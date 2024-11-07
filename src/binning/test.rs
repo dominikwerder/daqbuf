@@ -1,0 +1,15 @@
+mod events00;
+use super::container_events::ContainerEvents;
+use super::___;
+use netpod::log::*;
+use std::any;
+
+#[test]
+fn test_use_serde() {
+    let x = ContainerEvents::<f32>::new();
+    let a: &dyn any::Any = &x;
+    assert_eq!(a.downcast_ref::<String>().is_some(), false);
+    assert_eq!(a.downcast_ref::<ContainerEvents<f32>>().is_some(), true);
+    let s = serde_json::to_string(&x).unwrap();
+    let _: ContainerEvents<f32> = serde_json::from_str(&s).unwrap();
+}
