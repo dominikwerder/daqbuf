@@ -1,0 +1,12 @@
+[package]
+name = "daqbuf-items-proc"
+version = "0.0.3"
+authors = ["Dominik Werder <dominik.werder@gmail.com>"]
+edition = "2021"
+
+[lib]
+path = "src/items_proc.rs"
+proc-macro = true
+
+[dependencies]
+syn = { version = "2", features = ["full"] }
