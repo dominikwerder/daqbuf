@@ -172,10 +172,20 @@ where
     }
 
     pub fn verify(&self) -> Result<(), ContainerBinsError> {
-        if self.ts1s.iter().zip(self.ts1s.iter().skip(1)).any(|(&a, &b)| a > b) {
+        if self
+            .ts1s
+            .iter()
+            .zip(self.ts1s.iter().skip(1))
+            .any(|(&a, &b)| a > b)
+        {
             return Err(ContainerBinsError::Unordered);
         }
-        if self.ts2s.iter().zip(self.ts2s.iter().skip(1)).any(|(&a, &b)| a > b) {
+        if self
+            .ts2s
+            .iter()
+            .zip(self.ts2s.iter().skip(1))
+            .any(|(&a, &b)| a > b)
+        {
             return Err(ContainerBinsError::Unordered);
         }
         Ok(())
@@ -213,6 +223,10 @@ where
         self.avgs.iter()
     }
 
+    pub fn lsts_iter(&self) -> std::collections::vec_deque::Iter<EVT> {
+        self.lsts.iter()
+    }
+
     pub fn fnls_iter(&self) -> std::collections::vec_deque::Iter<bool> {
         self.fnls.iter()
     }
@@ -225,16 +239,19 @@ where
                 std::iter::Zip<
                     std::iter::Zip<
                         std::iter::Zip<
-                            std::collections::vec_deque::Iter<TsNano>,
-                            std::collections::vec_deque::Iter<TsNano>,
+                            std::iter::Zip<
+                                std::collections::vec_deque::Iter<TsNano>,
+                                std::collections::vec_deque::Iter<TsNano>,
+                            >,
+                            std::collections::vec_deque::Iter<u64>,
                         >,
-                        std::collections::vec_deque::Iter<u64>,
+                        std::collections::vec_deque::Iter<EVT>,
                     >,
                     std::collections::vec_deque::Iter<EVT>,
                 >,
-                std::collections::vec_deque::Iter<EVT>,
+                std::collections::vec_deque::Iter<EVT::AggTimeWeightOutputAvg>,
             >,
-            std::collections::vec_deque::Iter<EVT::AggTimeWeightOutputAvg>,
+            std::collections::vec_deque::Iter<EVT>,
         >,
         std::collections::vec_deque::Iter<bool>,
     > {
@@ -244,18 +261,27 @@ where
             .zip(self.mins_iter())
             .zip(self.maxs_iter())
             .zip(self.avgs_iter())
+            .zip(self.lsts_iter())
             .zip(self.fnls_iter())
     }
 
     pub fn edges_iter(
         &self,
-    ) -> std::iter::Zip<std::collections::vec_deque::Iter<TsNano>, std::collections::vec_deque::Iter<TsNano>> {
+    ) -> std::iter::Zip<
+        std::collections::vec_deque::Iter<TsNano>,
+        std::collections::vec_deque::Iter<TsNano>,
+    > {
         self.ts1s.iter().zip(self.ts2s.iter())
     }
 
     pub fn len_before(&self, end: TsNano) -> usize {
         let pp = self.ts2s.partition_point(|&x| x <= end);
-        assert!(pp <= self.len(), "len_before  pp {}  len {}", pp, self.len());
+        assert!(
+            pp <= self.len(),
+            "len_before  pp {}  len {}",
+            pp,
+            self.len()
+        );
         pp
     }
 
@@ -578,11 +604,18 @@ where
 
     fn edges_iter(
         &self,
-    ) -> std::iter::Zip<std::collections::vec_deque::Iter<TsNano>, std::collections::vec_deque::Iter<TsNano>> {
+    ) -> std::iter::Zip<
+        std::collections::vec_deque::Iter<TsNano>,
+        std::collections::vec_deque::Iter<TsNano>,
+    > {
         self.ts1s.iter().zip(self.ts2s.iter())
     }
 
-    fn drain_into(&mut self, dst: &mut dyn BinningggContainerBinsDyn, range: std::ops::Range<usize>) {
+    fn drain_into(
+        &mut self,
+        dst: &mut dyn BinningggContainerBinsDyn,
+        range: std::ops::Range<usize>,
+    ) {
         let obj = dst.as_any_mut();
         if let Some(dst) = obj.downcast_mut::<Self>() {
             dst.ts1s.extend(self.ts1s.drain(range.clone()));
@@ -600,7 +633,12 @@ where
     }
 
     fn fix_numerics(&mut self) {
-        for ((min, max), avg) in self.mins.iter_mut().zip(self.maxs.iter_mut()).zip(self.avgs.iter_mut()) {}
+        for ((min, max), avg) in self
+            .mins
+            .iter_mut()
+            .zip(self.maxs.iter_mut())
+            .zip(self.avgs.iter_mut())
+        {}
     }
 }
 
