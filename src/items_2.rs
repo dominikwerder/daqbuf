@@ -1,6 +1,5 @@
 pub mod accounting;
 pub mod binning;
-pub mod binsdim0;
 pub mod channelevents;
 pub mod empty;
 pub mod eventfull;
