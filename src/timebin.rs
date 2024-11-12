@@ -6,3 +6,5 @@ pub mod timebin;
 mod basic;
 mod gapfill;
 mod grid;
+
+pub use cached::reader::CacheReadProvider;
