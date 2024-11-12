@@ -8,8 +8,8 @@ use crate::streamtimeout::TimeoutableStream;
 use crate::tcprawclient::container_stream_from_bytes_stream;
 use crate::tcprawclient::make_sub_query;
 use crate::tcprawclient::OpenBoxedBytesStreamsBox;
+use crate::timebin::cached::reader::CacheReadProvider;
 use crate::timebin::cached::reader::EventsReadProvider;
-use crate::timebin::CacheReadProvider;
 use crate::transform::build_merged_event_transform;
 use futures_util::future::BoxFuture;
 use futures_util::Stream;
@@ -63,7 +63,9 @@ where
 }
 
 #[allow(unused)]
-fn assert_stream_send<'u, R>(stream: impl 'u + Send + Stream<Item = R>) -> impl 'u + Send + Stream<Item = R> {
+fn assert_stream_send<'u, R>(
+    stream: impl 'u + Send + Stream<Item = R>,
+) -> impl 'u + Send + Stream<Item = R> {
     stream
 }
 
@@ -92,7 +94,11 @@ pub async fn timebinnable_stream_sf_databuffer_channelevents(
     let bytes_streams = open_bytes.open(subq, ctx.as_ref().clone()).await?;
     let mut inps = Vec::new();
     for s in bytes_streams {
-        let s = container_stream_from_bytes_stream::<ChannelEvents>(s, inmem_bufcap.clone(), "TODOdbgdesc".into())?;
+        let s = container_stream_from_bytes_stream::<ChannelEvents>(
+            s,
+            inmem_bufcap.clone(),
+            "TODOdbgdesc".into(),
+        )?;
         let s = Box::pin(s) as Pin<Box<dyn Stream<Item = Sitemty<ChannelEvents>> + Send>>;
         inps.push(s);
     }
@@ -110,9 +116,9 @@ pub async fn timebinnable_stream_sf_databuffer_channelevents(
                 // let k: Box<dyn Events> = Box::new(k);
                 let k = k.to_dim0_f32_for_binning();
                 let k = tr.0.transform(k);
-                Ok(StreamItem::DataItem(RangeCompletableItem::Data(ChannelEvents::Events(
-                    k,
-                ))))
+                Ok(StreamItem::DataItem(RangeCompletableItem::Data(
+                    ChannelEvents::Events(k),
+                )))
             }
             _ => k,
         }
@@ -136,7 +142,8 @@ pub async fn timebinnable_stream_sf_databuffer_channelevents(
         let mut store = wasmer::Store::default();
         let module = wasmer::Module::new(&store, wasm).unwrap();
         // TODO assert that memory is large enough
-        let memory = wasmer::Memory::new(&mut store, wasmer::MemoryType::new(10, Some(30), false)).unwrap();
+        let memory =
+            wasmer::Memory::new(&mut store, wasmer::MemoryType::new(10, Some(30), false)).unwrap();
         let import_object = wasmer::imports! {
             "env" => {
                 "memory" => memory.clone(),
@@ -170,15 +177,24 @@ pub async fn timebinnable_stream_sf_databuffer_channelevents(
                             .as_any_mut()
                             .downcast_mut::<Box<items_2::eventsdim0::EventsDim0<f64>>>()
                             .is_some();
-                        let r5 = evs.as_mut().as_any_mut().downcast_mut::<ChannelEvents>().is_some();
-                        let r6 = evs.as_mut().as_any_mut().downcast_mut::<Box<ChannelEvents>>().is_some();
+                        let r5 = evs
+                            .as_mut()
+                            .as_any_mut()
+                            .downcast_mut::<ChannelEvents>()
+                            .is_some();
+                        let r6 = evs
+                            .as_mut()
+                            .as_any_mut()
+                            .downcast_mut::<Box<ChannelEvents>>()
+                            .is_some();
                         debug!("wasm  castings:  {r1}  {r2}  {r3}  {r4}  {r5}  {r6}");
                     }
                     if let Some(evs) = evs.as_any_mut().downcast_mut::<ChannelEvents>() {
                         match evs {
                             ChannelEvents::Events(evs) => {
-                                if let Some(evs) =
-                                    evs.as_any_mut().downcast_mut::<items_2::eventsdim0::EventsDim0<f64>>()
+                                if let Some(evs) = evs
+                                    .as_any_mut()
+                                    .downcast_mut::<items_2::eventsdim0::EventsDim0<f64>>()
                                 {
                                     use items_0::WithLen;
                                     if evs.len() == 0 {
@@ -186,7 +202,8 @@ pub async fn timebinnable_stream_sf_databuffer_channelevents(
                                     } else {
                                         debug!("wasm  see EventsDim0<f64>  len {}", evs.len());
                                         let max_len_needed = 16000;
-                                        let dummy1 = instance.exports.get_function("dummy1").unwrap();
+                                        let dummy1 =
+                                            instance.exports.get_function("dummy1").unwrap();
                                         let s = evs.values.as_mut_slices();
                                         for sl in [s.0, s.1] {
                                             if sl.len() > max_len_needed as _ {
@@ -196,12 +213,20 @@ pub async fn timebinnable_stream_sf_databuffer_channelevents(
                                             let wmemoff = buffer_ptr as u64;
                                             let view = memory.view(&store);
                                             // TODO is the offset bytes or elements?
-                                            let wsl = WasmSlice::<f64>::new(&view, wmemoff, sl.len() as _).unwrap();
+                                            let wsl = WasmSlice::<f64>::new(
+                                                &view,
+                                                wmemoff,
+                                                sl.len() as _,
+                                            )
+                                            .unwrap();
                                             // debug!("wasm pages {:?}  data size {:?}", view.size(), view.data_size());
                                             wsl.write_slice(&sl).unwrap();
                                             let ptr = wsl.as_ptr32();
                                             debug!("ptr {:?}  offset {}", ptr, ptr.offset());
-                                            let params = [Value::I32(ptr.offset() as _), Value::I32(sl.len() as _)];
+                                            let params = [
+                                                Value::I32(ptr.offset() as _),
+                                                Value::I32(sl.len() as _),
+                                            ];
                                             let res = dummy1.call(&mut store, &params).unwrap();
                                             match res[0] {
                                                 Value::I32(x) => {
@@ -216,7 +241,12 @@ pub async fn timebinnable_stream_sf_databuffer_channelevents(
                                             }
                                             // Init the slice again because we need to drop ownership for the function call.
                                             let view = memory.view(&store);
-                                            let wsl = WasmSlice::<f64>::new(&view, wmemoff, sl.len() as _).unwrap();
+                                            let wsl = WasmSlice::<f64>::new(
+                                                &view,
+                                                wmemoff,
+                                                sl.len() as _,
+                                            )
+                                            .unwrap();
                                             wsl.read_slice(sl).unwrap();
                                         }
                                     }
@@ -263,7 +293,7 @@ async fn timebinned_stream(
     } else {
         netpod::time_bin_len_cache_opts().to_vec()
     };
-    let stream = crate::timebin::TimeBinnedFromLayers::new(
+    let stream = crate::timebin::fromlayers::TimeBinnedFromLayers::new(
         ch_conf,
         cache_usage,
         query.transform().clone(),
@@ -328,17 +358,6 @@ pub async fn timebinned_json(
     let collres = collected.await?;
     match collres {
         CollectResult::Some(collres) => {
-            let collres = if let Some(_bins) = collres
-                .as_any_ref()
-                .downcast_ref::<items_2::binsdim0::BinsDim0CollectedResult<netpod::EnumVariant>>()
-            {
-                debug!("unexpected binned enum");
-                // bins.boxed_collected_with_enum_fix()
-                collres
-            } else {
-                debug!("timebinned_json collected type_name {:?}", collres.type_name());
-                collres
-            };
             let jsval = collres.to_json_value()?;
             Ok(CollectResult::Some(jsval))
         }
@@ -346,24 +365,14 @@ pub async fn timebinned_json(
     }
 }
 
-fn take_collector_result(coll: &mut Box<dyn items_0::collect_s::CollectorDyn>) -> Option<serde_json::Value> {
+fn take_collector_result(
+    coll: &mut Box<dyn items_0::collect_s::CollectorDyn>,
+) -> Option<serde_json::Value> {
     match coll.result(None, None) {
-        Ok(collres) => {
-            let collres = if let Some(_bins) = collres
-                .as_any_ref()
-                .downcast_ref::<items_2::binsdim0::BinsDim0CollectedResult<netpod::EnumVariant>>()
-            {
-                warn!("unexpected binned enum");
-                // bins.boxed_collected_with_enum_fix()
-                collres
-            } else {
-                collres
-            };
-            match collres.to_json_value() {
-                Ok(val) => Some(val),
-                Err(e) => Some(serde_json::Value::String(format!("{e}"))),
-            }
-        }
+        Ok(collres) => match collres.to_json_value() {
+            Ok(val) => Some(val),
+            Err(e) => Some(serde_json::Value::String(format!("{e}"))),
+        },
         Err(e) => Some(serde_json::Value::String(format!("{e}"))),
     }
 }
@@ -400,7 +409,9 @@ pub async fn timebinned_json_framed(
     let timeout_content_2 = timeout_content_base * 2 / 3;
     let mut coll = None;
     let mut last_emit = Instant::now();
-    let stream = stream.map(|x| Some(x)).chain(futures_util::stream::iter([None]));
+    let stream = stream
+        .map(|x| Some(x))
+        .chain(futures_util::stream::iter([None]));
     let stream = TimeoutableStream::new(timeout_content_base, timeout_provider, stream);
     let stream = stream.map(move |x| {
         match x {
@@ -466,7 +477,9 @@ pub async fn timebinned_json_framed(
     // TODO skip the intermediate conversion to js value, go directly to string data
     let stream = stream.map(|x| match x {
         Ok(x) => Ok(JsonBytes::new(serde_json::to_string(&x).unwrap())),
-        Err(e) => Err(crate::json_stream::Error::from(crate::json_stream::ErrMsg(e))),
+        Err(e) => Err(crate::json_stream::Error::from(crate::json_stream::ErrMsg(
+            e,
+        ))),
     });
     Ok(Box::pin(stream))
 }

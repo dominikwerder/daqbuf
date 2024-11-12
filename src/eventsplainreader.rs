@@ -1,7 +1,7 @@
 use crate::tcprawclient::OpenBoxedBytesStreamsBox;
+use crate::timebin::cached::reader::CacheReadProvider;
 use crate::timebin::cached::reader::EventsReadProvider;
 use crate::timebin::cached::reader::EventsReading;
-use crate::timebin::CacheReadProvider;
 use futures_util::Future;
 use futures_util::FutureExt;
 use futures_util::Stream;
@@ -73,7 +73,9 @@ impl EventsReadProvider for SfDatabufferEventReadProvider {
     fn read(&self, evq: EventsSubQuery) -> EventsReading {
         let range = match evq.range() {
             netpod::range::evrange::SeriesRange::TimeRange(x) => x.clone(),
-            netpod::range::evrange::SeriesRange::PulseRange(_) => panic!("not available for pulse range"),
+            netpod::range::evrange::SeriesRange::PulseRange(_) => {
+                panic!("not available for pulse range")
+            }
         };
         let ctx = self.ctx.clone();
         let open_bytes = self.open_bytes.clone();
@@ -104,19 +106,24 @@ impl DummyCacheReadProvider {
     }
 }
 
+// TODO impl
 impl CacheReadProvider for DummyCacheReadProvider {
     fn read(
         &self,
-        series: u64,
-        bin_len: netpod::DtMs,
-        msp: u64,
-        offs: std::ops::Range<u32>,
+        _series: u64,
+        _bin_len: netpod::DtMs,
+        _msp: u64,
+        _offs: std::ops::Range<u32>,
     ) -> crate::timebin::cached::reader::CacheReading {
         let stream = futures_util::future::ready(Ok(None));
         crate::timebin::cached::reader::CacheReading::new(Box::pin(stream))
     }
 
-    fn write(&self, series: u64, bins: items_0::timebin::BinsBoxed) -> crate::timebin::cached::reader::CacheWriting {
+    fn write(
+        &self,
+        _series: u64,
+        _bins: items_0::timebin::BinsBoxed,
+    ) -> crate::timebin::cached::reader::CacheWriting {
         let fut = futures_util::future::ready(Ok(()));
         crate::timebin::cached::reader::CacheWriting::new(Box::pin(fut))
     }

@@ -28,7 +28,6 @@ pub enum Error {
     MissingBinnerAfterProcessItem,
     CreateEmpty,
     NoBinnerAfterInputDone,
-    Stream,
     Msg(String),
 }
 
@@ -66,7 +65,8 @@ impl<T> TimeBinnedStream<T>
 where
     T: TimeBinnableTy,
 {
-    pub fn new(inp: SitemtyStream<T>, range: BinnedRangeEnum, do_time_weight: bool) -> Self {
+    #[allow(unused)]
+    fn new(inp: SitemtyStream<T>, range: BinnedRangeEnum, do_time_weight: bool) -> Self {
         Self {
             inp,
             range,
@@ -85,7 +85,8 @@ where
         trace2!("process_item {item:?}");
         if self.binner.is_none() {
             trace!("process_item call time_binner_new");
-            let binner = item.time_binner_new(self.range.clone(), self.do_time_weight, emit_empty_bins);
+            let binner =
+                item.time_binner_new(self.range.clone(), self.do_time_weight, emit_empty_bins);
             self.binner = Some(binner);
         }
         let binner = self.binner.as_mut().unwrap();
@@ -96,7 +97,10 @@ where
     fn handle_data_item(
         &mut self,
         item: T,
-    ) -> Result<ControlFlow<Poll<Sitemty<<<T as TimeBinnableTy>::TimeBinner as TimeBinnerTy>::Output>>>, Error> {
+    ) -> Result<
+        ControlFlow<Poll<Sitemty<<<T as TimeBinnableTy>::TimeBinner as TimeBinnerTy>::Output>>>,
+        Error,
+    > {
         use ControlFlow::*;
         use Poll::*;
         trace2!("=================   handle_data_item");
@@ -147,7 +151,10 @@ where
     fn handle_item(
         &mut self,
         item: Sitemty<T>,
-    ) -> Result<ControlFlow<Poll<Sitemty<<<T as TimeBinnableTy>::TimeBinner as TimeBinnerTy>::Output>>>, Error> {
+    ) -> Result<
+        ControlFlow<Poll<Sitemty<<<T as TimeBinnableTy>::TimeBinner as TimeBinnerTy>::Output>>>,
+        Error,
+    > {
         use ControlFlow::*;
         use Poll::*;
         trace2!("=================   handle_item");
@@ -174,19 +181,28 @@ where
 
     fn handle_none(
         &mut self,
-    ) -> Result<ControlFlow<Poll<Sitemty<<<T as TimeBinnableTy>::TimeBinner as TimeBinnerTy>::Output>>>, Error> {
+    ) -> Result<
+        ControlFlow<Poll<Sitemty<<<T as TimeBinnableTy>::TimeBinner as TimeBinnerTy>::Output>>>,
+        Error,
+    > {
         use ControlFlow::*;
         use Poll::*;
         trace2!("=================   handle_none");
         let self_range_final = self.range_final;
         if let Some(binner) = self.binner.as_mut() {
-            trace2!("bins ready count before finish {}", binner.bins_ready_count());
+            trace2!(
+                "bins ready count before finish {}",
+                binner.bins_ready_count()
+            );
             // TODO rework the finish logic
             if self_range_final {
                 binner.set_range_complete();
             }
             binner.push_in_progress(false);
-            trace2!("bins ready count after finish  {}", binner.bins_ready_count());
+            trace2!(
+                "bins ready count after finish  {}",
+                binner.bins_ready_count()
+            );
             if let Some(bins) = binner.bins_ready() {
                 self.done_data = true;
                 Ok(Break(Ready(sitem_data(bins))))
@@ -216,7 +232,10 @@ where
     fn poll_input(
         &mut self,
         cx: &mut Context,
-    ) -> Result<ControlFlow<Poll<Sitemty<<<T as TimeBinnableTy>::TimeBinner as TimeBinnerTy>::Output>>>, Error> {
+    ) -> Result<
+        ControlFlow<Poll<Sitemty<<<T as TimeBinnableTy>::TimeBinner as TimeBinnerTy>::Output>>>,
+        Error,
+    > {
         use ControlFlow::*;
         use Poll::*;
         trace2!("=================   poll_input");
@@ -250,7 +269,9 @@ where
                 self.done = true;
                 if self.range_final {
                     info!("TimeBinnedStream   EMIT RANGE FINAL");
-                    Ready(Some(Ok(StreamItem::DataItem(RangeCompletableItem::RangeComplete))))
+                    Ready(Some(Ok(StreamItem::DataItem(
+                        RangeCompletableItem::RangeComplete,
+                    ))))
                 } else {
                     continue;
                 }

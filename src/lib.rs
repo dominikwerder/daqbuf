@@ -30,3 +30,8 @@ pub mod teststream;
 pub mod timebin;
 pub mod timebinnedjson;
 pub mod transform;
+
+#[allow(unused)]
+fn todoval<T>() -> T {
+    todo!()
+}

@@ -8,7 +8,11 @@ use netpod::range::evrange::SeriesRange;
 use query::api4::events::EventsSubQuery;
 use std::pin::Pin;
 
-fn make_stream(chname: &str, range: &SeriesRange) -> Pin<Box<dyn Stream<Item = Sitemty<ChannelEvents>> + Send>> {
+fn make_stream(
+    chname: &str,
+    range: &SeriesRange,
+) -> Pin<Box<dyn Stream<Item = Sitemty<ChannelEvents>> + Send>> {
+    let _ = &range;
     if chname == "unittest;scylla;cont;scalar;f32" {
         let e = sitem_err2_from_string(format!("unknown channel {chname}"));
         let ret = futures_util::stream::iter([Err(e)]);
