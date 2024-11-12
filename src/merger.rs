@@ -26,23 +26,11 @@ use std::task::Poll;
 const OUT_MAX_BYTES: u64 = 1024 * 200;
 const DO_DETECT_NON_MONO: bool = true;
 
-#[allow(unused)]
-macro_rules! trace2 {
-    ($($arg:tt)*) => {};
-    ($($arg:tt)*) => { trace!($($arg)*) };
-}
+macro_rules! trace2 { ($($arg:tt)*) => ( if false { trace!($($arg)*); } ) }
 
-#[allow(unused)]
-macro_rules! trace3 {
-    ($($arg:tt)*) => {};
-    ($($arg:tt)*) => { trace!($($arg)*) };
-}
+macro_rules! trace3 { ($($arg:tt)*) => ( if false { trace!($($arg)*); } ) }
 
-#[allow(unused)]
-macro_rules! trace4 {
-    ($($arg:tt)*) => {};
-    ($($arg:tt)*) => { trace!($($arg)*) };
-}
+macro_rules! trace4 { ($($arg:tt)*) => ( if false { trace!($($arg)*); } ) }
 
 pub trait Mergeable<Rhs = Self>: fmt::Debug + WithLen + ByteEstimate + Unpin {
     fn ts_min(&self) -> Option<u64>;
@@ -311,7 +299,8 @@ where
                             }
                             StreamItem::Stats(item) => {
                                 // TODO limit queue length
-                                self.out_of_band_queue.push_back(Ok(StreamItem::Stats(item)));
+                                self.out_of_band_queue
+                                    .push_back(Ok(StreamItem::Stats(item)));
                                 continue;
                             }
                         },
@@ -337,7 +326,10 @@ where
         }
     }
 
-    fn poll3(mut self: Pin<&mut Self>, cx: &mut Context) -> ControlFlow<Poll<Option<Result<T, Error>>>> {
+    fn poll3(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context,
+    ) -> ControlFlow<Poll<Option<Result<T, Error>>>> {
         use ControlFlow::*;
         use Poll::*;
         trace4!("poll3");
@@ -364,9 +356,17 @@ where
             }
         }
         if let Some(o) = self.out.as_ref() {
-            if o.len() >= self.out_max_len || o.byte_estimate() >= OUT_MAX_BYTES || self.do_clear_out || last_emit {
+            if o.len() >= self.out_max_len
+                || o.byte_estimate() >= OUT_MAX_BYTES
+                || self.do_clear_out
+                || last_emit
+            {
                 if o.len() > self.out_max_len {
-                    debug!("MERGER OVERWEIGHT ITEM  {} vs {}", o.len(), self.out_max_len);
+                    debug!(
+                        "MERGER OVERWEIGHT ITEM  {} vs {}",
+                        o.len(),
+                        self.out_max_len
+                    );
                 }
                 trace3!("decide to output");
                 self.do_clear_out = false;
@@ -388,7 +388,10 @@ where
         }
     }
 
-    fn poll2(mut self: Pin<&mut Self>, cx: &mut Context) -> ControlFlow<Poll<Option<Result<T, Error>>>> {
+    fn poll2(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context,
+    ) -> ControlFlow<Poll<Option<Result<T, Error>>>> {
         use ControlFlow::*;
         use Poll::*;
         match Self::refill(Pin::new(&mut self), cx) {
@@ -426,7 +429,9 @@ where
                 self.done_range_complete = true;
                 if self.range_complete.iter().all(|x| *x) {
                     trace!("emit RangeComplete");
-                    Ready(Some(Ok(StreamItem::DataItem(RangeCompletableItem::RangeComplete))))
+                    Ready(Some(Ok(StreamItem::DataItem(
+                        RangeCompletableItem::RangeComplete,
+                    ))))
                 } else {
                     continue;
                 }
@@ -485,7 +490,7 @@ impl<T> EventTransform for Merger<T>
 where
     T: Send,
 {
-    fn transform(&mut self, src: Box<dyn Events>) -> Box<dyn Events> {
+    fn transform(&mut self, _src: Box<dyn Events>) -> Box<dyn Events> {
         todo!()
     }
 }

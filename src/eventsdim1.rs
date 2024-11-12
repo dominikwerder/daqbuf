@@ -1,5 +1,3 @@
-use crate::binsdim0::BinsDim0;
-use crate::eventsxbindim0::EventsXbinDim0;
 use crate::IsoDateTime;
 use daqbuf_err as err;
 use err::Error;
@@ -32,7 +30,6 @@ use std::any;
 use std::any::Any;
 use std::collections::VecDeque;
 use std::fmt;
-use std::marker::PhantomData;
 use std::mem;
 
 #[allow(unused)]
@@ -239,7 +236,11 @@ pub struct EventsDim1CollectorOutput<STY> {
     range_final: bool,
     #[serde(rename = "timedOut", default, skip_serializing_if = "is_false")]
     timed_out: bool,
-    #[serde(rename = "continueAt", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "continueAt",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     continue_at: Option<IsoDateTime>,
 }
 
@@ -517,7 +518,11 @@ impl<STY: ScalarOps> Events for EventsDim1<STY> {
         let tss = self.tss.drain(..n1).collect();
         let pulses = self.pulses.drain(..n1).collect();
         let values = self.values.drain(..n1).collect();
-        let ret = Self { tss, pulses, values };
+        let ret = Self {
+            tss,
+            pulses,
+            values,
+        };
         Box::new(ret)
     }
 
@@ -525,7 +530,11 @@ impl<STY: ScalarOps> Events for EventsDim1<STY> {
         Box::new(Self::empty())
     }
 
-    fn drain_into_evs(&mut self, dst: &mut dyn Events, range: (usize, usize)) -> Result<(), MergeError> {
+    fn drain_into_evs(
+        &mut self,
+        dst: &mut dyn Events,
+        range: (usize, usize),
+    ) -> Result<(), MergeError> {
         // TODO as_any and as_any_mut are declared on unrelated traits. Simplify.
         if let Some(dst) = dst.as_any_mut().downcast_mut::<Self>() {
             // TODO make it harder to forget new members when the struct may get modified in the future
@@ -609,33 +618,7 @@ impl<STY: ScalarOps> Events for EventsDim1<STY> {
     }
 
     fn to_min_max_avg(&mut self) -> Box<dyn Events> {
-        let mins = self
-            .values
-            .iter()
-            .map(|x| STY::find_vec_min(x))
-            .map(|x| x.unwrap_or_else(|| STY::zero_b()))
-            .collect();
-        let maxs = self
-            .values
-            .iter()
-            .map(|x| STY::find_vec_max(x))
-            .map(|x| x.unwrap_or_else(|| STY::zero_b()))
-            .collect();
-        let avgs = self
-            .values
-            .iter()
-            .map(|x| STY::avg_vec(x))
-            .map(|x| x.unwrap_or_else(|| STY::zero_b()))
-            .map(|x| x.as_prim_f32_b())
-            .collect();
-        let item = EventsXbinDim0 {
-            tss: mem::replace(&mut self.tss, VecDeque::new()),
-            pulses: mem::replace(&mut self.pulses, VecDeque::new()),
-            mins,
-            maxs,
-            avgs,
-        };
-        Box::new(item)
+        panic!("discontinued support for EventsDim1")
     }
 
     fn to_json_string(&self) -> String {

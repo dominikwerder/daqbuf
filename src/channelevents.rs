@@ -9,8 +9,6 @@ use items_0::container::ByteEstimate;
 use items_0::framable::FrameTypeInnerStatic;
 use items_0::isodate::IsoDateTime;
 use items_0::streamitem::ITEMS_2_CHANNEL_EVENTS_FRAME_TYPE_ID;
-use items_0::timebin::TimeBinnableTy;
-use items_0::timebin::TimeBinnerTy;
 use items_0::AsAnyMut;
 use items_0::AsAnyRef;
 use items_0::Empty;
@@ -27,11 +25,9 @@ use serde::Serialize;
 use std::any;
 use std::any::Any;
 use std::collections::VecDeque;
-use std::fmt;
 use std::time::Duration;
 use std::time::SystemTime;
 
-#[allow(unused)]
 macro_rules! trace_ingest { ($($arg:tt)*) => ( if true { trace!($($arg)*); }) }
 
 // TODO maybe rename to ChannelStatus?
@@ -62,7 +58,11 @@ pub struct ConnStatusEvent {
 impl ConnStatusEvent {
     pub fn new(ts: u64, status: ConnStatus) -> Self {
         let datetime = SystemTime::UNIX_EPOCH + Duration::from_millis(ts / 1000000);
-        Self { ts, datetime, status }
+        Self {
+            ts,
+            datetime,
+            status,
+        }
     }
 }
 
@@ -135,7 +135,11 @@ pub struct ChannelStatusEvent {
 impl ChannelStatusEvent {
     pub fn new(ts: u64, status: ChannelStatus) -> Self {
         let datetime = SystemTime::UNIX_EPOCH + Duration::from_millis(ts / 1000000);
-        Self { ts, datetime, status }
+        Self {
+            ts,
+            datetime,
+            status,
+        }
     }
 }
 
@@ -207,7 +211,6 @@ mod serde_channel_events {
     use crate::channelevents::ConnStatusEvent;
     use crate::eventsdim0::EventsDim0;
     use crate::eventsdim1::EventsDim1;
-    use crate::eventsxbindim0::EventsXbinDim0;
     use items_0::subfr::SubFrId;
     use netpod::log::*;
     use netpod::EnumVariant;
@@ -258,73 +261,90 @@ mod serde_channel_events {
         where
             A: de::SeqAccess<'de>,
         {
-            let cty: &str = seq.next_element()?.ok_or_else(|| de::Error::missing_field("[0] cty"))?;
-            let nty: u32 = seq.next_element()?.ok_or_else(|| de::Error::missing_field("[1] nty"))?;
+            let cty: &str = seq
+                .next_element()?
+                .ok_or_else(|| de::Error::missing_field("[0] cty"))?;
+            let nty: u32 = seq
+                .next_element()?
+                .ok_or_else(|| de::Error::missing_field("[1] nty"))?;
             if cty == EventsDim0::<u8>::serde_id() {
                 match nty {
                     u8::SUB => {
-                        let obj: EventsDim0<u8> =
-                            seq.next_element()?.ok_or_else(|| de::Error::missing_field("[2] obj"))?;
+                        let obj: EventsDim0<u8> = seq
+                            .next_element()?
+                            .ok_or_else(|| de::Error::missing_field("[2] obj"))?;
                         Ok(EvBox(Box::new(obj)))
                     }
                     u16::SUB => {
-                        let obj: EventsDim0<u16> =
-                            seq.next_element()?.ok_or_else(|| de::Error::missing_field("[2] obj"))?;
+                        let obj: EventsDim0<u16> = seq
+                            .next_element()?
+                            .ok_or_else(|| de::Error::missing_field("[2] obj"))?;
                         Ok(EvBox(Box::new(obj)))
                     }
                     u32::SUB => {
-                        let obj: EventsDim0<u32> =
-                            seq.next_element()?.ok_or_else(|| de::Error::missing_field("[2] obj"))?;
+                        let obj: EventsDim0<u32> = seq
+                            .next_element()?
+                            .ok_or_else(|| de::Error::missing_field("[2] obj"))?;
                         Ok(EvBox(Box::new(obj)))
                     }
                     u64::SUB => {
-                        let obj: EventsDim0<u64> =
-                            seq.next_element()?.ok_or_else(|| de::Error::missing_field("[2] obj"))?;
+                        let obj: EventsDim0<u64> = seq
+                            .next_element()?
+                            .ok_or_else(|| de::Error::missing_field("[2] obj"))?;
                         Ok(EvBox(Box::new(obj)))
                     }
                     i8::SUB => {
-                        let obj: EventsDim0<i8> =
-                            seq.next_element()?.ok_or_else(|| de::Error::missing_field("[2] obj"))?;
+                        let obj: EventsDim0<i8> = seq
+                            .next_element()?
+                            .ok_or_else(|| de::Error::missing_field("[2] obj"))?;
                         Ok(EvBox(Box::new(obj)))
                     }
                     i16::SUB => {
-                        let obj: EventsDim0<i16> =
-                            seq.next_element()?.ok_or_else(|| de::Error::missing_field("[2] obj"))?;
+                        let obj: EventsDim0<i16> = seq
+                            .next_element()?
+                            .ok_or_else(|| de::Error::missing_field("[2] obj"))?;
                         Ok(EvBox(Box::new(obj)))
                     }
                     i32::SUB => {
-                        let obj: EventsDim0<i32> =
-                            seq.next_element()?.ok_or_else(|| de::Error::missing_field("[2] obj"))?;
+                        let obj: EventsDim0<i32> = seq
+                            .next_element()?
+                            .ok_or_else(|| de::Error::missing_field("[2] obj"))?;
                         Ok(EvBox(Box::new(obj)))
                     }
                     i64::SUB => {
-                        let obj: EventsDim0<i64> =
-                            seq.next_element()?.ok_or_else(|| de::Error::missing_field("[2] obj"))?;
+                        let obj: EventsDim0<i64> = seq
+                            .next_element()?
+                            .ok_or_else(|| de::Error::missing_field("[2] obj"))?;
                         Ok(EvBox(Box::new(obj)))
                     }
                     f32::SUB => {
-                        let obj: EventsDim0<f32> =
-                            seq.next_element()?.ok_or_else(|| de::Error::missing_field("[2] obj"))?;
+                        let obj: EventsDim0<f32> = seq
+                            .next_element()?
+                            .ok_or_else(|| de::Error::missing_field("[2] obj"))?;
                         Ok(EvBox(Box::new(obj)))
                     }
                     f64::SUB => {
-                        let obj: EventsDim0<f64> =
-                            seq.next_element()?.ok_or_else(|| de::Error::missing_field("[2] obj"))?;
+                        let obj: EventsDim0<f64> = seq
+                            .next_element()?
+                            .ok_or_else(|| de::Error::missing_field("[2] obj"))?;
                         Ok(EvBox(Box::new(obj)))
                     }
                     bool::SUB => {
-                        let obj: EventsDim0<bool> =
-                            seq.next_element()?.ok_or_else(|| de::Error::missing_field("[2] obj"))?;
+                        let obj: EventsDim0<bool> = seq
+                            .next_element()?
+                            .ok_or_else(|| de::Error::missing_field("[2] obj"))?;
                         Ok(EvBox(Box::new(obj)))
                     }
                     String::SUB => {
-                        let obj: EventsDim0<String> =
-                            seq.next_element()?.ok_or_else(|| de::Error::missing_field("[2] obj"))?;
+                        let obj: EventsDim0<String> = seq
+                            .next_element()?
+                            .ok_or_else(|| de::Error::missing_field("[2] obj"))?;
                         Ok(EvBox(Box::new(obj)))
                     }
                     EnumVariant::SUB => {
-                        let obj: EventsDim0<EnumVariant> =
-                            seq.next_element()?.ok_or_else(|| de::Error::missing_field("[2] obj"))?;
+                        let obj: EventsDim0<EnumVariant> = seq
+                            .next_element()?
+                            .ok_or_else(|| de::Error::missing_field("[2] obj"))?;
                         Ok(EvBox(Box::new(obj)))
                     }
                     _ => {
@@ -335,85 +355,75 @@ mod serde_channel_events {
             } else if cty == EventsDim1::<u8>::serde_id() {
                 match nty {
                     u8::SUB => {
-                        let obj: EventsDim1<u8> =
-                            seq.next_element()?.ok_or_else(|| de::Error::missing_field("[2] obj"))?;
+                        let obj: EventsDim1<u8> = seq
+                            .next_element()?
+                            .ok_or_else(|| de::Error::missing_field("[2] obj"))?;
                         Ok(EvBox(Box::new(obj)))
                     }
                     u16::SUB => {
-                        let obj: EventsDim1<u16> =
-                            seq.next_element()?.ok_or_else(|| de::Error::missing_field("[2] obj"))?;
+                        let obj: EventsDim1<u16> = seq
+                            .next_element()?
+                            .ok_or_else(|| de::Error::missing_field("[2] obj"))?;
                         Ok(EvBox(Box::new(obj)))
                     }
                     u32::SUB => {
-                        let obj: EventsDim1<u32> =
-                            seq.next_element()?.ok_or_else(|| de::Error::missing_field("[2] obj"))?;
+                        let obj: EventsDim1<u32> = seq
+                            .next_element()?
+                            .ok_or_else(|| de::Error::missing_field("[2] obj"))?;
                         Ok(EvBox(Box::new(obj)))
                     }
                     u64::SUB => {
-                        let obj: EventsDim1<u64> =
-                            seq.next_element()?.ok_or_else(|| de::Error::missing_field("[2] obj"))?;
+                        let obj: EventsDim1<u64> = seq
+                            .next_element()?
+                            .ok_or_else(|| de::Error::missing_field("[2] obj"))?;
                         Ok(EvBox(Box::new(obj)))
                     }
                     i8::SUB => {
-                        let obj: EventsDim1<i8> =
-                            seq.next_element()?.ok_or_else(|| de::Error::missing_field("[2] obj"))?;
+                        let obj: EventsDim1<i8> = seq
+                            .next_element()?
+                            .ok_or_else(|| de::Error::missing_field("[2] obj"))?;
                         Ok(EvBox(Box::new(obj)))
                     }
                     i16::SUB => {
-                        let obj: EventsDim1<i16> =
-                            seq.next_element()?.ok_or_else(|| de::Error::missing_field("[2] obj"))?;
+                        let obj: EventsDim1<i16> = seq
+                            .next_element()?
+                            .ok_or_else(|| de::Error::missing_field("[2] obj"))?;
                         Ok(EvBox(Box::new(obj)))
                     }
                     i32::SUB => {
-                        let obj: EventsDim1<i32> =
-                            seq.next_element()?.ok_or_else(|| de::Error::missing_field("[2] obj"))?;
+                        let obj: EventsDim1<i32> = seq
+                            .next_element()?
+                            .ok_or_else(|| de::Error::missing_field("[2] obj"))?;
                         Ok(EvBox(Box::new(obj)))
                     }
                     i64::SUB => {
-                        let obj: EventsDim1<i64> =
-                            seq.next_element()?.ok_or_else(|| de::Error::missing_field("[2] obj"))?;
+                        let obj: EventsDim1<i64> = seq
+                            .next_element()?
+                            .ok_or_else(|| de::Error::missing_field("[2] obj"))?;
                         Ok(EvBox(Box::new(obj)))
                     }
                     f32::SUB => {
-                        let obj: EventsDim1<f32> =
-                            seq.next_element()?.ok_or_else(|| de::Error::missing_field("[2] obj"))?;
+                        let obj: EventsDim1<f32> = seq
+                            .next_element()?
+                            .ok_or_else(|| de::Error::missing_field("[2] obj"))?;
                         Ok(EvBox(Box::new(obj)))
                     }
                     f64::SUB => {
-                        let obj: EventsDim1<f64> =
-                            seq.next_element()?.ok_or_else(|| de::Error::missing_field("[2] obj"))?;
+                        let obj: EventsDim1<f64> = seq
+                            .next_element()?
+                            .ok_or_else(|| de::Error::missing_field("[2] obj"))?;
                         Ok(EvBox(Box::new(obj)))
                     }
                     bool::SUB => {
-                        let obj: EventsDim1<bool> =
-                            seq.next_element()?.ok_or_else(|| de::Error::missing_field("[2] obj"))?;
+                        let obj: EventsDim1<bool> = seq
+                            .next_element()?
+                            .ok_or_else(|| de::Error::missing_field("[2] obj"))?;
                         Ok(EvBox(Box::new(obj)))
                     }
                     String::SUB => {
-                        let obj: EventsDim1<String> =
-                            seq.next_element()?.ok_or_else(|| de::Error::missing_field("[2] obj"))?;
-                        Ok(EvBox(Box::new(obj)))
-                    }
-                    _ => {
-                        error!("TODO serde  cty {cty}  nty {nty}");
-                        Err(de::Error::custom(&format!("unknown nty {nty}")))
-                    }
-                }
-            } else if cty == EventsXbinDim0::<u8>::serde_id() {
-                match nty {
-                    f32::SUB => {
-                        let obj: EventsXbinDim0<f32> =
-                            seq.next_element()?.ok_or_else(|| de::Error::missing_field("[2] obj"))?;
-                        Ok(EvBox(Box::new(obj)))
-                    }
-                    f64::SUB => {
-                        let obj: EventsXbinDim0<f64> =
-                            seq.next_element()?.ok_or_else(|| de::Error::missing_field("[2] obj"))?;
-                        Ok(EvBox(Box::new(obj)))
-                    }
-                    bool::SUB => {
-                        let obj: EventsXbinDim0<bool> =
-                            seq.next_element()?.ok_or_else(|| de::Error::missing_field("[2] obj"))?;
+                        let obj: EventsDim1<String> = seq
+                            .next_element()?
+                            .ok_or_else(|| de::Error::missing_field("[2] obj"))?;
                         Ok(EvBox(Box::new(obj)))
                     }
                     _ => {
@@ -422,7 +432,7 @@ mod serde_channel_events {
                     }
                 }
             } else {
-                error!("TODO serde  cty {cty}  nty {nty}");
+                error!("unsupported serde  cty {cty}  nty {nty}");
                 Err(de::Error::custom(&format!("unknown cty {cty}")))
             }
         }
@@ -448,7 +458,9 @@ mod serde_channel_events {
                 ChannelEvents::Events(obj) => {
                     serializer.serialize_newtype_variant(name, 0, vars[0], &EvRef(obj.as_ref()))
                 }
-                ChannelEvents::Status(val) => serializer.serialize_newtype_variant(name, 1, vars[1], val),
+                ChannelEvents::Status(val) => {
+                    serializer.serialize_newtype_variant(name, 1, vars[1], val)
+                }
             }
         }
     }
@@ -491,7 +503,10 @@ mod serde_channel_events {
             } else if val == vars[1] {
                 Ok(VarId::Status)
             } else {
-                Err(de::Error::unknown_variant(val, ChannelEventsVis::allowed_variants()))
+                Err(de::Error::unknown_variant(
+                    val,
+                    ChannelEventsVis::allowed_variants(),
+                ))
             }
         }
     }
@@ -870,7 +885,11 @@ impl Events for ChannelEvents {
         }
     }
 
-    fn drain_into_evs(&mut self, dst: &mut dyn Events, range: (usize, usize)) -> Result<(), MergeError> {
+    fn drain_into_evs(
+        &mut self,
+        dst: &mut dyn Events,
+        range: (usize, usize),
+    ) -> Result<(), MergeError> {
         let dst2 = if let Some(x) = dst.as_any_mut().downcast_mut::<Self>() {
             // debug!("unwrapped dst ChannelEvents as well");
             x
@@ -931,7 +950,9 @@ impl Events for ChannelEvents {
 
     fn to_min_max_avg(&mut self) -> Box<dyn Events> {
         match self {
-            ChannelEvents::Events(item) => Box::new(ChannelEvents::Events(Events::to_min_max_avg(item))),
+            ChannelEvents::Events(item) => {
+                Box::new(ChannelEvents::Events(Events::to_min_max_avg(item)))
+            }
             ChannelEvents::Status(item) => Box::new(ChannelEvents::Status(item.take())),
         }
     }
@@ -1075,9 +1096,11 @@ impl CollectorDyn for ChannelEventsCollector {
         if let Some(item) = item.as_any_mut().downcast_mut::<ChannelEvents>() {
             match item {
                 ChannelEvents::Events(item) => {
-                    let coll = self
-                        .coll
-                        .get_or_insert_with(|| item.as_ref().as_collectable_with_default_ref().new_collector());
+                    let coll = self.coll.get_or_insert_with(|| {
+                        item.as_ref()
+                            .as_collectable_with_default_ref()
+                            .new_collector()
+                    });
                     coll.ingest(item.as_collectable_with_default_mut());
                 }
                 ChannelEvents::Status(_) => {

@@ -312,7 +312,10 @@ impl<NTY: ScalarOps> TimeBins for BinsDim0<NTY> {
     }
 
     fn ts_min_max(&self) -> Option<(u64, u64)> {
-        if let (Some(min), Some(max)) = (self.ts1s.front().map(Clone::clone), self.ts2s.back().map(Clone::clone)) {
+        if let (Some(min), Some(max)) = (
+            self.ts1s.front().map(Clone::clone),
+            self.ts2s.back().map(Clone::clone),
+        ) {
             Some((min, max))
         } else {
             None
@@ -389,7 +392,11 @@ where
     type Output = BinsDim0<STY>;
 
     fn ingest(&mut self, item: &mut Self::Input) {
-        trace_ingest!("<{} as TimeBinnerTy>::ingest  {:?}", Self::type_name(), item);
+        trace_ingest!(
+            "<{} as TimeBinnerTy>::ingest  {:?}",
+            Self::type_name(),
+            item
+        );
         let mut count_before = 0;
         for ((((((&ts1, &ts2), &cnt), min), max), &avg), lst) in item
             .ts1s
@@ -407,7 +414,11 @@ where
                     continue;
                 }
                 // warn!("encountered bin from time before  {}  {}", ts1, self.ts1now.ns());
-                trace_ingest!("{}  input bin before  {}", Self::type_name(), TsNano::from_ns(ts1));
+                trace_ingest!(
+                    "{}  input bin before  {}",
+                    Self::type_name(),
+                    TsNano::from_ns(ts1)
+                );
                 self.min = min.clone();
                 self.max = max.clone();
                 self.lst = lst.clone();
@@ -562,7 +573,9 @@ impl<STY: ScalarOps> TimeBinnableTy for BinsDim0<STY> {
         emit_empty_bins: bool,
     ) -> Self::TimeBinner {
         match binrange {
-            BinnedRangeEnum::Time(binrange) => BinsDim0TimeBinnerTy::new(binrange, do_time_weight, emit_empty_bins),
+            BinnedRangeEnum::Time(binrange) => {
+                BinsDim0TimeBinnerTy::new(binrange, do_time_weight, emit_empty_bins)
+            }
             BinnedRangeEnum::Pulse(_) => todo!("TimeBinnableTy for BinsDim0 Pulse"),
         }
     }
@@ -593,11 +606,23 @@ pub struct BinsDim0CollectedResult<NTY> {
     range_final: bool,
     #[serde(rename = "timedOut", default, skip_serializing_if = "is_false")]
     timed_out: bool,
-    #[serde(rename = "missingBins", default, skip_serializing_if = "CmpZero::is_zero")]
+    #[serde(
+        rename = "missingBins",
+        default,
+        skip_serializing_if = "CmpZero::is_zero"
+    )]
     missing_bins: u32,
-    #[serde(rename = "continueAt", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "continueAt",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     continue_at: Option<IsoDateTime>,
-    #[serde(rename = "finishedAt", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "finishedAt",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     finished_at: Option<IsoDateTime>,
 }
 

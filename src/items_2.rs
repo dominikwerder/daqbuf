@@ -1,14 +1,12 @@
 pub mod accounting;
 pub mod binning;
 pub mod binsdim0;
-pub mod binsxbindim0;
 pub mod channelevents;
 pub mod empty;
 pub mod eventfull;
 pub mod eventsdim0;
 pub mod eventsdim0enum;
 pub mod eventsdim1;
-pub mod eventsxbindim0;
 pub mod framable;
 pub mod frame;
 pub mod inmem;
@@ -26,11 +24,9 @@ use futures_util::Stream;
 use items_0::isodate::IsoDateTime;
 use items_0::streamitem::Sitemty;
 use items_0::transform::EventTransform;
-use items_0::Empty;
 use items_0::Events;
 use items_0::MergeError;
 use merger::Mergeable;
-use netpod::range::evrange::SeriesRange;
 use netpod::timeunits::*;
 use std::collections::VecDeque;
 use std::fmt;
@@ -47,7 +43,10 @@ pub fn ts_offs_from_abs(tss: &[u64]) -> (u64, VecDeque<u64>, VecDeque<u64>) {
     (ts_anchor_sec, ts_off_ms, ts_off_ns)
 }
 
-pub fn ts_offs_from_abs_with_anchor(ts_anchor_sec: u64, tss: &[u64]) -> (VecDeque<u64>, VecDeque<u64>) {
+pub fn ts_offs_from_abs_with_anchor(
+    ts_anchor_sec: u64,
+    tss: &[u64],
+) -> (VecDeque<u64>, VecDeque<u64>) {
     let ts_anchor_ns = ts_anchor_sec * SEC;
     let ts_off_ms: VecDeque<_> = tss.iter().map(|&k| (k - ts_anchor_ns) / MS).collect();
     let ts_off_ns = tss
@@ -173,6 +172,12 @@ impl Mergeable for Box<dyn Events> {
     }
 }
 
-pub trait ChannelEventsInput: Stream<Item = Sitemty<ChannelEvents>> + EventTransform + Send {}
+pub trait ChannelEventsInput:
+    Stream<Item = Sitemty<ChannelEvents>> + EventTransform + Send
+{
+}
 
-impl<T> ChannelEventsInput for T where T: Stream<Item = Sitemty<ChannelEvents>> + EventTransform + Send {}
+impl<T> ChannelEventsInput for T where
+    T: Stream<Item = Sitemty<ChannelEvents>> + EventTransform + Send
+{
+}
