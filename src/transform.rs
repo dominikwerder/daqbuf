@@ -1,20 +1,19 @@
 use crate::collect_s::CollectableDyn;
-use crate::collect_s::CollectedDyn;
 use crate::streamitem::RangeCompletableItem;
 use crate::streamitem::Sitemty;
 use crate::streamitem::StreamItem;
 use crate::Events;
-use daqbuf_err as err;
-use err::Error;
 use futures_util::stream;
-use futures_util::Future;
 use futures_util::Stream;
 use futures_util::StreamExt;
 use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
 
-pub trait EventStreamTrait: Stream<Item = Sitemty<Box<dyn Events>>> + WithTransformProperties + Send {}
+pub trait EventStreamTrait:
+    Stream<Item = Sitemty<Box<dyn Events>>> + WithTransformProperties + Send
+{
+}
 
 pub trait CollectableStreamTrait:
     Stream<Item = Sitemty<Box<dyn CollectableDyn>>> + WithTransformProperties + Send
@@ -52,28 +51,6 @@ where
     }
 }
 
-pub trait EventTransform: WithTransformProperties + Send {
-    fn transform(&mut self, src: Box<dyn Events>) -> Box<dyn Events>;
-}
-
-impl<T> EventTransform for Box<T>
-where
-    T: EventTransform,
-{
-    fn transform(&mut self, src: Box<dyn Events>) -> Box<dyn Events> {
-        self.as_mut().transform(src)
-    }
-}
-
-impl<T> EventTransform for Pin<Box<T>>
-where
-    T: EventTransform,
-{
-    fn transform(&mut self, src: Box<dyn Events>) -> Box<dyn Events> {
-        todo!()
-    }
-}
-
 pub struct IdentityTransform {}
 
 impl IdentityTransform {
@@ -85,26 +62,6 @@ impl IdentityTransform {
 impl WithTransformProperties for IdentityTransform {
     fn query_transform_properties(&self) -> TransformProperties {
         todo!()
-    }
-}
-
-impl EventTransform for IdentityTransform {
-    fn transform(&mut self, src: Box<dyn Events>) -> Box<dyn Events> {
-        src
-    }
-}
-
-pub struct TransformEvent(pub Box<dyn EventTransform>);
-
-impl WithTransformProperties for TransformEvent {
-    fn query_transform_properties(&self) -> TransformProperties {
-        self.0.query_transform_properties()
-    }
-}
-
-impl EventTransform for TransformEvent {
-    fn transform(&mut self, src: Box<dyn Events>) -> Box<dyn Events> {
-        self.0.transform(src)
     }
 }
 
@@ -126,7 +83,9 @@ where
     T: Events,
 {
     fn from(value: T) -> Self {
-        let item = Ok(StreamItem::DataItem(RangeCompletableItem::Data(Box::new(value) as _)));
+        let item = Ok(StreamItem::DataItem(RangeCompletableItem::Data(
+            Box::new(value) as _,
+        )));
         let x = stream::iter(vec![item]);
         Self(Box::pin(x))
     }

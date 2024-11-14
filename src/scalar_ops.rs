@@ -2,7 +2,6 @@ use crate::container::ByteEstimate;
 use crate::subfr::SubFrId;
 use daqbuf_err as err;
 use netpod::EnumVariant;
-use netpod::StringFix;
 use serde::Serialize;
 use std::fmt;
 use std::ops;
@@ -83,9 +82,6 @@ pub trait ScalarOps:
     fn equal_slack(&self, rhs: &Self) -> bool;
     fn add(&mut self, rhs: &Self);
     fn div(&mut self, n: usize);
-    fn find_vec_min(a: &Vec<Self>) -> Option<Self>;
-    fn find_vec_max(a: &Vec<Self>) -> Option<Self>;
-    fn avg_vec(a: &Vec<Self>) -> Option<Self>;
 }
 
 macro_rules! impl_scalar_ops {
@@ -115,49 +111,6 @@ macro_rules! impl_scalar_ops {
 
             fn div(&mut self, n: usize) {
                 $mac_div!(self, n);
-            }
-
-            fn find_vec_min(a: &Vec<Self>) -> Option<Self> {
-                if a.len() == 0 {
-                    None
-                } else {
-                    let mut k = &a[0];
-                    for (i, v) in a.iter().enumerate() {
-                        if *v < *k {
-                            k = &a[i];
-                        }
-                    }
-                    Some(k.clone())
-                }
-            }
-
-            fn find_vec_max(a: &Vec<Self>) -> Option<Self> {
-                if a.len() == 0 {
-                    None
-                } else {
-                    let mut k = &a[0];
-                    for (i, v) in a.iter().enumerate() {
-                        if *v > *k {
-                            k = &a[i];
-                        }
-                    }
-                    Some(k.clone())
-                }
-            }
-
-            fn avg_vec(a: &Vec<Self>) -> Option<Self> {
-                if a.len() == 0 {
-                    None
-                } else {
-                    let mut sum = Self::zero_b();
-                    let mut c = 0;
-                    for v in a.iter() {
-                        sum.add(v);
-                        c += 1;
-                    }
-                    ScalarOps::div(&mut sum, c);
-                    Some(sum)
-                }
             }
         }
     };
@@ -293,17 +246,5 @@ impl ScalarOps for EnumVariant {
 
     fn div(&mut self, _n: usize) {
         // undefined so far
-    }
-
-    fn find_vec_min(a: &Vec<Self>) -> Option<Self> {
-        todo!()
-    }
-
-    fn find_vec_max(a: &Vec<Self>) -> Option<Self> {
-        todo!()
-    }
-
-    fn avg_vec(a: &Vec<Self>) -> Option<Self> {
-        todo!()
     }
 }

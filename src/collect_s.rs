@@ -80,7 +80,11 @@ pub trait CollectorTy: fmt::Debug + Send + Unpin + WithLen + ByteEstimate {
     fn set_continue_at_here(&mut self);
 
     // TODO use this crate's Error instead:
-    fn result(&mut self, range: Option<SeriesRange>, binrange: Option<BinnedRangeEnum>) -> Result<Self::Output, Error>;
+    fn result(
+        &mut self,
+        range: Option<SeriesRange>,
+        binrange: Option<BinnedRangeEnum>,
+    ) -> Result<Self::Output, Error>;
 }
 
 pub trait CollectorDyn: fmt::Debug + Send + WithLen + ByteEstimate {
@@ -105,7 +109,10 @@ where
             trace!("sees incoming &mut ref");
             T::ingest(self, src)
         } else {
-            if let Some(src) = src.as_any_mut().downcast_mut::<Box<<T as CollectorTy>::Input>>() {
+            if let Some(src) = src
+                .as_any_mut()
+                .downcast_mut::<Box<<T as CollectorTy>::Input>>()
+            {
                 trace!("sees incoming &mut Box");
                 T::ingest(self, src)
             } else {
@@ -146,49 +153,6 @@ where
 pub trait CollectableType: fmt::Debug + WithLen + AsAnyRef + AsAnyMut + TypeName + Send {
     type Collector: CollectorTy<Input = Self>;
     fn new_collector() -> Self::Collector;
-}
-
-#[derive(Debug)]
-pub struct CollectorForDyn {
-    inner: Box<dyn CollectorDyn>,
-}
-
-impl WithLen for CollectorForDyn {
-    fn len(&self) -> usize {
-        todo!()
-    }
-}
-
-impl ByteEstimate for CollectorForDyn {
-    fn byte_estimate(&self) -> u64 {
-        todo!()
-    }
-}
-
-impl CollectorDyn for CollectorForDyn {
-    fn ingest(&mut self, src: &mut dyn CollectableDyn) {
-        todo!()
-    }
-
-    fn set_range_complete(&mut self) {
-        todo!()
-    }
-
-    fn set_timed_out(&mut self) {
-        todo!()
-    }
-
-    fn set_continue_at_here(&mut self) {
-        todo!()
-    }
-
-    fn result(
-        &mut self,
-        range: Option<SeriesRange>,
-        binrange: Option<BinnedRangeEnum>,
-    ) -> Result<Box<dyn crate::collect_s::CollectedDyn>, Error> {
-        todo!()
-    }
 }
 
 pub trait CollectableDyn: fmt::Debug + WithLen + AsAnyRef + AsAnyMut + TypeName + Send {

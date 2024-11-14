@@ -1,5 +1,6 @@
 use crate::collect_s::CollectableDyn;
 use crate::AsAnyMut;
+use crate::AsAnyRef;
 use crate::WithLen;
 use netpod::BinnedRange;
 use netpod::BinnedRangeEnum;
@@ -79,19 +80,27 @@ where
     }
 }
 
-pub trait BinningggContainerEventsDyn: fmt::Debug + Send {
+pub trait BinningggContainerEventsDyn: fmt::Debug + Send + AsAnyRef {
     fn type_name(&self) -> &'static str;
-    fn binned_events_timeweight_traitobj(&self, range: BinnedRange<TsNano>) -> Box<dyn BinnedEventsTimeweightTrait>;
+    fn binned_events_timeweight_traitobj(
+        &self,
+        range: BinnedRange<TsNano>,
+    ) -> Box<dyn BinnedEventsTimeweightTrait>;
     fn to_anybox(&mut self) -> Box<dyn std::any::Any>;
 }
 
-pub trait BinningggContainerBinsDyn: fmt::Debug + Send + fmt::Display + WithLen + AsAnyMut + CollectableDyn {
+pub trait BinningggContainerBinsDyn:
+    fmt::Debug + Send + fmt::Display + WithLen + AsAnyMut + CollectableDyn
+{
     fn type_name(&self) -> &'static str;
     fn empty(&self) -> BinsBoxed;
     fn clone(&self) -> BinsBoxed;
     fn edges_iter(
         &self,
-    ) -> std::iter::Zip<std::collections::vec_deque::Iter<TsNano>, std::collections::vec_deque::Iter<TsNano>>;
+    ) -> std::iter::Zip<
+        std::collections::vec_deque::Iter<TsNano>,
+        std::collections::vec_deque::Iter<TsNano>,
+    >;
     fn drain_into(&mut self, dst: &mut dyn BinningggContainerBinsDyn, range: Range<usize>);
     fn fix_numerics(&mut self);
 }
@@ -122,7 +131,7 @@ pub trait BinningggBinnerDyn: fmt::Debug + Send {
 }
 
 pub trait BinnedEventsTimeweightTrait: fmt::Debug + Send {
-    fn ingest(&mut self, evs_all: EventsBoxed) -> Result<(), BinningggError>;
+    fn ingest(&mut self, evs: &EventsBoxed) -> Result<(), BinningggError>;
     fn input_done_range_final(&mut self) -> Result<(), BinningggError>;
     fn input_done_range_open(&mut self) -> Result<(), BinningggError>;
     fn output(&mut self) -> Result<Option<BinsBoxed>, BinningggError>;
