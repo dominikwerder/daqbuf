@@ -6,7 +6,6 @@ use items_0::streamitem::RangeCompletableItem;
 use items_0::streamitem::Sitemty;
 use items_0::streamitem::StreamItem;
 use items_0::transform::EventStreamTrait;
-use items_0::transform::EventTransform;
 use items_0::transform::TransformProperties;
 use items_0::transform::WithTransformProperties;
 use items_0::Events;
@@ -21,10 +20,7 @@ pub struct Enumerate2<T> {
 }
 
 impl<T> Enumerate2<T> {
-    pub fn new(inp: T) -> Self
-    where
-        T: EventTransform,
-    {
+    pub fn new(inp: T) -> Self {
         Self { inp, cnt: 0 }
     }
 }
@@ -58,15 +54,6 @@ where
     }
 }
 
-impl<T> EventTransform for Enumerate2<T>
-where
-    T: WithTransformProperties + Send,
-{
-    fn transform(&mut self, src: Box<dyn Events>) -> Box<dyn Events> {
-        todo!()
-    }
-}
-
 pub struct Then2<T, F, Fut> {
     inp: Pin<Box<T>>,
     f: Pin<Box<F>>,
@@ -78,10 +65,7 @@ where
     T: Stream,
     F: Fn(<T as Stream>::Item) -> Fut,
 {
-    pub fn new(inp: T, f: F) -> Self
-    where
-        T: EventTransform,
-    {
+    pub fn new(inp: T, f: F) -> Self {
         Self {
             inp: Box::pin(inp),
             f: Box::pin(f),
@@ -135,56 +119,6 @@ where
     }
 }
 
-impl<T, F, Fut> WithTransformProperties for Then2<T, F, Fut>
-where
-    T: EventTransform,
-{
-    fn query_transform_properties(&self) -> TransformProperties {
-        self.inp.query_transform_properties()
-    }
-}
-
-impl<T, F, Fut> EventTransform for Then2<T, F, Fut>
-where
-    T: EventTransform + Send,
-    F: Send,
-    Fut: Send,
-{
-    fn transform(&mut self, src: Box<dyn Events>) -> Box<dyn Events> {
-        todo!()
-    }
-}
-
-pub trait TransformerExt {
-    fn enumerate2(self) -> Enumerate2<Self>
-    where
-        Self: EventTransform + Sized;
-
-    fn then2<F, Fut>(self, f: F) -> Then2<Self, F, Fut>
-    where
-        Self: EventTransform + Stream + Sized,
-        F: Fn(<Self as Stream>::Item) -> Fut,
-        Fut: Future;
-}
-
-impl<T> TransformerExt for T {
-    fn enumerate2(self) -> Enumerate2<Self>
-    where
-        Self: EventTransform + Sized,
-    {
-        Enumerate2::new(self)
-    }
-
-    fn then2<F, Fut>(self, f: F) -> Then2<Self, F, Fut>
-    where
-        Self: EventTransform + Stream + Sized,
-        F: Fn(<Self as Stream>::Item) -> Fut,
-        Fut: Future,
-    {
-        Then2::new(self, f)
-    }
-}
-
 pub struct VecStream<T> {
     inp: VecDeque<T>,
 }
@@ -208,21 +142,6 @@ where
         } else {
             Ready(None)
         }
-    }
-}
-
-impl<T> WithTransformProperties for VecStream<T> {
-    fn query_transform_properties(&self) -> TransformProperties {
-        todo!()
-    }
-}
-
-impl<T> EventTransform for VecStream<T>
-where
-    T: Send,
-{
-    fn transform(&mut self, src: Box<dyn Events>) -> Box<dyn Events> {
-        todo!()
     }
 }
 
@@ -259,7 +178,9 @@ where
                 Ok(item) => Ok(match item {
                     StreamItem::DataItem(item) => StreamItem::DataItem(match item {
                         RangeCompletableItem::RangeComplete => RangeCompletableItem::RangeComplete,
-                        RangeCompletableItem::Data(item) => RangeCompletableItem::Data(Box::new(item)),
+                        RangeCompletableItem::Data(item) => {
+                            RangeCompletableItem::Data(Box::new(item))
+                        }
                     }),
                     StreamItem::Log(item) => StreamItem::Log(item),
                     StreamItem::Stats(item) => StreamItem::Stats(item),

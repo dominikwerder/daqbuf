@@ -28,8 +28,6 @@ use std::collections::VecDeque;
 use std::time::Duration;
 use std::time::SystemTime;
 
-macro_rules! trace_ingest { ($($arg:tt)*) => ( if true { trace!($($arg)*); }) }
-
 // TODO maybe rename to ChannelStatus?
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum ConnStatus {

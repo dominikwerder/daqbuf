@@ -202,7 +202,7 @@ fn test_frame_log() {
     let item: Sitemty<ChannelEvents> = Ok(StreamItem::Log(item));
     let buf = Framable::make_frame_dyn(&item).unwrap();
     let len = u32::from_le_bytes(buf[12..16].try_into().unwrap());
-    let item2: LogItem = decode_from_slice(&buf[20..20 + len as usize]).unwrap();
+    let _item2: LogItem = decode_from_slice(&buf[20..20 + len as usize]).unwrap();
 }
 
 #[test]
@@ -217,5 +217,6 @@ fn test_frame_error() {
         panic!("bad tyid");
     }
     eprintln!("buf len {}  len {}", buf.len(), len);
-    let item2: items_0::streamitem::SitemErrTy = json_from_slice(&buf[20..20 + len as usize]).unwrap();
+    let _item2: items_0::streamitem::SitemErrTy =
+        json_from_slice(&buf[20..20 + len as usize]).unwrap();
 }

@@ -1,7 +1,6 @@
 mod events00;
+
 use super::container_events::ContainerEvents;
-use super::___;
-use netpod::log::*;
 use std::any;
 
 #[test]

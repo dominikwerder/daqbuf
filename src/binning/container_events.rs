@@ -24,25 +24,31 @@ macro_rules! trace_init { ($($arg:tt)*) => ( if true { trace!($($arg)*); }) }
 #[cstm(name = "ValueContainerError")]
 pub enum ValueContainerError {}
 
-pub trait Container<EVT>: fmt::Debug + Send + Clone + PreviewRange + Serialize + for<'a> Deserialize<'a> {
+pub trait Container<EVT>:
+    fmt::Debug + Send + Clone + PreviewRange + Serialize + for<'a> Deserialize<'a>
+where
+    EVT: EventValueType,
+{
     fn new() -> Self;
-    // fn verify(&self) -> Result<(), ValueContainerError>;
     fn push_back(&mut self, val: EVT);
     fn pop_front(&mut self) -> Option<EVT>;
+    fn get_iter_ty_1(&self, pos: usize) -> Option<EVT::IterTy1<'_>>;
+}
+
+pub trait PartialOrdEvtA<EVT> {
+    fn cmp_a(&self, other: &EVT) -> Option<std::cmp::Ordering>;
 }
 
 pub trait EventValueType: fmt::Debug + Clone + PartialOrd + Send + 'static + Serialize {
     type Container: Container<Self>;
     type AggregatorTimeWeight: AggregatorTimeWeight<Self>;
     type AggTimeWeightOutputAvg: AggTimeWeightOutputAvg;
-
-    // fn identity_sum() -> Self;
-    // fn add_weighted(&self, add: &Self, f: f32) -> Self;
+    type IterTy1<'a>: fmt::Debug + Clone + PartialOrdEvtA<Self> + Into<Self>;
 }
 
 impl<EVT> Container<EVT> for VecDeque<EVT>
 where
-    EVT: EventValueType + Serialize + for<'a> Deserialize<'a>,
+    EVT: for<'a> EventValueType<IterTy1<'a> = EVT> + Serialize + for<'a> Deserialize<'a>,
 {
     fn new() -> Self {
         VecDeque::new()
@@ -55,6 +61,28 @@ where
     fn pop_front(&mut self) -> Option<EVT> {
         self.pop_front()
     }
+
+    fn get_iter_ty_1(&self, pos: usize) -> Option<EVT::IterTy1<'_>> {
+        self.get(pos).map(|x| x.clone())
+    }
+}
+
+impl Container<String> for VecDeque<String> {
+    fn new() -> Self {
+        VecDeque::new()
+    }
+
+    fn push_back(&mut self, val: String) {
+        self.push_back(val);
+    }
+
+    fn pop_front(&mut self) -> Option<String> {
+        self.pop_front()
+    }
+
+    fn get_iter_ty_1(&self, pos: usize) -> Option<&str> {
+        todo!()
+    }
 }
 
 macro_rules! impl_event_value_type {
@@ -63,6 +91,13 @@ macro_rules! impl_event_value_type {
             type Container = VecDeque<Self>;
             type AggregatorTimeWeight = AggregatorNumeric;
             type AggTimeWeightOutputAvg = f64;
+            type IterTy1<'a> = $evt;
+        }
+
+        impl PartialOrdEvtA<$evt> for $evt {
+            fn cmp_a(&self, other: &$evt) -> Option<std::cmp::Ordering> {
+                self.partial_cmp(other)
+            }
         }
     };
 }
@@ -78,34 +113,104 @@ impl_event_value_type!(i64);
 // impl_event_value_type!(f32);
 // impl_event_value_type!(f64);
 
+impl PartialOrdEvtA<f32> for f32 {
+    fn cmp_a(&self, other: &f32) -> Option<std::cmp::Ordering> {
+        self.partial_cmp(other)
+    }
+}
+
+impl PartialOrdEvtA<f64> for f64 {
+    fn cmp_a(&self, other: &f64) -> Option<std::cmp::Ordering> {
+        self.partial_cmp(other)
+    }
+}
+
+impl PartialOrdEvtA<bool> for bool {
+    fn cmp_a(&self, other: &bool) -> Option<std::cmp::Ordering> {
+        self.partial_cmp(other)
+    }
+}
+
+impl PartialOrdEvtA<String> for &str {
+    fn cmp_a(&self, other: &String) -> Option<std::cmp::Ordering> {
+        (*self).partial_cmp(other.as_str())
+    }
+}
+
 impl EventValueType for f32 {
     type Container = VecDeque<Self>;
     type AggregatorTimeWeight = AggregatorNumeric;
     type AggTimeWeightOutputAvg = f32;
+    type IterTy1<'a> = f32;
 }
 
 impl EventValueType for f64 {
     type Container = VecDeque<Self>;
     type AggregatorTimeWeight = AggregatorNumeric;
     type AggTimeWeightOutputAvg = f64;
+    type IterTy1<'a> = f64;
 }
 
 impl EventValueType for bool {
     type Container = VecDeque<Self>;
     type AggregatorTimeWeight = AggregatorNumeric;
     type AggTimeWeightOutputAvg = f64;
+    type IterTy1<'a> = bool;
 }
 
 impl EventValueType for String {
     type Container = VecDeque<Self>;
     type AggregatorTimeWeight = AggregatorNumeric;
     type AggTimeWeightOutputAvg = f64;
+    type IterTy1<'a> = &'a str;
+}
+
+#[derive(Debug, Clone)]
+pub struct EventSingleRef<'a, EVT>
+where
+    EVT: EventValueType,
+{
+    pub ts: TsNano,
+    pub val: EVT::IterTy1<'a>,
+}
+
+impl<'a, EVT> EventSingleRef<'a, EVT>
+where
+    EVT: EventValueType,
+{
+    pub fn to_owned(&self) {
+        todo!()
+    }
 }
 
 #[derive(Debug, Clone)]
 pub struct EventSingle<EVT> {
     pub ts: TsNano,
     pub val: EVT,
+}
+
+impl<'a, EVT> From<EventSingleRef<'a, EVT>> for EventSingle<EVT>
+where
+    EVT: EventValueType,
+{
+    fn from(value: EventSingleRef<'a, EVT>) -> Self {
+        Self {
+            ts: value.ts,
+            val: value.val.into(),
+        }
+    }
+}
+
+impl<'a, EVT> From<&EventSingleRef<'a, EVT>> for EventSingle<EVT>
+where
+    EVT: EventValueType,
+{
+    fn from(value: &EventSingleRef<'a, EVT>) -> Self {
+        Self {
+            ts: value.ts,
+            val: value.val.clone().into(),
+        }
+    }
 }
 
 #[derive(Debug, ThisError)]
@@ -127,7 +232,10 @@ impl<EVT> ContainerEvents<EVT>
 where
     EVT: EventValueType,
 {
-    pub fn from_constituents(tss: VecDeque<TsNano>, vals: <EVT as EventValueType>::Container) -> Self {
+    pub fn from_constituents(
+        tss: VecDeque<TsNano>,
+        vals: <EVT as EventValueType>::Container,
+    ) -> Self {
         Self { tss, vals }
     }
 
@@ -147,7 +255,12 @@ where
     }
 
     pub fn verify(&self) -> Result<(), EventsContainerError> {
-        if self.tss.iter().zip(self.tss.iter().skip(1)).any(|(&a, &b)| a > b) {
+        if self
+            .tss
+            .iter()
+            .zip(self.tss.iter().skip(1))
+            .any(|(&a, &b)| a > b)
+        {
             return Err(EventsContainerError::Unordered);
         }
         Ok(())
@@ -161,18 +274,15 @@ where
         self.tss.back().map(|&x| x)
     }
 
-    pub fn len_before(&self, end: TsNano) -> usize {
-        let pp = self.tss.partition_point(|&x| x < end);
-        assert!(pp <= self.len(), "len_before  pp {}  len {}", pp, self.len());
+    fn _len_before(&self, end: TsNano) -> usize {
+        let tss = &self.tss;
+        let pp = tss.partition_point(|&x| x < end);
+        assert!(pp <= tss.len(), "len_before  pp {}  len {}", pp, tss.len());
         pp
     }
 
-    pub fn pop_front(&mut self) -> Option<EventSingle<EVT>> {
-        if let (Some(ts), Some(val)) = (self.tss.pop_front(), self.vals.pop_front()) {
-            Some(EventSingle { ts, val })
-        } else {
-            None
-        }
+    fn _pop_front(&mut self) -> Option<EventSingleRef<EVT>> {
+        todo!()
     }
 
     pub fn push_back(&mut self, ts: TsNano, val: EVT) {
@@ -210,40 +320,58 @@ pub struct ContainerEventsTakeUpTo<'a, EVT>
 where
     EVT: EventValueType,
 {
-    evs: &'a mut ContainerEvents<EVT>,
-    len: usize,
+    evs: &'a ContainerEvents<EVT>,
+    beg: usize,
+    end: usize,
+    pos: usize,
 }
 
 impl<'a, EVT> ContainerEventsTakeUpTo<'a, EVT>
 where
     EVT: EventValueType,
 {
-    pub fn new(evs: &'a mut ContainerEvents<EVT>, len: usize) -> Self {
-        let len = len.min(evs.len());
-        Self { evs, len }
-    }
-}
-
-impl<'a, EVT> ContainerEventsTakeUpTo<'a, EVT>
-where
-    EVT: EventValueType,
-{
-    pub fn ts_first(&self) -> Option<TsNano> {
-        self.evs.ts_first()
+    pub fn new(evs: &'a ContainerEvents<EVT>) -> Self {
+        Self {
+            evs,
+            beg: 0,
+            end: evs.len(),
+            pos: 0,
+        }
     }
 
-    pub fn ts_last(&self) -> Option<TsNano> {
-        self.evs.ts_last()
+    pub fn constrain_up_to_ts(&mut self, end: TsNano) {
+        let tss = &self.evs.tss;
+        let pp = tss.partition_point(|&x| x < end);
+        let pp = pp.max(self.pos);
+        assert!(pp <= tss.len(), "len_before  pp {}  len {}", pp, tss.len());
+        assert!(pp >= self.pos);
+        self.end = pp;
+    }
+
+    pub fn extend_to_all(&mut self) {
+        self.end = self.evs.len();
     }
 
     pub fn len(&self) -> usize {
-        self.len
+        self.end - self.pos
     }
 
-    pub fn pop_front(&mut self) -> Option<EventSingle<EVT>> {
-        if self.len != 0 {
-            if let Some(ev) = self.evs.pop_front() {
-                self.len -= 1;
+    pub fn pos(&self) -> usize {
+        self.pos
+    }
+
+    pub fn ts_first(&self) -> Option<TsNano> {
+        self.evs.tss.get(self.pos).cloned()
+    }
+
+    pub fn next(&mut self) -> Option<EventSingleRef<EVT>> {
+        let evs = &self.evs;
+        if self.pos < self.end {
+            if let (Some(&ts), Some(val)) =
+                (evs.tss.get(self.pos), evs.vals.get_iter_ty_1(self.pos))
+            {
+                self.pos += 1;
+                let ev = EventSingleRef { ts, val };
                 Some(ev)
             } else {
                 None

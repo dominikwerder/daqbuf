@@ -1,10 +1,12 @@
 use super::aggregator::AggregatorTimeWeight;
 use super::container_events::Container;
 use super::container_events::EventValueType;
+use super::container_events::PartialOrdEvtA;
 use core::fmt;
 use items_0::vecpreview::PreviewRange;
 use netpod::DtNano;
 use netpod::EnumVariant;
+use netpod::EnumVariantRef;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::VecDeque;
@@ -46,6 +48,18 @@ impl Container<EnumVariant> for EnumVariantContainer {
             None
         }
     }
+
+    fn get_iter_ty_1(&self, pos: usize) -> Option<<EnumVariant as EventValueType>::IterTy1<'_>> {
+        if let (Some(&ix), Some(name)) = (self.ixs.get(pos), self.names.get(pos)) {
+            let ret = EnumVariantRef {
+                ix,
+                name: name.as_str(),
+            };
+            Some(ret)
+        } else {
+            None
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -78,8 +92,26 @@ impl AggregatorTimeWeight<EnumVariant> for EnumVariantAggregatorTimeWeight {
     }
 }
 
+impl<'a> PartialOrdEvtA<EnumVariant> for EnumVariantRef<'a> {
+    fn cmp_a(&self, other: &EnumVariant) -> Option<std::cmp::Ordering> {
+        use std::cmp::Ordering::*;
+        let x = self.ix.partial_cmp(&other.ix());
+        if let Some(Equal) = x {
+            let x = self.name.partial_cmp(other.name());
+            if let Some(Equal) = x {
+                Some(Equal)
+            } else {
+                x
+            }
+        } else {
+            x
+        }
+    }
+}
+
 impl EventValueType for EnumVariant {
     type Container = EnumVariantContainer;
     type AggregatorTimeWeight = EnumVariantAggregatorTimeWeight;
     type AggTimeWeightOutputAvg = f32;
+    type IterTy1<'a> = EnumVariantRef<'a>;
 }

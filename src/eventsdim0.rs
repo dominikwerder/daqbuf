@@ -279,7 +279,11 @@ pub struct EventsDim0CollectorOutput<STY> {
     range_final: bool,
     #[serde(rename = "timedOut", default, skip_serializing_if = "is_false")]
     timed_out: bool,
-    #[serde(rename = "continueAt", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "continueAt",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     continue_at: Option<IsoDateTime>,
 }
 
@@ -440,8 +444,8 @@ impl<STY: ScalarOps> CollectorTy for EventsDim0Collector<STY> {
         };
         let tss_sl = vals.tss.make_contiguous();
         let pulses_sl = vals.pulses.make_contiguous();
-        let (ts_anchor_sec, ts_off_ms, ts_off_ns) = crate::ts_offs_from_abs(tss_sl);
-        let (pulse_anchor, pulse_off) = crate::pulse_offs_from_abs(pulses_sl);
+        let (ts_anchor_sec, ts_off_ms, ts_off_ns) = crate::offsets::ts_offs_from_abs(tss_sl);
+        let (pulse_anchor, pulse_off) = crate::offsets::pulse_offs_from_abs(pulses_sl);
         let values = mem::replace(&mut vals.values, VecDeque::new());
         if ts_off_ms.len() != ts_off_ns.len() {
             return Err(Error::with_msg_no_trace("collected len mismatch"));
@@ -475,27 +479,6 @@ impl<STY: ScalarOps> items_0::collect_s::CollectableType for EventsDim0<STY> {
 
     fn new_collector() -> Self::Collector {
         Self::Collector::new()
-    }
-}
-
-#[derive(Debug)]
-pub struct EventsDim0Aggregator<STY> {
-    range: SeriesRange,
-    count: u64,
-    minmaxlst: Option<(STY, STY, STY)>,
-    sumc: u64,
-    sum: f32,
-    int_ts: u64,
-    last_ts: u64,
-    do_time_weight: bool,
-    events_ignored_count: u64,
-    items_seen: usize,
-}
-
-impl<STY> Drop for EventsDim0Aggregator<STY> {
-    fn drop(&mut self) {
-        // TODO collect as stats for the request context:
-        trace!("count {}  ignored {}", self.count, self.events_ignored_count);
     }
 }
 
@@ -583,7 +566,11 @@ impl<STY: ScalarOps> Events for EventsDim0<STY> {
         let tss = self.tss.drain(..n1).collect();
         let pulses = self.pulses.drain(..n1).collect();
         let values = self.values.drain(..n1).collect();
-        let ret = Self { tss, pulses, values };
+        let ret = Self {
+            tss,
+            pulses,
+            values,
+        };
         Box::new(ret)
     }
 
@@ -591,7 +578,11 @@ impl<STY: ScalarOps> Events for EventsDim0<STY> {
         Box::new(Self::empty())
     }
 
-    fn drain_into_evs(&mut self, dst: &mut dyn Events, range: (usize, usize)) -> Result<(), MergeError> {
+    fn drain_into_evs(
+        &mut self,
+        dst: &mut dyn Events,
+        range: (usize, usize),
+    ) -> Result<(), MergeError> {
         // TODO as_any and as_any_mut are declared on unrelated traits. Simplify.
         if let Some(dst) = dst.as_any_mut().downcast_mut::<Self>() {
             // TODO make it harder to forget new members when the struct may get modified in the future
@@ -607,7 +598,7 @@ impl<STY: ScalarOps> Events for EventsDim0<STY> {
                 dst.type_name()
             );
             panic!();
-            Err(MergeError::NotCompatible)
+            // Err(MergeError::NotCompatible)
         }
     }
 
@@ -696,8 +687,8 @@ impl<STY: ScalarOps> Events for EventsDim0<STY> {
         let mut values = self.values.clone();
         let tss_sl = tss.make_contiguous();
         let pulses_sl = pulses.make_contiguous();
-        let (ts_anchor_sec, ts_off_ms, ts_off_ns) = crate::ts_offs_from_abs(tss_sl);
-        let (pulse_anchor, pulse_off) = crate::pulse_offs_from_abs(pulses_sl);
+        let (ts_anchor_sec, ts_off_ms, ts_off_ns) = crate::offsets::ts_offs_from_abs(tss_sl);
+        let (pulse_anchor, pulse_off) = crate::offsets::pulse_offs_from_abs(pulses_sl);
         let values = mem::replace(&mut values, VecDeque::new());
         let ret = EventsDim0CollectorOutput {
             ts_anchor_sec,
@@ -759,7 +750,10 @@ impl<STY: ScalarOps> Events for EventsDim0<STY> {
         try_to_container_events!(bool, self);
         try_to_container_events!(String, self);
         let this = self;
-        if let Some(evs) = self.as_any_ref().downcast_ref::<EventsDim0<netpod::EnumVariant>>() {
+        if let Some(evs) = self
+            .as_any_ref()
+            .downcast_ref::<EventsDim0<netpod::EnumVariant>>()
+        {
             use crate::binning::container_events::ContainerEvents;
             let tss = this.tss.iter().map(|&x| TsNano::from_ns(x)).collect();
             use crate::binning::container_events::Container;

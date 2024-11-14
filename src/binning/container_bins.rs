@@ -1,9 +1,6 @@
-use super::aggregator::AggregatorNumeric;
-use super::aggregator::AggregatorTimeWeight;
 use super::container_events::EventValueType;
-use super::___;
-use crate::ts_offs_from_abs;
-use crate::ts_offs_from_abs_with_anchor;
+use crate::offsets::ts_offs_from_abs;
+use crate::offsets::ts_offs_from_abs_with_anchor;
 use core::fmt;
 use daqbuf_err as err;
 use err::thiserror;
@@ -19,7 +16,6 @@ use items_0::AsAnyRef;
 use items_0::TypeName;
 use items_0::WithLen;
 use netpod::log::*;
-use netpod::EnumVariant;
 use netpod::TsNano;
 use serde::Deserialize;
 use serde::Serialize;
@@ -285,21 +281,6 @@ where
         pp
     }
 
-    pub fn pop_front(&mut self) -> Option<BinSingle<EVT>> {
-        todo!("pop_front");
-        let ts1 = if let Some(x) = self.ts1s.pop_front() {
-            x
-        } else {
-            return None;
-        };
-        let ts2 = if let Some(x) = self.ts2s.pop_front() {
-            x
-        } else {
-            return None;
-        };
-        todo!()
-    }
-
     pub fn push_back(
         &mut self,
         ts1: TsNano,
@@ -562,8 +543,8 @@ where
 
     fn result(
         &mut self,
-        range: Option<netpod::range::evrange::SeriesRange>,
-        binrange: Option<netpod::BinnedRangeEnum>,
+        _range: Option<netpod::range::evrange::SeriesRange>,
+        _binrange: Option<netpod::BinnedRangeEnum>,
     ) -> Result<Box<dyn items_0::collect_s::CollectedDyn>, err::Error> {
         // TODO do we need to set timeout, continueAt or anything?
         let bins = mem::replace(&mut self.bins, ContainerBins::new());
@@ -633,7 +614,7 @@ where
     }
 
     fn fix_numerics(&mut self) {
-        for ((min, max), avg) in self
+        for ((_min, _max), _avg) in self
             .mins
             .iter_mut()
             .zip(self.maxs.iter_mut())
@@ -674,18 +655,5 @@ where
 
     pub fn len(&self) -> usize {
         self.len
-    }
-
-    pub fn pop_front(&mut self) -> Option<BinSingle<EVT>> {
-        if self.len != 0 {
-            if let Some(ev) = self.evs.pop_front() {
-                self.len -= 1;
-                Some(ev)
-            } else {
-                None
-            }
-        } else {
-            None
-        }
     }
 }

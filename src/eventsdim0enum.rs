@@ -4,7 +4,6 @@ use items_0::collect_s::CollectableDyn;
 use items_0::collect_s::CollectedDyn;
 use items_0::collect_s::CollectorDyn;
 use items_0::collect_s::CollectorTy;
-use items_0::collect_s::ToJsonBytes;
 use items_0::collect_s::ToJsonResult;
 use items_0::container::ByteEstimate;
 use items_0::isodate::IsoDateTime;
@@ -88,11 +87,19 @@ pub struct EventsDim0EnumCollectorOutput {
     vals: VecDeque<u16>,
     #[serde(rename = "valuestrings")]
     valstrs: VecDeque<String>,
-    #[serde(rename = "rangeFinal", default, skip_serializing_if = "netpod::is_false")]
+    #[serde(
+        rename = "rangeFinal",
+        default,
+        skip_serializing_if = "netpod::is_false"
+    )]
     range_final: bool,
     #[serde(rename = "timedOut", default, skip_serializing_if = "netpod::is_false")]
     timed_out: bool,
-    #[serde(rename = "continueAt", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "continueAt",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     continue_at: Option<IsoDateTime>,
 }
 
@@ -154,7 +161,7 @@ impl CollectorTy for EventsDim0EnumCollector {
     fn result(
         &mut self,
         range: Option<SeriesRange>,
-        binrange: Option<BinnedRangeEnum>,
+        _binrange: Option<BinnedRangeEnum>,
     ) -> Result<EventsDim0EnumCollectorOutput, Error> {
         trace_collect_result!(
             "{}  result()  needs_continue_at {}",
@@ -188,7 +195,7 @@ impl CollectorTy for EventsDim0EnumCollector {
             None
         };
         let tss_sl = vals.tss.make_contiguous();
-        let (ts_anchor_sec, ts_off_ms, ts_off_ns) = crate::ts_offs_from_abs(tss_sl);
+        let (ts_anchor_sec, ts_off_ms, ts_off_ns) = crate::offsets::ts_offs_from_abs(tss_sl);
         let valixs = mem::replace(&mut vals.values, VecDeque::new());
         let valstrs = mem::replace(&mut vals.valuestrs, VecDeque::new());
         let vals = valixs;
@@ -291,7 +298,7 @@ impl TimeBinnerTy for EventsDim0EnumTimeBinner {
     type Input = EventsDim0Enum;
     type Output = ();
 
-    fn ingest(&mut self, item: &mut Self::Input) {
+    fn ingest(&mut self, _item: &mut Self::Input) {
         todo!()
     }
 
@@ -307,7 +314,7 @@ impl TimeBinnerTy for EventsDim0EnumTimeBinner {
         todo!()
     }
 
-    fn push_in_progress(&mut self, push_empty: bool) {
+    fn push_in_progress(&mut self, _push_empty: bool) {
         todo!()
     }
 
@@ -330,9 +337,9 @@ impl TimeBinnableTy for EventsDim0Enum {
 
     fn time_binner_new(
         &self,
-        binrange: BinnedRangeEnum,
-        do_time_weight: bool,
-        emit_empty_bins: bool,
+        _binrange: BinnedRangeEnum,
+        _do_time_weight: bool,
+        _emit_empty_bins: bool,
     ) -> Self::TimeBinner {
         todo!()
     }
@@ -377,7 +384,7 @@ impl Events for EventsDim0Enum {
         todo!()
     }
 
-    fn take_new_events_until_ts(&mut self, ts_end: u64) -> Box<dyn Events> {
+    fn take_new_events_until_ts(&mut self, _ts_end: u64) -> Box<dyn Events> {
         todo!()
     }
 
@@ -385,19 +392,23 @@ impl Events for EventsDim0Enum {
         todo!()
     }
 
-    fn drain_into_evs(&mut self, dst: &mut dyn Events, range: (usize, usize)) -> Result<(), items_0::MergeError> {
+    fn drain_into_evs(
+        &mut self,
+        _dst: &mut dyn Events,
+        _range: (usize, usize),
+    ) -> Result<(), items_0::MergeError> {
         todo!()
     }
 
-    fn find_lowest_index_gt_evs(&self, ts: u64) -> Option<usize> {
+    fn find_lowest_index_gt_evs(&self, _ts: u64) -> Option<usize> {
         todo!()
     }
 
-    fn find_lowest_index_ge_evs(&self, ts: u64) -> Option<usize> {
+    fn find_lowest_index_ge_evs(&self, _ts: u64) -> Option<usize> {
         todo!()
     }
 
-    fn find_highest_index_lt_evs(&self, ts: u64) -> Option<usize> {
+    fn find_highest_index_lt_evs(&self, _ts: u64) -> Option<usize> {
         todo!()
     }
 
@@ -405,7 +416,7 @@ impl Events for EventsDim0Enum {
         todo!()
     }
 
-    fn partial_eq_dyn(&self, other: &dyn Events) -> bool {
+    fn partial_eq_dyn(&self, _other: &dyn Events) -> bool {
         todo!()
     }
 

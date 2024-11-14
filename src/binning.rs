@@ -7,5 +7,3 @@ pub mod valuetype;
 
 #[cfg(test)]
 mod test;
-
-use super::binning as ___;

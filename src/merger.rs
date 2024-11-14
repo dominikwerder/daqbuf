@@ -8,9 +8,6 @@ use items_0::streamitem::LogItem;
 use items_0::streamitem::RangeCompletableItem;
 use items_0::streamitem::Sitemty;
 use items_0::streamitem::StreamItem;
-use items_0::transform::EventTransform;
-use items_0::transform::TransformProperties;
-use items_0::transform::WithTransformProperties;
 use items_0::Events;
 use items_0::MergeError;
 use items_0::WithLen;
@@ -44,6 +41,47 @@ pub trait Mergeable<Rhs = Self>: fmt::Debug + WithLen + ByteEstimate + Unpin {
     fn find_highest_index_lt(&self, ts: u64) -> Option<usize>;
     // TODO only for testing:
     fn tss(&self) -> Vec<TsMs>;
+}
+
+impl Mergeable for Box<dyn Events> {
+    fn ts_min(&self) -> Option<u64> {
+        self.as_ref().ts_min()
+    }
+
+    fn ts_max(&self) -> Option<u64> {
+        self.as_ref().ts_max()
+    }
+
+    fn new_empty(&self) -> Self {
+        self.as_ref().new_empty_evs()
+    }
+
+    fn clear(&mut self) {
+        Events::clear(self.as_mut())
+    }
+
+    fn drain_into(&mut self, dst: &mut Self, range: (usize, usize)) -> Result<(), MergeError> {
+        self.as_mut().drain_into_evs(dst, range)
+    }
+
+    fn find_lowest_index_gt(&self, ts: u64) -> Option<usize> {
+        self.as_ref().find_lowest_index_gt_evs(ts)
+    }
+
+    fn find_lowest_index_ge(&self, ts: u64) -> Option<usize> {
+        self.as_ref().find_lowest_index_ge_evs(ts)
+    }
+
+    fn find_highest_index_lt(&self, ts: u64) -> Option<usize> {
+        self.as_ref().find_highest_index_lt_evs(ts)
+    }
+
+    fn tss(&self) -> Vec<netpod::TsMs> {
+        Events::tss(self)
+            .iter()
+            .map(|x| netpod::TsMs::from_ns_u64(*x))
+            .collect()
+    }
 }
 
 type MergeInp<T> = Pin<Box<dyn Stream<Item = Sitemty<T>> + Send>>;
@@ -477,20 +515,5 @@ where
                 }
             };
         }
-    }
-}
-
-impl<T> WithTransformProperties for Merger<T> {
-    fn query_transform_properties(&self) -> TransformProperties {
-        todo!()
-    }
-}
-
-impl<T> EventTransform for Merger<T>
-where
-    T: Send,
-{
-    fn transform(&mut self, _src: Box<dyn Events>) -> Box<dyn Events> {
-        todo!()
     }
 }

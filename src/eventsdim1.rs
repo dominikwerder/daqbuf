@@ -400,8 +400,8 @@ impl<STY: ScalarOps> CollectorTy for EventsDim1Collector<STY> {
         };
         let tss_sl = vals.tss.make_contiguous();
         let pulses_sl = vals.pulses.make_contiguous();
-        let (ts_anchor_sec, ts_off_ms, ts_off_ns) = crate::ts_offs_from_abs(tss_sl);
-        let (pulse_anchor, pulse_off) = crate::pulse_offs_from_abs(pulses_sl);
+        let (ts_anchor_sec, ts_off_ms, ts_off_ns) = crate::offsets::ts_offs_from_abs(tss_sl);
+        let (pulse_anchor, pulse_off) = crate::offsets::pulse_offs_from_abs(pulses_sl);
         let values = mem::replace(&mut vals.values, VecDeque::new());
         if ts_off_ms.len() != ts_off_ns.len() {
             return Err(Error::with_msg_no_trace("collected len mismatch"));

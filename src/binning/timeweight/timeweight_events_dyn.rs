@@ -56,22 +56,32 @@ impl<EVT> BinnedEventsTimeweightTrait for BinnedEventsTimeweightDynbox<EVT>
 where
     EVT: EventValueType,
 {
-    fn ingest(&mut self, mut evs: EventsBoxed) -> Result<(), BinningggError> {
+    fn ingest(&mut self, evs: &EventsBoxed) -> Result<(), BinningggError> {
         // let a = (&evs as &dyn any::Any).downcast_ref::<String>();
         // evs.downcast::<String>();
         // evs.as_anybox().downcast::<ContainerEvents<f64>>();
-        match evs.to_anybox().downcast::<ContainerEvents<EVT>>() {
-            Ok(evs) => {
-                let evs = {
-                    let a = evs;
-                    *a
+        // match evs.to_anybox().downcast::<ContainerEvents<EVT>>() {
+        //     Ok(evs) => {
+        //         let evs = {
+        //             let a = evs;
+        //             *a
+        //         };
+        //         Ok(self.binner.ingest(evs)?)
+        //     }
+        //     Err(_) => Err(BinningggError::TypeMismatch {
+        //         have: evs.type_name().into(),
+        //         expect: std::any::type_name::<ContainerEvents<EVT>>().into(),
+        //     }),
+        // }
+        match evs.as_any_ref().downcast_ref::<ContainerEvents<EVT>>() {
+            Some(evs) => Ok(self.binner.ingest(evs)?),
+            None => {
+                let e = BinningggError::TypeMismatch {
+                    have: evs.type_name().into(),
+                    expect: std::any::type_name::<ContainerEvents<EVT>>().into(),
                 };
-                Ok(self.binner.ingest(evs)?)
+                Err(e)
             }
-            Err(_) => Err(BinningggError::TypeMismatch {
-                have: evs.type_name().into(),
-                expect: std::any::type_name::<ContainerEvents<EVT>>().into(),
-            }),
         }
     }
 
@@ -109,10 +119,10 @@ impl BinnedEventsTimeweightLazy {
 }
 
 impl BinnedEventsTimeweightTrait for BinnedEventsTimeweightLazy {
-    fn ingest(&mut self, evs_all: EventsBoxed) -> Result<(), BinningggError> {
+    fn ingest(&mut self, evs: &EventsBoxed) -> Result<(), BinningggError> {
         self.binned_events
-            .get_or_insert_with(|| evs_all.binned_events_timeweight_traitobj(self.range.clone()))
-            .ingest(evs_all)
+            .get_or_insert_with(|| evs.binned_events_timeweight_traitobj(self.range.clone()))
+            .ingest(evs)
     }
 
     fn input_done_range_final(&mut self) -> Result<(), BinningggError> {
@@ -133,7 +143,10 @@ impl BinnedEventsTimeweightTrait for BinnedEventsTimeweightLazy {
     }
 
     fn output(&mut self) -> Result<Option<BinsBoxed>, BinningggError> {
-        self.binned_events.as_mut().map(|x| x.output()).unwrap_or(Ok(None))
+        self.binned_events
+            .as_mut()
+            .map(|x| x.output())
+            .unwrap_or(Ok(None))
     }
 }
 
@@ -151,7 +164,10 @@ pub struct BinnedEventsTimeweightStream {
 }
 
 impl BinnedEventsTimeweightStream {
-    pub fn new(range: BinnedRange<TsNano>, inp: Pin<Box<dyn Stream<Item = Sitemty<ChannelEvents>> + Send>>) -> Self {
+    pub fn new(
+        range: BinnedRange<TsNano>,
+        inp: Pin<Box<dyn Stream<Item = Sitemty<ChannelEvents>> + Send>>,
+    ) -> Self {
         Self {
             state: StreamState::Reading,
             inp,
@@ -173,7 +189,10 @@ impl BinnedEventsTimeweightStream {
             Ok(x) => match x {
                 DataItem(x) => match x {
                     Data(x) => match x {
-                        ChannelEvents::Events(evs) => match self.binned_events.ingest(evs.to_container_events()) {
+                        ChannelEvents::Events(evs) => match self
+                            .binned_events
+                            .ingest(&evs.to_container_events())
+                        {
                             Ok(()) => {
                                 match self.binned_events.output() {
                                     Ok(Some(x)) => {
@@ -210,7 +229,10 @@ impl BinnedEventsTimeweightStream {
         }
     }
 
-    fn handle_eos(mut self: Pin<&mut Self>, _cx: &mut Context) -> Poll<Option<<Self as Stream>::Item>> {
+    fn handle_eos(
+        mut self: Pin<&mut Self>,
+        _cx: &mut Context,
+    ) -> Poll<Option<<Self as Stream>::Item>> {
         trace_input_container!("handle_eos");
         use items_0::streamitem::RangeCompletableItem::*;
         use items_0::streamitem::StreamItem::*;
@@ -225,7 +247,11 @@ impl BinnedEventsTimeweightStream {
                 .input_done_range_open()
                 .map_err(err::Error::from_string)?;
         }
-        match self.binned_events.output().map_err(err::Error::from_string)? {
+        match self
+            .binned_events
+            .output()
+            .map_err(err::Error::from_string)?
+        {
             Some(x) => {
                 trace_emit!("seeing ready bins {:?}", x);
                 Ready(Some(Ok(DataItem(Data(x)))))
@@ -237,7 +263,10 @@ impl BinnedEventsTimeweightStream {
         }
     }
 
-    fn handle_main(mut self: Pin<&mut Self>, cx: &mut Context) -> ControlFlow<Poll<Option<<Self as Stream>::Item>>> {
+    fn handle_main(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context,
+    ) -> ControlFlow<Poll<Option<<Self as Stream>::Item>>> {
         use ControlFlow::*;
         use Poll::*;
         let ret = match &self.state {
