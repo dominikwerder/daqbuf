@@ -1,7 +1,6 @@
 use crate::tcprawclient::container_stream_from_bytes_stream;
 use crate::tcprawclient::make_sub_query;
 use crate::tcprawclient::OpenBoxedBytesStreamsBox;
-use crate::transform::build_merged_event_transform;
 use futures_util::Stream;
 use futures_util::StreamExt;
 use items_0::on_sitemty_data;
@@ -43,11 +42,14 @@ pub async fn dyn_events_stream(
         ctx,
     );
     let inmem_bufcap = subq.inmem_bufcap();
-    let mut tr = build_merged_event_transform(evq.transform())?;
     let bytes_streams = open_bytes.open(subq, ctx.clone()).await?;
     let mut inps = Vec::new();
     for s in bytes_streams {
-        let s = container_stream_from_bytes_stream::<ChannelEvents>(s, inmem_bufcap.clone(), "TODOdbgdesc".into())?;
+        let s = container_stream_from_bytes_stream::<ChannelEvents>(
+            s,
+            inmem_bufcap.clone(),
+            "TODOdbgdesc".into(),
+        )?;
         let s = Box::pin(s) as Pin<Box<dyn Stream<Item = Sitemty<ChannelEvents>> + Send>>;
         inps.push(s);
     }
@@ -55,30 +57,20 @@ pub async fn dyn_events_stream(
     // TODO propagate also the max-buf-len for the first stage event reader.
     // TODO use a mixture of count and byte-size as threshold.
     let stream = Merger::new(inps, evq.merger_out_len_max());
-
-    // let stream = stream.map(|item| {
-    //     info!("item after merge: {item:?}");
-    //     item
-    // });
-
-    let stream = crate::rangefilter2::RangeFilter2::new(stream, evq.range().try_into()?, evq.one_before_range());
-
-    // let stream = stream.map(|item| {
-    //     info!("item after rangefilter: {item:?}");
-    //     item
-    // });
-
+    let stream = crate::rangefilter2::RangeFilter2::new(
+        stream,
+        evq.range().try_into()?,
+        evq.one_before_range(),
+    );
     let stream = stream.map(move |k| {
         on_sitemty_data!(k, |k| {
             let k: Box<dyn Events> = Box::new(k);
-            // trace!("got len {}", k.len());
-            let k = tr.0.transform(k);
             Ok(StreamItem::DataItem(RangeCompletableItem::Data(k)))
         })
     });
-
     if let Some(wasmname) = evq.test_do_wasm() {
-        let stream = transform_wasm::<_, items_0::streamitem::SitemErrTy>(stream, wasmname, ctx).await?;
+        let stream =
+            transform_wasm::<_, items_0::streamitem::SitemErrTy>(stream, wasmname, ctx).await?;
         Ok(Box::pin(stream))
     } else {
         Ok(Box::pin(stream))
@@ -123,7 +115,8 @@ where
     let mut store = wasmer::Store::default();
     let module = wasmer::Module::new(&store, wasm).unwrap();
     // TODO assert that memory is large enough
-    let memory = wasmer::Memory::new(&mut store, wasmer::MemoryType::new(10, Some(30), false)).unwrap();
+    let memory =
+        wasmer::Memory::new(&mut store, wasmer::MemoryType::new(10, Some(30), false)).unwrap();
     let import_object = wasmer::imports! {
         "env" => {
             "memory" => memory.clone(),
@@ -157,14 +150,25 @@ where
                         .as_any_mut()
                         .downcast_mut::<Box<items_2::eventsdim0::EventsDim0<f64>>>()
                         .is_some();
-                    let r5 = evs.as_mut().as_any_mut().downcast_mut::<ChannelEvents>().is_some();
-                    let r6 = evs.as_mut().as_any_mut().downcast_mut::<Box<ChannelEvents>>().is_some();
+                    let r5 = evs
+                        .as_mut()
+                        .as_any_mut()
+                        .downcast_mut::<ChannelEvents>()
+                        .is_some();
+                    let r6 = evs
+                        .as_mut()
+                        .as_any_mut()
+                        .downcast_mut::<Box<ChannelEvents>>()
+                        .is_some();
                     debug!("wasm  castings:  {r1}  {r2}  {r3}  {r4}  {r5}  {r6}");
                 }
                 if let Some(evs) = evs.as_any_mut().downcast_mut::<ChannelEvents>() {
                     match evs {
                         ChannelEvents::Events(evs) => {
-                            if let Some(evs) = evs.as_any_mut().downcast_mut::<items_2::eventsdim0::EventsDim0<f64>>() {
+                            if let Some(evs) = evs
+                                .as_any_mut()
+                                .downcast_mut::<items_2::eventsdim0::EventsDim0<f64>>()
+                            {
                                 use items_0::WithLen;
                                 if evs.len() == 0 {
                                     debug!("wasm  empty EventsDim0<f64>");
@@ -181,12 +185,17 @@ where
                                         let wmemoff = buffer_ptr as u64;
                                         let view = memory.view(&store);
                                         // TODO is the offset bytes or elements?
-                                        let wsl = WasmSlice::<f64>::new(&view, wmemoff, sl.len() as _).unwrap();
+                                        let wsl =
+                                            WasmSlice::<f64>::new(&view, wmemoff, sl.len() as _)
+                                                .unwrap();
                                         // debug!("wasm pages {:?}  data size {:?}", view.size(), view.data_size());
                                         wsl.write_slice(&sl).unwrap();
                                         let ptr = wsl.as_ptr32();
                                         debug!("ptr {:?}  offset {}", ptr, ptr.offset());
-                                        let params = [Value::I32(ptr.offset() as _), Value::I32(sl.len() as _)];
+                                        let params = [
+                                            Value::I32(ptr.offset() as _),
+                                            Value::I32(sl.len() as _),
+                                        ];
                                         let res = dummy1.call(&mut store, &params).unwrap();
                                         match res[0] {
                                             Value::I32(x) => {
@@ -201,7 +210,9 @@ where
                                         }
                                         // Init the slice again because we need to drop ownership for the function call.
                                         let view = memory.view(&store);
-                                        let wsl = WasmSlice::<f64>::new(&view, wmemoff, sl.len() as _).unwrap();
+                                        let wsl =
+                                            WasmSlice::<f64>::new(&view, wmemoff, sl.len() as _)
+                                                .unwrap();
                                         wsl.read_slice(sl).unwrap();
                                     }
                                 }

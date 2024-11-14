@@ -10,7 +10,6 @@ use crate::tcprawclient::make_sub_query;
 use crate::tcprawclient::OpenBoxedBytesStreamsBox;
 use crate::timebin::cached::reader::CacheReadProvider;
 use crate::timebin::cached::reader::EventsReadProvider;
-use crate::transform::build_merged_event_transform;
 use futures_util::future::BoxFuture;
 use futures_util::Stream;
 use futures_util::StreamExt;
@@ -90,7 +89,6 @@ pub async fn timebinnable_stream_sf_databuffer_channelevents(
     );
     let inmem_bufcap = subq.inmem_bufcap();
     let _wasm1 = subq.wasm1().map(ToString::to_string);
-    let mut tr = build_merged_event_transform(subq.transform())?;
     let bytes_streams = open_bytes.open(subq, ctx.as_ref().clone()).await?;
     let mut inps = Vec::new();
     for s in bytes_streams {
@@ -112,10 +110,7 @@ pub async fn timebinnable_stream_sf_databuffer_channelevents(
         use StreamItem::*;
         match k {
             Ok(DataItem(Data(ChannelEvents::Events(k)))) => {
-                // let k = k;
-                // let k: Box<dyn Events> = Box::new(k);
                 let k = k.to_dim0_f32_for_binning();
-                let k = tr.0.transform(k);
                 Ok(StreamItem::DataItem(RangeCompletableItem::Data(
                     ChannelEvents::Events(k),
                 )))

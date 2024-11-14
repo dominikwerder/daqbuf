@@ -1,5 +1,4 @@
 use crate::frames::inmem::BoxedBytesStream;
-use crate::transform::build_event_transform;
 use futures_util::Future;
 use futures_util::FutureExt;
 use futures_util::Stream;
@@ -53,26 +52,24 @@ pub fn make_test_channel_events_bytes_stream(
         error!("{e}");
         Err(e)
     } else {
-        let mut tr = build_event_transform(subq.transform())?;
         let stream = make_test_channel_events_stream_data(subq, node_count, node_ix)?;
         let stream = stream.map(move |x| {
             on_sitemty_data!(x, |x: ChannelEvents| {
                 match x {
-                    ChannelEvents::Events(evs) => {
-                        let evs = tr.0.transform(evs);
-                        Ok(StreamItem::DataItem(RangeCompletableItem::Data(ChannelEvents::Events(
-                            evs,
-                        ))))
-                    }
-                    ChannelEvents::Status(x) => Ok(StreamItem::DataItem(RangeCompletableItem::Data(
-                        ChannelEvents::Status(x),
-                    ))),
+                    ChannelEvents::Events(evs) => Ok(StreamItem::DataItem(
+                        RangeCompletableItem::Data(ChannelEvents::Events(evs)),
+                    )),
+                    ChannelEvents::Status(x) => Ok(StreamItem::DataItem(
+                        RangeCompletableItem::Data(ChannelEvents::Status(x)),
+                    )),
                 }
             })
         });
-        let stream = stream
-            .map_err(sitem_err2_from_string)
-            .map(|x| x.make_frame_dyn().map(|x| x.freeze()).map_err(sitem_err2_from_string));
+        let stream = stream.map_err(sitem_err2_from_string).map(|x| {
+            x.make_frame_dyn()
+                .map(|x| x.freeze())
+                .map_err(sitem_err2_from_string)
+        });
         let ret = Box::pin(stream);
         Ok(ret)
     }
@@ -102,11 +99,17 @@ fn make_test_channel_events_stream_data_inner(
     let range = subq.range().clone();
     let one_before = subq.need_one_before_range();
     if chn == "test-gen-i32-dim0-v00" {
-        Ok(Box::pin(GenerateI32V00::new(node_ix, node_count, range, one_before)))
+        Ok(Box::pin(GenerateI32V00::new(
+            node_ix, node_count, range, one_before,
+        )))
     } else if chn == "test-gen-i32-dim0-v01" {
-        Ok(Box::pin(GenerateI32V01::new(node_ix, node_count, range, one_before)))
+        Ok(Box::pin(GenerateI32V01::new(
+            node_ix, node_count, range, one_before,
+        )))
     } else if chn == "test-gen-f64-dim1-v00" {
-        Ok(Box::pin(GenerateF64V00::new(node_ix, node_count, range, one_before)))
+        Ok(Box::pin(GenerateF64V00::new(
+            node_ix, node_count, range, one_before,
+        )))
     } else {
         let na: Vec<_> = chn.split("-").collect();
         if na.len() != 3 {
@@ -199,7 +202,9 @@ impl Stream for GenerateI32V00 {
             } else if self.ts >= self.tsend {
                 self.done = true;
                 self.done_range_final = true;
-                Ready(Some(Ok(StreamItem::DataItem(RangeCompletableItem::RangeComplete))))
+                Ready(Some(Ok(StreamItem::DataItem(
+                    RangeCompletableItem::RangeComplete,
+                ))))
             } else if !self.do_throttle {
                 // To use the generator without throttling, use this scope
                 Ready(Some(self.make_batch()))
@@ -302,7 +307,9 @@ impl Stream for GenerateI32V01 {
                 self.done = true;
                 self.done_range_final = true;
                 if self.have_range_final {
-                    Ready(Some(Ok(StreamItem::DataItem(RangeCompletableItem::RangeComplete))))
+                    Ready(Some(Ok(StreamItem::DataItem(
+                        RangeCompletableItem::RangeComplete,
+                    ))))
                 } else {
                     continue;
                 }
@@ -408,7 +415,9 @@ impl Stream for GenerateF64V00 {
             } else if self.ts >= self.tsend {
                 self.done = true;
                 self.done_range_final = true;
-                Ready(Some(Ok(StreamItem::DataItem(RangeCompletableItem::RangeComplete))))
+                Ready(Some(Ok(StreamItem::DataItem(
+                    RangeCompletableItem::RangeComplete,
+                ))))
             } else if !self.do_throttle {
                 // To use the generator without throttling, use this scope
                 Ready(Some(self.make_batch()))
@@ -519,7 +528,9 @@ impl Stream for GenerateWaveI16V00 {
             } else if self.ts >= self.tsend {
                 self.done = true;
                 self.done_range_final = true;
-                Ready(Some(Ok(StreamItem::DataItem(RangeCompletableItem::RangeComplete))))
+                Ready(Some(Ok(StreamItem::DataItem(
+                    RangeCompletableItem::RangeComplete,
+                ))))
             } else if !self.do_throttle {
                 // To use the generator without throttling, use this scope
                 Ready(Some(self.make_batch()))
