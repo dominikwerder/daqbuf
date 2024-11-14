@@ -1,0 +1,10 @@
+[package]
+name = "daqbuf-ca-proto-tokio"
+version = "0.1.0"
+authors = ["Dominik Werder <dominik.werder@gmail.com>"]
+edition = "2021"
+
+[dependencies]
+tokio = { version = "1", features = ["net"] }
+futures-util = { version = "0.3.31", features = ["io"] }
+pin-project = "1"
