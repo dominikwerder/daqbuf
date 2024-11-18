@@ -6,17 +6,17 @@ use crate::binning::container_events::ContainerEventsTakeUpTo;
 use crate::binning::container_events::EventSingle;
 use crate::binning::container_events::EventSingleRef;
 use crate::binning::container_events::PartialOrdEvtA;
+use crate::log::*;
 use core::fmt;
 use daqbuf_err as err;
 use err::thiserror;
 use err::ThisError;
-use netpod::log::*;
 use netpod::BinnedRange;
 use netpod::DtNano;
 use netpod::TsNano;
 use std::mem;
 
-macro_rules! trace_ { ($($arg:tt)*) => ( if true { eprintln!($($arg)*); }) }
+macro_rules! trace_ { ($($arg:tt)*) => ( if false { eprintln!($($arg)*); }) }
 
 macro_rules! trace_init { ($($arg:tt)*) => ( if true { trace_!($($arg)*); }) }
 

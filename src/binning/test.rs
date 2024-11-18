@@ -1,3 +1,6 @@
+mod bins00;
+mod bins_gen;
+mod compare;
 mod events00;
 
 use super::container_events::ContainerEvents;

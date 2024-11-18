@@ -613,6 +613,14 @@ where
         }
     }
 
+    fn binned_bins_timeweight_traitobj(
+        &self,
+        range: netpod::BinnedRange<TsNano>,
+    ) -> Box<dyn items_0::timebin::BinnedBinsTimeweightTrait> {
+        let ret = super::timeweight::timeweight_bins::BinnedBinsTimeweight::<EVT>::new(range);
+        Box::new(ret)
+    }
+
     fn fix_numerics(&mut self) {
         for ((_min, _max), _avg) in self
             .mins

@@ -31,3 +31,6 @@ thiserror = { git = "https://github.com/dominikwerder/thiserror.git", branch = "
 
 [features]
 heavy = []
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt"] }

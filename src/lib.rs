@@ -22,6 +22,10 @@ use items_0::isodate::IsoDateTime;
 use items_0::Events;
 use std::fmt;
 
+mod log {
+    pub use netpod::log::*;
+}
+
 #[derive(Debug, PartialEq)]
 pub enum ErrorKind {
     General,

@@ -81,7 +81,7 @@ impl Container<String> for VecDeque<String> {
     }
 
     fn get_iter_ty_1(&self, pos: usize) -> Option<&str> {
-        todo!()
+        self.get(pos).map(|x| x.as_str())
     }
 }
 
@@ -174,14 +174,7 @@ where
     pub val: EVT::IterTy1<'a>,
 }
 
-impl<'a, EVT> EventSingleRef<'a, EVT>
-where
-    EVT: EventValueType,
-{
-    pub fn to_owned(&self) {
-        todo!()
-    }
-}
+impl<'a, EVT> EventSingleRef<'a, EVT> where EVT: EventValueType {}
 
 #[derive(Debug, Clone)]
 pub struct EventSingle<EVT> {
@@ -264,25 +257,6 @@ where
             return Err(EventsContainerError::Unordered);
         }
         Ok(())
-    }
-
-    pub fn ts_first(&self) -> Option<TsNano> {
-        self.tss.front().map(|&x| x)
-    }
-
-    pub fn ts_last(&self) -> Option<TsNano> {
-        self.tss.back().map(|&x| x)
-    }
-
-    fn _len_before(&self, end: TsNano) -> usize {
-        let tss = &self.tss;
-        let pp = tss.partition_point(|&x| x < end);
-        assert!(pp <= tss.len(), "len_before  pp {}  len {}", pp, tss.len());
-        pp
-    }
-
-    fn _pop_front(&mut self) -> Option<EventSingleRef<EVT>> {
-        todo!()
     }
 
     pub fn push_back(&mut self, ts: TsNano, val: EVT) {
