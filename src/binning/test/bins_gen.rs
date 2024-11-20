@@ -18,7 +18,7 @@ pub(super) fn bins_gen_dim0_f32_v00(
 ) -> impl Stream<Item = Sitemty<Box<dyn BinningggContainerBinsDyn>>> {
     futures_util::stream::iter((0usize..1000).into_iter())
         .map(|x| {
-            let c = ContainerBins::<f32>::new();
+            let c = ContainerBins::<f32, f64>::new();
             Box::new(c) as Box<dyn BinningggContainerBinsDyn>
         })
         .map(|x| Ok(StreamItem::DataItem(RangeCompletableItem::Data(x))))

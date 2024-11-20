@@ -1,3 +1,6 @@
+pub mod agg_bins;
+
+use super::container::bins::BinAggedType;
 use super::container_events::EventValueType;
 use core::fmt;
 use netpod::log::*;
@@ -12,21 +15,21 @@ macro_rules! trace_event { ($($arg:tt)*) => ( if false { trace!($($arg)*); }) }
 #[allow(unused)]
 macro_rules! trace_result { ($($arg:tt)*) => ( if false { trace!($($arg)*); }) }
 
-pub trait AggTimeWeightOutputAvg: fmt::Debug + Clone + Send + Serialize + for<'a> Deserialize<'a> {}
+pub trait AggTimeWeightOutputAvg: BinAggedType + Serialize + for<'a> Deserialize<'a> {}
 
-impl AggTimeWeightOutputAvg for u8 {}
-impl AggTimeWeightOutputAvg for u16 {}
-impl AggTimeWeightOutputAvg for u32 {}
-impl AggTimeWeightOutputAvg for u64 {}
-impl AggTimeWeightOutputAvg for i8 {}
-impl AggTimeWeightOutputAvg for i16 {}
-impl AggTimeWeightOutputAvg for i32 {}
-impl AggTimeWeightOutputAvg for i64 {}
+// impl AggTimeWeightOutputAvg for u8 {}
+// impl AggTimeWeightOutputAvg for u16 {}
+// impl AggTimeWeightOutputAvg for u32 {}
+// impl AggTimeWeightOutputAvg for u64 {}
+// impl AggTimeWeightOutputAvg for i8 {}
+// impl AggTimeWeightOutputAvg for i16 {}
+// impl AggTimeWeightOutputAvg for i32 {}
+// impl AggTimeWeightOutputAvg for i64 {}
 impl AggTimeWeightOutputAvg for f32 {}
 impl AggTimeWeightOutputAvg for f64 {}
-impl AggTimeWeightOutputAvg for EnumVariant {}
-impl AggTimeWeightOutputAvg for String {}
-impl AggTimeWeightOutputAvg for bool {}
+// impl AggTimeWeightOutputAvg for EnumVariant {}
+// impl AggTimeWeightOutputAvg for String {}
+// impl AggTimeWeightOutputAvg for bool {}
 
 pub trait AggregatorTimeWeight<EVT>: fmt::Debug + Send
 where
@@ -35,7 +38,10 @@ where
     fn new() -> Self;
     fn ingest(&mut self, dt: DtNano, bl: DtNano, val: EVT);
     fn reset_for_new_bin(&mut self);
-    fn result_and_reset_for_new_bin(&mut self, filled_width_fraction: f32) -> EVT::AggTimeWeightOutputAvg;
+    fn result_and_reset_for_new_bin(
+        &mut self,
+        filled_width_fraction: f32,
+    ) -> EVT::AggTimeWeightOutputAvg;
 }
 
 #[derive(Debug)]
@@ -71,9 +77,16 @@ where
         self.sum = 0.;
     }
 
-    fn result_and_reset_for_new_bin(&mut self, filled_width_fraction: f32) -> EVT::AggTimeWeightOutputAvg {
+    fn result_and_reset_for_new_bin(
+        &mut self,
+        filled_width_fraction: f32,
+    ) -> EVT::AggTimeWeightOutputAvg {
         let sum = self.sum.clone();
-        trace_result!("result_and_reset_for_new_bin  sum {}  {}", sum, filled_width_fraction);
+        trace_result!(
+            "result_and_reset_for_new_bin  sum {}  {}",
+            sum,
+            filled_width_fraction
+        );
         self.sum = 0.;
         sum / filled_width_fraction as f64
     }
@@ -96,7 +109,11 @@ impl AggregatorTimeWeight<f32> for AggregatorNumeric {
 
     fn result_and_reset_for_new_bin(&mut self, filled_width_fraction: f32) -> f32 {
         let sum = self.sum.clone() as f32;
-        trace_result!("result_and_reset_for_new_bin  sum {}  {}", sum, filled_width_fraction);
+        trace_result!(
+            "result_and_reset_for_new_bin  sum {}  {}",
+            sum,
+            filled_width_fraction
+        );
         self.sum = 0.;
         sum / filled_width_fraction
     }
@@ -158,7 +175,11 @@ impl AggregatorTimeWeight<u64> for AggregatorNumeric {
 
     fn result_and_reset_for_new_bin(&mut self, filled_width_fraction: f32) -> f64 {
         let sum = self.sum.clone();
-        trace_result!("result_and_reset_for_new_bin  sum {}  {}", sum, filled_width_fraction);
+        trace_result!(
+            "result_and_reset_for_new_bin  sum {}  {}",
+            sum,
+            filled_width_fraction
+        );
         self.sum = 0.;
         sum / filled_width_fraction as f64
     }
@@ -181,7 +202,11 @@ impl AggregatorTimeWeight<bool> for AggregatorNumeric {
 
     fn result_and_reset_for_new_bin(&mut self, filled_width_fraction: f32) -> f64 {
         let sum = self.sum.clone();
-        trace_result!("result_and_reset_for_new_bin  sum {}  {}", sum, filled_width_fraction);
+        trace_result!(
+            "result_and_reset_for_new_bin  sum {}  {}",
+            sum,
+            filled_width_fraction
+        );
         self.sum = 0.;
         sum / filled_width_fraction as f64
     }
@@ -204,7 +229,11 @@ impl AggregatorTimeWeight<String> for AggregatorNumeric {
 
     fn result_and_reset_for_new_bin(&mut self, filled_width_fraction: f32) -> f64 {
         let sum = self.sum.clone();
-        trace_result!("result_and_reset_for_new_bin  sum {}  {}", sum, filled_width_fraction);
+        trace_result!(
+            "result_and_reset_for_new_bin  sum {}  {}",
+            sum,
+            filled_width_fraction
+        );
         self.sum = 0.;
         sum / filled_width_fraction as f64
     }

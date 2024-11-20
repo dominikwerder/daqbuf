@@ -7,7 +7,7 @@ pub enum Error {
     AssertMsg(String),
 }
 
-trait IntoVecDequeU64 {
+pub(super) trait IntoVecDequeU64 {
     fn into_vec_deque_u64(self) -> VecDeque<u64>;
 }
 
@@ -18,7 +18,8 @@ impl IntoVecDequeU64 for &str {
             .collect()
     }
 }
-trait IntoVecDequeF32 {
+
+pub(super) trait IntoVecDequeF32 {
     fn into_vec_deque_f32(self) -> VecDeque<f32>;
 }
 
@@ -88,7 +89,10 @@ fn exp_f32<'a>(
     Ok(())
 }
 
-pub(super) fn exp_cnts(bins: &ContainerBins<f32>, exps: impl IntoVecDequeU64) -> Result<(), Error> {
+pub(super) fn exp_cnts(
+    bins: &ContainerBins<f32, f32>,
+    exps: impl IntoVecDequeU64,
+) -> Result<(), Error> {
     exp_u64(
         bins.cnts_iter(),
         exps.into_vec_deque_u64().iter(),
@@ -96,7 +100,10 @@ pub(super) fn exp_cnts(bins: &ContainerBins<f32>, exps: impl IntoVecDequeU64) ->
     )
 }
 
-pub(super) fn exp_mins(bins: &ContainerBins<f32>, exps: impl IntoVecDequeF32) -> Result<(), Error> {
+pub(super) fn exp_mins(
+    bins: &ContainerBins<f32, f32>,
+    exps: impl IntoVecDequeF32,
+) -> Result<(), Error> {
     exp_f32(
         bins.mins_iter(),
         exps.into_vec_deque_f32().iter(),
@@ -104,7 +111,10 @@ pub(super) fn exp_mins(bins: &ContainerBins<f32>, exps: impl IntoVecDequeF32) ->
     )
 }
 
-pub(super) fn exp_maxs(bins: &ContainerBins<f32>, exps: impl IntoVecDequeF32) -> Result<(), Error> {
+pub(super) fn exp_maxs(
+    bins: &ContainerBins<f32, f32>,
+    exps: impl IntoVecDequeF32,
+) -> Result<(), Error> {
     exp_f32(
         bins.maxs_iter(),
         exps.into_vec_deque_f32().iter(),
@@ -112,7 +122,10 @@ pub(super) fn exp_maxs(bins: &ContainerBins<f32>, exps: impl IntoVecDequeF32) ->
     )
 }
 
-pub(super) fn exp_avgs(bins: &ContainerBins<f32>, exps: impl IntoVecDequeF32) -> Result<(), Error> {
+pub(super) fn exp_avgs(
+    bins: &ContainerBins<f32, f32>,
+    exps: impl IntoVecDequeF32,
+) -> Result<(), Error> {
     let exps = exps.into_vec_deque_f32();
     let mut it_a = bins.iter_debug();
     let mut it_b = exps.iter();
@@ -124,7 +137,7 @@ pub(super) fn exp_avgs(bins: &ContainerBins<f32>, exps: impl IntoVecDequeF32) ->
             break;
         }
         if let (Some(a), Some(&exp)) = (a, b) {
-            let val = *a.avg as f32;
+            let val = *a.agg as f32;
             if netpod::f32_close(val, exp) == false {
                 return Err(Error::AssertMsg(format!(
                     "exp_avgs  val {}  exp {}  i {}",

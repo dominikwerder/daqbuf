@@ -24,8 +24,8 @@ macro_rules! trace_init { ($($arg:tt)*) => ( if true { trace!($($arg)*); }) }
 #[cstm(name = "ValueContainerError")]
 pub enum ValueContainerError {}
 
-pub trait Container<EVT>:
-    fmt::Debug + Send + Clone + PreviewRange + Serialize + for<'a> Deserialize<'a>
+// + Serialize + for<'a> Deserialize<'a>
+pub trait Container<EVT>: fmt::Debug + Send + Clone + PreviewRange
 where
     EVT: EventValueType,
 {
@@ -39,7 +39,9 @@ pub trait PartialOrdEvtA<EVT> {
     fn cmp_a(&self, other: &EVT) -> Option<std::cmp::Ordering>;
 }
 
-pub trait EventValueType: fmt::Debug + Clone + PartialOrd + Send + 'static + Serialize {
+pub trait EventValueType:
+    fmt::Debug + Clone + PartialOrd + Send + 'static + Serialize + for<'a> Deserialize<'a>
+{
     type Container: Container<Self>;
     type AggregatorTimeWeight: AggregatorTimeWeight<Self>;
     type AggTimeWeightOutputAvg: AggTimeWeightOutputAvg;
@@ -212,13 +214,46 @@ pub enum EventsContainerError {
     Unordered,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone)]
 pub struct ContainerEvents<EVT>
 where
     EVT: EventValueType,
 {
     tss: VecDeque<TsNano>,
     vals: <EVT as EventValueType>::Container,
+}
+
+mod container_events_serde {
+    use super::ContainerEvents;
+    use super::EventValueType;
+    use serde::Deserialize;
+    use serde::Deserializer;
+    use serde::Serialize;
+    use serde::Serializer;
+
+    impl<EVT> Serialize for ContainerEvents<EVT>
+    where
+        EVT: EventValueType,
+    {
+        fn serialize<S>(&self, ser: S) -> Result<S::Ok, S::Error>
+        where
+            S: Serializer,
+        {
+            todo!()
+        }
+    }
+
+    impl<'de, EVT> Deserialize<'de> for ContainerEvents<EVT>
+    where
+        EVT: EventValueType,
+    {
+        fn deserialize<D>(de: D) -> Result<Self, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            todo!()
+        }
+    }
 }
 
 impl<EVT> ContainerEvents<EVT>

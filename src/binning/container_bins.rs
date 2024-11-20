@@ -1,3 +1,4 @@
+use super::container::bins::BinAggedType;
 use super::container_events::EventValueType;
 use crate::offsets::ts_offs_from_abs;
 use crate::offsets::ts_offs_from_abs_with_anchor;
@@ -32,56 +33,38 @@ pub enum ContainerBinsError {
     Unordered,
 }
 
-pub trait BinValueType: fmt::Debug + Clone + PartialOrd {
-    // type Container: Container<Self>;
-    // type AggregatorTimeWeight: AggregatorTimeWeight<Self>;
-    // type AggTimeWeightOutputAvg;
-
-    // fn identity_sum() -> Self;
-    // fn add_weighted(&self, add: &Self, f: f32) -> Self;
-}
-
 #[derive(Debug, Clone)]
-pub struct BinSingle<EVT> {
-    pub ts1: TsNano,
-    pub ts2: TsNano,
-    pub cnt: u64,
-    pub min: EVT,
-    pub max: EVT,
-    pub avg: f32,
-    pub lst: EVT,
-    pub fnl: bool,
-}
-
-#[derive(Debug, Clone)]
-pub struct BinRef<'a, EVT>
+pub struct BinRef<'a, EVT, BVT>
 where
     EVT: EventValueType,
+    BVT: BinAggedType,
 {
     pub ts1: TsNano,
     pub ts2: TsNano,
     pub cnt: u64,
     pub min: &'a EVT,
     pub max: &'a EVT,
-    pub avg: &'a EVT::AggTimeWeightOutputAvg,
+    pub agg: &'a BVT,
     pub lst: &'a EVT,
     pub fnl: bool,
 }
 
-pub struct IterDebug<'a, EVT>
+pub struct IterDebug<'a, EVT, BVT>
 where
     EVT: EventValueType,
+    BVT: BinAggedType,
 {
-    bins: &'a ContainerBins<EVT>,
+    bins: &'a ContainerBins<EVT, BVT>,
     ix: usize,
     len: usize,
 }
 
-impl<'a, EVT> Iterator for IterDebug<'a, EVT>
+impl<'a, EVT, BVT> Iterator for IterDebug<'a, EVT, BVT>
 where
     EVT: EventValueType,
+    BVT: BinAggedType,
 {
-    type Item = BinRef<'a, EVT>;
+    type Item = BinRef<'a, EVT, BVT>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.ix < self.bins.len() && self.ix < self.len {
@@ -94,7 +77,7 @@ where
                 cnt: b.cnts[i],
                 min: &b.mins[i],
                 max: &b.maxs[i],
-                avg: &b.avgs[i],
+                agg: &b.aggs[i],
                 lst: &b.lsts[i],
                 fnl: b.fnls[i],
             };
@@ -105,24 +88,62 @@ where
     }
 }
 
-#[derive(Clone, Serialize, Deserialize)]
-pub struct ContainerBins<EVT>
+#[derive(Clone)]
+pub struct ContainerBins<EVT, BVT>
 where
     EVT: EventValueType,
+    BVT: BinAggedType,
 {
     ts1s: VecDeque<TsNano>,
     ts2s: VecDeque<TsNano>,
     cnts: VecDeque<u64>,
     mins: VecDeque<EVT>,
     maxs: VecDeque<EVT>,
-    avgs: VecDeque<EVT::AggTimeWeightOutputAvg>,
+    aggs: VecDeque<BVT>,
     lsts: VecDeque<EVT>,
     fnls: VecDeque<bool>,
 }
 
-impl<EVT> ContainerBins<EVT>
+mod container_bins_serde {
+    use super::ContainerBins;
+    use super::EventValueType;
+    use crate::binning::container::bins::BinAggedType;
+    use serde::Deserialize;
+    use serde::Deserializer;
+    use serde::Serialize;
+    use serde::Serializer;
+
+    impl<EVT, BVT> Serialize for ContainerBins<EVT, BVT>
+    where
+        EVT: EventValueType,
+        BVT: BinAggedType,
+    {
+        fn serialize<S>(&self, ser: S) -> Result<S::Ok, S::Error>
+        where
+            S: Serializer,
+        {
+            todo!()
+        }
+    }
+
+    impl<'de, EVT, BVT> Deserialize<'de> for ContainerBins<EVT, BVT>
+    where
+        EVT: EventValueType,
+        BVT: BinAggedType,
+    {
+        fn deserialize<D>(de: D) -> Result<Self, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            todo!()
+        }
+    }
+}
+
+impl<EVT, BVT> ContainerBins<EVT, BVT>
 where
     EVT: EventValueType,
+    BVT: BinAggedType,
 {
     pub fn from_constituents(
         ts1s: VecDeque<TsNano>,
@@ -130,7 +151,7 @@ where
         cnts: VecDeque<u64>,
         mins: VecDeque<EVT>,
         maxs: VecDeque<EVT>,
-        avgs: VecDeque<EVT::AggTimeWeightOutputAvg>,
+        aggs: VecDeque<BVT>,
         lsts: VecDeque<EVT>,
         fnls: VecDeque<bool>,
     ) -> Self {
@@ -140,7 +161,7 @@ where
             cnts,
             mins,
             maxs,
-            avgs,
+            aggs,
             lsts,
             fnls,
         }
@@ -157,7 +178,7 @@ where
             cnts: VecDeque::new(),
             mins: VecDeque::new(),
             maxs: VecDeque::new(),
-            avgs: VecDeque::new(),
+            aggs: VecDeque::new(),
             lsts: VecDeque::new(),
             fnls: VecDeque::new(),
         }
@@ -215,8 +236,8 @@ where
         self.maxs.iter()
     }
 
-    pub fn avgs_iter(&self) -> std::collections::vec_deque::Iter<EVT::AggTimeWeightOutputAvg> {
-        self.avgs.iter()
+    pub fn aggs_iter(&self) -> std::collections::vec_deque::Iter<BVT> {
+        self.aggs.iter()
     }
 
     pub fn lsts_iter(&self) -> std::collections::vec_deque::Iter<EVT> {
@@ -245,7 +266,7 @@ where
                     >,
                     std::collections::vec_deque::Iter<EVT>,
                 >,
-                std::collections::vec_deque::Iter<EVT::AggTimeWeightOutputAvg>,
+                std::collections::vec_deque::Iter<BVT>,
             >,
             std::collections::vec_deque::Iter<EVT>,
         >,
@@ -256,7 +277,7 @@ where
             .zip(self.cnts_iter())
             .zip(self.mins_iter())
             .zip(self.maxs_iter())
-            .zip(self.avgs_iter())
+            .zip(self.aggs_iter())
             .zip(self.lsts_iter())
             .zip(self.fnls_iter())
     }
@@ -288,7 +309,7 @@ where
         cnt: u64,
         min: EVT,
         max: EVT,
-        avg: EVT::AggTimeWeightOutputAvg,
+        agg: BVT,
         lst: EVT,
         fnl: bool,
     ) {
@@ -297,12 +318,12 @@ where
         self.cnts.push_back(cnt);
         self.mins.push_back(min);
         self.maxs.push_back(max);
-        self.avgs.push_back(avg);
+        self.aggs.push_back(agg);
         self.lsts.push_back(lst);
         self.fnls.push_back(fnl);
     }
 
-    pub fn iter_debug(&self) -> IterDebug<EVT> {
+    pub fn iter_debug(&self) -> IterDebug<EVT, BVT> {
         IterDebug {
             bins: self,
             ix: 0,
@@ -311,64 +332,70 @@ where
     }
 }
 
-impl<EVT> fmt::Debug for ContainerBins<EVT>
+impl<EVT, BVT> fmt::Debug for ContainerBins<EVT, BVT>
 where
     EVT: EventValueType,
+    BVT: BinAggedType,
 {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         let self_name = any::type_name::<Self>();
         write!(
             fmt,
-            "{self_name}  {{  len: {:?},  ts1s: {:?},  ts2s: {:?}, cnts: {:?},  avgs {:?},  fnls {:?}  }}",
+            "{self_name}  {{  len: {:?},  ts1s: {:?},  ts2s: {:?}, cnts: {:?},  aggs {:?},  fnls {:?}  }}",
             self.len(),
             VecPreview::new(&self.ts1s),
             VecPreview::new(&self.ts2s),
             VecPreview::new(&self.cnts),
-            VecPreview::new(&self.avgs),
+            VecPreview::new(&self.aggs),
             VecPreview::new(&self.fnls),
         )
     }
 }
 
-impl<EVT> fmt::Display for ContainerBins<EVT>
+impl<EVT, BVT> fmt::Display for ContainerBins<EVT, BVT>
 where
     EVT: EventValueType,
+    BVT: BinAggedType,
 {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         fmt::Debug::fmt(self, fmt)
     }
 }
 
-impl<EVT> AsAnyMut for ContainerBins<EVT>
+impl<EVT, BVT> AsAnyMut for ContainerBins<EVT, BVT>
 where
     EVT: EventValueType,
+    BVT: BinAggedType,
 {
     fn as_any_mut(&mut self) -> &mut dyn any::Any {
         self
     }
 }
 
-impl<EVT> WithLen for ContainerBins<EVT>
+impl<EVT, BVT> WithLen for ContainerBins<EVT, BVT>
 where
     EVT: EventValueType,
+    BVT: BinAggedType,
 {
     fn len(&self) -> usize {
         Self::len(self)
     }
 }
 
-impl<EVT> TypeName for ContainerBins<EVT>
+impl<EVT, BVT> TypeName for ContainerBins<EVT, BVT>
 where
     EVT: EventValueType,
+    BVT: BinAggedType,
 {
     fn type_name(&self) -> String {
-        BinningggContainerBinsDyn::type_name(self).into()
+        Self::type_name().into()
     }
 }
 
-impl<EVT> AsAnyRef for ContainerBins<EVT>
+impl<EVT, BVT> AsAnyRef for ContainerBins<EVT, BVT>
 where
     EVT: EventValueType,
+    BVT: BinAggedType,
 {
     fn as_any_ref(&self) -> &dyn any::Any {
         self
@@ -376,43 +403,48 @@ where
 }
 
 #[derive(Debug)]
-pub struct ContainerBinsCollectorOutput<EVT>
+pub struct ContainerBinsCollectorOutput<EVT, BVT>
 where
     EVT: EventValueType,
+    BVT: BinAggedType,
 {
-    bins: ContainerBins<EVT>,
+    bins: ContainerBins<EVT, BVT>,
 }
 
-impl<EVT> TypeName for ContainerBinsCollectorOutput<EVT>
+impl<EVT, BVT> TypeName for ContainerBinsCollectorOutput<EVT, BVT>
 where
     EVT: EventValueType,
+    BVT: BinAggedType,
 {
     fn type_name(&self) -> String {
         any::type_name::<Self>().into()
     }
 }
 
-impl<EVT> AsAnyRef for ContainerBinsCollectorOutput<EVT>
+impl<EVT, BVT> AsAnyRef for ContainerBinsCollectorOutput<EVT, BVT>
 where
     EVT: EventValueType,
+    BVT: BinAggedType,
 {
     fn as_any_ref(&self) -> &dyn any::Any {
         self
     }
 }
 
-impl<EVT> AsAnyMut for ContainerBinsCollectorOutput<EVT>
+impl<EVT, BVT> AsAnyMut for ContainerBinsCollectorOutput<EVT, BVT>
 where
     EVT: EventValueType,
+    BVT: BinAggedType,
 {
     fn as_any_mut(&mut self) -> &mut dyn any::Any {
         self
     }
 }
 
-impl<EVT> WithLen for ContainerBinsCollectorOutput<EVT>
+impl<EVT, BVT> WithLen for ContainerBinsCollectorOutput<EVT, BVT>
 where
     EVT: EventValueType,
+    BVT: BinAggedType,
 {
     fn len(&self) -> usize {
         self.bins.len()
@@ -420,9 +452,10 @@ where
 }
 
 #[derive(Debug, Serialize)]
-struct ContainerBinsCollectorOutputUser<EVT>
+struct ContainerBinsCollectorOutputUser<EVT, BVT>
 where
     EVT: EventValueType,
+    BVT: BinAggedType,
 {
     #[serde(rename = "tsAnchor")]
     ts_anchor_sec: u64,
@@ -441,7 +474,7 @@ where
     #[serde(rename = "maxs")]
     maxs: VecDeque<EVT>,
     #[serde(rename = "avgs")]
-    avgs: VecDeque<EVT::AggTimeWeightOutputAvg>,
+    aggs: VecDeque<BVT>,
     // #[serde(rename = "rangeFinal", default, skip_serializing_if = "is_false")]
     // range_final: bool,
     // #[serde(rename = "timedOut", default, skip_serializing_if = "is_false")]
@@ -454,9 +487,10 @@ where
     // finished_at: Option<IsoDateTime>,
 }
 
-impl<EVT> ToJsonResult for ContainerBinsCollectorOutput<EVT>
+impl<EVT, BVT> ToJsonResult for ContainerBinsCollectorOutput<EVT, BVT>
 where
     EVT: EventValueType,
+    BVT: BinAggedType,
 {
     fn to_json_value(&self) -> Result<serde_json::Value, serde_json::Error> {
         let bins = &self.bins;
@@ -467,8 +501,8 @@ where
         let counts = bins.cnts.clone();
         let mins = bins.mins.clone();
         let maxs = bins.maxs.clone();
-        let avgs = bins.avgs.clone();
-        let val = ContainerBinsCollectorOutputUser::<EVT> {
+        let aggs = bins.aggs.clone();
+        let val = ContainerBinsCollectorOutputUser::<EVT, BVT> {
             ts_anchor_sec: ts_anch,
             ts1_off_ms: ts1ms,
             ts2_off_ms: ts2ms,
@@ -477,38 +511,51 @@ where
             counts,
             mins,
             maxs,
-            avgs,
+            aggs,
         };
         serde_json::to_value(&val)
     }
 }
 
-impl<EVT> CollectedDyn for ContainerBinsCollectorOutput<EVT> where EVT: EventValueType {}
-
-#[derive(Debug)]
-pub struct ContainerBinsCollector<EVT>
+impl<EVT, BVT> CollectedDyn for ContainerBinsCollectorOutput<EVT, BVT>
 where
     EVT: EventValueType,
+    BVT: BinAggedType,
 {
-    bins: ContainerBins<EVT>,
+}
+
+#[derive(Debug)]
+pub struct ContainerBinsCollector<EVT, BVT>
+where
+    EVT: EventValueType,
+    BVT: BinAggedType,
+{
+    bins: ContainerBins<EVT, BVT>,
     timed_out: bool,
     range_final: bool,
 }
 
-impl<EVT> ContainerBinsCollector<EVT> where EVT: EventValueType {}
-
-impl<EVT> WithLen for ContainerBinsCollector<EVT>
+impl<EVT, BVT> ContainerBinsCollector<EVT, BVT>
 where
     EVT: EventValueType,
+    BVT: BinAggedType,
+{
+}
+
+impl<EVT, BVT> WithLen for ContainerBinsCollector<EVT, BVT>
+where
+    EVT: EventValueType,
+    BVT: BinAggedType,
 {
     fn len(&self) -> usize {
         self.bins.len()
     }
 }
 
-impl<EVT> items_0::container::ByteEstimate for ContainerBinsCollector<EVT>
+impl<EVT, BVT> items_0::container::ByteEstimate for ContainerBinsCollector<EVT, BVT>
 where
     EVT: EventValueType,
+    BVT: BinAggedType,
 {
     fn byte_estimate(&self) -> u64 {
         // TODO need better estimate
@@ -516,12 +563,13 @@ where
     }
 }
 
-impl<EVT> items_0::collect_s::CollectorDyn for ContainerBinsCollector<EVT>
+impl<EVT, BVT> items_0::collect_s::CollectorDyn for ContainerBinsCollector<EVT, BVT>
 where
     EVT: EventValueType,
+    BVT: BinAggedType,
 {
     fn ingest(&mut self, src: &mut dyn CollectableDyn) {
-        if let Some(src) = src.as_any_mut().downcast_mut::<ContainerBins<EVT>>() {
+        if let Some(src) = src.as_any_mut().downcast_mut::<ContainerBins<EVT, BVT>>() {
             src.drain_into(&mut self.bins, 0..src.len());
         } else {
             let srcn = src.type_name();
@@ -553,12 +601,13 @@ where
     }
 }
 
-impl<EVT> CollectableDyn for ContainerBins<EVT>
+impl<EVT, BVT> CollectableDyn for ContainerBins<EVT, BVT>
 where
     EVT: EventValueType,
+    BVT: BinAggedType,
 {
     fn new_collector(&self) -> Box<dyn items_0::collect_s::CollectorDyn> {
-        let ret = ContainerBinsCollector::<EVT> {
+        let ret = ContainerBinsCollector::<EVT, BVT> {
             bins: ContainerBins::new(),
             timed_out: false,
             range_final: false,
@@ -567,9 +616,10 @@ where
     }
 }
 
-impl<EVT> BinningggContainerBinsDyn for ContainerBins<EVT>
+impl<EVT, BVT> BinningggContainerBinsDyn for ContainerBins<EVT, BVT>
 where
     EVT: EventValueType,
+    BVT: BinAggedType,
 {
     fn type_name(&self) -> &'static str {
         any::type_name::<Self>()
@@ -604,7 +654,7 @@ where
             dst.cnts.extend(self.cnts.drain(range.clone()));
             dst.mins.extend(self.mins.drain(range.clone()));
             dst.maxs.extend(self.maxs.drain(range.clone()));
-            dst.avgs.extend(self.avgs.drain(range.clone()));
+            dst.aggs.extend(self.aggs.drain(range.clone()));
             dst.lsts.extend(self.lsts.drain(range.clone()));
             dst.fnls.extend(self.fnls.drain(range.clone()));
         } else {
@@ -617,7 +667,9 @@ where
         &self,
         range: netpod::BinnedRange<TsNano>,
     ) -> Box<dyn items_0::timebin::BinnedBinsTimeweightTrait> {
-        let ret = super::timeweight::timeweight_bins::BinnedBinsTimeweight::<EVT>::new(range);
+        let ret = super::timeweight::timeweight_bins::BinnedBinsTimeweight::<
+            EVT::AggTimeWeightOutputAvg,
+        >::new(range);
         Box::new(ret)
     }
 
@@ -626,32 +678,35 @@ where
             .mins
             .iter_mut()
             .zip(self.maxs.iter_mut())
-            .zip(self.avgs.iter_mut())
+            .zip(self.aggs.iter_mut())
         {}
     }
 }
 
-pub struct ContainerBinsTakeUpTo<'a, EVT>
+pub struct ContainerBinsTakeUpTo<'a, EVT, BVT>
 where
     EVT: EventValueType,
+    BVT: BinAggedType,
 {
-    evs: &'a mut ContainerBins<EVT>,
+    evs: &'a mut ContainerBins<EVT, BVT>,
     len: usize,
 }
 
-impl<'a, EVT> ContainerBinsTakeUpTo<'a, EVT>
+impl<'a, EVT, BVT> ContainerBinsTakeUpTo<'a, EVT, BVT>
 where
     EVT: EventValueType,
+    BVT: BinAggedType,
 {
-    pub fn new(evs: &'a mut ContainerBins<EVT>, len: usize) -> Self {
+    pub fn new(evs: &'a mut ContainerBins<EVT, BVT>, len: usize) -> Self {
         let len = len.min(evs.len());
         Self { evs, len }
     }
 }
 
-impl<'a, EVT> ContainerBinsTakeUpTo<'a, EVT>
+impl<'a, EVT, BVT> ContainerBinsTakeUpTo<'a, EVT, BVT>
 where
     EVT: EventValueType,
+    BVT: BinAggedType,
 {
     pub fn ts1_first(&self) -> Option<TsNano> {
         self.evs.ts1_first()

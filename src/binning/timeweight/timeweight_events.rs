@@ -254,6 +254,7 @@ where
 impl<EVT> InnerA<EVT>
 where
     EVT: EventValueType,
+    // BVT: BinAggedType,
 {
     fn apply_min_max(ev: &EventSingleRef<EVT>, minmax: &mut MinMax<EVT>) {
         if let Some(std::cmp::Ordering::Less) = ev.val.cmp_a(&minmax.0.val) {
@@ -262,12 +263,6 @@ where
         if let Some(std::cmp::Ordering::Greater) = ev.val.cmp_a(&minmax.1.val) {
             minmax.1 = ev.into();
         }
-        // if ev.val < minmax.0.val {
-        //     minmax.0 = ev.into();
-        // }
-        // if ev.val > minmax.1.val {
-        //     minmax.1 = ev.into();
-        // }
     }
 
     fn apply_lst_after_event_handled(ev: EventSingleRef<EVT>, lst: LstMut<EVT>) {
@@ -367,7 +362,7 @@ where
         &mut self,
         lst: LstRef<EVT>,
         range_final: bool,
-        out: &mut ContainerBins<EVT>,
+        out: &mut ContainerBins<EVT, EVT::AggTimeWeightOutputAvg>,
     ) {
         let selfname = "push_out_and_reset";
         // TODO there is not always good enough input to produce a meaningful bin.
@@ -403,7 +398,7 @@ where
     lst: Option<EventSingle<EVT>>,
     range: BinnedRange<TsNano>,
     inner_a: InnerA<EVT>,
-    out: ContainerBins<EVT>,
+    out: ContainerBins<EVT, EVT::AggTimeWeightOutputAvg>,
     produce_cnt_zero: bool,
 }
 
@@ -693,7 +688,7 @@ where
         self.out.len()
     }
 
-    pub fn output(&mut self) -> ContainerBins<EVT> {
+    pub fn output(&mut self) -> ContainerBins<EVT, EVT::AggTimeWeightOutputAvg> {
         mem::replace(&mut self.out, ContainerBins::new())
     }
 }
