@@ -29,7 +29,7 @@ fn test_bin_events_f32_simple_01() -> Result<(), Error> {
     let fut = async {
         let beg = TsNano::from_ms(100);
         let end = TsNano::from_ms(500);
-        let bin_len = DtMs::from_ms_u64(10);
+        let bin_len = DtMs::from_ms_u64(100);
         let nano_range = NanoRange {
             beg: beg.ns(),
             end: end.ns(),

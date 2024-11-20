@@ -23,6 +23,9 @@ use items_0::Events;
 use std::fmt;
 
 mod log {
+    #[cfg(not(test))]
+    pub use netpod::log::*;
+    #[cfg(test)]
     pub use netpod::log::*;
 }
 

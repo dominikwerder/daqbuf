@@ -621,10 +621,6 @@ where
     EVT: EventValueType,
     BVT: BinAggedType,
 {
-    fn type_name(&self) -> &'static str {
-        any::type_name::<Self>()
-    }
-
     fn empty(&self) -> BinsBoxed {
         Box::new(Self::new())
     }
@@ -668,6 +664,7 @@ where
         range: netpod::BinnedRange<TsNano>,
     ) -> Box<dyn items_0::timebin::BinnedBinsTimeweightTrait> {
         let ret = super::timeweight::timeweight_bins::BinnedBinsTimeweight::<
+            EVT,
             EVT::AggTimeWeightOutputAvg,
         >::new(range);
         Box::new(ret)

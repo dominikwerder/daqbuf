@@ -61,7 +61,7 @@ impl AggWithF64 for f64 {
 
 impl<EVT> AggregatorTimeWeight<EVT> for AggregatorNumeric
 where
-    EVT: AggWithF64,
+    EVT: EventValueType + AggWithF64,
 {
     fn new() -> Self {
         Self { sum: 0. }
@@ -87,7 +87,7 @@ where
             sum,
             filled_width_fraction
         );
-        self.sum = 0.;
+        <Self as AggregatorTimeWeight<EVT>>::reset_for_new_bin(self);
         sum / filled_width_fraction as f64
     }
 }
