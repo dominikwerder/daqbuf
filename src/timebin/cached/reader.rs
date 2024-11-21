@@ -26,7 +26,6 @@ pub enum Error {
     Scylla(String),
 }
 
-#[allow(unused)]
 macro_rules! trace_emit { ($($arg:tt)*) => ( if true { trace!($($arg)*); } ) }
 
 pub fn off_max() -> u64 {
@@ -75,12 +74,23 @@ pub trait EventsReadProvider: Send + Sync {
 }
 
 pub struct CacheReading {
-    fut: Pin<Box<dyn Future<Output = Result<Option<BinsBoxed>, streams::timebin::cached::reader::Error>> + Send>>,
+    fut: Pin<
+        Box<
+            dyn Future<Output = Result<Option<BinsBoxed>, streams::timebin::cached::reader::Error>>
+                + Send,
+        >,
+    >,
 }
 
 impl CacheReading {
     pub fn new(
-        fut: Pin<Box<dyn Future<Output = Result<Option<BinsBoxed>, streams::timebin::cached::reader::Error>> + Send>>,
+        fut: Pin<
+            Box<
+                dyn Future<
+                        Output = Result<Option<BinsBoxed>, streams::timebin::cached::reader::Error>,
+                    > + Send,
+            >,
+        >,
     ) -> Self {
         Self { fut }
     }
@@ -99,7 +109,11 @@ pub struct CacheWriting {
 }
 
 impl CacheWriting {
-    pub fn new(fut: Pin<Box<dyn Future<Output = Result<(), streams::timebin::cached::reader::Error>> + Send>>) -> Self {
+    pub fn new(
+        fut: Pin<
+            Box<dyn Future<Output = Result<(), streams::timebin::cached::reader::Error>> + Send>,
+        >,
+    ) -> Self {
         Self { fut }
     }
 }
@@ -180,7 +194,9 @@ impl Stream for CachedReader {
                     let off2 = off2.min(off_max());
                     self.ts1next = TsNano::from_ns(self.bin_len.ns() * off2 + div * msp);
                     let offs = off as u32..off2 as u32;
-                    let fut = self.cache_read_provider.read(self.series, self.bin_len, msp, offs);
+                    let fut = self
+                        .cache_read_provider
+                        .read(self.series, self.bin_len, msp, offs);
                     self.reading = Some(Box::pin(fut));
                     continue;
                 } else {

@@ -9,7 +9,7 @@ use items_0::streamitem::RangeCompletableItem;
 use items_0::streamitem::Sitemty;
 use items_0::streamitem::StreamItem;
 use items_0::timebin::BinsBoxed;
-use items_2::binning::timeweight::timeweight_bins_dyn::BinnedBinsTimeweightStream;
+use items_2::binning::timeweight::timeweight_bins_stream::BinnedBinsTimeweightStream;
 use netpod::log::*;
 use netpod::query::CacheUsage;
 use netpod::range::evrange::NanoRange;

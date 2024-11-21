@@ -6,7 +6,7 @@ use futures_util::Stream;
 use futures_util::StreamExt;
 use items_0::streamitem::Sitemty;
 use items_0::timebin::BinsBoxed;
-use items_2::binning::timeweight::timeweight_bins_dyn::BinnedBinsTimeweightStream;
+use items_2::binning::timeweight::timeweight_bins_stream::BinnedBinsTimeweightStream;
 use netpod::log::*;
 use netpod::query::CacheUsage;
 use netpod::range::evrange::SeriesRange;
@@ -68,7 +68,7 @@ impl TimeBinnedFromLayers {
         if bin_len_layers.contains(&bin_len) {
             debug!("{}::new  bin_len in layers  {:?}", Self::type_name(), range);
             let inp = super::gapfill::GapFill::new(
-                "FromLayers".into(),
+                "FromLayers-ongrid".into(),
                 ch_conf.clone(),
                 cache_usage.clone(),
                 transform_query.clone(),
@@ -97,7 +97,7 @@ impl TimeBinnedFromLayers {
                         range_finer
                     );
                     let inp = super::gapfill::GapFill::new(
-                        "FromLayers".into(),
+                        "FromLayers-finergrid".into(),
                         ch_conf.clone(),
                         cache_usage.clone(),
                         transform_query.clone(),
@@ -124,8 +124,14 @@ impl TimeBinnedFromLayers {
                         one_before_range,
                         transform_query.clone(),
                     );
-                    let evq = EventsSubQuery::from_parts(select, sub.clone(), ctx.reqid().into(), log_level.clone());
-                    let inp = BinnedFromEvents::new(range, evq, do_time_weight, events_read_provider)?;
+                    let evq = EventsSubQuery::from_parts(
+                        select,
+                        sub.clone(),
+                        ctx.reqid().into(),
+                        log_level.clone(),
+                    );
+                    let inp =
+                        BinnedFromEvents::new(range, evq, do_time_weight, events_read_provider)?;
                     let ret = Self { inp: Box::pin(inp) };
                     debug!("{}::new  setup from events", Self::type_name());
                     Ok(ret)

@@ -1,5 +1,6 @@
 mod collect;
 mod events;
+mod events_reader;
 mod timebin;
 
 use futures_util::stream;

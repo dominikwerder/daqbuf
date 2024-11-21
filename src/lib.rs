@@ -35,3 +35,10 @@ pub mod transform;
 fn todoval<T>() -> T {
     todo!()
 }
+
+mod log {
+    #[cfg(not(test))]
+    pub use netpod::log::*;
+    #[cfg(test)]
+    pub use netpod::log_direct::*;
+}
