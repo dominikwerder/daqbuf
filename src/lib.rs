@@ -340,18 +340,6 @@ impl From<async_channel::RecvError> for Error {
     }
 }
 
-impl<T> From<async_channel_2::SendError<T>> for Error {
-    fn from(k: async_channel_2::SendError<T>) -> Self {
-        Self::from_string(k)
-    }
-}
-
-impl From<async_channel_2::RecvError> for Error {
-    fn from(k: async_channel_2::RecvError) -> Self {
-        Self::from_string(k)
-    }
-}
-
 impl From<chrono::format::ParseError> for Error {
     fn from(k: chrono::format::ParseError) -> Self {
         Self::from_string(k)
@@ -562,7 +550,10 @@ mod test {
 
     #[test]
     fn error_handle_a_00() {
-        assert_eq!(format!("{}", SomeErrorEnumA::BadCase), "SomeErrorEnumA::BadCase");
+        assert_eq!(
+            format!("{}", SomeErrorEnumA::BadCase),
+            "SomeErrorEnumA::BadCase"
+        );
     }
 
     #[test]
