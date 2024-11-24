@@ -109,7 +109,9 @@ impl PreBinnedQuery {
     }
 
     pub fn cache_usage(&self) -> CacheUsage {
-        self.cache_usage.as_ref().map_or(CacheUsage::Use, |x| x.clone())
+        self.cache_usage
+            .as_ref()
+            .map_or(CacheUsage::Use, |x| x.clone())
     }
 
     pub fn buf_len_disk_io(&self) -> usize {

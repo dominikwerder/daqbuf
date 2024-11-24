@@ -40,7 +40,8 @@ impl Api1Range {
 
 #[test]
 fn serde_de_range_zulu() {
-    let s = r#"{"startDate": "2022-11-22T10:15:12.412Z", "endDate": "2022-11-22T10:15:12.413556Z"}"#;
+    let s =
+        r#"{"startDate": "2022-11-22T10:15:12.412Z", "endDate": "2022-11-22T10:15:12.413556Z"}"#;
     let range: Api1Range = serde_json::from_str(s).unwrap();
     assert_eq!(range.beg().offset().local_minus_utc(), 0);
     assert_eq!(range.end().offset().local_minus_utc(), 0);
@@ -50,7 +51,8 @@ fn serde_de_range_zulu() {
 
 #[test]
 fn serde_de_range_offset() {
-    let s = r#"{"startDate": "2022-11-22T10:15:12.412Z", "endDate": "2022-11-22T10:15:12.413556Z"}"#;
+    let s =
+        r#"{"startDate": "2022-11-22T10:15:12.412Z", "endDate": "2022-11-22T10:15:12.413556Z"}"#;
     let range: Api1Range = serde_json::from_str(s).unwrap();
     assert_eq!(range.beg().offset().local_minus_utc(), 0);
     assert_eq!(range.end().offset().local_minus_utc(), 0);
@@ -126,7 +128,10 @@ impl ChannelTuple {
     }
 
     pub fn from_name(name: String) -> Self {
-        Self { backend: None, name }
+        Self {
+            backend: None,
+            name,
+        }
     }
 
     pub fn backend(&self) -> Option<&String> {

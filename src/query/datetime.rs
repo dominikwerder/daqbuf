@@ -21,8 +21,8 @@ impl TryFrom<&str> for Datetime {
     type Error = Error;
 
     fn try_from(val: &str) -> Result<Self, Self::Error> {
-        let dt =
-            DateTime::<FixedOffset>::parse_from_rfc3339(val).map_err(|e| Error::with_msg_no_trace(format!("{e}")))?;
+        let dt = DateTime::<FixedOffset>::parse_from_rfc3339(val)
+            .map_err(|e| Error::with_msg_no_trace(format!("{e}")))?;
         Ok(Datetime(dt))
     }
 }

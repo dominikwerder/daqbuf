@@ -38,7 +38,11 @@ impl RetentionTime {
         let margin_max = Duration::from_secs(day * 2);
         let ttl = self.ttl_ts_msp();
         let margin = ttl / 10;
-        let margin = if margin >= margin_max { margin_max } else { margin };
+        let margin = if margin >= margin_max {
+            margin_max
+        } else {
+            margin
+        };
         ttl + margin
     }
 

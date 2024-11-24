@@ -1,3 +1,4 @@
+#![allow(unused)]
 use super::evrange::NanoRange;
 use super::evrange::SeriesRange;
 use crate::timeunits::SEC;
@@ -10,8 +11,12 @@ use chrono::Utc;
 #[test]
 fn test_binned_range_covering_00() {
     let range = SeriesRange::TimeRange(NanoRange::from_date_time(
-        DateTime::parse_from_rfc3339("1970-01-01T10:10:00Z").unwrap().into(),
-        DateTime::parse_from_rfc3339("1970-01-01T10:20:00Z").unwrap().into(),
+        DateTime::parse_from_rfc3339("1970-01-01T10:10:00Z")
+            .unwrap()
+            .into(),
+        DateTime::parse_from_rfc3339("1970-01-01T10:20:00Z")
+            .unwrap()
+            .into(),
     ));
     let r = BinnedRangeEnum::covering_range(range, 9).unwrap();
     assert_eq!(r.bin_count(), 10);
@@ -36,8 +41,12 @@ fn test_binned_range_covering_00() {
 #[test]
 fn test_binned_range_covering_01() {
     let range = SeriesRange::TimeRange(NanoRange::from_date_time(
-        DateTime::parse_from_rfc3339("1970-01-01T00:20:04Z").unwrap().into(),
-        DateTime::parse_from_rfc3339("1970-01-01T00:21:10Z").unwrap().into(),
+        DateTime::parse_from_rfc3339("1970-01-01T00:20:04Z")
+            .unwrap()
+            .into(),
+        DateTime::parse_from_rfc3339("1970-01-01T00:21:10Z")
+            .unwrap()
+            .into(),
     ));
     let r = BinnedRangeEnum::covering_range(range, 9).unwrap();
     assert_eq!(r.bin_count(), 14);
@@ -62,8 +71,12 @@ fn test_binned_range_covering_01() {
 #[test]
 fn test_binned_range_covering_02() {
     let range = SeriesRange::TimeRange(NanoRange::from_date_time(
-        DateTime::parse_from_rfc3339("1970-01-01T00:20:04Z").unwrap().into(),
-        DateTime::parse_from_rfc3339("1970-01-01T00:22:10Z").unwrap().into(),
+        DateTime::parse_from_rfc3339("1970-01-01T00:20:04Z")
+            .unwrap()
+            .into(),
+        DateTime::parse_from_rfc3339("1970-01-01T00:22:10Z")
+            .unwrap()
+            .into(),
     ));
     let r = BinnedRangeEnum::covering_range(range, 25).unwrap();
     assert_eq!(r.bin_count(), 26);

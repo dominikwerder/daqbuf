@@ -6,7 +6,10 @@ pub struct HistoLog2 {
 
 impl HistoLog2 {
     pub fn new(sub: usize) -> Self {
-        Self { histo: [0; 16], sub }
+        Self {
+            histo: [0; 16],
+            sub,
+        }
     }
 
     #[inline]
