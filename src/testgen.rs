@@ -1,3 +1,5 @@
+pub mod events_gen;
+
 use crate::eventsdim0::EventsDim0;
 use crate::Events;
 use items_0::Appendable;
@@ -12,7 +14,13 @@ fn xorshift32(state: u32) -> u32 {
     x
 }
 
-pub fn make_some_boxed_d0_f32(n: usize, t0: u64, tstep: u64, tmask: u64, seed: u32) -> Box<dyn Events> {
+pub fn make_some_boxed_d0_f32(
+    n: usize,
+    t0: u64,
+    tstep: u64,
+    tmask: u64,
+    seed: u32,
+) -> Box<dyn Events> {
     let mut vstate = seed;
     let mut events = EventsDim0::empty();
     for i in 0..n {

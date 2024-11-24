@@ -396,7 +396,7 @@ impl Events for EventsDim0Enum {
         &mut self,
         _dst: &mut dyn Events,
         _range: (usize, usize),
-    ) -> Result<(), items_0::MergeError> {
+    ) -> Result<(), err::Error> {
         todo!()
     }
 

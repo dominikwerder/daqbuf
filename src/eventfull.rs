@@ -1,19 +1,22 @@
 use crate::framable::FrameType;
-use crate::merger::Mergeable;
 use bytes::BytesMut;
+use core::ops::Range;
 use daqbuf_err as err;
 use err::thiserror;
 use err::ThisError;
 use items_0::container::ByteEstimate;
 use items_0::framable::FrameTypeInnerStatic;
+use items_0::merge::DrainIntoDstResult;
+use items_0::merge::DrainIntoNewResult;
+use items_0::merge::MergeableTy;
 use items_0::streamitem::EVENT_FULL_FRAME_TYPE_ID;
 use items_0::Empty;
-use items_0::MergeError;
 use items_0::WithLen;
 #[allow(unused)]
 use netpod::log::*;
 use netpod::ScalarType;
 use netpod::Shape;
+use netpod::TsNano;
 use parse::channelconfig::CompressionMethod;
 use serde::Deserialize;
 use serde::Deserializer;
@@ -23,11 +26,7 @@ use std::borrow::Cow;
 use std::collections::VecDeque;
 use std::time::Instant;
 
-#[allow(unused)]
-macro_rules! trace2 {
-    ($($arg:tt)*) => {};
-    ($($arg:tt)*) => { trace!($($arg)*) };
-}
+macro_rules! trace2 { ($($arg:tt)*) => ( trace!($($arg)*); ) }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct EventFull {
@@ -189,33 +188,18 @@ impl ByteEstimate for EventFull {
     }
 }
 
-impl Mergeable for EventFull {
-    fn ts_min(&self) -> Option<u64> {
-        self.tss.front().map(|&x| x)
+impl MergeableTy for EventFull {
+    fn ts_min(&self) -> Option<TsNano> {
+        self.tss.front().map(|&x| TsNano::from_ns(x))
     }
 
-    fn ts_max(&self) -> Option<u64> {
-        self.tss.back().map(|&x| x)
+    fn ts_max(&self) -> Option<TsNano> {
+        self.tss.back().map(|&x| TsNano::from_ns(x))
     }
 
-    fn new_empty(&self) -> Self {
-        Empty::empty()
-    }
-
-    fn clear(&mut self) {
-        self.tss.clear();
-        self.pulses.clear();
-        self.blobs.clear();
-        self.scalar_types.clear();
-        self.be.clear();
-        self.shapes.clear();
-        self.comps.clear();
-        self.entry_payload_max = 0;
-    }
-
-    fn drain_into(&mut self, dst: &mut Self, range: (usize, usize)) -> Result<(), MergeError> {
+    fn drain_into(&mut self, dst: &mut Self, range: Range<usize>) -> DrainIntoDstResult {
         // TODO make it harder to forget new members when the struct may get modified in the future
-        let r = range.0..range.1;
+        let r = range;
         let mut max = dst.entry_payload_max;
         for i in r.clone() {
             max = max.max(self.blobs[i].len() as _);
@@ -228,38 +212,50 @@ impl Mergeable for EventFull {
         dst.be.extend(self.be.drain(r.clone()));
         dst.shapes.extend(self.shapes.drain(r.clone()));
         dst.comps.extend(self.comps.drain(r.clone()));
-        Ok(())
+        DrainIntoDstResult::Done
     }
 
-    fn find_lowest_index_gt(&self, ts: u64) -> Option<usize> {
+    fn drain_into_new(&mut self, range: Range<usize>) -> DrainIntoNewResult<Self> {
+        let mut dst = Self::empty();
+        match self.drain_into(&mut dst, range) {
+            DrainIntoDstResult::Done => DrainIntoNewResult::Done(dst),
+            DrainIntoDstResult::Partial => DrainIntoNewResult::Partial(dst),
+            DrainIntoDstResult::NotCompatible => DrainIntoNewResult::NotCompatible,
+        }
+    }
+
+    fn find_lowest_index_gt(&self, ts: TsNano) -> Option<usize> {
         for (i, &m) in self.tss.iter().enumerate() {
-            if m > ts {
+            if m > ts.ns() {
                 return Some(i);
             }
         }
         None
     }
 
-    fn find_lowest_index_ge(&self, ts: u64) -> Option<usize> {
+    fn find_lowest_index_ge(&self, ts: TsNano) -> Option<usize> {
         for (i, &m) in self.tss.iter().enumerate() {
-            if m >= ts {
+            if m >= ts.ns() {
                 return Some(i);
             }
         }
         None
     }
 
-    fn find_highest_index_lt(&self, ts: u64) -> Option<usize> {
+    fn find_highest_index_lt(&self, ts: TsNano) -> Option<usize> {
         for (i, &m) in self.tss.iter().enumerate().rev() {
-            if m < ts {
+            if m < ts.ns() {
                 return Some(i);
             }
         }
         None
     }
 
-    fn tss(&self) -> Vec<netpod::TsMs> {
-        self.tss.iter().map(|x| netpod::TsMs::from_ns_u64(*x)).collect()
+    fn tss_for_testing(&self) -> Vec<netpod::TsMs> {
+        self.tss
+            .iter()
+            .map(|x| netpod::TsMs::from_ns_u64(*x))
+            .collect()
     }
 }
 
@@ -292,18 +288,18 @@ fn decompress(databuf: &[u8], type_size: u32) -> Result<Vec<u8>, DecompError> {
         return Err(DecompError::BadCompresionBlockSize);
     }
     let ele_count = value_bytes / type_size as u64;
-    trace2!(
-        "ele_count {}  ele_count_2 {}  ele_count_exp {}",
-        ele_count,
-        ele_count_2,
-        ele_count_exp
-    );
+    trace2!("ele_count {}", ele_count);
     let mut decomp: Vec<u8> = Vec::with_capacity(type_size as usize * ele_count as usize);
     unsafe {
         decomp.set_len(decomp.capacity());
     }
-    // #[cfg(DISABLED)]
-    match bitshuffle::bitshuffle_decompress(&databuf[12..], &mut decomp, ele_count as _, type_size as _, 0) {
+    match bitshuffle::bitshuffle_decompress(
+        &databuf[12..],
+        &mut decomp,
+        ele_count as _,
+        type_size as _,
+        0,
+    ) {
         Ok(c1) => {
             if 12 + c1 != databuf.len() {
                 Err(DecompError::UnusedBytes)

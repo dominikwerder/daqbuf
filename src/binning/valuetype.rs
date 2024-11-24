@@ -3,6 +3,7 @@ use super::container_events::Container;
 use super::container_events::EventValueType;
 use super::container_events::PartialOrdEvtA;
 use core::fmt;
+use items_0::subfr::SubFrId;
 use items_0::vecpreview::PreviewRange;
 use netpod::DtNano;
 use netpod::EnumVariant;
@@ -60,6 +61,16 @@ impl Container<EnumVariant> for EnumVariantContainer {
             None
         }
     }
+
+    fn iter_ty_1(&self) -> impl Iterator<Item = <EnumVariant as EventValueType>::IterTy1<'_>> {
+        self.ixs
+            .iter()
+            .zip(self.names.iter())
+            .map(|x| EnumVariantRef {
+                ix: *x.0,
+                name: x.1.as_str(),
+            })
+    }
 }
 
 #[derive(Debug)]
@@ -114,4 +125,5 @@ impl EventValueType for EnumVariant {
     type AggregatorTimeWeight = EnumVariantAggregatorTimeWeight;
     type AggTimeWeightOutputAvg = f32;
     type IterTy1<'a> = EnumVariantRef<'a>;
+    const SERDE_ID: u32 = Self::SUB;
 }

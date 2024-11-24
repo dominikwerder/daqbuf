@@ -1,31 +1,43 @@
 use super::aggregator::AggTimeWeightOutputAvg;
 use super::aggregator::AggregatorNumeric;
 use super::aggregator::AggregatorTimeWeight;
+use super::aggregator::AggregatorVecNumeric;
 use super::timeweight::timeweight_events_dyn::BinnedEventsTimeweightDynbox;
+use crate::log::*;
 use core::fmt;
+use core::ops::Range;
 use daqbuf_err as err;
 use err::thiserror;
 use err::ThisError;
+use items_0::container::ByteEstimate;
+use items_0::merge::DrainIntoDstResult;
+use items_0::merge::DrainIntoNewResult;
+use items_0::merge::MergeableDyn;
+use items_0::merge::MergeableTy;
+use items_0::subfr::SubFrId;
 use items_0::timebin::BinningggContainerEventsDyn;
 use items_0::vecpreview::PreviewRange;
 use items_0::vecpreview::VecPreview;
+use items_0::AsAnyMut;
 use items_0::AsAnyRef;
+use items_0::WithLen;
 use netpod::BinnedRange;
+use netpod::EnumVariant;
 use netpod::TsNano;
 use serde::Deserialize;
 use serde::Serialize;
 use std::any;
 use std::collections::VecDeque;
+use std::iter;
 
-#[allow(unused)]
 macro_rules! trace_init { ($($arg:tt)*) => ( if true { trace!($($arg)*); }) }
 
 #[derive(Debug, ThisError)]
 #[cstm(name = "ValueContainerError")]
 pub enum ValueContainerError {}
 
-// + Serialize + for<'a> Deserialize<'a>
-pub trait Container<EVT>: fmt::Debug + Send + Clone + PreviewRange
+pub trait Container<EVT>:
+    fmt::Debug + Send + Unpin + Clone + PreviewRange + Serialize + for<'a> Deserialize<'a>
 where
     EVT: EventValueType,
 {
@@ -33,6 +45,7 @@ where
     fn push_back(&mut self, val: EVT);
     fn pop_front(&mut self) -> Option<EVT>;
     fn get_iter_ty_1(&self, pos: usize) -> Option<EVT::IterTy1<'_>>;
+    fn iter_ty_1(&self) -> impl Iterator<Item = EVT::IterTy1<'_>>;
 }
 
 pub trait PartialOrdEvtA<EVT> {
@@ -40,12 +53,13 @@ pub trait PartialOrdEvtA<EVT> {
 }
 
 pub trait EventValueType:
-    fmt::Debug + Clone + PartialOrd + Send + 'static + Serialize + for<'a> Deserialize<'a>
+    fmt::Debug + Clone + PartialOrd + Send + Unpin + 'static + Serialize + for<'a> Deserialize<'a>
 {
     type Container: Container<Self>;
     type AggregatorTimeWeight: AggregatorTimeWeight<Self>;
     type AggTimeWeightOutputAvg: AggTimeWeightOutputAvg;
     type IterTy1<'a>: fmt::Debug + Clone + PartialOrdEvtA<Self> + Into<Self>;
+    const SERDE_ID: u32;
 }
 
 impl<EVT> Container<EVT> for VecDeque<EVT>
@@ -53,6 +67,7 @@ where
     EVT: for<'a> EventValueType<IterTy1<'a> = EVT> + Serialize + for<'a> Deserialize<'a>,
 {
     fn new() -> Self {
+        trace_init!("{} as trait Container ::new", std::any::type_name::<Self>());
         VecDeque::new()
     }
 
@@ -66,6 +81,10 @@ where
 
     fn get_iter_ty_1(&self, pos: usize) -> Option<EVT::IterTy1<'_>> {
         self.get(pos).map(|x| x.clone())
+    }
+
+    fn iter_ty_1(&self) -> impl Iterator<Item = <EVT as EventValueType>::IterTy1<'_>> {
+        self.iter().map(|x| x.clone())
     }
 }
 
@@ -85,6 +104,10 @@ impl Container<String> for VecDeque<String> {
     fn get_iter_ty_1(&self, pos: usize) -> Option<&str> {
         self.get(pos).map(|x| x.as_str())
     }
+
+    fn iter_ty_1(&self) -> impl Iterator<Item = <String as EventValueType>::IterTy1<'_>> {
+        self.iter().map(|x| x.as_str())
+    }
 }
 
 macro_rules! impl_event_value_type {
@@ -94,6 +117,7 @@ macro_rules! impl_event_value_type {
             type AggregatorTimeWeight = AggregatorNumeric;
             type AggTimeWeightOutputAvg = f64;
             type IterTy1<'a> = $evt;
+            const SERDE_ID: u32 = <$evt as SubFrId>::SUB;
         }
 
         impl PartialOrdEvtA<$evt> for $evt {
@@ -144,6 +168,7 @@ impl EventValueType for f32 {
     type AggregatorTimeWeight = AggregatorNumeric;
     type AggTimeWeightOutputAvg = f32;
     type IterTy1<'a> = f32;
+    const SERDE_ID: u32 = <f32 as SubFrId>::SUB;
 }
 
 impl EventValueType for f64 {
@@ -151,6 +176,7 @@ impl EventValueType for f64 {
     type AggregatorTimeWeight = AggregatorNumeric;
     type AggTimeWeightOutputAvg = f64;
     type IterTy1<'a> = f64;
+    const SERDE_ID: u32 = <f64 as SubFrId>::SUB;
 }
 
 impl EventValueType for bool {
@@ -158,6 +184,7 @@ impl EventValueType for bool {
     type AggregatorTimeWeight = AggregatorNumeric;
     type AggTimeWeightOutputAvg = f64;
     type IterTy1<'a> = bool;
+    const SERDE_ID: u32 = <bool as SubFrId>::SUB;
 }
 
 impl EventValueType for String {
@@ -165,7 +192,40 @@ impl EventValueType for String {
     type AggregatorTimeWeight = AggregatorNumeric;
     type AggTimeWeightOutputAvg = f64;
     type IterTy1<'a> = &'a str;
+    const SERDE_ID: u32 = <String as SubFrId>::SUB;
 }
+
+macro_rules! impl_event_value_type_vec {
+    ($evt:ty) => {
+        impl EventValueType for Vec<$evt> {
+            type Container = VecDeque<Self>;
+            type AggregatorTimeWeight = AggregatorVecNumeric;
+            type AggTimeWeightOutputAvg = f32;
+            type IterTy1<'a> = Vec<$evt>;
+            const SERDE_ID: u32 = <Vec<$evt> as SubFrId>::SUB;
+        }
+
+        impl PartialOrdEvtA<Vec<$evt>> for Vec<$evt> {
+            fn cmp_a(&self, other: &Vec<$evt>) -> Option<core::cmp::Ordering> {
+                self.partial_cmp(other)
+            }
+        }
+    };
+}
+
+impl_event_value_type_vec!(u8);
+impl_event_value_type_vec!(u16);
+impl_event_value_type_vec!(u32);
+impl_event_value_type_vec!(u64);
+impl_event_value_type_vec!(i8);
+impl_event_value_type_vec!(i16);
+impl_event_value_type_vec!(i32);
+impl_event_value_type_vec!(i64);
+impl_event_value_type_vec!(f32);
+impl_event_value_type_vec!(f64);
+impl_event_value_type_vec!(bool);
+impl_event_value_type_vec!(String);
+impl_event_value_type_vec!(EnumVariant);
 
 #[derive(Debug, Clone)]
 pub struct EventSingleRef<'a, EVT>
@@ -221,15 +281,21 @@ where
 {
     tss: VecDeque<TsNano>,
     vals: <EVT as EventValueType>::Container,
+    byte_estimate: u64,
 }
 
 mod container_events_serde {
     use super::ContainerEvents;
     use super::EventValueType;
+    use serde::de::MapAccess;
+    use serde::de::Visitor;
+    use serde::ser::SerializeStruct;
     use serde::Deserialize;
     use serde::Deserializer;
     use serde::Serialize;
     use serde::Serializer;
+    use std::fmt;
+    use std::marker::PhantomData;
 
     impl<EVT> Serialize for ContainerEvents<EVT>
     where
@@ -239,7 +305,54 @@ mod container_events_serde {
         where
             S: Serializer,
         {
-            todo!()
+            let stname = std::any::type_name::<Self>();
+            let mut st = ser.serialize_struct(stname, 2)?;
+            st.serialize_field("tss", &self.tss)?;
+            st.serialize_field("vals", &self.vals)?;
+            st.end()
+        }
+    }
+
+    struct Vis<EVT> {
+        _t1: PhantomData<EVT>,
+    }
+
+    impl<'de, EVT> Visitor<'de> for Vis<EVT>
+    where
+        EVT: EventValueType,
+    {
+        type Value = ContainerEvents<EVT>;
+
+        fn expecting(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+            fmt.write_str("a struct with fields tss and vals")
+        }
+
+        fn visit_map<M>(self, mut map: M) -> Result<Self::Value, M::Error>
+        where
+            M: MapAccess<'de>,
+        {
+            let mut tss = None;
+            let mut vals = None;
+            while let Some(key) = map.next_key::<&str>()? {
+                match key {
+                    "tss" => {
+                        tss = Some(map.next_value()?);
+                    }
+                    "vals" => {
+                        vals = Some(map.next_value()?);
+                    }
+                    _ => {
+                        use serde::de::Error;
+                        return Err(Error::unknown_field(key, &["tss", "vals"]));
+                    }
+                }
+            }
+            let ret = Self::Value {
+                tss: tss.unwrap(),
+                vals: vals.unwrap(),
+                byte_estimate: 0,
+            };
+            Ok(ret)
         }
     }
 
@@ -251,7 +364,8 @@ mod container_events_serde {
         where
             D: Deserializer<'de>,
         {
-            todo!()
+            let stname = std::any::type_name::<Self>();
+            de.deserialize_struct(stname, &["tss", "vals"], Vis { _t1: PhantomData })
         }
     }
 }
@@ -264,7 +378,11 @@ where
         tss: VecDeque<TsNano>,
         vals: <EVT as EventValueType>::Container,
     ) -> Self {
-        Self { tss, vals }
+        Self {
+            tss,
+            vals,
+            byte_estimate: 0,
+        }
     }
 
     pub fn type_name() -> &'static str {
@@ -275,6 +393,7 @@ where
         Self {
             tss: VecDeque::new(),
             vals: Container::new(),
+            byte_estimate: 0,
         }
     }
 
@@ -297,6 +416,10 @@ where
     pub fn push_back(&mut self, ts: TsNano, val: EVT) {
         self.tss.push_back(ts);
         self.vals.push_back(val);
+    }
+
+    pub fn iter_zip<'a>(&'a self) -> impl Iterator<Item = (&TsNano, EVT::IterTy1<'a>)> {
+        self.tss.iter().zip(self.vals.iter_ty_1())
     }
 }
 
@@ -322,6 +445,33 @@ where
 {
     fn as_any_ref(&self) -> &dyn any::Any {
         self
+    }
+}
+
+impl<EVT> AsAnyMut for ContainerEvents<EVT>
+where
+    EVT: EventValueType,
+{
+    fn as_any_mut(&mut self) -> &mut dyn any::Any {
+        self
+    }
+}
+
+impl<EVT> WithLen for ContainerEvents<EVT>
+where
+    EVT: EventValueType,
+{
+    fn len(&self) -> usize {
+        self.len()
+    }
+}
+
+impl<EVT> ByteEstimate for ContainerEvents<EVT>
+where
+    EVT: EventValueType,
+{
+    fn byte_estimate(&self) -> u64 {
+        self.byte_estimate
     }
 }
 
@@ -391,6 +541,80 @@ where
     }
 }
 
+impl<EVT> MergeableTy for ContainerEvents<EVT>
+where
+    EVT: EventValueType,
+{
+    fn ts_min(&self) -> Option<TsNano> {
+        todo!()
+    }
+
+    fn ts_max(&self) -> Option<TsNano> {
+        todo!()
+    }
+
+    fn drain_into(&mut self, dst: &mut Self, range: Range<usize>) -> DrainIntoDstResult {
+        todo!()
+    }
+
+    fn drain_into_new(&mut self, range: Range<usize>) -> DrainIntoNewResult<Self> {
+        todo!()
+    }
+
+    fn find_lowest_index_gt(&self, ts: TsNano) -> Option<usize> {
+        todo!()
+    }
+
+    fn find_lowest_index_ge(&self, ts: TsNano) -> Option<usize> {
+        todo!()
+    }
+
+    fn find_highest_index_lt(&self, ts: TsNano) -> Option<usize> {
+        todo!()
+    }
+
+    fn tss_for_testing(&self) -> Vec<netpod::TsMs> {
+        todo!()
+    }
+}
+
+impl<EVT> MergeableDyn for ContainerEvents<EVT>
+where
+    EVT: EventValueType,
+{
+    fn ts_min(&self) -> Option<TsNano> {
+        todo!()
+    }
+
+    fn ts_max(&self) -> Option<TsNano> {
+        todo!()
+    }
+
+    fn find_lowest_index_gt(&self, ts: TsNano) -> Option<usize> {
+        todo!()
+    }
+
+    fn find_lowest_index_ge(&self, ts: TsNano) -> Option<usize> {
+        todo!()
+    }
+
+    fn find_highest_index_lt(&self, ts: TsNano) -> Option<usize> {
+        todo!()
+    }
+
+    fn tss_for_testing(&self) -> Vec<netpod::TsMs> {
+        todo!()
+    }
+
+    fn drain_into(
+        &mut self,
+        dst: &mut dyn MergeableDyn,
+        range: Range<usize>,
+    ) -> DrainIntoDstResult {
+        todo!()
+    }
+}
+
 impl<EVT> BinningggContainerEventsDyn for ContainerEvents<EVT>
 where
     EVT: EventValueType,
@@ -409,5 +633,108 @@ where
     fn to_anybox(&mut self) -> Box<dyn std::any::Any> {
         let ret = core::mem::replace(self, Self::new());
         Box::new(ret)
+    }
+
+    fn clone_dyn(&self) -> Box<dyn BinningggContainerEventsDyn> {
+        Box::new(self.clone())
+    }
+
+    fn serde_id(&self) -> u32 {
+        items_0::streamitem::CONTAINER_EVENTS_TYPE_ID
+    }
+
+    fn nty_id(&self) -> u32 {
+        EVT::SERDE_ID
+    }
+
+    fn eq(&self, rhs: &dyn BinningggContainerEventsDyn) -> bool {
+        if let Some(rhs) = rhs.as_any_ref().downcast_ref::<Self>() {
+            self.eq(rhs)
+        } else {
+            false
+        }
+    }
+}
+
+#[cfg(test)]
+mod test_frame {
+    use super::*;
+    use crate::channelevents::ChannelEvents;
+    use crate::framable::Framable;
+    use crate::framable::INMEM_FRAME_ENCID;
+    use crate::frame::decode_frame;
+    use crate::inmem::InMemoryFrame;
+    use items_0::streamitem::RangeCompletableItem;
+    use items_0::streamitem::Sitemty;
+    use items_0::streamitem::StreamItem;
+    use netpod::TsMs;
+
+    #[test]
+    fn events_serialize() {
+        let mut evs = ContainerEvents::new();
+        evs.push_back(TsNano::from_ns(123), 55f32);
+        let item = ChannelEvents::from(evs);
+        let item: Sitemty<_> = Ok(StreamItem::DataItem(RangeCompletableItem::Data(item)));
+        let mut buf = item.make_frame_dyn().unwrap();
+        let s = String::from_utf8_lossy(&buf[20..buf.len() - 4]);
+        eprintln!("[[{s}]]");
+        let buflen = buf.len();
+        let frame = InMemoryFrame {
+            encid: INMEM_FRAME_ENCID,
+            tyid: 0x2500,
+            len: (buflen - 24) as _,
+            buf: buf.split_off(20).split_to(buflen - 20 - 4).freeze(),
+        };
+        let item: Sitemty<ChannelEvents> = decode_frame(&frame).unwrap();
+        let item = if let Ok(x) = item { x } else { panic!() };
+        let item = if let StreamItem::DataItem(x) = item {
+            x
+        } else {
+            panic!()
+        };
+        let item = if let RangeCompletableItem::Data(x) = item {
+            x
+        } else {
+            panic!()
+        };
+        let item = if let ChannelEvents::Events(x) = item {
+            x
+        } else {
+            panic!()
+        };
+        let item = if let Some(item) = item.as_any_ref().downcast_ref::<ContainerEvents<f32>>() {
+            item
+        } else {
+            panic!()
+        };
+        assert_eq!(
+            MergeableTy::tss_for_testing(item),
+            &[TsMs::from_ms_u64(123)]
+        );
+    }
+}
+
+#[cfg(test)]
+mod test_serde_opt {
+    use super::*;
+
+    #[derive(Serialize)]
+    struct A {
+        a: Option<String>,
+        #[serde(default)]
+        b: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        c: Option<String>,
+    }
+
+    #[test]
+    fn test_a() {
+        let s = serde_json::to_string(&A {
+            a: None,
+            b: None,
+            c: None,
+        })
+        .unwrap();
+        assert_eq!(s, r#"{"a":null,"b":null}"#);
     }
 }

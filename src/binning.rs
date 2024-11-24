@@ -7,4 +7,4 @@ pub mod timeweight;
 pub mod valuetype;
 
 #[cfg(test)]
-mod test;
+pub mod test;

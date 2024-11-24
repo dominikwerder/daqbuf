@@ -238,3 +238,132 @@ impl AggregatorTimeWeight<String> for AggregatorNumeric {
         sum / filled_width_fraction as f64
     }
 }
+
+#[derive(Debug)]
+pub struct AggregatorVecNumeric {
+    sum: f64,
+}
+
+macro_rules! impl_agg_tw_vec {
+    ($evt:ty) => {
+        impl AggregatorTimeWeight<Vec<$evt>> for AggregatorVecNumeric {
+            fn new() -> Self {
+                Self { sum: 0. }
+            }
+
+            fn ingest(&mut self, dt: DtNano, bl: DtNano, val: Vec<$evt>) {
+                let f = dt.ns() as f64 / bl.ns() as f64;
+                for e in val.iter() {
+                    self.sum += f * (*e) as f64;
+                }
+            }
+
+            fn reset_for_new_bin(&mut self) {
+                self.sum = 0.;
+            }
+
+            fn result_and_reset_for_new_bin(
+                &mut self,
+                filled_width_fraction: f32,
+            ) -> <Vec<$evt> as EventValueType>::AggTimeWeightOutputAvg {
+                let sum = self.sum.clone() as f32;
+                trace_result!(
+                    "result_and_reset_for_new_bin  sum {}  {}",
+                    sum,
+                    filled_width_fraction
+                );
+                self.sum = 0.;
+                sum / filled_width_fraction
+            }
+        }
+    };
+}
+
+impl_agg_tw_vec!(u8);
+impl_agg_tw_vec!(u16);
+impl_agg_tw_vec!(u32);
+impl_agg_tw_vec!(u64);
+impl_agg_tw_vec!(i8);
+impl_agg_tw_vec!(i16);
+impl_agg_tw_vec!(i32);
+impl_agg_tw_vec!(i64);
+impl_agg_tw_vec!(f32);
+impl_agg_tw_vec!(f64);
+
+impl AggregatorTimeWeight<Vec<bool>> for AggregatorVecNumeric {
+    fn new() -> Self {
+        Self { sum: 0. }
+    }
+
+    fn ingest(&mut self, dt: DtNano, bl: DtNano, val: Vec<bool>) {
+        let f = dt.ns() as f64 / bl.ns() as f64;
+        self.sum += f * val.len() as f64;
+    }
+
+    fn reset_for_new_bin(&mut self) {
+        self.sum = 0.;
+    }
+
+    fn result_and_reset_for_new_bin(&mut self, filled_width_fraction: f32) -> f32 {
+        let sum = self.sum as f32;
+        trace_result!(
+            "result_and_reset_for_new_bin  sum {}  {}",
+            sum,
+            filled_width_fraction
+        );
+        self.sum = 0.;
+        sum / filled_width_fraction
+    }
+}
+
+impl AggregatorTimeWeight<Vec<String>> for AggregatorVecNumeric {
+    fn new() -> Self {
+        Self { sum: 0. }
+    }
+
+    fn ingest(&mut self, dt: DtNano, bl: DtNano, val: Vec<String>) {
+        let f = dt.ns() as f64 / bl.ns() as f64;
+        self.sum += f * val.len() as f64;
+    }
+
+    fn reset_for_new_bin(&mut self) {
+        self.sum = 0.;
+    }
+
+    fn result_and_reset_for_new_bin(&mut self, filled_width_fraction: f32) -> f32 {
+        let sum = self.sum as f32;
+        trace_result!(
+            "result_and_reset_for_new_bin  sum {}  {}",
+            sum,
+            filled_width_fraction
+        );
+        self.sum = 0.;
+        sum / filled_width_fraction
+    }
+}
+
+impl AggregatorTimeWeight<Vec<EnumVariant>> for AggregatorVecNumeric {
+    fn new() -> Self {
+        Self { sum: 0. }
+    }
+
+    fn ingest(&mut self, dt: DtNano, bl: DtNano, val: Vec<EnumVariant>) {
+        let f = dt.ns() as f64 / bl.ns() as f64;
+        self.sum += f * val.len() as f64;
+    }
+
+    fn reset_for_new_bin(&mut self) {
+        self.sum = 0.;
+    }
+
+    fn result_and_reset_for_new_bin(&mut self, filled_width_fraction: f32) -> f32 {
+        let sum = self.sum as f32;
+        trace_result!(
+            "result_and_reset_for_new_bin  sum {}  {}",
+            sum,
+            filled_width_fraction
+        );
+        self.sum = 0.;
+        sum / filled_width_fraction
+    }
+}

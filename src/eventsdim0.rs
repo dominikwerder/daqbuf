@@ -14,7 +14,6 @@ use items_0::AsAnyRef;
 use items_0::Empty;
 use items_0::Events;
 use items_0::EventsNonObj;
-use items_0::MergeError;
 use items_0::Resettable;
 use items_0::TypeName;
 use items_0::WithLen;
@@ -578,11 +577,7 @@ impl<STY: ScalarOps> Events for EventsDim0<STY> {
         Box::new(Self::empty())
     }
 
-    fn drain_into_evs(
-        &mut self,
-        dst: &mut dyn Events,
-        range: (usize, usize),
-    ) -> Result<(), MergeError> {
+    fn drain_into_evs(&mut self, dst: &mut dyn Events, range: (usize, usize)) -> Result<(), Error> {
         // TODO as_any and as_any_mut are declared on unrelated traits. Simplify.
         if let Some(dst) = dst.as_any_mut().downcast_mut::<Self>() {
             // TODO make it harder to forget new members when the struct may get modified in the future
@@ -777,87 +772,5 @@ where
         self.tss.push_back(ts);
         self.pulses.push_back(pulse);
         self.values.push_back(value);
-    }
-}
-
-#[cfg(test)]
-mod test_frame {
-    use super::*;
-    use crate::channelevents::ChannelEvents;
-    use crate::framable::Framable;
-    use crate::framable::INMEM_FRAME_ENCID;
-    use crate::frame::decode_frame;
-    use crate::inmem::InMemoryFrame;
-    use items_0::streamitem::RangeCompletableItem;
-    use items_0::streamitem::Sitemty;
-    use items_0::streamitem::StreamItem;
-
-    #[test]
-    fn events_serialize() {
-        // taskrun::tracing_init_testing().unwrap();
-        let mut events = EventsDim0::empty();
-        events.push(123, 234, 55f32);
-        let events = events;
-        let events: Box<dyn Events> = Box::new(events);
-        let item = ChannelEvents::Events(events);
-        let item = Ok::<_, Error>(StreamItem::DataItem(RangeCompletableItem::Data(item)));
-        let mut buf = item.make_frame_dyn().unwrap();
-        let s = String::from_utf8_lossy(&buf[20..buf.len() - 4]);
-        eprintln!("[[{s}]]");
-        let buflen = buf.len();
-        let frame = InMemoryFrame {
-            encid: INMEM_FRAME_ENCID,
-            tyid: 0x2500,
-            len: (buflen - 24) as _,
-            buf: buf.split_off(20).split_to(buflen - 20 - 4).freeze(),
-        };
-        let item: Sitemty<ChannelEvents> = decode_frame(&frame).unwrap();
-        let item = if let Ok(x) = item { x } else { panic!() };
-        let item = if let StreamItem::DataItem(x) = item {
-            x
-        } else {
-            panic!()
-        };
-        let item = if let RangeCompletableItem::Data(x) = item {
-            x
-        } else {
-            panic!()
-        };
-        let mut item = if let ChannelEvents::Events(x) = item {
-            x
-        } else {
-            panic!()
-        };
-        let item = if let Some(item) = item.as_any_mut().downcast_mut::<EventsDim0<f32>>() {
-            item
-        } else {
-            panic!()
-        };
-        assert_eq!(item.tss(), &[123]);
-    }
-}
-
-#[cfg(test)]
-mod test_serde_opt {
-    use super::*;
-
-    #[derive(Serialize)]
-    struct A {
-        a: Option<String>,
-        #[serde(default)]
-        b: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        c: Option<String>,
-    }
-
-    #[test]
-    fn test_a() {
-        let s = serde_json::to_string(&A {
-            a: None,
-            b: None,
-            c: None,
-        })
-        .unwrap();
-        assert_eq!(s, r#"{"a":null,"b":null}"#);
     }
 }

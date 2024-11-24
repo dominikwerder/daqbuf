@@ -15,7 +15,6 @@ use items_0::AsAnyRef;
 use items_0::Empty;
 use items_0::Events;
 use items_0::EventsNonObj;
-use items_0::MergeError;
 use items_0::TypeName;
 use items_0::WithLen;
 use netpod::is_false;
@@ -530,11 +529,7 @@ impl<STY: ScalarOps> Events for EventsDim1<STY> {
         Box::new(Self::empty())
     }
 
-    fn drain_into_evs(
-        &mut self,
-        dst: &mut dyn Events,
-        range: (usize, usize),
-    ) -> Result<(), MergeError> {
+    fn drain_into_evs(&mut self, dst: &mut dyn Events, range: (usize, usize)) -> Result<(), Error> {
         // TODO as_any and as_any_mut are declared on unrelated traits. Simplify.
         if let Some(dst) = dst.as_any_mut().downcast_mut::<Self>() {
             // TODO make it harder to forget new members when the struct may get modified in the future
@@ -545,7 +540,8 @@ impl<STY: ScalarOps> Events for EventsDim1<STY> {
             Ok(())
         } else {
             error!("downcast to EventsDim0 FAILED");
-            Err(MergeError::NotCompatible)
+            // Err(Error::NotCompatible)
+            todo!()
         }
     }
 

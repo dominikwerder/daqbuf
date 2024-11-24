@@ -355,14 +355,22 @@ where
         return Err(Error::UnknownEncoder(frame.encid()));
     }
     if frame.len() as usize != frame.buf().len() {
-        return Err(Error::BufferMismatch(frame.len(), frame.buf().len(), frame.tyid()));
+        return Err(Error::BufferMismatch(
+            frame.len(),
+            frame.buf().len(),
+            frame.tyid(),
+        ));
     }
     if frame.tyid() == ERROR_FRAME_TYPE_ID {
         // error frames are always encoded as json
         let k: err::Error = match json_from_slice(frame.buf()) {
             Ok(item) => item,
             Err(e) => {
-                error!("deserialize  len {}  ERROR_FRAME_TYPE_ID  {}", frame.buf().len(), e);
+                error!(
+                    "deserialize  len {}  ERROR_FRAME_TYPE_ID  {}",
+                    frame.buf().len(),
+                    e
+                );
                 let n = frame.buf().len().min(256);
                 let s = String::from_utf8_lossy(&frame.buf()[..n]);
                 error!("frame.buf as string: {:?}", s);
@@ -374,7 +382,11 @@ where
         let k: LogItem = match decode_from_slice(frame.buf()) {
             Ok(item) => item,
             Err(e) => {
-                error!("deserialize  len {}  LOG_FRAME_TYPE_ID  {}", frame.buf().len(), e);
+                error!(
+                    "deserialize  len {}  LOG_FRAME_TYPE_ID  {}",
+                    frame.buf().len(),
+                    e
+                );
                 let n = frame.buf().len().min(128);
                 let s = String::from_utf8_lossy(&frame.buf()[..n]);
                 error!("frame.buf as string: {:?}", s);
@@ -386,7 +398,11 @@ where
         let k: StatsItem = match decode_from_slice(frame.buf()) {
             Ok(item) => item,
             Err(e) => {
-                error!("deserialize  len {}  STATS_FRAME_TYPE_ID  {}", frame.buf().len(), e);
+                error!(
+                    "deserialize  len {}  STATS_FRAME_TYPE_ID  {}",
+                    frame.buf().len(),
+                    e
+                );
                 let n = frame.buf().len().min(128);
                 let s = String::from_utf8_lossy(&frame.buf()[..n]);
                 error!("frame.buf as string: {:?}", s);
@@ -413,7 +429,10 @@ where
                     );
                     let n = frame.buf().len().min(64);
                     let s = String::from_utf8_lossy(&frame.buf()[..n]);
-                    error!("decode_from_slice bad frame.buf as bytes: {:?}", &frame.buf()[..n]);
+                    error!(
+                        "decode_from_slice bad frame.buf as bytes: {:?}",
+                        &frame.buf()[..n]
+                    );
                     error!("decode_from_slice bad frame.buf as string: {:?}", s);
                     Err(e)?
                 }

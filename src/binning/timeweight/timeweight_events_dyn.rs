@@ -189,24 +189,18 @@ impl BinnedEventsTimeweightStream {
             Ok(x) => match x {
                 DataItem(x) => match x {
                     Data(x) => match x {
-                        ChannelEvents::Events(evs) => match self
-                            .binned_events
-                            .ingest(&evs.to_container_events())
-                        {
-                            Ok(()) => {
-                                match self.binned_events.output() {
-                                    Ok(Some(x)) => {
-                                        if x.len() == 0 {
-                                            Continue(())
-                                        } else {
-                                            Break(Ready(Some(Ok(DataItem(Data(x))))))
-                                        }
+                        ChannelEvents::Events(evs) => match self.binned_events.ingest(&evs) {
+                            Ok(()) => match self.binned_events.output() {
+                                Ok(Some(x)) => {
+                                    if x.len() == 0 {
+                                        Continue(())
+                                    } else {
+                                        Break(Ready(Some(Ok(DataItem(Data(x))))))
                                     }
-                                    Ok(None) => Continue(()),
-                                    Err(e) => Break(Ready(Some(Err(err::Error::from_string(e))))),
                                 }
-                                // Continue(())
-                            }
+                                Ok(None) => Continue(()),
+                                Err(e) => Break(Ready(Some(Err(err::Error::from_string(e))))),
+                            },
                             Err(e) => Break(Ready(Some(Err(err::Error::from_string(e))))),
                         },
                         ChannelEvents::Status(_) => {

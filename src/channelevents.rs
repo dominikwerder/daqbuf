@@ -1,6 +1,8 @@
+use crate::binning::container_events::ContainerEvents;
+use crate::binning::container_events::EventValueType;
 use crate::framable::FrameType;
-use crate::merger::Mergeable;
 use crate::Events;
+use core::ops::Range;
 use daqbuf_err as err;
 use items_0::collect_s::CollectableDyn;
 use items_0::collect_s::CollectedDyn;
@@ -8,18 +10,23 @@ use items_0::collect_s::CollectorDyn;
 use items_0::container::ByteEstimate;
 use items_0::framable::FrameTypeInnerStatic;
 use items_0::isodate::IsoDateTime;
+use items_0::merge::DrainIntoDstResult;
+use items_0::merge::DrainIntoNewResult;
+use items_0::merge::MergeableDyn;
+use items_0::merge::MergeableTy;
 use items_0::streamitem::ITEMS_2_CHANNEL_EVENTS_FRAME_TYPE_ID;
+use items_0::timebin::BinningggContainerEventsDyn;
 use items_0::AsAnyMut;
 use items_0::AsAnyRef;
 use items_0::Empty;
 use items_0::EventsNonObj;
 use items_0::Extendable;
-use items_0::MergeError;
 use items_0::TypeName;
 use items_0::WithLen;
 use netpod::log::*;
 use netpod::range::evrange::SeriesRange;
 use netpod::BinnedRangeEnum;
+use netpod::TsNano;
 use serde::Deserialize;
 use serde::Serialize;
 use std::any;
@@ -46,7 +53,7 @@ impl ConnStatus {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ConnStatusEvent {
-    pub ts: u64,
+    pub ts: TsNano,
     #[serde(with = "humantime_serde")]
     //pub datetime: chrono::DateTime<chrono::Utc>,
     pub datetime: SystemTime,
@@ -54,8 +61,8 @@ pub struct ConnStatusEvent {
 }
 
 impl ConnStatusEvent {
-    pub fn new(ts: u64, status: ConnStatus) -> Self {
-        let datetime = SystemTime::UNIX_EPOCH + Duration::from_millis(ts / 1000000);
+    pub fn new(ts: TsNano, status: ConnStatus) -> Self {
+        let datetime = SystemTime::UNIX_EPOCH + Duration::from_millis(ts.ms());
         Self {
             ts,
             datetime,
@@ -148,11 +155,9 @@ impl ByteEstimate for ChannelStatusEvent {
     }
 }
 
-/// Events on a channel consist not only of e.g. timestamped values, but can be also
-/// connection status changes.
 #[derive(Debug)]
 pub enum ChannelEvents {
-    Events(Box<dyn Events>),
+    Events(Box<dyn BinningggContainerEventsDyn>),
     Status(Option<ConnStatusEvent>),
 }
 
@@ -162,6 +167,15 @@ impl ChannelEvents {
             ChannelEvents::Events(_) => true,
             ChannelEvents::Status(_) => false,
         }
+    }
+}
+
+impl<EVT> From<ContainerEvents<EVT>> for ChannelEvents
+where
+    EVT: EventValueType,
+{
+    fn from(value: ContainerEvents<EVT>) -> Self {
+        Self::Events(Box::new(value))
     }
 }
 
@@ -206,10 +220,12 @@ impl AsAnyMut for ChannelEvents {
 mod serde_channel_events {
     use super::ChannelEvents;
     use super::Events;
+    use crate::binning::container_events::ContainerEvents;
     use crate::channelevents::ConnStatusEvent;
     use crate::eventsdim0::EventsDim0;
     use crate::eventsdim1::EventsDim1;
     use items_0::subfr::SubFrId;
+    use items_0::timebin::BinningggContainerEventsDyn;
     use netpod::log::*;
     use netpod::EnumVariant;
     use serde::de;
@@ -223,19 +239,64 @@ mod serde_channel_events {
     use serde::Serializer;
     use std::fmt;
 
-    struct EvRef<'a>(&'a dyn Events);
+    fn try_serialize<S, T>(
+        v: &dyn BinningggContainerEventsDyn,
+        ser: &mut <S as Serializer>::SerializeSeq,
+    ) -> Result<(), <S as Serializer>::Error>
+    where
+        T: Serialize + 'static,
+        S: Serializer,
+    {
+        if let Some(x) = v.as_any_ref().downcast_ref::<T>() {
+            ser.serialize_element(x)?;
+            Ok(())
+        } else {
+            let s = std::any::type_name::<T>();
+            Err(serde::ser::Error::custom(format!("expect a {}", s)))
+        }
+    }
+
+    struct EvRef<'a>(&'a dyn BinningggContainerEventsDyn);
 
     struct EvBox(Box<dyn Events>);
 
     impl<'a> Serialize for EvRef<'a> {
-        fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        fn serialize<S>(&self, ser: S) -> Result<S::Ok, S::Error>
         where
             S: Serializer,
         {
-            let mut ser = serializer.serialize_seq(Some(3))?;
-            ser.serialize_element(self.0.serde_id())?;
+            let mut ser = ser.serialize_seq(Some(3))?;
+            ser.serialize_element(&self.0.serde_id())?;
             ser.serialize_element(&self.0.nty_id())?;
-            ser.serialize_element(self.0)?;
+            use items_0::streamitem::CONTAINER_EVENTS_TYPE_ID;
+            type C1<T> = ContainerEvents<T>;
+            match self.0.serde_id() {
+                CONTAINER_EVENTS_TYPE_ID => match self.0.nty_id() {
+                    u8::SUB => try_serialize::<S, C1<u8>>(self.0, &mut ser)?,
+                    u16::SUB => try_serialize::<S, C1<u16>>(self.0, &mut ser)?,
+                    u32::SUB => try_serialize::<S, C1<u32>>(self.0, &mut ser)?,
+                    u64::SUB => try_serialize::<S, C1<u64>>(self.0, &mut ser)?,
+                    i8::SUB => try_serialize::<S, C1<i8>>(self.0, &mut ser)?,
+                    i16::SUB => try_serialize::<S, C1<i16>>(self.0, &mut ser)?,
+                    i32::SUB => try_serialize::<S, C1<i32>>(self.0, &mut ser)?,
+                    i64::SUB => try_serialize::<S, C1<i64>>(self.0, &mut ser)?,
+                    f32::SUB => try_serialize::<S, C1<f32>>(self.0, &mut ser)?,
+                    f64::SUB => try_serialize::<S, C1<f64>>(self.0, &mut ser)?,
+                    bool::SUB => try_serialize::<S, C1<bool>>(self.0, &mut ser)?,
+                    String::SUB => try_serialize::<S, C1<String>>(self.0, &mut ser)?,
+                    EnumVariant::SUB => try_serialize::<S, C1<EnumVariant>>(self.0, &mut ser)?,
+                    //
+                    Vec::<f32>::SUB => try_serialize::<S, C1<Vec<f32>>>(self.0, &mut ser)?,
+                    _ => {
+                        let msg = format!("not supported evt id {}", self.0.nty_id());
+                        return Err(serde::ser::Error::custom(msg));
+                    }
+                },
+                _ => {
+                    let msg = format!("not supported obj id {}", self.0.serde_id());
+                    return Err(serde::ser::Error::custom(msg));
+                }
+            }
             ser.end()
         }
     }
@@ -545,7 +606,9 @@ mod serde_channel_events {
             match id {
                 VarId::Events => {
                     let x: EvBox = var.newtype_variant()?;
-                    Ok(Self::Value::Events(x.0))
+                    let _ = x;
+                    // Ok(Self::Value::Events(x.0));
+                    todo!()
                 }
                 VarId::Status => {
                     let x: Option<ConnStatusEvent> = var.newtype_variant()?;
@@ -572,6 +635,7 @@ mod serde_channel_events {
 #[cfg(test)]
 mod test_channel_events_serde {
     use super::ChannelEvents;
+    use crate::binning::container_events::ContainerEvents;
     use crate::channelevents::ConnStatusEvent;
     use crate::eventsdim0::EventsDim0;
     use bincode::config::FixintEncoding;
@@ -584,16 +648,17 @@ mod test_channel_events_serde {
     use items_0::bincode;
     use items_0::Appendable;
     use items_0::Empty;
+    use netpod::TsNano;
     use serde::Deserialize;
     use serde::Serialize;
     use std::time::SystemTime;
 
     #[test]
     fn channel_events() {
-        let mut evs = EventsDim0::empty();
-        evs.push(8, 2, 3.0f32);
-        evs.push(12, 3, 3.2f32);
-        let item = ChannelEvents::Events(Box::new(evs));
+        let mut evs = ContainerEvents::new();
+        evs.push_back(TsNano::from_ns(8), 3.0f32);
+        evs.push_back(TsNano::from_ns(12), 3.2f32);
+        let item = ChannelEvents::from(evs);
         let s = serde_json::to_string_pretty(&item).unwrap();
         eprintln!("{s}");
         let w: ChannelEvents = serde_json::from_str(&s).unwrap();
@@ -616,10 +681,10 @@ mod test_channel_events_serde {
 
     #[test]
     fn channel_events_bincode() {
-        let mut evs = EventsDim0::empty();
-        evs.push(8, 2, 3.0f32);
-        evs.push(12, 3, 3.2f32);
-        let item = ChannelEvents::Events(Box::new(evs));
+        let mut evs = ContainerEvents::new();
+        evs.push_back(TsNano::from_ns(8), 3.0f32);
+        evs.push_back(TsNano::from_ns(12), 3.2f32);
+        let item = ChannelEvents::from(evs);
         let opts = bincode_opts();
         let mut out = Vec::new();
         let mut ser = bincode::Serializer::new(&mut out, opts);
@@ -639,11 +704,11 @@ mod test_channel_events_serde {
 
     #[test]
     fn channel_status_bincode() {
-        let mut evs = EventsDim0::empty();
-        evs.push(8, 2, 3.0f32);
-        evs.push(12, 3, 3.2f32);
+        let mut evs = ContainerEvents::new();
+        evs.push_back(TsNano::from_ns(8), 3.0f32);
+        evs.push_back(TsNano::from_ns(12), 3.2f32);
         let status = ConnStatusEvent {
-            ts: 567,
+            ts: TsNano::from_ns(567),
             datetime: SystemTime::UNIX_EPOCH,
             status: crate::channelevents::ConnStatus::Connect,
         };
@@ -661,7 +726,7 @@ mod test_channel_events_serde {
             panic!()
         };
         if let Some(item) = item {
-            assert_eq!(item.ts, 567);
+            assert_eq!(item.ts, TsNano::from_ns(567));
         } else {
             panic!()
         }
@@ -671,7 +736,7 @@ mod test_channel_events_serde {
 impl PartialEq for ChannelEvents {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (Self::Events(l0), Self::Events(r0)) => l0 == r0,
+            (Self::Events(l0), Self::Events(r0)) => l0.eq(r0.as_ref()),
             (Self::Status(l0), Self::Status(r0)) => l0 == r0,
             _ => core::mem::discriminant(self) == core::mem::discriminant(other),
         }
@@ -702,10 +767,10 @@ impl ByteEstimate for ChannelEvents {
     }
 }
 
-impl Mergeable for ChannelEvents {
-    fn ts_min(&self) -> Option<u64> {
+impl MergeableTy for ChannelEvents {
+    fn ts_min(&self) -> Option<TsNano> {
         match self {
-            ChannelEvents::Events(k) => Mergeable::ts_min(k),
+            ChannelEvents::Events(k) => k.ts_min(),
             ChannelEvents::Status(k) => match k {
                 Some(k) => Some(k.ts),
                 None => None,
@@ -713,9 +778,9 @@ impl Mergeable for ChannelEvents {
         }
     }
 
-    fn ts_max(&self) -> Option<u64> {
+    fn ts_max(&self) -> Option<TsNano> {
         match self {
-            ChannelEvents::Events(k) => Mergeable::ts_max(k),
+            ChannelEvents::Events(k) => k.ts_max(),
             ChannelEvents::Status(k) => match k {
                 Some(k) => Some(k.ts),
                 None => None,
@@ -723,56 +788,43 @@ impl Mergeable for ChannelEvents {
         }
     }
 
-    fn new_empty(&self) -> Self {
-        match self {
-            ChannelEvents::Events(k) => ChannelEvents::Events(k.new_empty()),
-            ChannelEvents::Status(_) => ChannelEvents::Status(None),
-        }
-    }
-
-    fn clear(&mut self) {
-        match self {
-            ChannelEvents::Events(x) => {
-                Mergeable::clear(x);
-            }
-            ChannelEvents::Status(x) => {
-                *x = None;
-            }
-        }
-    }
-
-    fn drain_into(&mut self, dst: &mut Self, range: (usize, usize)) -> Result<(), MergeError> {
+    fn drain_into(&mut self, dst: &mut Self, range: Range<usize>) -> DrainIntoDstResult {
         match self {
             ChannelEvents::Events(k) => match dst {
-                ChannelEvents::Events(j) => k.drain_into(j, range),
-                ChannelEvents::Status(_) => Err(MergeError::NotCompatible),
+                ChannelEvents::Events(j) => {
+                    //
+                    // k.drain_into(j, range)
+                    todo!()
+                }
+                ChannelEvents::Status(_) => DrainIntoDstResult::NotCompatible,
             },
             ChannelEvents::Status(k) => match dst {
-                ChannelEvents::Events(_) => Err(MergeError::NotCompatible),
+                ChannelEvents::Events(_) => DrainIntoDstResult::NotCompatible,
                 ChannelEvents::Status(j) => match j {
-                    Some(_) => {
-                        trace!("drain_into  merger::MergeError::Full");
-                        Err(MergeError::Full)
-                    }
+                    Some(_) => DrainIntoDstResult::Partial,
                     None => {
-                        if range.0 > 0 {
-                            trace!("weird range {range:?}");
-                        }
-                        if range.1 > 1 {
-                            trace!("weird range {range:?}");
-                        }
-                        if range.0 == range.1 {
+                        if range.len() != 1 {
                             trace!("try to add empty range to status container {range:?}");
                         }
+                        if range.start != 0 {
+                            trace!("weird range {range:?}");
+                        }
+                        if range.end > 1 {
+                            trace!("weird range {range:?}");
+                        }
                         *j = k.take();
-                        Ok(())
+                        DrainIntoDstResult::Done
                     }
                 },
             },
         }
     }
 
-    fn find_lowest_index_gt(&self, ts: u64) -> Option<usize> {
+    fn drain_into_new(&mut self, range: Range<usize>) -> DrainIntoNewResult<Self> {
+        todo!()
+    }
+
+    fn find_lowest_index_gt(&self, ts: TsNano) -> Option<usize> {
         match self {
             ChannelEvents::Events(k) => k.find_lowest_index_gt(ts),
             ChannelEvents::Status(k) => {
@@ -789,7 +841,7 @@ impl Mergeable for ChannelEvents {
         }
     }
 
-    fn find_lowest_index_ge(&self, ts: u64) -> Option<usize> {
+    fn find_lowest_index_ge(&self, ts: TsNano) -> Option<usize> {
         match self {
             ChannelEvents::Events(k) => k.find_lowest_index_ge(ts),
             ChannelEvents::Status(k) => {
@@ -806,7 +858,7 @@ impl Mergeable for ChannelEvents {
         }
     }
 
-    fn find_highest_index_lt(&self, ts: u64) -> Option<usize> {
+    fn find_highest_index_lt(&self, ts: TsNano) -> Option<usize> {
         match self {
             ChannelEvents::Events(k) => k.find_highest_index_lt(ts),
             ChannelEvents::Status(k) => {
@@ -823,7 +875,7 @@ impl Mergeable for ChannelEvents {
         }
     }
 
-    fn tss(&self) -> Vec<netpod::TsMs> {
+    fn tss_for_testing(&self) -> Vec<netpod::TsMs> {
         Events::tss(self)
             .iter()
             .map(|x| netpod::TsMs::from_ns_u64(*x))
@@ -833,19 +885,13 @@ impl Mergeable for ChannelEvents {
 
 impl EventsNonObj for ChannelEvents {
     fn into_tss_pulses(self: Box<Self>) -> (VecDeque<u64>, VecDeque<u64>) {
-        match *self {
-            ChannelEvents::Events(k) => k.into_tss_pulses(),
-            ChannelEvents::Status(_) => (VecDeque::new(), VecDeque::new()),
-        }
+        todo!()
     }
 }
 
 impl Events for ChannelEvents {
     fn verify(&self) -> bool {
-        match self {
-            ChannelEvents::Events(x) => Events::verify(x),
-            ChannelEvents::Status(_) => panic!(),
-        }
+        todo!()
     }
 
     fn output_info(&self) -> String {
@@ -877,30 +923,15 @@ impl Events for ChannelEvents {
     }
 
     fn new_empty_evs(&self) -> Box<dyn Events> {
-        match self {
-            ChannelEvents::Events(x) => Events::new_empty_evs(x),
-            ChannelEvents::Status(_) => panic!(),
-        }
+        todo!()
     }
 
     fn drain_into_evs(
         &mut self,
         dst: &mut dyn Events,
         range: (usize, usize),
-    ) -> Result<(), MergeError> {
-        let dst2 = if let Some(x) = dst.as_any_mut().downcast_mut::<Self>() {
-            // debug!("unwrapped dst ChannelEvents as well");
-            x
-        } else {
-            panic!("dst is not ChannelEvents");
-        };
-        match self {
-            ChannelEvents::Events(k) => match dst2 {
-                ChannelEvents::Events(j) => Events::drain_into_evs(k, j, range),
-                ChannelEvents::Status(_) => panic!("dst is not events"),
-            },
-            ChannelEvents::Status(_) => panic!("self is not events"),
-        }
+    ) -> Result<(), err::Error> {
+        todo!()
     }
 
     fn find_lowest_index_gt_evs(&self, _ts: u64) -> Option<usize> {
@@ -932,10 +963,7 @@ impl Events for ChannelEvents {
     }
 
     fn tss(&self) -> &VecDeque<u64> {
-        match self {
-            ChannelEvents::Events(x) => Events::tss(x),
-            ChannelEvents::Status(_) => panic!(),
-        }
+        todo!()
     }
 
     fn pulses(&self) -> &VecDeque<u64> {
@@ -943,63 +971,31 @@ impl Events for ChannelEvents {
     }
 
     fn frame_type_id(&self) -> u32 {
-        <Self as FrameTypeInnerStatic>::FRAME_TYPE_ID
+        todo!()
     }
 
     fn to_min_max_avg(&mut self) -> Box<dyn Events> {
-        match self {
-            ChannelEvents::Events(item) => {
-                Box::new(ChannelEvents::Events(Events::to_min_max_avg(item)))
-            }
-            ChannelEvents::Status(item) => Box::new(ChannelEvents::Status(item.take())),
-        }
+        todo!()
     }
 
     fn to_json_string(&self) -> String {
-        match self {
-            ChannelEvents::Events(item) => item.to_json_string(),
-            ChannelEvents::Status(_item) => {
-                error!("TODO convert status to json");
-                String::new()
-            }
-        }
+        todo!()
     }
 
     fn to_json_vec_u8(&self) -> Vec<u8> {
-        match self {
-            ChannelEvents::Events(item) => item.to_json_vec_u8(),
-            ChannelEvents::Status(_item) => {
-                error!("TODO convert status to json");
-                Vec::new()
-            }
-        }
+        todo!()
     }
 
     fn to_cbor_vec_u8(&self) -> Vec<u8> {
-        match self {
-            ChannelEvents::Events(item) => item.to_cbor_vec_u8(),
-            ChannelEvents::Status(_item) => {
-                error!("TODO convert status to cbor");
-                Vec::new()
-            }
-        }
+        todo!()
     }
 
     fn clear(&mut self) {
-        match self {
-            ChannelEvents::Events(x) => Events::clear(x.as_mut()),
-            ChannelEvents::Status(x) => {
-                *x = None;
-            }
-        }
+        todo!()
     }
 
     fn to_dim0_f32_for_binning(&self) -> Box<dyn Events> {
-        use ChannelEvents::*;
-        match self {
-            Events(x) => x.to_dim0_f32_for_binning(),
-            Status(_x) => panic!("ChannelEvents::to_dim0_f32_for_binning"),
-        }
+        todo!()
     }
 
     fn to_container_events(&self) -> Box<dyn ::items_0::timebin::BinningggContainerEventsDyn> {
@@ -1094,12 +1090,13 @@ impl CollectorDyn for ChannelEventsCollector {
         if let Some(item) = item.as_any_mut().downcast_mut::<ChannelEvents>() {
             match item {
                 ChannelEvents::Events(item) => {
-                    let coll = self.coll.get_or_insert_with(|| {
-                        item.as_ref()
-                            .as_collectable_with_default_ref()
-                            .new_collector()
-                    });
-                    coll.ingest(item.as_collectable_with_default_mut());
+                    // let coll = self.coll.get_or_insert_with(|| {
+                    //     item.as_ref()
+                    //         .as_collectable_with_default_ref()
+                    //         .new_collector()
+                    // });
+                    // coll.ingest(item.as_collectable_with_default_mut());
+                    todo!()
                 }
                 ChannelEvents::Status(_) => {
                     // TODO decide on output format to collect also the connection status events

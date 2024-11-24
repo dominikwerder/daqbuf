@@ -1,7 +1,8 @@
 mod bins00;
-mod bins_gen;
+pub mod bins_gen;
 mod compare;
 mod events00;
+mod events01;
 
 use super::container_events::ContainerEvents;
 use std::any;
