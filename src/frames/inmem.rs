@@ -230,7 +230,10 @@ where
                         }
                     }
                     Ready(Err(e)) => {
-                        error!("poll_upstream  need_min {}  buf {:?}  {:?}", self.need_min, self.buf, e);
+                        error!(
+                            "poll_upstream  need_min {}  buf {:?}  {:?}",
+                            self.need_min, self.buf, e
+                        );
                         self.done = true;
                         Ready(Some(Err(e)))
                     }

@@ -8,7 +8,10 @@ use items_0::streamitem::Sitemty;
 use items_0::streamitem::StreamItem;
 use items_0::Events;
 use items_0::WithLen;
+use items_2::binning::container_events::ContainerEvents;
+use items_2::channelevents::ChannelEvents;
 use netpod::log::*;
+use netpod::EnumVariant;
 use std::pin::Pin;
 use std::time::Duration;
 
@@ -85,27 +88,32 @@ fn map_events(x: Sitemty<Box<dyn Events>>) -> Result<JsonBytes, Error> {
             StreamItem::DataItem(x) => match x {
                 RangeCompletableItem::Data(evs) => {
                     let mut k = evs;
-                    let evs = if let Some(j) = k.as_any_mut().downcast_mut::<items_2::channelevents::ChannelEvents>() {
-                        use items_0::AsAnyMut;
+                    let evs = if let Some(j) = k.as_any_mut().downcast_mut::<ChannelEvents>() {
                         match j {
-                            items_2::channelevents::ChannelEvents::Events(m) => {
+                            ChannelEvents::Events(m) => {
                                 if let Some(g) = m
                                     .as_any_mut()
-                                    .downcast_mut::<items_2::eventsdim0::EventsDim0<netpod::EnumVariant>>()
+                                    .downcast_mut::<ContainerEvents<EnumVariant>>()
                                 {
                                     trace!("consider container EnumVariant");
-                                    let mut out = items_2::eventsdim0enum::EventsDim0Enum::new();
-                                    for (&ts, val) in g.tss.iter().zip(g.values.iter()) {
-                                        out.push_back(ts, val.ix(), val.name_string());
+                                    let mut out = ContainerEvents::new();
+                                    for (&ts, val) in g.iter_zip() {
+                                        out.push_back(ts, val.name.to_string());
                                     }
-                                    Box::new(items_2::channelevents::ChannelEvents::Events(Box::new(out)))
+                                    Box::new(ChannelEvents::Events(Box::new(out)))
                                 } else {
-                                    trace!("consider container channel events other events  {}", k.type_name());
+                                    trace!(
+                                        "consider container channel events other events  {}",
+                                        k.type_name()
+                                    );
                                     k
                                 }
                             }
-                            items_2::channelevents::ChannelEvents::Status(_) => {
-                                trace!("consider container channel events status  {}", k.type_name());
+                            ChannelEvents::Status(_) => {
+                                trace!(
+                                    "consider container channel events status  {}",
+                                    k.type_name()
+                                );
                                 k
                             }
                         }

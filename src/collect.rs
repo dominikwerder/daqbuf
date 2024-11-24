@@ -77,7 +77,8 @@ impl Collect {
             collector: None,
             range_final: false,
             timeout: false,
-            timer: timeout_provider.timeout_intervals(deadline.saturating_duration_since(Instant::now())),
+            timer: timeout_provider
+                .timeout_intervals(deadline.saturating_duration_since(Instant::now())),
             done_input: false,
         }
     }
@@ -105,7 +106,11 @@ impl Collect {
                             self.done_input = true;
                         }
                         if coll.byte_estimate() >= self.bytes_max {
-                            info!("reached bytes_max {} / {}", coll.byte_estimate(), self.events_max);
+                            info!(
+                                "reached bytes_max {} / {}",
+                                coll.byte_estimate(),
+                                self.events_max
+                            );
                             coll.set_continue_at_here();
                             self.done_input = true;
                         }
@@ -178,13 +183,15 @@ impl Future for Collect {
                 }
                 // TODO use range_final and timeout in result.
                 match self.collector.take() {
-                    Some(mut coll) => match coll.result(self.range.clone(), self.binrange.clone()) {
-                        Ok(res) => {
-                            //info!("collect stats total duration: {:?}", total_duration);
-                            Ready(Ok(CollectResult::Some(res)))
+                    Some(mut coll) => {
+                        match coll.result(self.range.clone(), self.binrange.clone()) {
+                            Ok(res) => {
+                                //info!("collect stats total duration: {:?}", total_duration);
+                                Ready(Ok(CollectResult::Some(res)))
+                            }
+                            Err(e) => Ready(Err(ErrMsg(e).into())),
                         }
-                        Err(e) => Ready(Err(ErrMsg(e).into())),
-                    },
+                    }
                     None => {
                         debug!("no result because no collector was created");
                         Ready(Ok(CollectResult::Timeout))

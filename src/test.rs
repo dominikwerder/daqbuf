@@ -7,11 +7,10 @@ use futures_util::stream;
 use futures_util::Stream;
 use items_0::streamitem::sitem_data;
 use items_0::streamitem::Sitemty;
-use items_0::Appendable;
-use items_0::Empty;
+use items_2::binning::container_events::ContainerEvents;
 use items_2::channelevents::ChannelEvents;
-use items_2::eventsdim0::EventsDim0;
 use netpod::timeunits::SEC;
+use netpod::TsNano;
 use std::pin::Pin;
 
 #[derive(Debug, thiserror::Error)]
@@ -23,9 +22,9 @@ type BoxedEventStream = Pin<Box<dyn Stream<Item = Sitemty<ChannelEvents>> + Send
 // TODO use some xorshift generator.
 
 fn inmem_test_events_d0_i32_00() -> BoxedEventStream {
-    let mut evs = EventsDim0::empty();
-    evs.push(SEC * 1, 1, 10001);
-    evs.push(SEC * 4, 4, 10004);
+    let mut evs = ContainerEvents::new();
+    evs.push_back(TsNano::from_ns(SEC * 1), 10001);
+    evs.push_back(TsNano::from_ns(SEC * 4), 10004);
     let cev = ChannelEvents::Events(Box::new(evs));
     let item = sitem_data(cev);
     let stream = stream::iter([item]);
@@ -33,8 +32,8 @@ fn inmem_test_events_d0_i32_00() -> BoxedEventStream {
 }
 
 fn inmem_test_events_d0_i32_01() -> BoxedEventStream {
-    let mut evs = EventsDim0::empty();
-    evs.push(SEC * 2, 2, 10002);
+    let mut evs = ContainerEvents::new();
+    evs.push_back(TsNano::from_ns(SEC * 2), 10002);
     let cev = ChannelEvents::Events(Box::new(evs));
     let item = sitem_data(cev);
     let stream = stream::iter([item]);

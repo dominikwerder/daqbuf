@@ -3,13 +3,13 @@ mod test;
 
 use futures_util::Stream;
 use futures_util::StreamExt;
+use items_0::merge::DrainIntoNewResult;
+use items_0::merge::MergeableTy;
 use items_0::streamitem::sitem_err_from_string;
 use items_0::streamitem::RangeCompletableItem;
 use items_0::streamitem::Sitemty;
 use items_0::streamitem::StatsItem;
 use items_0::streamitem::StreamItem;
-use items_0::MergeError;
-use items_2::merger::Mergeable;
 use netpod::log::*;
 use netpod::range::evrange::NanoRange;
 use netpod::RangeFilterStats;
@@ -25,13 +25,13 @@ macro_rules! trace_emit { ($det:expr, $($arg:tt)*) => ( if false && $det { trace
 #[derive(Debug, thiserror::Error)]
 #[cstm(name = "Rangefilter")]
 pub enum Error {
-    Merge(#[from] MergeError),
+    DrainUnclean,
 }
 
 pub struct RangeFilter2<S, ITY>
 where
     S: Stream<Item = Sitemty<ITY>> + Unpin,
-    ITY: Mergeable,
+    ITY: MergeableTy,
 {
     inp: S,
     range: NanoRange,
@@ -50,7 +50,7 @@ where
 impl<S, ITY> RangeFilter2<S, ITY>
 where
     S: Stream<Item = Sitemty<ITY>> + Unpin,
-    ITY: Mergeable,
+    ITY: MergeableTy,
 {
     pub fn type_name() -> &'static str {
         std::any::type_name::<Self>()
@@ -81,45 +81,54 @@ where
         }
     }
 
-    fn prune_high(&mut self, mut item: ITY, ts: u64) -> Result<ITY, Error> {
+    fn prune_high(&mut self, mut item: ITY, ts: TsNano) -> Result<ITY, Error> {
+        let n = item.len();
         let ret = match item.find_highest_index_lt(ts) {
             Some(ihlt) => {
-                let n = item.len();
                 if ihlt + 1 == n {
                     // TODO gather stats, this should be the most common case.
                     self.stats.items_no_prune_high += 1;
                     item
                 } else {
                     self.stats.items_part_prune_high += 1;
-                    let mut dummy = item.new_empty();
-                    match item.drain_into(&mut dummy, (ihlt + 1, n)) {
-                        Ok(_) => {}
-                        Err(e) => match e {
-                            MergeError::NotCompatible => {
-                                error!("logic error")
-                            }
-                            MergeError::Full => error!("full, logic error"),
-                        },
+                    match item.drain_into_new(ihlt + 1..n) {
+                        DrainIntoNewResult::Done(_) => {}
+                        DrainIntoNewResult::Partial(_) => {
+                            error!("full, logic error");
+                        }
+                        DrainIntoNewResult::NotCompatible => {
+                            error!("logic error");
+                        }
                     }
                     item
                 }
             }
             None => {
+                // TODO should not happen often, observe.
                 self.stats.items_all_prune_high += 1;
-                item.new_empty()
+                match item.drain_into_new(0..n) {
+                    DrainIntoNewResult::Done(_) => {}
+                    DrainIntoNewResult::Partial(_) => {
+                        error!("full, logic error");
+                    }
+                    DrainIntoNewResult::NotCompatible => {
+                        error!("logic error");
+                    }
+                }
+                item
             }
         };
         Ok(ret)
     }
 
-    fn handle_item(&mut self, item: ITY) -> Result<ITY, Error> {
+    fn handle_item(&mut self, item: ITY) -> Result<Option<ITY>, Error> {
         if let Some(ts_min) = item.ts_min() {
-            if ts_min < self.range.beg() {
+            if ts_min.ns() < self.range.beg() {
                 debug!("ITEM  BEFORE RANGE  (how many?)");
             }
         }
-        let min = item.ts_min().map(|x| TsNano::from_ns(x).fmt());
-        let max = item.ts_max().map(|x| TsNano::from_ns(x).fmt());
+        let min = item.ts_min();
+        let max = item.ts_max();
         trace_emit!(
             self.trdet,
             "see event  len {}  min {:?}  max {:?}",
@@ -127,62 +136,74 @@ where
             min,
             max
         );
-        let mut item = self.prune_high(item, self.range.end)?;
-        let ret = if self.one_before {
-            let lige = item.find_lowest_index_ge(self.range.beg);
+        let mut item = self.prune_high(item, TsNano::from_ns(self.range.end))?;
+        if self.one_before {
+            let lige = item.find_lowest_index_ge(TsNano::from_ns(self.range.beg));
             trace_emit!(self.trdet, "YES one_before_range  ilge {:?}", lige);
             match lige {
                 Some(lige) => {
                     if lige == 0 {
                         if let Some(sl1) = self.slot1.take() {
                             self.slot1 = Some(item);
-                            sl1
+                            Ok(Some(sl1))
                         } else {
-                            item
+                            Ok(Some(item))
                         }
                     } else {
                         trace_emit!(self.trdet, "discarding events  len {:?}", lige - 1);
-                        let mut dummy = item.new_empty();
-                        item.drain_into(&mut dummy, (0, lige - 1))?;
+                        match item.drain_into_new(0..lige - 1) {
+                            DrainIntoNewResult::Done(_) => {}
+                            DrainIntoNewResult::Partial(_) => return Err(Error::DrainUnclean),
+                            DrainIntoNewResult::NotCompatible => return Err(Error::DrainUnclean),
+                        }
                         self.slot1 = None;
-                        item
+                        Ok(Some(item))
                     }
                 }
                 None => {
                     // TODO keep stats about this case
                     trace_emit!(self.trdet, "drain into to keep one before");
                     let n = item.len();
-                    let mut keep = item.new_empty();
-                    item.drain_into(&mut keep, (n.max(1) - 1, n))?;
-                    self.slot1 = Some(keep);
-                    item.new_empty()
+                    match item.drain_into_new(n.max(1) - 1..n) {
+                        DrainIntoNewResult::Done(keep) => {
+                            self.slot1 = Some(keep);
+                        }
+                        DrainIntoNewResult::Partial(_) => return Err(Error::DrainUnclean),
+                        DrainIntoNewResult::NotCompatible => return Err(Error::DrainUnclean),
+                    }
+                    Ok(None)
                 }
             }
         } else {
-            let lige = item.find_lowest_index_ge(self.range.beg);
+            let lige = item.find_lowest_index_ge(TsNano::from_ns(self.range.beg));
             trace_emit!(self.trdet, "NOT one_before_range  ilge {:?}", lige);
             match lige {
                 Some(lige) => {
-                    let mut dummy = item.new_empty();
-                    item.drain_into(&mut dummy, (0, lige))?;
-                    item
+                    match item.drain_into_new(0..lige) {
+                        DrainIntoNewResult::Done(_) => {}
+                        DrainIntoNewResult::Partial(_) => return Err(Error::DrainUnclean),
+                        DrainIntoNewResult::NotCompatible => return Err(Error::DrainUnclean),
+                    }
+                    Ok(Some(item))
                 }
                 None => {
                     // TODO count case for stats
-                    item.new_empty()
+                    Ok(None)
                 }
             }
-        };
-        Ok(ret)
+        }
     }
 }
 
 impl<S, ITY> RangeFilter2<S, ITY>
 where
     S: Stream<Item = Sitemty<ITY>> + Unpin,
-    ITY: Mergeable,
+    ITY: MergeableTy,
 {
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<<Self as Stream>::Item>> {
+    fn poll_next(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context,
+    ) -> Poll<Option<<Self as Stream>::Item>> {
         use Poll::*;
         loop {
             break if self.complete {
@@ -199,25 +220,35 @@ where
             } else if self.inp_done {
                 self.raco_done = true;
                 if self.have_range_complete {
-                    Ready(Some(Ok(StreamItem::DataItem(RangeCompletableItem::RangeComplete))))
+                    Ready(Some(Ok(StreamItem::DataItem(
+                        RangeCompletableItem::RangeComplete,
+                    ))))
                 } else {
                     continue;
                 }
             } else {
                 match self.inp.poll_next_unpin(cx) {
                     Ready(Some(item)) => match item {
-                        Ok(StreamItem::DataItem(RangeCompletableItem::Data(item))) => match self.handle_item(item) {
-                            Ok(item) => {
-                                trace_emit!(self.trdet, "emit {}", TsMsVecFmt(Mergeable::tss(&item).iter()));
-                                let item = Ok(StreamItem::DataItem(RangeCompletableItem::Data(item)));
-                                Ready(Some(item))
+                        Ok(StreamItem::DataItem(RangeCompletableItem::Data(item))) => {
+                            match self.handle_item(item) {
+                                Ok(Some(item)) => {
+                                    trace_emit!(
+                                        self.trdet,
+                                        "emit {}",
+                                        TsMsVecFmt(MergeableTy::tss_for_testing(&item).iter())
+                                    );
+                                    let item =
+                                        Ok(StreamItem::DataItem(RangeCompletableItem::Data(item)));
+                                    Ready(Some(item))
+                                }
+                                Ok(None) => continue,
+                                Err(e) => {
+                                    error!("sees: {e}");
+                                    self.inp_done = true;
+                                    Ready(Some(sitem_err_from_string(e)))
+                                }
                             }
-                            Err(e) => {
-                                error!("sees: {e}");
-                                self.inp_done = true;
-                                Ready(Some(sitem_err_from_string(e)))
-                            }
-                        },
+                        }
                         Ok(StreamItem::DataItem(RangeCompletableItem::RangeComplete)) => {
                             self.have_range_complete = true;
                             continue;
@@ -227,7 +258,9 @@ where
                     Ready(None) => {
                         self.inp_done = true;
                         if let Some(sl1) = self.slot1.take() {
-                            Ready(Some(Ok(StreamItem::DataItem(RangeCompletableItem::Data(sl1)))))
+                            Ready(Some(Ok(StreamItem::DataItem(RangeCompletableItem::Data(
+                                sl1,
+                            )))))
                         } else {
                             continue;
                         }
@@ -242,7 +275,7 @@ where
 impl<S, ITY> Stream for RangeFilter2<S, ITY>
 where
     S: Stream<Item = Sitemty<ITY>> + Unpin,
-    ITY: Mergeable,
+    ITY: MergeableTy,
 {
     type Item = Sitemty<ITY>;
 
@@ -257,20 +290,11 @@ where
 impl<S, ITY> fmt::Debug for RangeFilter2<S, ITY>
 where
     S: Stream<Item = Sitemty<ITY>> + Unpin,
-    ITY: Mergeable,
+    ITY: MergeableTy,
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.debug_struct("RangeFilter2").field("stats", &self.stats).finish()
-    }
-}
-
-impl<S, ITY> Drop for RangeFilter2<S, ITY>
-where
-    S: Stream<Item = Sitemty<ITY>> + Unpin,
-    ITY: Mergeable,
-{
-    fn drop(&mut self) {
-        // Self::type_name()
-        debug!("drop {:?}", self);
+        f.debug_struct("RangeFilter2")
+            .field("stats", &self.stats)
+            .finish()
     }
 }

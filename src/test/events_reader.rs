@@ -1,6 +1,5 @@
 use crate::timebin::cached::reader::EventsReadProvider;
 use crate::timebin::cached::reader::EventsReading;
-use futures_util::StreamExt;
 use items_0::streamitem::RangeCompletableItem;
 use items_0::streamitem::Sitemty;
 use items_0::streamitem::StreamItem;
@@ -24,8 +23,8 @@ impl TestEventsReader {
 
 impl EventsReadProvider for TestEventsReader {
     fn read(&self, evq: EventsSubQuery) -> EventsReading {
-        let stream = items_2::testgen::events_gen::old_events_gen_dim0_f32_v00(self.range.clone());
-        let stream = stream
+        let iter = items_2::testgen::events_gen::new_events_gen_dim1_f32_v00(self.range.clone());
+        let iter = iter
             .map(|x| {
                 let x = Box::new(x);
                 let x = ChannelEvents::Events(x);
@@ -36,9 +35,9 @@ impl EventsReadProvider for TestEventsReader {
                 use RangeCompletableItem::*;
                 use StreamItem::*;
                 let item1 = Ok(DataItem(RangeComplete));
-                futures_util::stream::iter([item1])
+                [item1].into_iter()
             });
-        let stream = Box::pin(stream);
+        let stream = Box::pin(futures_util::stream::iter(iter));
         let ret = EventsReading::new(stream);
         ret
     }

@@ -11,18 +11,15 @@ use items_0::streamitem::sitem_err2_from_string;
 use items_0::streamitem::RangeCompletableItem;
 use items_0::streamitem::Sitemty;
 use items_0::streamitem::StreamItem;
-use items_0::Appendable;
-use items_0::Empty;
-use items_0::WithLen;
+use items_2::binning::container_events::ContainerEvents;
 use items_2::channelevents::ChannelEvents;
 use items_2::empty::empty_events_dyn_ev;
-use items_2::eventsdim0::EventsDim0;
-use items_2::eventsdim1::EventsDim1;
 use items_2::framable::Framable;
 use netpod::log::*;
 use netpod::range::evrange::SeriesRange;
 use netpod::timeunits::DAY;
 use netpod::timeunits::MS;
+use netpod::TsNano;
 use query::api4::events::EventsSubQuery;
 use std::f64::consts::PI;
 use std::pin::Pin;
@@ -173,15 +170,14 @@ impl GenerateI32V00 {
 
     fn make_batch(&mut self) -> Sitemty<ChannelEvents> {
         type T = i32;
-        let mut item = EventsDim0::empty();
+        let mut item = ContainerEvents::new();
         let mut ts = self.ts;
         loop {
             if self.ts >= self.tsend || item.byte_estimate() > 100 {
                 break;
             }
-            let pulse = ts;
             let value = (ts / (MS * 100) % 1000) as T;
-            item.push(ts, pulse, value);
+            item.push_back(TsNano::from_ns(ts), value);
             ts += self.dts;
         }
         self.ts = ts;
@@ -271,21 +267,20 @@ impl GenerateI32V01 {
 
     fn make_batch(&mut self) -> Sitemty<ChannelEvents> {
         type T = i32;
-        let mut item = EventsDim0::empty();
+        let mut item = ContainerEvents::new();
         let mut ts = self.ts;
         loop {
             if self.ts >= self.tsend || item.byte_estimate() > 100 {
                 break;
             }
-            let pulse = ts;
             let value = (ts / self.ivl) as T;
             if false {
                 info!(
-                    "v01  node {}  made event  ts {}  pulse {}  value {}",
-                    self.node_ix, ts, pulse, value
+                    "v01  node {}  made event  ts {}  value {}",
+                    self.node_ix, ts, value
                 );
             }
-            item.push(ts, pulse, value);
+            item.push_back(TsNano::from_ns(ts), value);
             ts += self.dts;
         }
         self.ts = ts;
@@ -373,13 +368,12 @@ impl GenerateF64V00 {
 
     fn make_batch(&mut self) -> Sitemty<ChannelEvents> {
         type T = f64;
-        let mut item = EventsDim1::empty();
+        let mut item = ContainerEvents::new();
         let mut ts = self.ts;
         loop {
             if self.ts >= self.tsend || item.byte_estimate() > 400 {
                 break;
             }
-            let pulse = ts;
             let ampl = ((ts / self.ivl) as T).sin() + 2.;
             let mut value = Vec::new();
             let pi = PI;
@@ -389,11 +383,11 @@ impl GenerateF64V00 {
             }
             if false {
                 info!(
-                    "v01  node {}  made event  ts {}  pulse {}  value {:?}",
-                    self.node_ix, ts, pulse, value
+                    "v01  node {}  made event  ts {}  value {:?}",
+                    self.node_ix, ts, value
                 );
             }
-            item.push(ts, pulse, value);
+            item.push_back(TsNano::from_ns(ts), value);
             ts += self.dts;
         }
         self.ts = ts;
@@ -486,13 +480,12 @@ impl GenerateWaveI16V00 {
 
     fn make_batch(&mut self) -> Sitemty<ChannelEvents> {
         type T = i16;
-        let mut item = EventsDim1::empty();
+        let mut item = ContainerEvents::new();
         let mut ts = self.ts;
         loop {
             if self.ts >= self.tsend || item.byte_estimate() > 1024 * 20 {
                 break;
             }
-            let pulse = ts;
             let ampl = ((ts / self.ivl) as f32).sin() + 2.;
             let mut value = Vec::new();
             let pi = std::f32::consts::PI;
@@ -502,11 +495,11 @@ impl GenerateWaveI16V00 {
             }
             if false {
                 info!(
-                    "v01  node {}  made event  ts {}  pulse {}  value {:?}",
-                    self.node_ix, ts, pulse, value
+                    "v01  node {}  made event  ts {}  value {:?}",
+                    self.node_ix, ts, value
                 );
             }
-            item.push(ts, pulse, value);
+            item.push_back(TsNano::from_ns(ts), value);
             ts += self.dts;
         }
         self.ts = ts;

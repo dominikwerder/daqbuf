@@ -71,12 +71,14 @@ where
                             Ok(item) => match item {
                                 Ok(item) => match item {
                                     StreamItem::DataItem(item2) => match item2 {
-                                        RangeCompletableItem::Data(item3) => {
-                                            Ready(Some(Ok(StreamItem::DataItem(RangeCompletableItem::Data(item3)))))
-                                        }
+                                        RangeCompletableItem::Data(item3) => Ready(Some(Ok(
+                                            StreamItem::DataItem(RangeCompletableItem::Data(item3)),
+                                        ))),
                                         RangeCompletableItem::RangeComplete => {
                                             debug!("EventsFromFrames  RangeComplete");
-                                            Ready(Some(Ok(StreamItem::DataItem(RangeCompletableItem::RangeComplete))))
+                                            Ready(Some(Ok(StreamItem::DataItem(
+                                                RangeCompletableItem::RangeComplete,
+                                            ))))
                                         }
                                     },
                                     StreamItem::Log(k) => {

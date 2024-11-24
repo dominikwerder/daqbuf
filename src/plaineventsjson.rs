@@ -43,7 +43,10 @@ pub async fn plain_events_json(
 
     let stream = stream.map(move |k| {
         on_sitemty_data!(k, |mut k: Box<dyn items_0::Events>| {
-            if let Some(j) = k.as_any_mut().downcast_mut::<items_2::channelevents::ChannelEvents>() {
+            if let Some(j) = k
+                .as_any_mut()
+                .downcast_mut::<items_2::channelevents::ChannelEvents>()
+            {
                 use items_0::AsAnyMut;
                 match j {
                     items_2::channelevents::ChannelEvents::Events(m) => {
@@ -59,13 +62,19 @@ pub async fn plain_events_json(
                             let k: Box<dyn CollectableDyn> = Box::new(out);
                             Ok(StreamItem::DataItem(RangeCompletableItem::Data(k)))
                         } else {
-                            trace!("consider container channel events other events  {}", k.type_name());
+                            trace!(
+                                "consider container channel events other events  {}",
+                                k.type_name()
+                            );
                             let k: Box<dyn CollectableDyn> = Box::new(k);
                             Ok(StreamItem::DataItem(RangeCompletableItem::Data(k)))
                         }
                     }
                     items_2::channelevents::ChannelEvents::Status(_) => {
-                        trace!("consider container channel events status  {}", k.type_name());
+                        trace!(
+                            "consider container channel events status  {}",
+                            k.type_name()
+                        );
                         let k: Box<dyn CollectableDyn> = Box::new(k);
                         Ok(StreamItem::DataItem(RangeCompletableItem::Data(k)))
                     }

@@ -98,7 +98,13 @@ pub trait HttpSimplePost: Send {
         &self,
         req: http::Request<http_body_util::Full<Bytes>>,
     ) -> Pin<
-        Box<dyn Future<Output = http::Response<http_body_util::combinators::UnsyncBoxBody<Bytes, ErrorBody>>> + Send>,
+        Box<
+            dyn Future<
+                    Output = http::Response<
+                        http_body_util::combinators::UnsyncBoxBody<Bytes, ErrorBody>,
+                    >,
+                > + Send,
+        >,
     >;
 }
 
@@ -132,7 +138,10 @@ pub async fn x_processed_event_blobs_stream_from_node_http(
     let frame1 = make_node_command_frame(subq.clone())?;
     let item = sitem_data(frame1.clone());
     let buf = item.make_frame_dyn()?.freeze();
-    let url = node.baseurl().join("/api/4/private/eventdata/frames").unwrap();
+    let url = node
+        .baseurl()
+        .join("/api/4/private/eventdata/frames")
+        .unwrap();
     debug!("open_event_data_streams_http  post  {url}");
     let uri: Uri = url.as_str().parse().unwrap();
     let body = http_body_util::Full::new(buf);

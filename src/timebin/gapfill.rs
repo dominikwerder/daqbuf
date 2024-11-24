@@ -1,5 +1,6 @@
 use super::cached::reader::CacheReadProvider;
 use super::cached::reader::EventsReadProvider;
+use crate::log::*;
 use crate::timebin::fromevents::BinnedFromEvents;
 use futures_util::FutureExt;
 use futures_util::Stream;
@@ -10,7 +11,6 @@ use items_0::streamitem::Sitemty;
 use items_0::streamitem::StreamItem;
 use items_0::timebin::BinsBoxed;
 use items_2::binning::timeweight::timeweight_bins_stream::BinnedBinsTimeweightStream;
-use netpod::log::*;
 use netpod::query::CacheUsage;
 use netpod::range::evrange::NanoRange;
 use netpod::range::evrange::SeriesRange;

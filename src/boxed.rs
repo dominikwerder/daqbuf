@@ -33,7 +33,9 @@ where
                 Ok(item) => Ok(match item {
                     StreamItem::DataItem(item) => StreamItem::DataItem(match item {
                         RangeCompletableItem::RangeComplete => RangeCompletableItem::RangeComplete,
-                        RangeCompletableItem::Data(item) => RangeCompletableItem::Data(Box::new(item)),
+                        RangeCompletableItem::Data(item) => {
+                            RangeCompletableItem::Data(Box::new(item))
+                        }
                     }),
                     StreamItem::Log(item) => StreamItem::Log(item),
                     StreamItem::Stats(item) => StreamItem::Stats(item),

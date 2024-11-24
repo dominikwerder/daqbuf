@@ -110,7 +110,7 @@ pub async fn timebinnable_stream_sf_databuffer_channelevents(
         use StreamItem::*;
         match k {
             Ok(DataItem(Data(ChannelEvents::Events(k)))) => {
-                let k = k.to_dim0_f32_for_binning();
+                // let k = k.to_dim0_f32_for_binning();
                 Ok(StreamItem::DataItem(RangeCompletableItem::Data(
                     ChannelEvents::Events(k),
                 )))

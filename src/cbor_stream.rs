@@ -12,12 +12,17 @@ use items_0::streamitem::LogItem;
 use items_0::streamitem::RangeCompletableItem;
 use items_0::streamitem::Sitemty;
 use items_0::streamitem::StreamItem;
+use items_0::AsAnyMut;
+use items_0::AsAnyRef;
 use items_0::Events;
 use items_0::WithLen;
+use items_2::binning::container_events::ContainerEvents;
+use items_2::channelevents::ChannelEvents;
 use items_2::eventsdim0::EventsDim0;
 use items_2::eventsdim1::EventsDim1;
 use netpod::log::Level;
 use netpod::log::*;
+use netpod::EnumVariant;
 use netpod::ScalarType;
 use netpod::Shape;
 use std::io::Cursor;
@@ -102,41 +107,46 @@ fn map_events(x: Sitemty<Box<dyn Events>>) -> Result<CborBytes, Error> {
             StreamItem::DataItem(x) => match x {
                 RangeCompletableItem::Data(evs) => {
                     if false {
-                        use items_0::AsAnyRef;
                         // TODO impl generically on EventsDim0 ?
-                        if let Some(evs) = evs.as_any_ref().downcast_ref::<items_2::eventsdim0::EventsDim0<f64>>() {
+                        if let Some(evs) = evs.as_any_ref().downcast_ref::<ContainerEvents<f64>>() {
                             let mut buf = Vec::new();
-                            ciborium::into_writer(evs, &mut buf).map_err(|e| Error::Msg(e.to_string()))?;
+                            ciborium::into_writer(evs, &mut buf)
+                                .map_err(|e| Error::Msg(e.to_string()))?;
                             let bytes = Bytes::from(buf);
                             let _item = CborBytes(bytes);
                             // Ok(StreamItem::DataItem(RangeCompletableItem::Data(item)))
                         } else {
-                            let _item = LogItem::from_node(0, Level::DEBUG, format!("cbor stream discarded item"));
+                            let _item = LogItem::from_node(
+                                0,
+                                Level::DEBUG,
+                                format!("cbor stream discarded item"),
+                            );
                             // Ok(StreamItem::Log(item))
                         };
                     }
                     let mut k = evs;
-                    let evs = if let Some(j) = k.as_any_mut().downcast_mut::<items_2::channelevents::ChannelEvents>() {
-                        use items_0::AsAnyMut;
+                    let evs = if let Some(j) = k.as_any_mut().downcast_mut::<ChannelEvents>() {
                         match j {
-                            items_2::channelevents::ChannelEvents::Events(m) => {
+                            ChannelEvents::Events(m) => {
                                 if let Some(g) = m
                                     .as_any_mut()
-                                    .downcast_mut::<items_2::eventsdim0::EventsDim0<netpod::EnumVariant>>()
+                                    .downcast_mut::<ContainerEvents<EnumVariant>>()
                                 {
                                     trace!("consider container EnumVariant");
-                                    let mut out = items_2::eventsdim0enum::EventsDim0Enum::new();
-                                    for (&ts, val) in g.tss.iter().zip(g.values.iter()) {
-                                        out.push_back(ts, val.ix(), val.name_string());
-                                    }
-                                    Box::new(items_2::channelevents::ChannelEvents::Events(Box::new(out)))
+                                    k
                                 } else {
-                                    trace!("consider container channel events other events  {}", k.type_name());
+                                    trace!(
+                                        "consider container channel events other events  {}",
+                                        k.type_name()
+                                    );
                                     k
                                 }
                             }
-                            items_2::channelevents::ChannelEvents::Status(_) => {
-                                trace!("consider container channel events status  {}", k.type_name());
+                            ChannelEvents::Status(_) => {
+                                trace!(
+                                    "consider container channel events status  {}",
+                                    k.type_name()
+                                );
                                 k
                             }
                         }
@@ -156,7 +166,8 @@ fn map_events(x: Sitemty<Box<dyn Events>>) -> Result<CborBytes, Error> {
                     })
                     .map_err(|e| Error::Msg(e.to_string()))?;
                     let mut buf = Vec::with_capacity(64);
-                    ciborium::into_writer(&item, &mut buf).map_err(|e| Error::Msg(e.to_string()))?;
+                    ciborium::into_writer(&item, &mut buf)
+                        .map_err(|e| Error::Msg(e.to_string()))?;
                     let bytes = Bytes::from(buf);
                     let item = CborBytes(bytes);
                     Ok(item)
@@ -239,10 +250,14 @@ impl<S> FramedBytesToSitemtyDynEventsStream<S> {
             return Ok(None);
         }
         let buf = &self.buf[FRAME_HEAD_LEN..frame_len];
-        let val: ciborium::Value = ciborium::from_reader(std::io::Cursor::new(buf)).map_err(ErrMsg)?;
+        let val: ciborium::Value =
+            ciborium::from_reader(std::io::Cursor::new(buf)).map_err(ErrMsg)?;
         // debug!("decoded ciborium value {val:?}");
         let item = if let Some(map) = val.as_map() {
-            let keys: Vec<&str> = map.iter().map(|k| k.0.as_text().unwrap_or("(none)")).collect();
+            let keys: Vec<&str> = map
+                .iter()
+                .map(|k| k.0.as_text().unwrap_or("(none)"))
+                .collect();
             debug!("keys {keys:?}");
             if let Some(x) = map.get(0) {
                 if let Some(y) = x.0.as_text() {
@@ -309,7 +324,10 @@ where
                     },
                     Ready(None) => {
                         if self.buf.len() > 0 {
-                            warn!("remaining bytes in input buffer, input closed  len {}", self.buf.len());
+                            warn!(
+                                "remaining bytes in input buffer, input closed  len {}",
+                                self.buf.len()
+                            );
                         }
                         Ready(None)
                     }
@@ -339,7 +357,11 @@ macro_rules! cbor_wave {
     }};
 }
 
-fn decode_cbor_to_box_events(buf: &[u8], scalar_type: &ScalarType, shape: &Shape) -> Result<Box<dyn Events>, Error> {
+fn decode_cbor_to_box_events(
+    buf: &[u8],
+    scalar_type: &ScalarType,
+    shape: &Shape,
+) -> Result<Box<dyn Events>, Error> {
     let item: Box<dyn Events> = match shape {
         Shape::Scalar => match scalar_type {
             ScalarType::U8 => cbor_scalar!(u8, buf),
@@ -352,13 +374,25 @@ fn decode_cbor_to_box_events(buf: &[u8], scalar_type: &ScalarType, shape: &Shape
             ScalarType::I64 => cbor_scalar!(i64, buf),
             ScalarType::F32 => cbor_scalar!(f32, buf),
             ScalarType::F64 => cbor_scalar!(f64, buf),
-            _ => return Err(ErrMsg(format!("decode_cbor_to_box_events  {:?}  {:?}", scalar_type, shape)).into()),
+            _ => {
+                return Err(ErrMsg(format!(
+                    "decode_cbor_to_box_events  {:?}  {:?}",
+                    scalar_type, shape
+                ))
+                .into())
+            }
         },
         Shape::Wave(_) => match scalar_type {
             ScalarType::U8 => cbor_wave!(u8, buf),
             ScalarType::U16 => cbor_wave!(u16, buf),
             ScalarType::I64 => cbor_wave!(i64, buf),
-            _ => return Err(ErrMsg(format!("decode_cbor_to_box_events  {:?}  {:?}", scalar_type, shape)).into()),
+            _ => {
+                return Err(ErrMsg(format!(
+                    "decode_cbor_to_box_events  {:?}  {:?}",
+                    scalar_type, shape
+                ))
+                .into())
+            }
         },
         Shape::Image(_, _) => todo!(),
     };

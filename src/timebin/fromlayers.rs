@@ -1,13 +1,14 @@
 use super::cached::reader::CacheReadProvider;
 use super::cached::reader::EventsReadProvider;
+use crate::log::*;
 use crate::timebin::fromevents::BinnedFromEvents;
+use crate::timebin::gapfill::GapFill;
 use crate::timebin::grid::find_next_finer_bin_len;
 use futures_util::Stream;
 use futures_util::StreamExt;
 use items_0::streamitem::Sitemty;
 use items_0::timebin::BinsBoxed;
 use items_2::binning::timeweight::timeweight_bins_stream::BinnedBinsTimeweightStream;
-use netpod::log::*;
 use netpod::query::CacheUsage;
 use netpod::range::evrange::SeriesRange;
 use netpod::BinnedRange;
@@ -67,7 +68,7 @@ impl TimeBinnedFromLayers {
         let bin_len = DtMs::from_ms_u64(range.bin_len.ms());
         if bin_len_layers.contains(&bin_len) {
             debug!("{}::new  bin_len in layers  {:?}", Self::type_name(), range);
-            let inp = super::gapfill::GapFill::new(
+            let inp = GapFill::new(
                 "FromLayers-ongrid".into(),
                 ch_conf.clone(),
                 cache_usage.clone(),
@@ -84,6 +85,11 @@ impl TimeBinnedFromLayers {
             let ret = Self { inp: Box::pin(inp) };
             Ok(ret)
         } else {
+            debug!(
+                "{}::new  bin_len off layers  {:?}",
+                Self::type_name(),
+                range
+            );
             match find_next_finer_bin_len(bin_len, &bin_len_layers) {
                 Some(finer) => {
                     if bin_len.ms() % finer.ms() != 0 {
@@ -96,7 +102,7 @@ impl TimeBinnedFromLayers {
                         finer,
                         range_finer
                     );
-                    let inp = super::gapfill::GapFill::new(
+                    let inp = GapFill::new(
                         "FromLayers-finergrid".into(),
                         ch_conf.clone(),
                         cache_usage.clone(),
