@@ -1,6 +1,10 @@
 use crate::collect_s::CollectableDyn;
+use crate::container::ByteEstimate;
+use crate::merge::DrainIntoDstResult;
+use crate::merge::MergeableDyn;
 use crate::AsAnyMut;
 use crate::AsAnyRef;
+use crate::TypeName;
 use crate::WithLen;
 use netpod::BinnedRange;
 use netpod::BinnedRangeEnum;
@@ -80,19 +84,61 @@ where
     }
 }
 
-pub trait BinningggContainerEventsDyn: fmt::Debug + Send + AsAnyRef {
+pub trait BinningggContainerEventsDyn:
+    fmt::Debug + Send + AsAnyRef + WithLen + ByteEstimate + MergeableDyn
+{
     fn type_name(&self) -> &'static str;
     fn binned_events_timeweight_traitobj(
         &self,
         range: BinnedRange<TsNano>,
     ) -> Box<dyn BinnedEventsTimeweightTrait>;
     fn to_anybox(&mut self) -> Box<dyn std::any::Any>;
+    fn clone_dyn(&self) -> Box<dyn BinningggContainerEventsDyn>;
+    fn serde_id(&self) -> u32;
+    fn nty_id(&self) -> u32;
+    fn eq(&self, rhs: &dyn BinningggContainerEventsDyn) -> bool;
+}
+
+impl<T> MergeableDyn for Box<T>
+where
+    T: MergeableDyn,
+{
+    fn ts_min(&self) -> Option<TsNano> {
+        self.as_ref().ts_min()
+    }
+
+    fn ts_max(&self) -> Option<TsNano> {
+        self.as_ref().ts_max()
+    }
+
+    fn find_lowest_index_gt(&self, ts: TsNano) -> Option<usize> {
+        self.as_ref().find_lowest_index_gt(ts)
+    }
+
+    fn find_lowest_index_ge(&self, ts: TsNano) -> Option<usize> {
+        self.as_ref().find_lowest_index_ge(ts)
+    }
+
+    fn find_highest_index_lt(&self, ts: TsNano) -> Option<usize> {
+        self.as_ref().find_highest_index_lt(ts)
+    }
+
+    fn tss_for_testing(&self) -> Vec<netpod::TsMs> {
+        self.as_ref().tss_for_testing()
+    }
+
+    fn drain_into(
+        &mut self,
+        dst: &mut dyn MergeableDyn,
+        range: Range<usize>,
+    ) -> DrainIntoDstResult {
+        todo!()
+    }
 }
 
 pub trait BinningggContainerBinsDyn:
-    fmt::Debug + Send + fmt::Display + WithLen + AsAnyMut + CollectableDyn
+    fmt::Debug + Send + fmt::Display + TypeName + WithLen + AsAnyMut + CollectableDyn
 {
-    fn type_name(&self) -> &'static str;
     fn empty(&self) -> BinsBoxed;
     fn clone(&self) -> BinsBoxed;
     fn edges_iter(
@@ -102,6 +148,10 @@ pub trait BinningggContainerBinsDyn:
         std::collections::vec_deque::Iter<TsNano>,
     >;
     fn drain_into(&mut self, dst: &mut dyn BinningggContainerBinsDyn, range: Range<usize>);
+    fn binned_bins_timeweight_traitobj(
+        &self,
+        range: BinnedRange<TsNano>,
+    ) -> Box<dyn BinnedBinsTimeweightTrait>;
     fn fix_numerics(&mut self);
 }
 
@@ -112,7 +162,6 @@ pub type EventsBoxed = Box<dyn BinningggContainerEventsDyn>;
 pub trait BinningggBinnerTy: fmt::Debug + Send {
     type Input: fmt::Debug;
     type Output: fmt::Debug;
-
     fn ingest(&mut self, item: &mut Self::Input);
     fn range_final(&mut self);
     fn bins_ready_count(&self) -> usize;
@@ -121,7 +170,6 @@ pub trait BinningggBinnerTy: fmt::Debug + Send {
 
 pub trait BinningggBinnableTy: fmt::Debug + WithLen + Send {
     type Binner: BinningggBinnerTy<Input = Self>;
-
     fn binner_new(range: BinnedRange<TsNano>) -> Self::Binner;
 }
 
@@ -132,6 +180,13 @@ pub trait BinningggBinnerDyn: fmt::Debug + Send {
 
 pub trait BinnedEventsTimeweightTrait: fmt::Debug + Send {
     fn ingest(&mut self, evs: &EventsBoxed) -> Result<(), BinningggError>;
+    fn input_done_range_final(&mut self) -> Result<(), BinningggError>;
+    fn input_done_range_open(&mut self) -> Result<(), BinningggError>;
+    fn output(&mut self) -> Result<Option<BinsBoxed>, BinningggError>;
+}
+
+pub trait BinnedBinsTimeweightTrait: fmt::Debug + Send {
+    fn ingest(&mut self, bins: &BinsBoxed) -> Result<(), BinningggError>;
     fn input_done_range_final(&mut self) -> Result<(), BinningggError>;
     fn input_done_range_open(&mut self) -> Result<(), BinningggError>;
     fn output(&mut self) -> Result<Option<BinsBoxed>, BinningggError>;

@@ -25,6 +25,7 @@ pub const ITEMS_2_CHANNEL_EVENTS_FRAME_TYPE_ID: u32 = 0x2500;
 pub const X_BINNED_SCALAR_EVENTS_FRAME_TYPE_ID: u32 = 0x8800;
 pub const X_BINNED_WAVE_EVENTS_FRAME_TYPE_ID: u32 = 0x8900;
 pub const DATABUFFER_EVENT_BLOB_FRAME_TYPE_ID: u32 = 0x8a00;
+pub const CONTAINER_EVENTS_TYPE_ID: u32 = 0x8b00;
 
 pub fn bool_is_false(j: &bool) -> bool {
     *j == false
@@ -78,7 +79,8 @@ pub type Sitemty2<T, E> = Result<StreamItem<RangeCompletableItem<T>>, E>;
 #[macro_export]
 macro_rules! on_sitemty_range_complete {
     ($item:expr, $ex:expr) => {
-        if let Ok($crate::StreamItem::DataItem($crate::RangeCompletableItem::RangeComplete)) = $item {
+        if let Ok($crate::StreamItem::DataItem($crate::RangeCompletableItem::RangeComplete)) = $item
+        {
             $ex
         }
     };
@@ -87,8 +89,9 @@ macro_rules! on_sitemty_range_complete {
 #[macro_export]
 macro_rules! on_sitemty_data_old {
     ($item:expr, $ex:expr) => {
-        if let Ok($crate::streamitem::StreamItem::DataItem($crate::streamitem::RangeCompletableItem::Data(item))) =
-            $item
+        if let Ok($crate::streamitem::StreamItem::DataItem(
+            $crate::streamitem::RangeCompletableItem::Data(item),
+        )) = $item
         {
             $ex(item)
         } else {

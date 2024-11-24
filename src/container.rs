@@ -9,3 +9,12 @@ impl ByteEstimate for Box<dyn Events> {
         self.as_ref().byte_estimate()
     }
 }
+
+impl<T> ByteEstimate for Box<T>
+where
+    T: ByteEstimate,
+{
+    fn byte_estimate(&self) -> u64 {
+        self.as_ref().byte_estimate()
+    }
+}

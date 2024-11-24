@@ -55,3 +55,55 @@ impl SubFrId for String {
 impl SubFrId for EnumVariant {
     const SUB: u32 = 0x0f;
 }
+
+impl SubFrId for Vec<u8> {
+    const SUB: u32 = 0x23;
+}
+
+impl SubFrId for Vec<u16> {
+    const SUB: u32 = 0x25;
+}
+
+impl SubFrId for Vec<u32> {
+    const SUB: u32 = 0x28;
+}
+
+impl SubFrId for Vec<u64> {
+    const SUB: u32 = 0x2a;
+}
+
+impl SubFrId for Vec<i8> {
+    const SUB: u32 = 0x22;
+}
+
+impl SubFrId for Vec<i16> {
+    const SUB: u32 = 0x24;
+}
+
+impl SubFrId for Vec<i32> {
+    const SUB: u32 = 0x27;
+}
+
+impl SubFrId for Vec<i64> {
+    const SUB: u32 = 0x29;
+}
+
+impl SubFrId for Vec<f32> {
+    const SUB: u32 = 0x2b;
+}
+
+impl SubFrId for Vec<f64> {
+    const SUB: u32 = 0x2c;
+}
+
+impl SubFrId for Vec<bool> {
+    const SUB: u32 = 0x2d;
+}
+
+impl SubFrId for Vec<String> {
+    const SUB: u32 = 0x2e;
+}
+
+impl SubFrId for Vec<EnumVariant> {
+    const SUB: u32 = 0x2f;
+}

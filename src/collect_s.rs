@@ -155,13 +155,13 @@ pub trait CollectableType: fmt::Debug + WithLen + AsAnyRef + AsAnyMut + TypeName
     fn new_collector() -> Self::Collector;
 }
 
-pub trait CollectableDyn: fmt::Debug + WithLen + AsAnyRef + AsAnyMut + TypeName + Send {
+pub trait CollectableDyn: fmt::Debug + WithLen + AsAnyRef + AsAnyMut + Send + TypeName {
     fn new_collector(&self) -> Box<dyn CollectorDyn>;
 }
 
 impl TypeName for Box<dyn BinningggContainerBinsDyn> {
     fn type_name(&self) -> String {
-        BinningggContainerBinsDyn::type_name(self.as_ref()).into()
+        self.as_ref().type_name()
     }
 }
 

@@ -3,6 +3,7 @@ pub mod container;
 pub mod events;
 pub mod framable;
 pub mod isodate;
+pub mod merge;
 pub mod overlap;
 pub mod scalar_ops;
 pub mod streamitem;

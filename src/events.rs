@@ -12,6 +12,15 @@ pub trait WithLen {
     fn len(&self) -> usize;
 }
 
+impl<T> WithLen for Box<T>
+where
+    T: WithLen,
+{
+    fn len(&self) -> usize {
+        self.as_ref().len()
+    }
+}
+
 impl WithLen for bytes::Bytes {
     fn len(&self) -> usize {
         self.len()
@@ -78,26 +87,6 @@ where
     }
 }
 
-#[derive(Debug)]
-pub enum MergeError {
-    NotCompatible,
-    Full,
-}
-
-impl From<MergeError> for err::Error {
-    fn from(e: MergeError) -> Self {
-        e.to_string().into()
-    }
-}
-
-impl fmt::Display for MergeError {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        write!(fmt, "{:?}", self)
-    }
-}
-
-impl std::error::Error for MergeError {}
-
 // TODO can I remove the Any bound?
 
 /// Container of some form of events, for use as trait object.
@@ -126,7 +115,7 @@ pub trait Events:
         &mut self,
         dst: &mut dyn Events,
         range: (usize, usize),
-    ) -> Result<(), MergeError>;
+    ) -> Result<(), err::Error>;
     fn find_lowest_index_gt_evs(&self, ts: u64) -> Option<usize>;
     fn find_lowest_index_ge_evs(&self, ts: u64) -> Option<usize>;
     fn find_highest_index_lt_evs(&self, ts: u64) -> Option<usize>;
@@ -212,7 +201,7 @@ impl Events for Box<dyn Events> {
         &mut self,
         dst: &mut dyn Events,
         range: (usize, usize),
-    ) -> Result<(), MergeError> {
+    ) -> Result<(), err::Error> {
         Events::drain_into_evs(self.as_mut(), dst, range)
     }
 
