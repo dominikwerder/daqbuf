@@ -71,6 +71,11 @@ impl Container<EnumVariant> for EnumVariantContainer {
                 name: x.1.as_str(),
             })
     }
+
+    fn drain_into(&mut self, dst: &mut Self, range: std::ops::Range<usize>) {
+        dst.ixs.extend(self.ixs.drain(range.clone()));
+        dst.names.extend(self.names.drain(range));
+    }
 }
 
 #[derive(Debug)]

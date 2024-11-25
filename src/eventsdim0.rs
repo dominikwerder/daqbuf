@@ -726,7 +726,7 @@ impl<STY: ScalarOps> Events for EventsDim0<STY> {
     fn to_dim0_f32_for_binning(&self) -> Box<dyn Events> {
         let mut ret = EventsDim0::empty();
         for (&ts, val) in self.tss.iter().zip(self.values.iter()) {
-            ret.push(ts, 0, val.as_prim_f32_b());
+            ret.push(TsNano::from_ns(ts), val.as_prim_f32_b());
         }
         Box::new(ret)
     }
@@ -768,9 +768,9 @@ impl<STY> Appendable<STY> for EventsDim0<STY>
 where
     STY: ScalarOps,
 {
-    fn push(&mut self, ts: u64, pulse: u64, value: STY) {
-        self.tss.push_back(ts);
-        self.pulses.push_back(pulse);
+    fn push(&mut self, ts: TsNano, value: STY) {
+        self.tss.push_back(ts.ns());
+        self.pulses.push_back(0);
         self.values.push_back(value);
     }
 }

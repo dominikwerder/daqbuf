@@ -11,6 +11,7 @@ use items_0::container::ByteEstimate;
 use items_0::framable::FrameTypeInnerStatic;
 use items_0::isodate::IsoDateTime;
 use items_0::merge::DrainIntoDstResult;
+use items_0::merge::DrainIntoNewDynResult;
 use items_0::merge::DrainIntoNewResult;
 use items_0::merge::MergeableDyn;
 use items_0::merge::MergeableTy;
@@ -29,6 +30,7 @@ use netpod::BinnedRangeEnum;
 use netpod::TsNano;
 use serde::Deserialize;
 use serde::Serialize;
+use serde_json::map::Keys;
 use std::any;
 use std::any::Any;
 use std::collections::VecDeque;
@@ -791,11 +793,7 @@ impl MergeableTy for ChannelEvents {
     fn drain_into(&mut self, dst: &mut Self, range: Range<usize>) -> DrainIntoDstResult {
         match self {
             ChannelEvents::Events(k) => match dst {
-                ChannelEvents::Events(j) => {
-                    //
-                    // k.drain_into(j, range)
-                    todo!()
-                }
+                ChannelEvents::Events(j) => k.drain_into(j.as_mergeable_dyn_mut(), range),
                 ChannelEvents::Status(_) => DrainIntoDstResult::NotCompatible,
             },
             ChannelEvents::Status(k) => match dst {
@@ -821,7 +819,18 @@ impl MergeableTy for ChannelEvents {
     }
 
     fn drain_into_new(&mut self, range: Range<usize>) -> DrainIntoNewResult<Self> {
-        todo!()
+        match self {
+            ChannelEvents::Events(k) => match k.drain_into_new(range) {
+                DrainIntoNewDynResult::Done(x) => {
+                    DrainIntoNewResult::Done(ChannelEvents::Events(x))
+                }
+                DrainIntoNewDynResult::Partial(x) => {
+                    DrainIntoNewResult::Partial(ChannelEvents::Events(x))
+                }
+                DrainIntoNewDynResult::NotCompatible => DrainIntoNewResult::NotCompatible,
+            },
+            ChannelEvents::Status(k) => DrainIntoNewResult::Done(ChannelEvents::Status(k.clone())),
+        }
     }
 
     fn find_lowest_index_gt(&self, ts: TsNano) -> Option<usize> {

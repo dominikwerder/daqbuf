@@ -23,6 +23,7 @@ use netpod::range::evrange::SeriesRange;
 use netpod::timeunits::MS;
 use netpod::timeunits::SEC;
 use netpod::BinnedRangeEnum;
+use netpod::TsNano;
 use serde::Deserialize;
 use serde::Serialize;
 use std::any;
@@ -664,7 +665,7 @@ impl<STY> Appendable<Vec<STY>> for EventsDim1<STY>
 where
     STY: ScalarOps,
 {
-    fn push(&mut self, ts: u64, pulse: u64, value: Vec<STY>) {
-        Self::push(self, ts, pulse, value)
+    fn push(&mut self, ts: TsNano, value: Vec<STY>) {
+        Self::push(self, ts.ns(), 0, value)
     }
 }
