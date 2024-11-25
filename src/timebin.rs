@@ -99,6 +99,7 @@ pub trait BinningggContainerEventsDyn:
     fn nty_id(&self) -> u32;
     fn eq(&self, rhs: &dyn BinningggContainerEventsDyn) -> bool;
     fn verify(&self) -> bool;
+    fn as_mergeable_dyn_mut(&mut self) -> &mut dyn MergeableDyn;
 }
 
 impl<T> MergeableDyn for Box<T>
