@@ -4,6 +4,7 @@ use crate::collect_s::CollectableDyn;
 use crate::container::ByteEstimate;
 use crate::timebin::BinningggContainerEventsDyn;
 use daqbuf_err as err;
+use netpod::TsNano;
 use std::any::Any;
 use std::collections::VecDeque;
 use std::fmt;
@@ -35,8 +36,8 @@ pub trait Resettable {
     fn reset(&mut self);
 }
 
-pub trait Appendable<STY>: Empty + WithLen {
-    fn push(&mut self, ts: u64, pulse: u64, value: STY);
+pub trait Appendable<STY>: WithLen {
+    fn push(&mut self, ts: TsNano, value: STY);
 }
 
 pub trait Extendable: Empty + WithLen {

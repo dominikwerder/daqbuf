@@ -1,6 +1,7 @@
 use crate::collect_s::CollectableDyn;
 use crate::container::ByteEstimate;
 use crate::merge::DrainIntoDstResult;
+use crate::merge::DrainIntoNewDynResult;
 use crate::merge::MergeableDyn;
 use crate::AsAnyMut;
 use crate::AsAnyRef;
@@ -97,6 +98,7 @@ pub trait BinningggContainerEventsDyn:
     fn serde_id(&self) -> u32;
     fn nty_id(&self) -> u32;
     fn eq(&self, rhs: &dyn BinningggContainerEventsDyn) -> bool;
+    fn verify(&self) -> bool;
 }
 
 impl<T> MergeableDyn for Box<T>
@@ -132,7 +134,11 @@ where
         dst: &mut dyn MergeableDyn,
         range: Range<usize>,
     ) -> DrainIntoDstResult {
-        todo!()
+        self.as_mut().drain_into(dst, range)
+    }
+
+    fn drain_into_new(&mut self, range: Range<usize>) -> DrainIntoNewDynResult {
+        self.as_mut().drain_into_new(range)
     }
 }
 
