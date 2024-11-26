@@ -47,6 +47,7 @@ pub trait MergeableTy: fmt::Debug + WithLen + ByteEstimate + Unpin + Sized {
     fn tss_for_testing(&self) -> Vec<TsMs>;
     fn drain_into(&mut self, dst: &mut Self, range: Range<usize>) -> DrainIntoDstResult;
     fn drain_into_new(&mut self, range: Range<usize>) -> DrainIntoNewResult<Self>;
+    fn is_consistent(&self) -> bool;
 }
 
 pub trait MergeableDyn: fmt::Debug + WithLen + ByteEstimate + Unpin + AsAnyMut {
@@ -59,4 +60,5 @@ pub trait MergeableDyn: fmt::Debug + WithLen + ByteEstimate + Unpin + AsAnyMut {
     fn drain_into(&mut self, dst: &mut dyn MergeableDyn, range: Range<usize>)
         -> DrainIntoDstResult;
     fn drain_into_new(&mut self, range: Range<usize>) -> DrainIntoNewDynResult;
+    fn is_consistent(&self) -> bool;
 }

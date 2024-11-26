@@ -1,4 +1,7 @@
+use crate::apitypes::ToUserFacingApiType;
 use crate::collect_s::CollectableDyn;
+use crate::collect_s::ToCborValue;
+use crate::collect_s::ToJsonValue;
 use crate::container::ByteEstimate;
 use crate::merge::DrainIntoDstResult;
 use crate::merge::DrainIntoNewDynResult;
@@ -86,7 +89,15 @@ where
 }
 
 pub trait BinningggContainerEventsDyn:
-    fmt::Debug + Send + AsAnyRef + WithLen + ByteEstimate + MergeableDyn
+    fmt::Debug
+    + Send
+    + AsAnyRef
+    + WithLen
+    + ByteEstimate
+    + MergeableDyn
+    + ToJsonValue
+    + ToCborValue
+    + ToUserFacingApiType
 {
     fn type_name(&self) -> &'static str;
     fn binned_events_timeweight_traitobj(
@@ -98,8 +109,13 @@ pub trait BinningggContainerEventsDyn:
     fn serde_id(&self) -> u32;
     fn nty_id(&self) -> u32;
     fn eq(&self, rhs: &dyn BinningggContainerEventsDyn) -> bool;
-    fn verify(&self) -> bool;
     fn as_mergeable_dyn_mut(&mut self) -> &mut dyn MergeableDyn;
+}
+
+impl ToUserFacingApiType for Box<dyn BinningggContainerEventsDyn> {
+    fn to_user_facing_api_type(self) -> Box<dyn crate::apitypes::UserApiType> {
+        let inner = *self;
+    }
 }
 
 impl<T> MergeableDyn for Box<T>
@@ -140,6 +156,10 @@ where
 
     fn drain_into_new(&mut self, range: Range<usize>) -> DrainIntoNewDynResult {
         self.as_mut().drain_into_new(range)
+    }
+
+    fn is_consistent(&self) -> bool {
+        self.as_ref().is_consistent()
     }
 }
 

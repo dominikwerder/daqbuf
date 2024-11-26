@@ -15,13 +15,12 @@ use std::any;
 use std::any::Any;
 use std::fmt;
 
-// TODO check usage of this trait
-pub trait ToJsonBytes {
-    fn to_json_bytes(&self) -> Result<Vec<u8>, Error>;
+pub trait ToJsonValue: fmt::Debug + Send {
+    fn to_json_value(&self) -> Result<serde_json::Value, serde_json::Error>;
 }
 
-pub trait ToJsonResult: fmt::Debug + AsAnyRef + AsAnyMut + Send {
-    fn to_json_value(&self) -> Result<serde_json::Value, serde_json::Error>;
+pub trait ToCborValue: fmt::Debug + Send {
+    fn to_cbor_value(&self) -> Result<ciborium::Value, ciborium::value::Error>;
 }
 
 impl AsAnyRef for serde_json::Value {
@@ -36,23 +35,17 @@ impl AsAnyMut for serde_json::Value {
     }
 }
 
-impl ToJsonResult for serde_json::Value {
+impl ToJsonValue for serde_json::Value {
     fn to_json_value(&self) -> Result<serde_json::Value, serde_json::Error> {
         Ok(self.clone())
     }
 }
 
-impl ToJsonBytes for serde_json::Value {
-    fn to_json_bytes(&self) -> Result<Vec<u8>, Error> {
-        Ok(serde_json::to_vec(self)?)
-    }
-}
+pub trait CollectedDyn: fmt::Debug + TypeName + Send + AsAnyRef + WithLen + ToJsonValue {}
 
-pub trait CollectedDyn: fmt::Debug + TypeName + Send + AsAnyRef + WithLen + ToJsonResult {}
-
-impl ToJsonResult for Box<dyn CollectedDyn> {
+impl ToJsonValue for Box<dyn CollectedDyn> {
     fn to_json_value(&self) -> Result<serde_json::Value, serde_json::Error> {
-        ToJsonResult::to_json_value(self.as_ref())
+        ToJsonValue::to_json_value(self.as_ref())
     }
 }
 
@@ -72,7 +65,7 @@ impl CollectedDyn for Box<dyn CollectedDyn> {}
 
 pub trait CollectorTy: fmt::Debug + Send + Unpin + WithLen + ByteEstimate {
     type Input: CollectableDyn;
-    type Output: CollectedDyn + ToJsonResult + Serialize;
+    type Output: CollectedDyn + ToJsonValue + Serialize;
 
     fn ingest(&mut self, src: &mut Self::Input);
     fn set_range_complete(&mut self);
