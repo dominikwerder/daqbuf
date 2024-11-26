@@ -1,6 +1,5 @@
 use crate::collect::Collect;
 use crate::collect::CollectResult;
-use crate::json_stream::JsonBytes;
 use crate::json_stream::JsonStream;
 use crate::rangefilter2::RangeFilter2;
 use crate::streamtimeout::StreamTimeout2;
@@ -20,6 +19,7 @@ use items_0::streamitem::Sitemty;
 use items_0::streamitem::StreamItem;
 use items_0::Events;
 use items_2::channelevents::ChannelEvents;
+use items_2::jsonbytes::JsonBytes;
 use items_2::merger::Merger;
 use netpod::log::*;
 use netpod::range::evrange::NanoRange;

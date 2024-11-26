@@ -186,6 +186,11 @@ where
 {
     let frames = InMemoryFrameStream::new(inp, bufcap);
     let frames = frames.map_err(sitem_err2_from_string);
+    let frames = frames.inspect(|x| {
+        if false {
+            eprintln!("container_stream_from_bytes_stream  see frame  {:?}", x);
+        }
+    });
     // TODO let EventsFromFrames accept also non-boxed input?
     let frames = Box::pin(frames);
     let stream = EventsFromFrames::<T>::new(frames, dbgdesc);

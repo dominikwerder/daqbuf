@@ -1,6 +1,7 @@
 mod collect;
 mod events;
 mod events_reader;
+mod framing;
 mod timebin;
 
 use futures_util::stream;

@@ -1,4 +1,4 @@
-use crate::cbor_stream::FramedBytesToSitemtyDynEventsStream;
+use crate::cbor_stream::FramedBytesToChannelEventsStream;
 use crate::firsterr::only_first_err;
 use crate::frames::inmem::BoxedBytesStream;
 use crate::lenframed;
@@ -66,7 +66,7 @@ async fn merged_events_inner() -> Result<(), Error> {
     .await
     .unwrap();
     let stream = lenframed::length_framed(stream);
-    let stream = FramedBytesToSitemtyDynEventsStream::new(
+    let stream = FramedBytesToChannelEventsStream::new(
         stream,
         ch_conf.scalar_type().clone(),
         ch_conf.shape().clone(),

@@ -14,7 +14,6 @@ use netpod::ByteSize;
 use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
-// use tokio::io::AsyncRead;
 
 #[derive(Debug, thiserror::Error)]
 #[cstm(name = "InMem")]

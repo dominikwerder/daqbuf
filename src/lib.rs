@@ -14,6 +14,7 @@ pub mod generators;
 pub mod instrument;
 pub mod itemclone;
 pub mod json_stream;
+pub mod lenframe;
 pub mod lenframed;
 pub mod needminbuffer;
 pub mod plaineventscbor;

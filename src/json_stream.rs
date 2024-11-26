@@ -1,8 +1,9 @@
-use crate::cbor_stream::SitemtyDynEventsStream;
+use crate::plaineventsstream::ChannelEventsStream;
 use crate::streamtimeout::StreamTimeout2;
 use crate::streamtimeout::TimeoutableStream;
 use futures_util::Stream;
 use futures_util::StreamExt;
+use items_0::collect_s::ToJsonValue;
 use items_0::streamitem::RangeCompletableItem;
 use items_0::streamitem::Sitemty;
 use items_0::streamitem::StreamItem;
@@ -10,6 +11,7 @@ use items_0::Events;
 use items_0::WithLen;
 use items_2::binning::container_events::ContainerEvents;
 use items_2::channelevents::ChannelEvents;
+use items_2::jsonbytes::JsonBytes;
 use netpod::log::*;
 use netpod::EnumVariant;
 use std::pin::Pin;
@@ -35,93 +37,31 @@ where
     }
 }
 
-pub struct JsonBytes(String);
-
-impl JsonBytes {
-    pub fn new<S: Into<String>>(s: S) -> Self {
-        Self(s.into())
-    }
-
-    pub fn into_inner(self) -> String {
-        self.0
-    }
-
-    pub fn len(&self) -> u32 {
-        self.0.len() as _
-    }
-}
-
-impl WithLen for JsonBytes {
-    fn len(&self) -> usize {
-        self.len() as usize
-    }
-}
-
-impl From<JsonBytes> for String {
-    fn from(value: JsonBytes) -> Self {
-        value.0
-    }
-}
-
 pub type JsonStream = Pin<Box<dyn Stream<Item = Result<JsonBytes, Error>> + Send>>;
 
 pub fn events_stream_to_json_stream(
-    stream: SitemtyDynEventsStream,
+    stream: ChannelEventsStream,
+    ivl: Duration,
     timeout_provider: Box<dyn StreamTimeout2>,
 ) -> impl Stream<Item = Result<JsonBytes, Error>> {
-    let ivl = Duration::from_millis(4000);
     let stream = TimeoutableStream::new(ivl, timeout_provider, stream);
     let stream = stream.map(|x| match x {
         Some(x) => map_events(x),
         None => make_keepalive(),
     });
-    let prepend = {
-        let item = make_keepalive();
-        futures_util::stream::iter([item])
-    };
-    prepend.chain(stream)
+    stream
 }
 
-fn map_events(x: Sitemty<Box<dyn Events>>) -> Result<JsonBytes, Error> {
+fn map_events<T>(x: Sitemty<T>) -> Result<JsonBytes, Error>
+where
+    T: ToJsonValue,
+{
     match x {
         Ok(x) => match x {
             StreamItem::DataItem(x) => match x {
                 RangeCompletableItem::Data(evs) => {
-                    let mut k = evs;
-                    let evs = if let Some(j) = k.as_any_mut().downcast_mut::<ChannelEvents>() {
-                        match j {
-                            ChannelEvents::Events(m) => {
-                                if let Some(g) = m
-                                    .as_any_mut()
-                                    .downcast_mut::<ContainerEvents<EnumVariant>>()
-                                {
-                                    trace!("consider container EnumVariant");
-                                    let mut out = ContainerEvents::new();
-                                    for (&ts, val) in g.iter_zip() {
-                                        out.push_back(ts, val.name.to_string());
-                                    }
-                                    Box::new(ChannelEvents::Events(Box::new(out)))
-                                } else {
-                                    trace!(
-                                        "consider container channel events other events  {}",
-                                        k.type_name()
-                                    );
-                                    k
-                                }
-                            }
-                            ChannelEvents::Status(_) => {
-                                trace!(
-                                    "consider container channel events status  {}",
-                                    k.type_name()
-                                );
-                                k
-                            }
-                        }
-                    } else {
-                        trace!("consider container else  {}", k.type_name());
-                        k
-                    };
-                    let s = evs.to_json_string();
+                    let val = evs.to_json_value()?;
+                    let s = serde_json::to_string(&val)?;
                     let item = JsonBytes::new(s);
                     Ok(item)
                 }

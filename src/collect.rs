@@ -45,8 +45,9 @@ pub enum CollectResult<T> {
     Some(T),
 }
 
-pub struct Collect {
-    inp: Pin<Box<dyn Stream<Item = Sitemty<Box<dyn CollectableDyn>>> + Send>>,
+pub struct Collect<ITEM> {
+    // inp: Pin<Box<dyn Stream<Item = Sitemty<Box<dyn CollectableDyn>>> + Send>>,
+    inp: Pin<Box<dyn Stream<Item = Sitemty<ITEM>> + Send>>,
     events_max: u64,
     bytes_max: u64,
     range: Option<SeriesRange>,
@@ -58,9 +59,13 @@ pub struct Collect {
     done_input: bool,
 }
 
-impl Collect {
+impl<ITEM> Collect<ITEM>
+where
+    ITEM: CollectableDyn,
+{
     pub fn new(
-        inp: Pin<Box<dyn Stream<Item = Sitemty<Box<dyn CollectableDyn>>> + Send>>,
+        // inp: Pin<Box<dyn Stream<Item = Sitemty<Box<dyn CollectableDyn>>> + Send>>,
+        inp: Pin<Box<dyn Stream<Item = Sitemty<ITEM>> + Send>>,
         deadline: Instant,
         events_max: u64,
         bytes_max: u64,
@@ -83,7 +88,7 @@ impl Collect {
         }
     }
 
-    fn handle_item(&mut self, item: Sitemty<Box<dyn CollectableDyn>>) -> Result<(), Error> {
+    fn handle_item(&mut self, item: Sitemty<ITEM>) -> Result<(), Error> {
         match item {
             Ok(item) => match item {
                 StreamItem::DataItem(item) => match item {
@@ -164,7 +169,10 @@ impl Collect {
     }
 }
 
-impl Future for Collect {
+impl<ITEM> Future for Collect<ITEM>
+where
+    ITEM: CollectableDyn,
+{
     type Output = Result<CollectResult<Box<dyn CollectedDyn>>, Error>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {

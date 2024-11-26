@@ -1,8 +1,8 @@
-use crate::cbor_stream::CborBytes;
 use futures_util::future;
 use futures_util::Stream;
 use futures_util::StreamExt;
 use items_0::WithLen;
+use items_2::jsonbytes::CborBytes;
 
 pub fn non_empty<S, T, E>(inp: S) -> impl Stream<Item = Result<T, E>>
 where

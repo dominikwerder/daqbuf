@@ -22,14 +22,14 @@ pub enum Error {
     TcpRawClient(#[from] crate::tcprawclient::Error),
 }
 
-pub type DynEventsStream = Pin<Box<dyn Stream<Item = Sitemty<Box<dyn Events>>> + Send>>;
+pub type ChannelEventsStream = Pin<Box<dyn Stream<Item = Sitemty<ChannelEvents>> + Send>>;
 
 pub async fn dyn_events_stream(
     evq: &PlainEventsQuery,
     ch_conf: ChannelTypeConfigGen,
     ctx: &ReqCtx,
     open_bytes: OpenBoxedBytesStreamsBox,
-) -> Result<DynEventsStream, Error> {
+) -> Result<ChannelEventsStream, Error> {
     trace!("dyn_events_stream  {}", evq.summary_short());
     use query::api4::events::EventsSubQuerySettings;
     let subq = make_sub_query(
@@ -62,12 +62,6 @@ pub async fn dyn_events_stream(
         evq.range().try_into()?,
         evq.one_before_range(),
     );
-    let stream = stream.map(move |k| {
-        on_sitemty_data!(k, |k| {
-            let k: Box<dyn Events> = Box::new(k);
-            Ok(StreamItem::DataItem(RangeCompletableItem::Data(k)))
-        })
-    });
     if let Some(wasmname) = evq.test_do_wasm() {
         let stream =
             transform_wasm::<_, items_0::streamitem::SitemErrTy>(stream, wasmname, ctx).await?;
@@ -82,11 +76,11 @@ async fn transform_wasm<INP, ETS>(
     stream: INP,
     _wasmname: &str,
     _ctx: &ReqCtx,
-) -> Result<impl Stream<Item = Sitemty<Box<dyn Events>>> + Send, Error>
+) -> Result<impl Stream<Item = Sitemty<ChannelEvents>> + Send, Error>
 where
-    INP: Stream<Item = Sitemty<Box<dyn Events>>> + Send + 'static,
+    INP: Stream<Item = Sitemty<ChannelEvents>> + Send + 'static,
 {
-    let ret: Pin<Box<dyn Stream<Item = Sitemty<Box<dyn Events>>> + Send>> = Box::pin(stream);
+    let ret = Box::pin(stream);
     Ok(ret)
 }
 
@@ -95,9 +89,9 @@ async fn transform_wasm<INP>(
     stream: INP,
     wasmname: &str,
     ctx: &ReqCtx,
-) -> Result<impl Stream<Item = Sitemty<Box<dyn Events>>> + Send, Error>
+) -> Result<impl Stream<Item = Sitemty<ChannelEvents>> + Send, Error>
 where
-    INP: Stream<Item = Sitemty<Box<dyn Events>>> + Send + 'static,
+    INP: Stream<Item = Sitemty<ChannelEvents>> + Send + 'static,
 {
     debug!("make wasm transform");
     use httpclient::url::Url;
