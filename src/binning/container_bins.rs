@@ -8,7 +8,7 @@ use err::thiserror;
 use err::ThisError;
 use items_0::collect_s::CollectableDyn;
 use items_0::collect_s::CollectedDyn;
-use items_0::collect_s::ToJsonResult;
+use items_0::collect_s::ToJsonValue;
 use items_0::timebin::BinningggContainerBinsDyn;
 use items_0::timebin::BinsBoxed;
 use items_0::vecpreview::VecPreview;
@@ -487,7 +487,7 @@ where
     // finished_at: Option<IsoDateTime>,
 }
 
-impl<EVT, BVT> ToJsonResult for ContainerBinsCollectorOutput<EVT, BVT>
+impl<EVT, BVT> ToJsonValue for ContainerBinsCollectorOutput<EVT, BVT>
 where
     EVT: EventValueType,
     BVT: BinAggedType,

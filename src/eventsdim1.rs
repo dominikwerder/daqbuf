@@ -5,7 +5,7 @@ use items_0::collect_s::CollectableDyn;
 use items_0::collect_s::CollectableType;
 use items_0::collect_s::CollectedDyn;
 use items_0::collect_s::CollectorTy;
-use items_0::collect_s::ToJsonResult;
+use items_0::collect_s::ToJsonValue;
 use items_0::container::ByteEstimate;
 use items_0::overlap::HasTimestampDeque;
 use items_0::scalar_ops::ScalarOps;
@@ -335,7 +335,7 @@ impl<STY: ScalarOps> WithLen for EventsDim1CollectorOutput<STY> {
     }
 }
 
-impl<STY: ScalarOps> ToJsonResult for EventsDim1CollectorOutput<STY> {
+impl<STY: ScalarOps> ToJsonValue for EventsDim1CollectorOutput<STY> {
     fn to_json_value(&self) -> Result<serde_json::Value, serde_json::Error> {
         serde_json::to_value(self)
     }

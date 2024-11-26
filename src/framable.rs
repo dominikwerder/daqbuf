@@ -4,6 +4,7 @@ use crate::frame::make_log_frame;
 use crate::frame::make_range_complete_frame;
 use crate::frame::make_stats_frame;
 use bytes::BytesMut;
+use core::fmt;
 use daqbuf_err as err;
 use items_0::framable::FrameTypeInnerDyn;
 use items_0::framable::FrameTypeInnerStatic;
@@ -93,7 +94,7 @@ impl<T: erased_serde::Serialize + FrameTypeInnerDyn + Send> FramableInner for T 
 
 impl<T> Framable for Sitemty<T>
 where
-    T: Sized + serde::Serialize + FrameType,
+    T: Sized + serde::Serialize + FrameType + fmt::Debug,
 {
     fn make_frame_dyn(&self) -> Result<BytesMut, Error> {
         match self {

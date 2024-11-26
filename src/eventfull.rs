@@ -257,6 +257,10 @@ impl MergeableTy for EventFull {
             .map(|x| netpod::TsMs::from_ns_u64(*x))
             .collect()
     }
+
+    fn is_consistent(&self) -> bool {
+        true
+    }
 }
 
 #[derive(Debug, ThisError, Serialize, Deserialize)]

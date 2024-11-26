@@ -25,6 +25,8 @@ impl InMemoryFrame {
 
 impl fmt::Debug for InMemoryFrame {
     fn fmt(&self, fmt: &mut std::fmt::Formatter) -> std::fmt::Result {
+        let v = &self.buf;
+        let _a = &v[0..v.len().min(40)];
         write!(
             fmt,
             "InMemoryFrame {{ encid: {:x}  tyid: {:x}  len {} }}",

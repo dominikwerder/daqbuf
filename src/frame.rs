@@ -13,6 +13,7 @@ use bincode::config::WithOtherTrailing;
 use bincode::DefaultOptions;
 use bytes::BufMut;
 use bytes::BytesMut;
+use core::fmt;
 use daqbuf_err as err;
 use items_0::bincode;
 use items_0::streamitem::LogItem;
@@ -26,6 +27,10 @@ use netpod::log::*;
 use serde::Serialize;
 use std::any;
 use std::io;
+
+const USE_JSON: bool = false;
+const EMIT_JSON_DEBUG: bool = false;
+const EMIT_POSTCARD_DEBUG: bool = false;
 
 #[derive(Debug, thiserror::Error)]
 #[cstm(name = "ItemFrame")]
@@ -41,7 +46,10 @@ pub enum Error {
     RmpEnc(#[from] rmp_serde::encode::Error),
     RmpDec(#[from] rmp_serde::decode::Error),
     ErasedSerde(#[from] erased_serde::Error),
-    Postcard(#[from] postcard::Error),
+    #[error("PostcardSer({0})")]
+    PostcardSer(postcard::Error),
+    #[error("PostcardDe({0}, {1}, {2:?}, {3})")]
+    PostcardDe(postcard::Error, usize, Vec<u8>, &'static str),
     SerdeJson(#[from] serde_json::Error),
 }
 
@@ -133,12 +141,19 @@ fn postcard_to_vec<T>(item: T) -> Result<Vec<u8>, Error>
 where
     T: Serialize,
 {
-    postcard::to_stdvec(&item).map_err(Error::from)
+    postcard::to_stdvec(&item)
+        .map_err(|e| Error::PostcardSer(e))
+        .inspect(|x| {
+            if EMIT_POSTCARD_DEBUG {
+                let a = &x[0..x.len().min(40)];
+                eprintln!("postcard_to_vec  {:?}  {}", a, std::any::type_name::<T>());
+            }
+        })
 }
 
 fn postcard_erased_to_vec<T>(item: T) -> Result<Vec<u8>, Error>
 where
-    T: erased_serde::Serialize,
+    T: erased_serde::Serialize + fmt::Debug,
 {
     use postcard::ser_flavors::Flavor;
     let mut ser1 = postcard::Serializer {
@@ -148,36 +163,97 @@ where
         let mut ser2 = <dyn erased_serde::Serializer>::erase(&mut ser1);
         item.erased_serialize(&mut ser2)
     }?;
-    let ret = ser1.output.finalize()?;
-    Ok(ret)
+    ser1.output
+        .finalize()
+        .map_err(|e| Error::PostcardSer(e))
+        .inspect(|x| {
+            if EMIT_POSTCARD_DEBUG {
+                let a = &x[0..x.len().min(40)];
+                eprintln!(
+                    "postcard_erased_to_vec  {:?}  {:?}  {}",
+                    a,
+                    item,
+                    std::any::type_name::<T>()
+                );
+            }
+        })
 }
 
 pub fn postcard_from_slice<T>(buf: &[u8]) -> Result<T, Error>
 where
     T: for<'de> serde::Deserialize<'de>,
 {
-    Ok(postcard::from_bytes(buf)?)
+    let x = postcard::from_bytes(buf).map_err(|e| {
+        Error::PostcardDe(
+            e,
+            buf.len(),
+            buf[0..buf.len().min(40)].to_vec(),
+            std::any::type_name::<T>(),
+        )
+    })?;
+    Ok(x)
 }
 
 fn json_to_vec<T>(item: T) -> Result<Vec<u8>, Error>
 where
-    T: Serialize,
+    T: Serialize + fmt::Debug,
 {
-    Ok(serde_json::to_vec(&item)?)
+    serde_json::to_vec(&item).map_err(Into::into).inspect(|x| {
+        if EMIT_JSON_DEBUG {
+            let s = String::from_utf8_lossy(&x);
+            let a = &s[0..x.len().min(80)];
+            eprintln!(
+                "json_to_vec  {}  {:?}  {}",
+                a,
+                item,
+                std::any::type_name::<T>()
+            );
+        }
+    })
+}
+
+fn json_erased_to_vec<T>(item: T) -> Result<Vec<u8>, Error>
+where
+    T: erased_serde::Serialize + fmt::Debug,
+{
+    let out = Vec::new();
+    let mut ser = serde_json::Serializer::new(out);
+    let x = erased_serde::serialize(&item, &mut ser)?;
+    assert_eq!(x, ());
+    let ret = ser.into_inner();
+    Ok(ret).inspect(|x| {
+        if EMIT_JSON_DEBUG {
+            let s = String::from_utf8_lossy(&x);
+            let a = &s[0..s.len().min(80)];
+            eprintln!(
+                "json_erased_to_vec  {}  {:?}  {}",
+                a,
+                item,
+                std::any::type_name::<T>()
+            );
+        }
+    })
 }
 
 pub fn json_from_slice<T>(buf: &[u8]) -> Result<T, Error>
 where
     T: for<'de> serde::Deserialize<'de>,
 {
+    if EMIT_JSON_DEBUG {
+        let s = String::from_utf8_lossy(&buf);
+        let a = &s[0..s.len().min(80)];
+        eprintln!("json_from_slice  {}  {}", a, std::any::type_name::<T>());
+    }
     Ok(serde_json::from_slice(buf)?)
 }
 
 pub fn encode_to_vec<T>(item: T) -> Result<Vec<u8>, Error>
 where
-    T: Serialize,
+    T: Serialize + fmt::Debug,
 {
-    if false {
+    if USE_JSON {
+        json_to_vec(item)
+    } else if false {
         msgpack_to_vec(item)
     } else if false {
         bincode_to_vec(item)
@@ -188,9 +264,11 @@ where
 
 pub fn encode_erased_to_vec<T>(item: T) -> Result<Vec<u8>, Error>
 where
-    T: erased_serde::Serialize,
+    T: erased_serde::Serialize + fmt::Debug,
 {
-    if false {
+    if USE_JSON {
+        json_erased_to_vec(item)
+    } else if false {
         msgpack_erased_to_vec(item)
     } else {
         postcard_erased_to_vec(item)
@@ -201,7 +279,9 @@ pub fn decode_from_slice<T>(buf: &[u8]) -> Result<T, Error>
 where
     T: for<'de> serde::Deserialize<'de>,
 {
-    if false {
+    if USE_JSON {
+        json_from_slice(buf)
+    } else if false {
         msgpack_from_slice(buf)
     } else if false {
         bincode_from_slice(buf)
@@ -212,7 +292,7 @@ where
 
 pub fn make_frame_2<T>(item: T, fty: u32) -> Result<BytesMut, Error>
 where
-    T: erased_serde::Serialize,
+    T: erased_serde::Serialize + fmt::Debug,
 {
     let enc = encode_erased_to_vec(item)?;
     if enc.len() > u32::MAX as usize {

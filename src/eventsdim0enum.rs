@@ -4,7 +4,7 @@ use items_0::collect_s::CollectableDyn;
 use items_0::collect_s::CollectedDyn;
 use items_0::collect_s::CollectorDyn;
 use items_0::collect_s::CollectorTy;
-use items_0::collect_s::ToJsonResult;
+use items_0::collect_s::ToJsonValue;
 use items_0::container::ByteEstimate;
 use items_0::isodate::IsoDateTime;
 use items_0::scalar_ops::ScalarOps;
@@ -127,7 +127,7 @@ impl TypeName for EventsDim0EnumCollectorOutput {
     }
 }
 
-impl ToJsonResult for EventsDim0EnumCollectorOutput {
+impl ToJsonValue for EventsDim0EnumCollectorOutput {
     fn to_json_value(&self) -> Result<serde_json::Value, serde_json::Error> {
         todo!()
     }

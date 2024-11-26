@@ -9,6 +9,7 @@ pub mod eventsdim1;
 pub mod framable;
 pub mod frame;
 pub mod inmem;
+pub mod jsonbytes;
 pub mod merger;
 pub mod offsets;
 pub mod streams;

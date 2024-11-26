@@ -9,6 +9,11 @@ use core::ops::Range;
 use daqbuf_err as err;
 use err::thiserror;
 use err::ThisError;
+use items_0::apitypes::ContainerEventsApi;
+use items_0::apitypes::ToUserFacingApiType;
+use items_0::apitypes::UserApiType;
+use items_0::collect_s::ToCborValue;
+use items_0::collect_s::ToJsonValue;
 use items_0::container::ByteEstimate;
 use items_0::merge::DrainIntoDstResult;
 use items_0::merge::DrainIntoNewDynResult;
@@ -300,6 +305,7 @@ mod container_events_serde {
     use super::ContainerEvents;
     use super::EventValueType;
     use serde::de::MapAccess;
+    use serde::de::SeqAccess;
     use serde::de::Visitor;
     use serde::ser::SerializeStruct;
     use serde::Deserialize;
@@ -308,6 +314,8 @@ mod container_events_serde {
     use serde::Serializer;
     use std::fmt;
     use std::marker::PhantomData;
+
+    macro_rules! trace_serde { ($($arg:tt)*) => ( if false { eprintln!($($arg)*); }) }
 
     impl<EVT> Serialize for ContainerEvents<EVT>
     where
@@ -339,10 +347,31 @@ mod container_events_serde {
             fmt.write_str("a struct with fields tss and vals")
         }
 
+        fn visit_seq<S>(self, mut seq: S) -> Result<Self::Value, S::Error>
+        where
+            S: SeqAccess<'de>,
+        {
+            trace_serde!("Vis ContainerEvents visit_map");
+            let tss = seq
+                .next_element()?
+                .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
+            let vals = seq
+                .next_element()?
+                .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
+            let ret = Self::Value {
+                tss,
+                vals,
+                // TODO make container recompute byte_estimate
+                byte_estimate: 0,
+            };
+            Ok(ret)
+        }
+
         fn visit_map<M>(self, mut map: M) -> Result<Self::Value, M::Error>
         where
             M: MapAccess<'de>,
         {
+            trace_serde!("Vis ContainerEvents visit_map");
             let mut tss = None;
             let mut vals = None;
             while let Some(key) = map.next_key::<&str>()? {
@@ -432,6 +461,10 @@ where
 
     pub fn iter_zip<'a>(&'a self) -> impl Iterator<Item = (&TsNano, EVT::IterTy1<'a>)> {
         self.tss.iter().zip(self.vals.iter_ty_1())
+    }
+
+    pub fn serde_id() -> u32 {
+        items_0::streamitem::CONTAINER_EVENTS_TYPE_ID
     }
 }
 
@@ -625,6 +658,19 @@ where
         MergeableTy::drain_into(self, &mut dst, range);
         DrainIntoNewResult::Done(dst)
     }
+
+    fn is_consistent(&self) -> bool {
+        let mut good = true;
+        let n = self.tss.len();
+        for (&ts1, &ts2) in self.tss.iter().zip(self.tss.range(n.min(1)..n)) {
+            if ts1 > ts2 {
+                good = false;
+                error!("unordered event data  ts1 {}  ts2 {}", ts1, ts2);
+                break;
+            }
+        }
+        good
+    }
 }
 
 impl<EVT> MergeableDyn for ContainerEvents<EVT>
@@ -674,6 +720,42 @@ where
             DrainIntoNewResult::NotCompatible => DrainIntoNewDynResult::NotCompatible,
         }
     }
+
+    fn is_consistent(&self) -> bool {
+        MergeableTy::is_consistent(self)
+    }
+}
+
+impl<EVT> ToCborValue for ContainerEvents<EVT>
+where
+    EVT: EventValueType,
+{
+    fn to_cbor_value(&self) -> Result<ciborium::Value, ciborium::value::Error> {
+        ciborium::value::Value::serialized(self)
+    }
+}
+
+impl<EVT> ToJsonValue for ContainerEvents<EVT>
+where
+    EVT: EventValueType,
+{
+    fn to_json_value(&self) -> Result<serde_json::Value, serde_json::Error> {
+        serde_json::to_value(self)
+    }
+}
+
+impl<EVT> ToUserFacingApiType for ContainerEvents<EVT>
+where
+    EVT: EventValueType,
+{
+    fn to_user_facing_api_type(self) -> Box<dyn UserApiType> {
+        let tss: VecDeque<_> = self.tss.into_iter().map(|x| x.ms()).collect();
+        let ret = ContainerEventsApi {
+            tss: tss.clone(),
+            values: tss.clone(),
+        };
+        Box::new(ret)
+    }
 }
 
 impl<EVT> BinningggContainerEventsDyn for ContainerEvents<EVT>
@@ -701,7 +783,7 @@ where
     }
 
     fn serde_id(&self) -> u32 {
-        items_0::streamitem::CONTAINER_EVENTS_TYPE_ID
+        Self::serde_id()
     }
 
     fn nty_id(&self) -> u32 {
@@ -714,19 +796,6 @@ where
         } else {
             false
         }
-    }
-
-    fn verify(&self) -> bool {
-        let mut good = true;
-        let n = self.tss.len();
-        for (&ts1, &ts2) in self.tss.iter().zip(self.tss.range(n.min(1)..n)) {
-            if ts1 > ts2 {
-                good = false;
-                error!("unordered event data  ts1 {}  ts2 {}", ts1, ts2);
-                break;
-            }
-        }
-        good
     }
 
     fn as_mergeable_dyn_mut(&mut self) -> &mut dyn MergeableDyn {
