@@ -10,8 +10,27 @@ impl<T> ContPayload for T where T: fmt::Debug + Serialize + Send {}
 pub trait UserApiType: ToCborValue {}
 
 pub trait ToUserFacingApiType {
-    fn to_user_facing_api_type(self) -> Box<dyn UserApiType>;
+    fn to_user_facing_api_type(self: Self) -> Box<dyn UserApiType>;
+    fn to_user_facing_api_type_box(self: Box<Self>) -> Box<dyn UserApiType>;
 }
+
+#[derive(Debug, Serialize)]
+pub struct EmptyStruct {}
+
+impl EmptyStruct {
+    pub fn new() -> Self {
+        Self {}
+    }
+}
+
+impl ToCborValue for EmptyStruct {
+    fn to_cbor_value(&self) -> Result<ciborium::Value, ciborium::value::Error> {
+        let ret = ciborium::Value::Map(Vec::new());
+        Ok(ret)
+    }
+}
+
+impl UserApiType for EmptyStruct {}
 
 #[derive(Serialize)]
 pub struct ContainerEventsApi<EVT>

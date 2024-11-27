@@ -112,12 +112,6 @@ pub trait BinningggContainerEventsDyn:
     fn as_mergeable_dyn_mut(&mut self) -> &mut dyn MergeableDyn;
 }
 
-impl ToUserFacingApiType for Box<dyn BinningggContainerEventsDyn> {
-    fn to_user_facing_api_type(self) -> Box<dyn crate::apitypes::UserApiType> {
-        let inner = *self;
-    }
-}
-
 impl<T> MergeableDyn for Box<T>
 where
     T: MergeableDyn,
