@@ -748,13 +748,39 @@ impl<EVT> ToUserFacingApiType for ContainerEvents<EVT>
 where
     EVT: EventValueType,
 {
-    fn to_user_facing_api_type(self) -> Box<dyn UserApiType> {
-        let tss: VecDeque<_> = self.tss.into_iter().map(|x| x.ms()).collect();
+    fn to_user_facing_api_type(self: Self) -> Box<dyn UserApiType> {
+        let this = self;
+        let tss: VecDeque<_> = this.tss.into_iter().map(|x| x.ms()).collect();
         let ret = ContainerEventsApi {
             tss: tss.clone(),
             values: tss.clone(),
         };
         Box::new(ret)
+    }
+
+    fn to_user_facing_api_type_box(self: Box<Self>) -> Box<dyn UserApiType> {
+        let this = *self;
+        this.to_user_facing_api_type()
+    }
+}
+
+impl<EVT> ToUserFacingApiType for Box<ContainerEvents<EVT>>
+where
+    EVT: EventValueType,
+{
+    fn to_user_facing_api_type(self: Self) -> Box<dyn UserApiType> {
+        let this = *self;
+        let tss: VecDeque<_> = this.tss.into_iter().map(|x| x.ms()).collect();
+        let ret = ContainerEventsApi {
+            tss: tss.clone(),
+            values: tss.clone(),
+        };
+        Box::new(ret)
+    }
+
+    fn to_user_facing_api_type_box(self: Box<Self>) -> Box<dyn UserApiType> {
+        let this = *self;
+        this.to_user_facing_api_type()
     }
 }
 

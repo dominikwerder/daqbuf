@@ -1,9 +1,7 @@
 use crate::binning::container_events::ContainerEvents;
 use crate::binning::container_events::EventValueType;
 use crate::framable::FrameType;
-use crate::jsonbytes::JsonBytes;
 use crate::log::*;
-use crate::Events;
 use core::ops::Range;
 use daqbuf_err as err;
 use items_0::apitypes::ToUserFacingApiType;
@@ -19,7 +17,6 @@ use items_0::isodate::IsoDateTime;
 use items_0::merge::DrainIntoDstResult;
 use items_0::merge::DrainIntoNewDynResult;
 use items_0::merge::DrainIntoNewResult;
-use items_0::merge::MergeableDyn;
 use items_0::merge::MergeableTy;
 use items_0::streamitem::ITEMS_2_CHANNEL_EVENTS_FRAME_TYPE_ID;
 use items_0::timebin::BinningggContainerEventsDyn;
@@ -36,7 +33,6 @@ use netpod::TsMs;
 use netpod::TsNano;
 use serde::Deserialize;
 use serde::Serialize;
-use serde_json::map::Keys;
 use std::any;
 use std::any::Any;
 use std::collections::VecDeque;
@@ -227,11 +223,8 @@ impl AsAnyMut for ChannelEvents {
 
 mod serde_channel_events {
     use super::ChannelEvents;
-    use super::Events;
     use crate::binning::container_events::ContainerEvents;
     use crate::channelevents::ConnStatusEvent;
-    use crate::eventsdim0::EventsDim0;
-    use crate::eventsdim1::EventsDim1;
     use crate::log::*;
     use items_0::subfr::SubFrId;
     use items_0::timebin::BinningggContainerEventsDyn;
@@ -319,6 +312,17 @@ mod serde_channel_events {
         }
     }
 
+    fn get_2nd_or_err<'de, T, A>(seq: &mut A) -> Result<EvBox, A::Error>
+    where
+        A: de::SeqAccess<'de>,
+        T: Deserialize<'de> + BinningggContainerEventsDyn + 'static,
+    {
+        let obj: T = seq
+            .next_element()?
+            .ok_or_else(|| de::Error::missing_field("[2] obj"))?;
+        Ok(EvBox(Box::new(obj)))
+    }
+
     impl<'de> Visitor<'de> for EvBoxVis {
         type Value = EvBox;
 
@@ -340,163 +344,32 @@ mod serde_channel_events {
                 .ok_or_else(|| de::Error::missing_field("[1] nty"))?;
             if cty == C1::<u8>::serde_id() {
                 match nty {
-                    u8::SUB => {
-                        let obj: C1<u8> = seq
-                            .next_element()?
-                            .ok_or_else(|| de::Error::missing_field("[2] obj"))?;
-                        Ok(EvBox(Box::new(obj)))
-                    }
-                    u16::SUB => {
-                        let obj: C1<u16> = seq
-                            .next_element()?
-                            .ok_or_else(|| de::Error::missing_field("[2] obj"))?;
-                        Ok(EvBox(Box::new(obj)))
-                    }
-                    u32::SUB => {
-                        let obj: C1<u32> = seq
-                            .next_element()?
-                            .ok_or_else(|| de::Error::missing_field("[2] obj"))?;
-                        Ok(EvBox(Box::new(obj)))
-                    }
-                    u64::SUB => {
-                        let obj: C1<u64> = seq
-                            .next_element()?
-                            .ok_or_else(|| de::Error::missing_field("[2] obj"))?;
-                        Ok(EvBox(Box::new(obj)))
-                    }
-                    i8::SUB => {
-                        let obj: C1<i8> = seq
-                            .next_element()?
-                            .ok_or_else(|| de::Error::missing_field("[2] obj"))?;
-                        Ok(EvBox(Box::new(obj)))
-                    }
-                    i16::SUB => {
-                        let obj: C1<i16> = seq
-                            .next_element()?
-                            .ok_or_else(|| de::Error::missing_field("[2] obj"))?;
-                        Ok(EvBox(Box::new(obj)))
-                    }
-                    i32::SUB => {
-                        let obj: C1<i32> = seq
-                            .next_element()?
-                            .ok_or_else(|| de::Error::missing_field("[2] obj"))?;
-                        Ok(EvBox(Box::new(obj)))
-                    }
-                    i64::SUB => {
-                        let obj: C1<i64> = seq
-                            .next_element()?
-                            .ok_or_else(|| de::Error::missing_field("[2] obj"))?;
-                        Ok(EvBox(Box::new(obj)))
-                    }
-                    f32::SUB => {
-                        let obj: C1<f32> = seq
-                            .next_element()?
-                            .ok_or_else(|| de::Error::missing_field("[2] obj"))?;
-                        Ok(EvBox(Box::new(obj)))
-                    }
-                    f64::SUB => {
-                        let obj: C1<f64> = seq
-                            .next_element()?
-                            .ok_or_else(|| de::Error::missing_field("[2] obj"))?;
-                        Ok(EvBox(Box::new(obj)))
-                    }
-                    bool::SUB => {
-                        let obj: C1<bool> = seq
-                            .next_element()?
-                            .ok_or_else(|| de::Error::missing_field("[2] obj"))?;
-                        Ok(EvBox(Box::new(obj)))
-                    }
-                    String::SUB => {
-                        let obj: C1<String> = seq
-                            .next_element()?
-                            .ok_or_else(|| de::Error::missing_field("[2] obj"))?;
-                        Ok(EvBox(Box::new(obj)))
-                    }
-                    EnumVariant::SUB => {
-                        let obj: C1<EnumVariant> = seq
-                            .next_element()?
-                            .ok_or_else(|| de::Error::missing_field("[2] obj"))?;
-                        Ok(EvBox(Box::new(obj)))
-                    }
-                    _ => {
-                        error!("TODO serde  cty {cty}  nty {nty}");
-                        Err(de::Error::custom(&format!("unknown nty {nty}")))
-                    }
-                }
-            } else if cty == C1::<u8>::serde_id() {
-                match nty {
-                    u8::SUB => {
-                        let obj: C1<u8> = seq
-                            .next_element()?
-                            .ok_or_else(|| de::Error::missing_field("[2] obj"))?;
-                        Ok(EvBox(Box::new(obj)))
-                    }
-                    u16::SUB => {
-                        let obj: C1<u16> = seq
-                            .next_element()?
-                            .ok_or_else(|| de::Error::missing_field("[2] obj"))?;
-                        Ok(EvBox(Box::new(obj)))
-                    }
-                    u32::SUB => {
-                        let obj: C1<u32> = seq
-                            .next_element()?
-                            .ok_or_else(|| de::Error::missing_field("[2] obj"))?;
-                        Ok(EvBox(Box::new(obj)))
-                    }
-                    u64::SUB => {
-                        let obj: C1<u64> = seq
-                            .next_element()?
-                            .ok_or_else(|| de::Error::missing_field("[2] obj"))?;
-                        Ok(EvBox(Box::new(obj)))
-                    }
-                    i8::SUB => {
-                        let obj: C1<i8> = seq
-                            .next_element()?
-                            .ok_or_else(|| de::Error::missing_field("[2] obj"))?;
-                        Ok(EvBox(Box::new(obj)))
-                    }
-                    i16::SUB => {
-                        let obj: C1<i16> = seq
-                            .next_element()?
-                            .ok_or_else(|| de::Error::missing_field("[2] obj"))?;
-                        Ok(EvBox(Box::new(obj)))
-                    }
-                    i32::SUB => {
-                        let obj: C1<i32> = seq
-                            .next_element()?
-                            .ok_or_else(|| de::Error::missing_field("[2] obj"))?;
-                        Ok(EvBox(Box::new(obj)))
-                    }
-                    i64::SUB => {
-                        let obj: C1<i64> = seq
-                            .next_element()?
-                            .ok_or_else(|| de::Error::missing_field("[2] obj"))?;
-                        Ok(EvBox(Box::new(obj)))
-                    }
-                    f32::SUB => {
-                        let obj: C1<f32> = seq
-                            .next_element()?
-                            .ok_or_else(|| de::Error::missing_field("[2] obj"))?;
-                        Ok(EvBox(Box::new(obj)))
-                    }
-                    f64::SUB => {
-                        let obj: C1<f64> = seq
-                            .next_element()?
-                            .ok_or_else(|| de::Error::missing_field("[2] obj"))?;
-                        Ok(EvBox(Box::new(obj)))
-                    }
-                    bool::SUB => {
-                        let obj: C1<bool> = seq
-                            .next_element()?
-                            .ok_or_else(|| de::Error::missing_field("[2] obj"))?;
-                        Ok(EvBox(Box::new(obj)))
-                    }
-                    String::SUB => {
-                        let obj: C1<String> = seq
-                            .next_element()?
-                            .ok_or_else(|| de::Error::missing_field("[2] obj"))?;
-                        Ok(EvBox(Box::new(obj)))
-                    }
+                    u8::SUB => get_2nd_or_err::<C1<u8>, _>(&mut seq),
+                    u16::SUB => get_2nd_or_err::<C1<u16>, _>(&mut seq),
+                    u32::SUB => get_2nd_or_err::<C1<u32>, _>(&mut seq),
+                    u64::SUB => get_2nd_or_err::<C1<u64>, _>(&mut seq),
+                    i8::SUB => get_2nd_or_err::<C1<i8>, _>(&mut seq),
+                    i16::SUB => get_2nd_or_err::<C1<i16>, _>(&mut seq),
+                    i32::SUB => get_2nd_or_err::<C1<i32>, _>(&mut seq),
+                    i64::SUB => get_2nd_or_err::<C1<i64>, _>(&mut seq),
+                    f32::SUB => get_2nd_or_err::<C1<f32>, _>(&mut seq),
+                    f64::SUB => get_2nd_or_err::<C1<f64>, _>(&mut seq),
+                    bool::SUB => get_2nd_or_err::<C1<bool>, _>(&mut seq),
+                    String::SUB => get_2nd_or_err::<C1<String>, _>(&mut seq),
+                    EnumVariant::SUB => get_2nd_or_err::<C1<EnumVariant>, _>(&mut seq),
+                    Vec::<u8>::SUB => get_2nd_or_err::<C1<Vec<u8>>, _>(&mut seq),
+                    Vec::<u16>::SUB => get_2nd_or_err::<C1<Vec<u16>>, _>(&mut seq),
+                    Vec::<u32>::SUB => get_2nd_or_err::<C1<Vec<u32>>, _>(&mut seq),
+                    Vec::<u64>::SUB => get_2nd_or_err::<C1<Vec<u64>>, _>(&mut seq),
+                    Vec::<i8>::SUB => get_2nd_or_err::<C1<Vec<i8>>, _>(&mut seq),
+                    Vec::<i16>::SUB => get_2nd_or_err::<C1<Vec<i16>>, _>(&mut seq),
+                    Vec::<i32>::SUB => get_2nd_or_err::<C1<Vec<i32>>, _>(&mut seq),
+                    Vec::<i64>::SUB => get_2nd_or_err::<C1<Vec<i64>>, _>(&mut seq),
+                    Vec::<f32>::SUB => get_2nd_or_err::<C1<Vec<f32>>, _>(&mut seq),
+                    Vec::<f64>::SUB => get_2nd_or_err::<C1<Vec<f64>>, _>(&mut seq),
+                    Vec::<bool>::SUB => get_2nd_or_err::<C1<Vec<bool>>, _>(&mut seq),
+                    Vec::<String>::SUB => get_2nd_or_err::<C1<Vec<String>>, _>(&mut seq),
+                    Vec::<EnumVariant>::SUB => get_2nd_or_err::<C1<Vec<EnumVariant>>, _>(&mut seq),
                     _ => {
                         error!("TODO serde  cty {cty}  nty {nty}");
                         Err(de::Error::custom(&format!("unknown nty {nty}")))
@@ -916,120 +789,6 @@ impl EventsNonObj for ChannelEvents {
     }
 }
 
-// impl Events for ChannelEvents {
-//     fn verify(&self) -> bool {
-//         todo!()
-//     }
-
-//     fn output_info(&self) -> String {
-//         todo!()
-//     }
-
-//     fn as_collectable_mut(&mut self) -> &mut dyn CollectableDyn {
-//         todo!()
-//     }
-
-//     fn as_collectable_with_default_ref(&self) -> &dyn CollectableDyn {
-//         todo!()
-//     }
-
-//     fn as_collectable_with_default_mut(&mut self) -> &mut dyn CollectableDyn {
-//         todo!()
-//     }
-
-//     fn ts_min(&self) -> Option<u64> {
-//         todo!()
-//     }
-
-//     fn ts_max(&self) -> Option<u64> {
-//         todo!()
-//     }
-
-//     fn take_new_events_until_ts(&mut self, _ts_end: u64) -> Box<dyn Events> {
-//         todo!()
-//     }
-
-//     fn new_empty_evs(&self) -> Box<dyn Events> {
-//         todo!()
-//     }
-
-//     fn drain_into_evs(
-//         &mut self,
-//         dst: &mut dyn Events,
-//         range: (usize, usize),
-//     ) -> Result<(), err::Error> {
-//         todo!()
-//     }
-
-//     fn find_lowest_index_gt_evs(&self, _ts: u64) -> Option<usize> {
-//         todo!()
-//     }
-
-//     fn find_lowest_index_ge_evs(&self, _ts: u64) -> Option<usize> {
-//         todo!()
-//     }
-
-//     fn find_highest_index_lt_evs(&self, _ts: u64) -> Option<usize> {
-//         todo!()
-//     }
-
-//     fn clone_dyn(&self) -> Box<dyn Events> {
-//         todo!()
-//     }
-
-//     fn partial_eq_dyn(&self, _other: &dyn Events) -> bool {
-//         todo!()
-//     }
-
-//     fn serde_id(&self) -> &'static str {
-//         todo!()
-//     }
-
-//     fn nty_id(&self) -> u32 {
-//         todo!()
-//     }
-
-//     fn tss(&self) -> &VecDeque<u64> {
-//         todo!()
-//     }
-
-//     fn pulses(&self) -> &VecDeque<u64> {
-//         todo!()
-//     }
-
-//     fn frame_type_id(&self) -> u32 {
-//         todo!()
-//     }
-
-//     fn to_min_max_avg(&mut self) -> Box<dyn Events> {
-//         todo!()
-//     }
-
-//     fn to_json_string(&self) -> String {
-//         todo!()
-//     }
-
-//     fn to_json_vec_u8(&self) -> Vec<u8> {
-//         todo!()
-//     }
-
-//     fn to_cbor_vec_u8(&self) -> Vec<u8> {
-//         todo!()
-//     }
-
-//     fn clear(&mut self) {
-//         todo!()
-//     }
-
-//     fn to_dim0_f32_for_binning(&self) -> Box<dyn Events> {
-//         todo!()
-//     }
-
-//     fn to_container_events(&self) -> Box<dyn ::items_0::timebin::BinningggContainerEventsDyn> {
-//         panic!("should not get used")
-//     }
-// }
-
 impl CollectableDyn for ChannelEvents {
     fn new_collector(&self) -> Box<dyn CollectorDyn> {
         Box::new(ChannelEventsCollector::new())
@@ -1214,8 +973,13 @@ impl ToCborValue for ChannelEvents {
 impl ToUserFacingApiType for ChannelEvents {
     fn to_user_facing_api_type(self) -> Box<dyn UserApiType> {
         match self {
-            ChannelEvents::Events(x) => x.to_user_facing_api_type(),
-            ChannelEvents::Status(x) => todo!(),
+            ChannelEvents::Events(x) => x.to_user_facing_api_type_box(),
+            ChannelEvents::Status(x) => Box::new(items_0::apitypes::EmptyStruct::new()),
         }
+    }
+
+    fn to_user_facing_api_type_box(self: Box<Self>) -> Box<dyn UserApiType> {
+        let this = *self;
+        this.to_user_facing_api_type()
     }
 }
