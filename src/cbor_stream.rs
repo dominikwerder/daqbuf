@@ -7,7 +7,6 @@ use bytes::Bytes;
 use bytes::BytesMut;
 use futures_util::Stream;
 use futures_util::StreamExt;
-use items_0::collect_s::ToCborValue;
 use items_0::streamitem::sitem_err2_from_string;
 use items_0::streamitem::sitem_err_from_string;
 use items_0::streamitem::LogItem;
@@ -17,14 +16,11 @@ use items_0::streamitem::StreamItem;
 use items_0::Events;
 use items_0::WithLen;
 use items_2::channelevents::ChannelEvents;
-use items_2::eventsdim0::EventsDim0;
-use items_2::eventsdim1::EventsDim1;
 use items_2::jsonbytes::CborBytes;
 use netpod::log::Level;
 use netpod::log::*;
 use netpod::ScalarType;
 use netpod::Shape;
-use std::io::Cursor;
 use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
@@ -75,6 +71,7 @@ fn map_events(x: Sitemty<ChannelEvents>) -> Result<CborBytes, Error> {
         Ok(x) => match x {
             StreamItem::DataItem(x) => match x {
                 RangeCompletableItem::Data(evs) => {
+                    trace!("map_events  Data  evs  len {}", evs.len());
                     use items_0::apitypes::ToUserFacingApiType;
                     let val = evs.to_user_facing_api_type();
                     let val = val.to_cbor_value()?;
@@ -98,58 +95,23 @@ fn map_events(x: Sitemty<ChannelEvents>) -> Result<CborBytes, Error> {
                 }
             },
             StreamItem::Log(item) => {
-                info!("{item:?}");
-                let item = CborBytes::new(Bytes::new());
-                Ok(item)
-            }
-            StreamItem::Stats(item) => {
-                info!("{item:?}");
-                let item = CborBytes::new(Bytes::new());
-                Ok(item)
-            }
-        },
-        Err(e) => {
-            use ciborium::cbor;
-            let item = cbor!({
-                "error" => e.to_string(),
-            })
-            .map_err(|e| Error::Msg(e.to_string()))?;
-            let mut buf = Vec::with_capacity(64);
-            ciborium::into_writer(&item, &mut buf).map_err(|e| Error::Msg(e.to_string()))?;
-            let bytes = Bytes::from(buf);
-            let item = CborBytes::new(bytes);
-            Ok(item)
-        }
-    }
-}
-
-fn map_events_2(x: Sitemty<ChannelEvents>) -> Result<CborBytes, Error> {
-    match x {
-        Ok(x) => match x {
-            StreamItem::DataItem(x) => match x {
-                RangeCompletableItem::Data(evs) => {
-                    let val = evs.to_cbor_value()?;
-                    let mut buf = Vec::with_capacity(64);
-                    ciborium::into_writer(&val, &mut buf).map_err(|e| Error::Msg(e.to_string()))?;
-                    let bytes = Bytes::from(buf);
-                    let item = CborBytes::new(bytes);
-                    Ok(item)
+                match item.level {
+                    Level::TRACE => {
+                        trace!("{item:?}");
+                    }
+                    Level::DEBUG => {
+                        debug!("{item:?}");
+                    }
+                    Level::INFO => {
+                        info!("{item:?}");
+                    }
+                    Level::WARN => {
+                        warn!("{item:?}");
+                    }
+                    Level::ERROR => {
+                        error!("{item:?}");
+                    }
                 }
-                RangeCompletableItem::RangeComplete => {
-                    use ciborium::cbor;
-                    let val = cbor!({
-                        "rangeFinal" => true,
-                    })
-                    .map_err(|e| Error::Msg(e.to_string()))?;
-                    let mut buf = Vec::with_capacity(64);
-                    ciborium::into_writer(&val, &mut buf).map_err(|e| Error::Msg(e.to_string()))?;
-                    let bytes = Bytes::from(buf);
-                    let item = CborBytes::new(bytes);
-                    Ok(item)
-                }
-            },
-            StreamItem::Log(item) => {
-                info!("{item:?}");
                 let item = CborBytes::new(Bytes::new());
                 Ok(item)
             }
@@ -264,9 +226,10 @@ impl<S> FramedBytesToChannelEventsStream<S> {
         let item = if let Some(x) = item {
             Some(x)
         } else {
-            let item = decode_cbor_to_box_events(buf, &self.scalar_type, &self.shape)?;
-            debug!("decoded boxed events  len {}", item.len());
-            Some(StreamItem::DataItem(RangeCompletableItem::Data(item)))
+            // let item = decode_cbor_to_box_events(buf, &self.scalar_type, &self.shape)?;
+            // debug!("decoded boxed events  len {}", item.len());
+            // Some(StreamItem::DataItem(RangeCompletableItem::Data(item)))
+            todo!()
         };
         self.buf.advance(adv);
         if let Some(x) = item {
@@ -313,65 +276,4 @@ where
             };
         }
     }
-}
-
-macro_rules! cbor_scalar {
-    ($ty:ident, $buf:expr) => {{
-        type T = $ty;
-        type C = EventsDim0<T>;
-        let item: C = ciborium::from_reader(Cursor::new($buf))?;
-        Box::new(item)
-    }};
-}
-
-macro_rules! cbor_wave {
-    ($ty:ident, $buf:expr) => {{
-        type T = $ty;
-        type C = EventsDim1<T>;
-        let item: C = ciborium::from_reader(Cursor::new($buf))?;
-        Box::new(item)
-    }};
-}
-
-fn decode_cbor_to_box_events(
-    buf: &[u8],
-    scalar_type: &ScalarType,
-    shape: &Shape,
-) -> Result<ChannelEvents, Error> {
-    let item: Box<dyn Events> = match shape {
-        Shape::Scalar => match scalar_type {
-            ScalarType::U8 => cbor_scalar!(u8, buf),
-            ScalarType::U16 => cbor_scalar!(u16, buf),
-            ScalarType::U32 => cbor_scalar!(u32, buf),
-            ScalarType::U64 => cbor_scalar!(u64, buf),
-            ScalarType::I8 => cbor_scalar!(i8, buf),
-            ScalarType::I16 => cbor_scalar!(i16, buf),
-            ScalarType::I32 => cbor_scalar!(i32, buf),
-            ScalarType::I64 => cbor_scalar!(i64, buf),
-            ScalarType::F32 => cbor_scalar!(f32, buf),
-            ScalarType::F64 => cbor_scalar!(f64, buf),
-            _ => {
-                return Err(ErrMsg(format!(
-                    "decode_cbor_to_box_events  {:?}  {:?}",
-                    scalar_type, shape
-                ))
-                .into())
-            }
-        },
-        Shape::Wave(_) => match scalar_type {
-            ScalarType::U8 => cbor_wave!(u8, buf),
-            ScalarType::U16 => cbor_wave!(u16, buf),
-            ScalarType::I64 => cbor_wave!(i64, buf),
-            _ => {
-                return Err(ErrMsg(format!(
-                    "decode_cbor_to_box_events  {:?}  {:?}",
-                    scalar_type, shape
-                ))
-                .into())
-            }
-        },
-        Shape::Image(_, _) => todo!(),
-    };
-    // Ok(item);
-    todo!()
 }

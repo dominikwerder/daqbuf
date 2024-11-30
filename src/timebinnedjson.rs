@@ -353,7 +353,8 @@ pub async fn timebinned_json(
     let collres = collected.await?;
     match collres {
         CollectResult::Some(collres) => {
-            let jsval = collres.to_json_value()?;
+            let x = collres.to_user_facing_api_type_box();
+            let jsval = x.to_json_value()?;
             Ok(CollectResult::Some(jsval))
         }
         CollectResult::Timeout => Ok(CollectResult::Timeout),
@@ -363,11 +364,14 @@ pub async fn timebinned_json(
 fn take_collector_result(
     coll: &mut Box<dyn items_0::collect_s::CollectorDyn>,
 ) -> Option<serde_json::Value> {
-    match coll.result(None, None) {
-        Ok(collres) => match collres.to_json_value() {
-            Ok(val) => Some(val),
-            Err(e) => Some(serde_json::Value::String(format!("{e}"))),
-        },
+    match coll.result() {
+        Ok(collres) => {
+            let x = collres.to_user_facing_api_type_box();
+            match x.to_json_value() {
+                Ok(val) => Some(val),
+                Err(e) => Some(serde_json::Value::String(format!("{e}"))),
+            }
+        }
         Err(e) => Some(serde_json::Value::String(format!("{e}"))),
     }
 }

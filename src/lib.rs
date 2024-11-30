@@ -22,6 +22,8 @@ pub mod plaineventsjson;
 pub mod plaineventsstream;
 pub mod print_on_done;
 pub mod rangefilter2;
+#[cfg(test)]
+pub mod rt;
 pub mod slidebuf;
 pub mod streamtimeout;
 pub mod tcprawclient;

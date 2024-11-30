@@ -46,7 +46,6 @@ pub enum CollectResult<T> {
 }
 
 pub struct Collect<ITEM> {
-    // inp: Pin<Box<dyn Stream<Item = Sitemty<Box<dyn CollectableDyn>>> + Send>>,
     inp: Pin<Box<dyn Stream<Item = Sitemty<ITEM>> + Send>>,
     events_max: u64,
     bytes_max: u64,
@@ -64,7 +63,6 @@ where
     ITEM: CollectableDyn,
 {
     pub fn new(
-        // inp: Pin<Box<dyn Stream<Item = Sitemty<Box<dyn CollectableDyn>>> + Send>>,
         inp: Pin<Box<dyn Stream<Item = Sitemty<ITEM>> + Send>>,
         deadline: Instant,
         events_max: u64,
@@ -107,7 +105,6 @@ where
                         coll.ingest(&mut item);
                         if coll.len() as u64 >= self.events_max {
                             info!("reached events_max {} / {}", coll.len(), self.events_max);
-                            coll.set_continue_at_here();
                             self.done_input = true;
                         }
                         if coll.byte_estimate() >= self.bytes_max {
@@ -116,7 +113,6 @@ where
                                 coll.byte_estimate(),
                                 self.events_max
                             );
-                            coll.set_continue_at_here();
                             self.done_input = true;
                         }
                         Ok(())
@@ -192,7 +188,7 @@ where
                 // TODO use range_final and timeout in result.
                 match self.collector.take() {
                     Some(mut coll) => {
-                        match coll.result(self.range.clone(), self.binrange.clone()) {
+                        match coll.result() {
                             Ok(res) => {
                                 //info!("collect stats total duration: {:?}", total_duration);
                                 Ready(Ok(CollectResult::Some(res)))

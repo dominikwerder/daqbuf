@@ -57,6 +57,7 @@ pub async fn plain_events_json(
     .await?;
     debug!("plain_events_json  collected");
     if let CollectResult::Some(x) = collected {
+        let x = x.to_user_facing_api_type_box();
         let jsval = x.to_json_value()?;
         debug!("plain_events_json  json serialized");
         Ok(CollectResult::Some(jsval))

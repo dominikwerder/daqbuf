@@ -13,6 +13,7 @@ use items_0::framable::FrameTypeInnerStatic;
 use items_0::streamitem::sitem_data;
 use items_0::streamitem::sitem_err2_from_string;
 use items_0::streamitem::Sitemty;
+use items_0::WithLen;
 use items_2::eventfull::EventFull;
 use items_2::framable::EventQueryJsonStringFrame;
 use items_2::framable::Framable;
@@ -182,18 +183,30 @@ pub fn container_stream_from_bytes_stream<T>(
     dbgdesc: String,
 ) -> Result<impl Stream<Item = Sitemty<T>>, Error>
 where
-    T: FrameTypeInnerStatic + DeserializeOwned + Send + Unpin + fmt::Debug + 'static,
+    T: FrameTypeInnerStatic + DeserializeOwned + Send + Unpin + fmt::Debug + 'static + WithLen,
 {
     let frames = InMemoryFrameStream::new(inp, bufcap);
     let frames = frames.map_err(sitem_err2_from_string);
     let frames = frames.inspect(|x| {
-        if false {
-            eprintln!("container_stream_from_bytes_stream  see frame  {:?}", x);
+        if true {
+            trace!("container_stream_from_bytes_stream  see frame  {:?}", x);
         }
     });
-    // TODO let EventsFromFrames accept also non-boxed input?
-    let frames = Box::pin(frames);
-    let stream = EventsFromFrames::<T>::new(frames, dbgdesc);
+    let stream = EventsFromFrames::<T, _>::new(frames, dbgdesc);
+    let stream = stream.inspect(|x| {
+        if true {
+            use items_0::streamitem::RangeCompletableItem::*;
+            use items_0::streamitem::StreamItem::*;
+            match x {
+                Ok(DataItem(Data(x))) => {
+                    trace!("EventsFromFrames  yields item len {}", x.len());
+                }
+                _ => {
+                    trace!("EventsFromFrames  yields item {:?}", x);
+                }
+            }
+        }
+    });
     Ok(stream)
 }
 

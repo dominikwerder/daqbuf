@@ -2,7 +2,10 @@ use crate::slidebuf::SlideBuf;
 use bytes::Bytes;
 use futures_util::pin_mut;
 use futures_util::Stream;
+use items_0::streamitem::sitem_err2_from_string;
+use items_0::streamitem::RangeCompletableItem;
 use items_0::streamitem::SitemErrTy;
+use items_0::streamitem::Sitemty;
 use items_0::streamitem::StreamItem;
 use items_0::streamitem::TERM_FRAME_TYPE_ID;
 use items_2::framable::INMEM_FRAME_FOOT;
@@ -182,7 +185,7 @@ impl<T, E> Stream for InMemoryFrameStream<T, E>
 where
     T: Stream<Item = Result<Bytes, E>> + Unpin,
 {
-    type Item = Result<StreamItem<InMemoryFrame>, Error>;
+    type Item = Sitemty<InMemoryFrame>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         use Poll::*;
@@ -200,7 +203,7 @@ where
                         if self.buf.len() >= self.need_min {
                             self.done = true;
                             let e = Error::EnoughInputNothingParsed;
-                            Ready(Some(Err(e)))
+                            Ready(Some(Err(sitem_err2_from_string(e))))
                         } else {
                             continue;
                         }
@@ -210,12 +213,13 @@ where
                             self.done = true;
                             continue;
                         } else {
-                            Ready(Some(Ok(StreamItem::DataItem(item))))
+                            let item = Ok(StreamItem::DataItem(RangeCompletableItem::Data(item)));
+                            Ready(Some(item))
                         }
                     }
                     Err(e) => {
                         self.done = true;
-                        Ready(Some(Err(e)))
+                        Ready(Some(Err(sitem_err2_from_string(e))))
                     }
                 }
             } else {
@@ -234,7 +238,7 @@ where
                             self.need_min, self.buf, e
                         );
                         self.done = true;
-                        Ready(Some(Err(e)))
+                        Ready(Some(Err(sitem_err2_from_string(e))))
                     }
                     Pending => Pending,
                 }

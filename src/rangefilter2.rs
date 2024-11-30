@@ -1,6 +1,7 @@
-#[cfg(feature = "tests-runtime")]
+#[cfg(test)]
 mod test;
 
+use crate::log::*;
 use futures_util::Stream;
 use futures_util::StreamExt;
 use items_0::merge::DrainIntoNewResult;
@@ -10,17 +11,20 @@ use items_0::streamitem::RangeCompletableItem;
 use items_0::streamitem::Sitemty;
 use items_0::streamitem::StatsItem;
 use items_0::streamitem::StreamItem;
-use netpod::log::*;
 use netpod::range::evrange::NanoRange;
 use netpod::RangeFilterStats;
-use netpod::TsMsVecFmt;
 use netpod::TsNano;
+use netpod::TsNanoVecFmt;
 use std::fmt;
 use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
 
-macro_rules! trace_emit { ($det:expr, $($arg:tt)*) => ( if false && $det { trace!($($arg)*); } ) }
+macro_rules! trace_inp { ($det:expr, $($arg:tt)*) => ( if false && $det { trace!($($arg)*); } ) }
+
+macro_rules! trace_init { ($det:expr, $($arg:tt)*) => ( if false { trace!($($arg)*); } ) }
+
+macro_rules! trace_emit { ($det:expr, $($arg:tt)*) => ( if false { trace!($($arg)*); } ) }
 
 #[derive(Debug, thiserror::Error)]
 #[cstm(name = "Rangefilter")]
@@ -28,12 +32,12 @@ pub enum Error {
     DrainUnclean,
 }
 
-pub struct RangeFilter2<S, ITY>
+pub struct RangeFilter2<INP, ITY>
 where
-    S: Stream<Item = Sitemty<ITY>> + Unpin,
+    INP: Stream<Item = Sitemty<ITY>> + Unpin,
     ITY: MergeableTy,
 {
-    inp: S,
+    inp: INP,
     range: NanoRange,
     range_str: String,
     one_before: bool,
@@ -47,19 +51,19 @@ where
     trdet: bool,
 }
 
-impl<S, ITY> RangeFilter2<S, ITY>
+impl<INP, ITY> RangeFilter2<INP, ITY>
 where
-    S: Stream<Item = Sitemty<ITY>> + Unpin,
+    INP: Stream<Item = Sitemty<ITY>> + Unpin,
     ITY: MergeableTy,
 {
     pub fn type_name() -> &'static str {
         std::any::type_name::<Self>()
     }
 
-    pub fn new(inp: S, range: NanoRange, one_before: bool) -> Self {
+    pub fn new(inp: INP, range: NanoRange, one_before: bool) -> Self {
         let trdet = false;
-        trace_emit!(
-            trdet,
+        trace_init!(
+            self.trdet,
             "{}::new  range: {:?}  one_before {:?}",
             Self::type_name(),
             range,
@@ -129,16 +133,17 @@ where
         }
         let min = item.ts_min();
         let max = item.ts_max();
-        trace_emit!(
+        trace_inp!(
             self.trdet,
             "see event  len {}  min {:?}  max {:?}",
             item.len(),
             min,
             max
         );
-        let mut item = self.prune_high(item, TsNano::from_ns(self.range.end))?;
+        let mut item = self.prune_high(item, self.range.end_ts())?;
+        trace_inp!(self.trdet, "item len after prune_high {}", item.len());
         if self.one_before {
-            let lige = item.find_lowest_index_ge(TsNano::from_ns(self.range.beg));
+            let lige = item.find_lowest_index_ge(self.range.beg_ts());
             trace_emit!(self.trdet, "YES one_before_range  ilge {:?}", lige);
             match lige {
                 Some(lige) => {
@@ -162,7 +167,7 @@ where
                 }
                 None => {
                     // TODO keep stats about this case
-                    trace_emit!(self.trdet, "drain into to keep one before");
+                    trace_emit!(self.trdet, "drain into to keep one before",);
                     let n = item.len();
                     match item.drain_into_new(n.max(1) - 1..n) {
                         DrainIntoNewResult::Done(keep) => {
@@ -195,9 +200,9 @@ where
     }
 }
 
-impl<S, ITY> RangeFilter2<S, ITY>
+impl<INP, ITY> RangeFilter2<INP, ITY>
 where
-    S: Stream<Item = Sitemty<ITY>> + Unpin,
+    INP: Stream<Item = Sitemty<ITY>> + Unpin,
     ITY: MergeableTy,
 {
     fn poll_next(
@@ -220,9 +225,8 @@ where
             } else if self.inp_done {
                 self.raco_done = true;
                 if self.have_range_complete {
-                    Ready(Some(Ok(StreamItem::DataItem(
-                        RangeCompletableItem::RangeComplete,
-                    ))))
+                    let item = Ok(StreamItem::DataItem(RangeCompletableItem::RangeComplete));
+                    Ready(Some(item))
                 } else {
                     continue;
                 }
@@ -235,7 +239,7 @@ where
                                     trace_emit!(
                                         self.trdet,
                                         "emit {}",
-                                        TsMsVecFmt(MergeableTy::tss_for_testing(&item).iter())
+                                        TsNanoVecFmt(MergeableTy::tss_for_testing(&item).iter())
                                     );
                                     let item =
                                         Ok(StreamItem::DataItem(RangeCompletableItem::Data(item)));
@@ -272,9 +276,9 @@ where
     }
 }
 
-impl<S, ITY> Stream for RangeFilter2<S, ITY>
+impl<INP, ITY> Stream for RangeFilter2<INP, ITY>
 where
-    S: Stream<Item = Sitemty<ITY>> + Unpin,
+    INP: Stream<Item = Sitemty<ITY>> + Unpin,
     ITY: MergeableTy,
 {
     type Item = Sitemty<ITY>;
@@ -287,9 +291,9 @@ where
     }
 }
 
-impl<S, ITY> fmt::Debug for RangeFilter2<S, ITY>
+impl<INP, ITY> fmt::Debug for RangeFilter2<INP, ITY>
 where
-    S: Stream<Item = Sitemty<ITY>> + Unpin,
+    INP: Stream<Item = Sitemty<ITY>> + Unpin,
     ITY: MergeableTy,
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
