@@ -6,6 +6,7 @@ use crate::Dim0Kind;
 use crate::FromUrl;
 use crate::NetpodError;
 use crate::TsNano;
+use crate::MS;
 use chrono::DateTime;
 use chrono::TimeZone;
 use chrono::Utc;
@@ -91,6 +92,13 @@ impl NanoRange {
         }
     }
 
+    pub fn from_ms_u64(beg: u64, end: u64) -> Self {
+        Self {
+            beg: MS * beg,
+            end: MS * end,
+        }
+    }
+
     pub fn from_ns_u64(beg: u64, end: u64) -> Self {
         Self { beg, end }
     }
@@ -105,6 +113,14 @@ impl NanoRange {
 
     pub fn end(&self) -> u64 {
         self.end
+    }
+
+    pub fn beg_ts(&self) -> TsNano {
+        TsNano::from_ns(self.beg)
+    }
+
+    pub fn end_ts(&self) -> TsNano {
+        TsNano::from_ns(self.end)
     }
 }
 

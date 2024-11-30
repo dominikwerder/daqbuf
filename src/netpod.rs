@@ -12,40 +12,55 @@ pub mod log_macros {
     #[allow(unused)]
     #[macro_export]
     macro_rules! trace {
-        ($($arg:tt)*) => {
-            eprintln!($($arg)*);
+        ($fmt:expr) => {
+            eprintln!(concat!("TRACE ", $fmt));
+        };
+        ($fmt:expr, $($arg:tt)*) => {
+            eprintln!(concat!("TRACE ", $fmt), $($arg)*);
         };
     }
 
     #[allow(unused)]
     #[macro_export]
     macro_rules! debug {
-        ($($arg:tt)*) => {
-            eprintln!($($arg)*);
+        ($fmt:expr) => {
+            eprintln!(concat!("DEBUG ", $fmt));
+        };
+        ($fmt:expr, $($arg:tt)*) => {
+            eprintln!(concat!("DEBUG ", $fmt), $($arg)*);
         };
     }
 
     #[allow(unused)]
     #[macro_export]
     macro_rules! info {
-        ($($arg:tt)*) => {
-            eprintln!($($arg)*);
+        ($fmt:expr) => {
+            eprintln!(concat!("INFO  ", $fmt));
+        };
+        ($fmt:expr, $($arg:tt)*) => {
+            eprintln!(concat!("INFO  ", $fmt), $($arg)*);
         };
     }
 
     #[allow(unused)]
     #[macro_export]
     macro_rules! warn {
-        ($($arg:tt)*) => {
-            eprintln!($($arg)*);
+        ($fmt:expr) => {
+            eprintln!(concat!("WARN  ", $fmt));
+        };
+        ($fmt:expr, $($arg:tt)*) => {
+            eprintln!(concat!("WARN  ", $fmt), $($arg)*);
         };
     }
 
     #[allow(unused)]
     #[macro_export]
     macro_rules! error {
-        ($($arg:tt)*) => {
-            eprintln!($($arg)*);
+        ($fmt:expr) => {
+            eprintln!(concat!("ERROR ", $fmt));
+        };
+        ($fmt:expr, $($arg:tt)*) => {
+            eprintln!(concat!("ERROR ", $fmt), $($arg)*);
         };
     }
 }
@@ -2006,6 +2021,18 @@ impl fmt::Display for TsNano {
     }
 }
 
+impl AsRef<TsNano> for TsNano {
+    fn as_ref(&self) -> &TsNano {
+        &self
+    }
+}
+
+impl AsRef<TsMs> for TsMs {
+    fn as_ref(&self) -> &TsMs {
+        &self
+    }
+}
+
 pub struct TsNanoFmt {
     ts: TsNano,
 }
@@ -2022,6 +2049,59 @@ impl fmt::Display for TsNanoFmt {
 impl fmt::Debug for TsNanoFmt {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         fmt::Display::fmt(self, fmt)
+    }
+}
+
+pub struct TsMsFmt {
+    ts: TsMs,
+}
+
+impl fmt::Display for TsMsFmt {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        chrono::DateTime::from_timestamp_millis(self.ts.ms() as i64)
+            .unwrap()
+            .format(DATETIME_FMT_3MS)
+            .fmt(fmt)
+    }
+}
+
+impl fmt::Debug for TsMsFmt {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        fmt::Display::fmt(self, fmt)
+    }
+}
+
+pub struct TsNanoVecFmt<I>(pub I);
+
+impl<I, T> fmt::Display for TsNanoVecFmt<I>
+where
+    I: Clone + IntoIterator<Item = T>,
+    T: AsRef<TsNano>,
+{
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        write!(fmt, "[")?;
+        for ts in self.0.clone().into_iter() {
+            write!(fmt, "  {}", ts.as_ref().fmt())?;
+        }
+        write!(fmt, "  ]")?;
+        Ok(())
+    }
+}
+
+pub struct TsMsVecFmt<I>(pub I);
+
+impl<I, T> fmt::Display for TsMsVecFmt<I>
+where
+    I: Clone + IntoIterator<Item = T>,
+    T: AsRef<TsMs>,
+{
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        write!(fmt, "[")?;
+        for ts in self.0.clone().into_iter() {
+            write!(fmt, "  {}", ts.as_ref().fmt())?;
+        }
+        write!(fmt, "  ]")?;
+        Ok(())
     }
 }
 
@@ -2977,12 +3057,6 @@ impl TsMs {
     }
 }
 
-impl AsRef<TsMs> for TsMs {
-    fn as_ref(&self) -> &TsMs {
-        &self
-    }
-}
-
 impl fmt::Display for TsMs {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         write!(fmt, "TsMs {{ {} }}", self.0)
@@ -2994,45 +3068,6 @@ impl core::ops::Sub for TsMs {
 
     fn sub(self, rhs: Self) -> Self::Output {
         DtMs(self.0.saturating_sub(rhs.0))
-    }
-}
-
-pub struct TsMsFmt {
-    ts: TsMs,
-}
-
-impl fmt::Debug for TsMsFmt {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        chrono::DateTime::from_timestamp_millis(self.ts.ms() as i64)
-            .unwrap()
-            .format(DATETIME_FMT_3MS)
-            .fmt(fmt)
-    }
-}
-
-impl fmt::Display for TsMsFmt {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        chrono::DateTime::from_timestamp_millis(self.ts.ms() as i64)
-            .unwrap()
-            .format(DATETIME_FMT_3MS)
-            .fmt(fmt)
-    }
-}
-
-pub struct TsMsVecFmt<I>(pub I);
-
-impl<I, T> fmt::Display for TsMsVecFmt<I>
-where
-    I: Clone + IntoIterator<Item = T>,
-    T: AsRef<TsMs>,
-{
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        write!(fmt, "[")?;
-        for ts in self.0.clone().into_iter() {
-            write!(fmt, "  {}", ts.as_ref().fmt())?;
-        }
-        write!(fmt, "  ]")?;
-        Ok(())
     }
 }
 
@@ -4396,7 +4431,7 @@ pub fn status_board() -> Result<RwLockWriteGuard<'static, StatusBoard>, StatusBo
     match x {
         Ok(x) => Ok(x),
         Err(e) => {
-            error!("{e}");
+            error!("{}", e);
             Err(StatusBoardError::CantAcquire)
         }
     }
