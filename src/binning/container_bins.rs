@@ -1,11 +1,13 @@
 use super::container::bins::BinAggedType;
 use super::container_events::EventValueType;
+use crate::apitypes::ContainerBinsApi;
 use crate::offsets::ts_offs_from_abs;
 use crate::offsets::ts_offs_from_abs_with_anchor;
 use core::fmt;
 use daqbuf_err as err;
 use err::thiserror;
 use err::ThisError;
+use items_0::apitypes::ToUserFacingApiType;
 use items_0::collect_s::CollectableDyn;
 use items_0::collect_s::CollectedDyn;
 use items_0::collect_s::ToJsonValue;
@@ -16,9 +18,7 @@ use items_0::AsAnyMut;
 use items_0::AsAnyRef;
 use items_0::TypeName;
 use items_0::WithLen;
-use netpod::log::*;
 use netpod::TsNano;
-use serde::Deserialize;
 use serde::Serialize;
 use std::any;
 use std::collections::VecDeque;
@@ -494,10 +494,8 @@ where
 {
     fn to_json_value(&self) -> Result<serde_json::Value, serde_json::Error> {
         let bins = &self.bins;
-        let ts1sns: Vec<_> = bins.ts1s.iter().map(|x| x.ns()).collect();
-        let ts2sns: Vec<_> = bins.ts2s.iter().map(|x| x.ns()).collect();
-        let (ts_anch, ts1ms, ts1ns) = ts_offs_from_abs(&ts1sns);
-        let (ts2ms, ts2ns) = ts_offs_from_abs_with_anchor(ts_anch, &ts2sns);
+        let (ts_anch, ts1ms, ts1ns) = ts_offs_from_abs(&bins.ts1s);
+        let (ts2ms, ts2ns) = ts_offs_from_abs_with_anchor(ts_anch, &bins.ts2s);
         let counts = bins.cnts.clone();
         let mins = bins.mins.clone();
         let maxs = bins.maxs.clone();
@@ -514,6 +512,29 @@ where
             aggs,
         };
         serde_json::to_value(&val)
+    }
+}
+
+impl<EVT, BVT> ToUserFacingApiType for ContainerBinsCollectorOutput<EVT, BVT>
+where
+    EVT: EventValueType,
+    BVT: BinAggedType,
+{
+    fn to_user_facing_api_type(self) -> Box<dyn items_0::apitypes::UserApiType> {
+        let ret = ContainerBinsApi::<EVT, BVT> {
+            ts1s: self.bins.ts1s,
+            ts2s: self.bins.ts2s,
+            cnts: self.bins.cnts,
+            mins: self.bins.mins,
+            maxs: self.bins.maxs,
+            aggs: self.bins.aggs,
+            fnls: self.bins.fnls,
+        };
+        Box::new(ret)
+    }
+
+    fn to_user_facing_api_type_box(self: Box<Self>) -> Box<dyn items_0::apitypes::UserApiType> {
+        (*self).to_user_facing_api_type()
     }
 }
 
@@ -585,15 +606,7 @@ where
         self.timed_out = true;
     }
 
-    fn set_continue_at_here(&mut self) {
-        debug!("TODO remember the continue at");
-    }
-
-    fn result(
-        &mut self,
-        _range: Option<netpod::range::evrange::SeriesRange>,
-        _binrange: Option<netpod::BinnedRangeEnum>,
-    ) -> Result<Box<dyn items_0::collect_s::CollectedDyn>, err::Error> {
+    fn result(&mut self) -> Result<Box<dyn items_0::collect_s::CollectedDyn>, err::Error> {
         // TODO do we need to set timeout, continueAt or anything?
         let bins = mem::replace(&mut self.bins, ContainerBins::new());
         let ret = ContainerBinsCollectorOutput { bins };

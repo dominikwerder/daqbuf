@@ -251,11 +251,8 @@ impl MergeableTy for EventFull {
         None
     }
 
-    fn tss_for_testing(&self) -> Vec<netpod::TsMs> {
-        self.tss
-            .iter()
-            .map(|x| netpod::TsMs::from_ns_u64(*x))
-            .collect()
+    fn tss_for_testing(&self) -> VecDeque<TsNano> {
+        self.tss.iter().map(|&x| TsNano::from_ns(x)).collect()
     }
 
     fn is_consistent(&self) -> bool {

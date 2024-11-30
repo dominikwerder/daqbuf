@@ -49,7 +49,7 @@ pub struct AggregatorNumeric {
     sum: f64,
 }
 
-trait AggWithF64: EventValueType<AggTimeWeightOutputAvg = f64> {
+pub trait AggWithF64: EventValueType<AggTimeWeightOutputAvg = f64> {
     fn as_f64(&self) -> f64;
 }
 
@@ -129,6 +129,10 @@ macro_rules! impl_agg_tw_for_agg_num {
             fn ingest(&mut self, dt: DtNano, bl: DtNano, val: $evt) {
                 let f = dt.ns() as f64 / bl.ns() as f64;
                 trace_event!("INGEST  {}  {}", f, val);
+                if true {
+                    panic!();
+                }
+                let val = 42;
                 self.sum += f * val as f64;
             }
 
@@ -157,6 +161,8 @@ impl_agg_tw_for_agg_num!(i8);
 impl_agg_tw_for_agg_num!(i16);
 impl_agg_tw_for_agg_num!(i32);
 impl_agg_tw_for_agg_num!(i64);
+
+impl_agg_tw_for_agg_num!(super::container_events::PulsedVal<u8>);
 
 impl AggregatorTimeWeight<u64> for AggregatorNumeric {
     fn new() -> Self {

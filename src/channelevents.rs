@@ -29,7 +29,6 @@ use items_0::TypeName;
 use items_0::WithLen;
 use netpod::range::evrange::SeriesRange;
 use netpod::BinnedRangeEnum;
-use netpod::TsMs;
 use netpod::TsNano;
 use serde::Deserialize;
 use serde::Serialize;
@@ -765,12 +764,12 @@ impl MergeableTy for ChannelEvents {
         }
     }
 
-    fn tss_for_testing(&self) -> Vec<TsMs> {
+    fn tss_for_testing(&self) -> VecDeque<TsNano> {
         match self {
             ChannelEvents::Events(x) => x.tss_for_testing(),
             ChannelEvents::Status(x) => match x {
-                Some(x) => vec![x.ts.to_ts_ms()],
-                None => Vec::new(),
+                Some(x) => [x.ts].into_iter().collect(),
+                None => VecDeque::new(),
             },
         }
     }
@@ -824,9 +823,13 @@ impl WithLen for ChannelEventsCollectorOutput {
     }
 }
 
-impl items_0::collect_s::ToJsonValue for ChannelEventsCollectorOutput {
-    fn to_json_value(&self) -> Result<serde_json::Value, serde_json::Error> {
-        serde_json::to_value(self)
+impl ToUserFacingApiType for ChannelEventsCollectorOutput {
+    fn to_user_facing_api_type(self: Self) -> Box<dyn UserApiType> {
+        todo!()
+    }
+
+    fn to_user_facing_api_type_box(self: Box<Self>) -> Box<dyn UserApiType> {
+        todo!()
     }
 }
 
@@ -876,13 +879,8 @@ impl CollectorDyn for ChannelEventsCollector {
         if let Some(item) = item.as_any_mut().downcast_mut::<ChannelEvents>() {
             match item {
                 ChannelEvents::Events(item) => {
-                    // let coll = self.coll.get_or_insert_with(|| {
-                    //     item.as_ref()
-                    //         .as_collectable_with_default_ref()
-                    //         .new_collector()
-                    // });
-                    // coll.ingest(item.as_collectable_with_default_mut());
-                    todo!()
+                    let coll = self.coll.get_or_insert_with(|| item.new_collector());
+                    coll.ingest(item.as_collectable_dyn_mut());
                 }
                 ChannelEvents::Status(_) => {
                     // TODO decide on output format to collect also the connection status events
@@ -908,21 +906,9 @@ impl CollectorDyn for ChannelEventsCollector {
         self.timed_out = true;
     }
 
-    fn set_continue_at_here(&mut self) {
-        self.needs_continue_at = true;
-    }
-
-    fn result(
-        &mut self,
-        range: Option<SeriesRange>,
-        binrange: Option<BinnedRangeEnum>,
-    ) -> Result<Box<dyn CollectedDyn>, err::Error> {
+    fn result(&mut self) -> Result<Box<dyn CollectedDyn>, err::Error> {
         match self.coll.as_mut() {
             Some(coll) => {
-                if self.needs_continue_at {
-                    debug!("ChannelEventsCollector  set_continue_at_here");
-                    coll.set_continue_at_here();
-                }
                 if self.range_complete {
                     coll.set_range_complete();
                 }
@@ -930,7 +916,7 @@ impl CollectorDyn for ChannelEventsCollector {
                     debug!("ChannelEventsCollector  set_timed_out");
                     coll.set_timed_out();
                 }
-                let res = coll.result(range, binrange)?;
+                let res = coll.result()?;
                 Ok(res)
             }
             None => {

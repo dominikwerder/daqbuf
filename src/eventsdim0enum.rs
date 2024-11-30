@@ -1,5 +1,6 @@
 use daqbuf_err as err;
 use err::Error;
+use items_0::apitypes::ToUserFacingApiType;
 use items_0::collect_s::CollectableDyn;
 use items_0::collect_s::CollectedDyn;
 use items_0::collect_s::CollectorDyn;
@@ -127,8 +128,12 @@ impl TypeName for EventsDim0EnumCollectorOutput {
     }
 }
 
-impl ToJsonValue for EventsDim0EnumCollectorOutput {
-    fn to_json_value(&self) -> Result<serde_json::Value, serde_json::Error> {
+impl ToUserFacingApiType for EventsDim0EnumCollectorOutput {
+    fn to_user_facing_api_type(self: Self) -> Box<dyn items_0::apitypes::UserApiType> {
+        todo!()
+    }
+
+    fn to_user_facing_api_type_box(self: Box<Self>) -> Box<dyn items_0::apitypes::UserApiType> {
         todo!()
     }
 }
@@ -154,20 +159,13 @@ impl CollectorTy for EventsDim0EnumCollector {
         self.needs_continue_at = true;
     }
 
-    fn set_continue_at_here(&mut self) {
-        self.needs_continue_at = true;
-    }
-
-    fn result(
-        &mut self,
-        range: Option<SeriesRange>,
-        _binrange: Option<BinnedRangeEnum>,
-    ) -> Result<EventsDim0EnumCollectorOutput, Error> {
+    fn result(&mut self) -> Result<EventsDim0EnumCollectorOutput, Error> {
         trace_collect_result!(
             "{}  result()  needs_continue_at {}",
             self.type_name(),
             self.needs_continue_at
         );
+        let range: Option<SeriesRange> = None;
         // If we timed out, we want to hint the client from where to continue.
         // This is tricky: currently, client can not request a left-exclusive range.
         // We currently give the timestamp of the last event plus a small delta.
@@ -194,8 +192,7 @@ impl CollectorTy for EventsDim0EnumCollector {
         } else {
             None
         };
-        let tss_sl = vals.tss.make_contiguous();
-        let (ts_anchor_sec, ts_off_ms, ts_off_ns) = crate::offsets::ts_offs_from_abs(tss_sl);
+        let (ts_anchor_sec, ts_off_ms, ts_off_ns) = crate::offsets::ts_offs_from_abs(todo!());
         let valixs = mem::replace(&mut vals.values, VecDeque::new());
         let valstrs = mem::replace(&mut vals.valuestrs, VecDeque::new());
         let vals = valixs;

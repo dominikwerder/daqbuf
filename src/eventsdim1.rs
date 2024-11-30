@@ -1,6 +1,7 @@
 use crate::IsoDateTime;
 use daqbuf_err as err;
 use err::Error;
+use items_0::apitypes::ToUserFacingApiType;
 use items_0::collect_s::CollectableDyn;
 use items_0::collect_s::CollectableType;
 use items_0::collect_s::CollectedDyn;
@@ -335,9 +336,13 @@ impl<STY: ScalarOps> WithLen for EventsDim1CollectorOutput<STY> {
     }
 }
 
-impl<STY: ScalarOps> ToJsonValue for EventsDim1CollectorOutput<STY> {
-    fn to_json_value(&self) -> Result<serde_json::Value, serde_json::Error> {
-        serde_json::to_value(self)
+impl<STY: ScalarOps> ToUserFacingApiType for EventsDim1CollectorOutput<STY> {
+    fn to_user_facing_api_type(self: Self) -> Box<dyn items_0::apitypes::UserApiType> {
+        todo!()
+    }
+
+    fn to_user_facing_api_type_box(self: Box<Self>) -> Box<dyn items_0::apitypes::UserApiType> {
+        todo!()
     }
 }
 
@@ -361,22 +366,14 @@ impl<STY: ScalarOps> CollectorTy for EventsDim1Collector<STY> {
         self.timed_out = true;
     }
 
-    fn set_continue_at_here(&mut self) {
-        debug!("{}::set_continue_at_here", Self::self_name());
-        self.needs_continue_at = true;
-    }
-
     // TODO unify with dim0 case
-    fn result(
-        &mut self,
-        range: Option<SeriesRange>,
-        _binrange: Option<BinnedRangeEnum>,
-    ) -> Result<Self::Output, Error> {
+    fn result(&mut self) -> Result<Self::Output, Error> {
         // If we timed out, we want to hint the client from where to continue.
         // This is tricky: currently, client can not request a left-exclusive range.
         // We currently give the timestamp of the last event plus a small delta.
         // The amount of the delta must take into account what kind of timestamp precision the client
         // can parse and handle.
+        let range: Option<SeriesRange> = None;
         let vals = &mut self.vals;
         let continue_at = if self.timed_out {
             if let Some(ts) = vals.tss.back() {
@@ -398,10 +395,8 @@ impl<STY: ScalarOps> CollectorTy for EventsDim1Collector<STY> {
         } else {
             None
         };
-        let tss_sl = vals.tss.make_contiguous();
-        let pulses_sl = vals.pulses.make_contiguous();
-        let (ts_anchor_sec, ts_off_ms, ts_off_ns) = crate::offsets::ts_offs_from_abs(tss_sl);
-        let (pulse_anchor, pulse_off) = crate::offsets::pulse_offs_from_abs(pulses_sl);
+        let (ts_anchor_sec, ts_off_ms, ts_off_ns) = crate::offsets::ts_offs_from_abs(todo!());
+        let (pulse_anchor, pulse_off) = crate::offsets::pulse_offs_from_abs(&vals.pulses);
         let values = mem::replace(&mut vals.values, VecDeque::new());
         if ts_off_ms.len() != ts_off_ns.len() {
             return Err(Error::with_msg_no_trace("collected len mismatch"));

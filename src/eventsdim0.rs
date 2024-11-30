@@ -1,6 +1,7 @@
 use crate::IsoDateTime;
 use daqbuf_err as err;
 use err::Error;
+use items_0::apitypes::ToUserFacingApiType;
 use items_0::collect_s::CollectableDyn;
 use items_0::collect_s::CollectedDyn;
 use items_0::collect_s::CollectorTy;
@@ -380,6 +381,16 @@ impl<STY: ScalarOps> ToJsonValue for EventsDim0CollectorOutput<STY> {
     }
 }
 
+impl<STY: ScalarOps> ToUserFacingApiType for EventsDim0CollectorOutput<STY> {
+    fn to_user_facing_api_type(self: Self) -> Box<dyn items_0::apitypes::UserApiType> {
+        todo!()
+    }
+
+    fn to_user_facing_api_type_box(self: Box<Self>) -> Box<dyn items_0::apitypes::UserApiType> {
+        todo!()
+    }
+}
+
 impl<STY: ScalarOps> CollectedDyn for EventsDim0CollectorOutput<STY> {}
 
 impl<STY: ScalarOps> CollectorTy for EventsDim0Collector<STY> {
@@ -401,15 +412,8 @@ impl<STY: ScalarOps> CollectorTy for EventsDim0Collector<STY> {
         self.needs_continue_at = true;
     }
 
-    fn set_continue_at_here(&mut self) {
-        self.needs_continue_at = true;
-    }
-
-    fn result(
-        &mut self,
-        range: Option<SeriesRange>,
-        _binrange: Option<BinnedRangeEnum>,
-    ) -> Result<Self::Output, Error> {
+    fn result(&mut self) -> Result<Self::Output, Error> {
+        let range: Option<SeriesRange> = None;
         debug!(
             "{}  result()  needs_continue_at {}",
             Self::self_name(),
@@ -441,10 +445,8 @@ impl<STY: ScalarOps> CollectorTy for EventsDim0Collector<STY> {
         } else {
             None
         };
-        let tss_sl = vals.tss.make_contiguous();
-        let pulses_sl = vals.pulses.make_contiguous();
-        let (ts_anchor_sec, ts_off_ms, ts_off_ns) = crate::offsets::ts_offs_from_abs(tss_sl);
-        let (pulse_anchor, pulse_off) = crate::offsets::pulse_offs_from_abs(pulses_sl);
+        let (ts_anchor_sec, ts_off_ms, ts_off_ns) = crate::offsets::ts_offs_from_abs(todo!());
+        let (pulse_anchor, pulse_off) = crate::offsets::pulse_offs_from_abs(&self.vals.pulses);
         let values = mem::replace(&mut vals.values, VecDeque::new());
         if ts_off_ms.len() != ts_off_ns.len() {
             return Err(Error::with_msg_no_trace("collected len mismatch"));
@@ -677,14 +679,10 @@ impl<STY: ScalarOps> Events for EventsDim0<STY> {
 
     fn to_json_string(&self) -> String {
         // TODO redesign with mut access, rename to `into_` and take the values out.
-        let mut tss = self.tss.clone();
-        let mut pulses = self.pulses.clone();
         let mut values = self.values.clone();
-        let tss_sl = tss.make_contiguous();
-        let pulses_sl = pulses.make_contiguous();
-        let (ts_anchor_sec, ts_off_ms, ts_off_ns) = crate::offsets::ts_offs_from_abs(tss_sl);
-        let (pulse_anchor, pulse_off) = crate::offsets::pulse_offs_from_abs(pulses_sl);
-        let values = mem::replace(&mut values, VecDeque::new());
+        let (ts_anchor_sec, ts_off_ms, ts_off_ns) = crate::offsets::ts_offs_from_abs(todo!());
+        let (pulse_anchor, pulse_off) = crate::offsets::pulse_offs_from_abs(&self.pulses);
+        // let values = mem::replace(&mut values, VecDeque::new());
         let ret = EventsDim0CollectorOutput {
             ts_anchor_sec,
             ts_off_ms,

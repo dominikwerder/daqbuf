@@ -1,4 +1,5 @@
 pub mod accounting;
+pub mod apitypes;
 pub mod binning;
 pub mod channelevents;
 pub mod empty;
@@ -27,7 +28,7 @@ mod log {
     #[cfg(not(test))]
     pub use netpod::log::*;
     #[cfg(test)]
-    pub use netpod::log::*;
+    pub use netpod::log_direct::*;
 }
 
 #[derive(Debug, PartialEq)]

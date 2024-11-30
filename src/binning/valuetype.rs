@@ -131,4 +131,5 @@ impl EventValueType for EnumVariant {
     type AggTimeWeightOutputAvg = f32;
     type IterTy1<'a> = EnumVariantRef<'a>;
     const SERDE_ID: u32 = Self::SUB;
+    const BYTE_ESTIMATE_V00: u32 = 40;
 }

@@ -1,3 +1,6 @@
+#[cfg(test)]
+mod test;
+
 use crate::log::*;
 use core::ops::Range;
 use futures_util::Stream;
@@ -34,6 +37,8 @@ macro_rules! trace3 { ($($arg:tt)*) => ( if false { trace!($($arg)*); } ) }
 
 macro_rules! trace4 { ($($arg:tt)*) => ( if false { trace!($($arg)*); } ) }
 
+macro_rules! trace_emit { ($($arg:tt)*) => ( if true { trace!($($arg)*); } ) }
+
 #[derive(Debug, thiserror::Error)]
 #[cstm(name = "MergerError")]
 pub enum Error {
@@ -56,8 +61,7 @@ pub struct Merger<T> {
     out_of_band_queue: VecDeque<Sitemty<T>>,
     log_queue: VecDeque<LogItem>,
     dim0ix_max: TsNano,
-    done_data: bool,
-    done_buffered: bool,
+    done_inp: bool,
     done_range_complete: bool,
     complete: bool,
     poll_count: usize,
@@ -75,8 +79,7 @@ where
             .field("out_max_len", &self.out_max_len)
             .field("range_complete", &self.range_complete)
             .field("out_of_band_queue", &self.out_of_band_queue.len())
-            .field("done_data", &self.done_data)
-            .field("done_buffered", &self.done_buffered)
+            .field("done_data", &self.done_inp)
             .field("done_range_complete", &self.done_range_complete)
             .finish()
     }
@@ -98,8 +101,7 @@ where
             out_of_band_queue: VecDeque::new(),
             log_queue: VecDeque::new(),
             dim0ix_max: TsNano::from_ns(0),
-            done_data: false,
-            done_buffered: false,
+            done_inp: false,
             done_range_complete: false,
             complete: false,
             poll_count: 0,
@@ -380,16 +382,22 @@ where
                 || self.do_clear_out
                 || last_emit
             {
-                if o.len() > self.out_max_len {
+                if o.len() > 2 * self.out_max_len {
                     debug!(
-                        "MERGER OVERWEIGHT ITEM  {} vs {}",
+                        "MERGER OVERLENGTH ITEM  {} vs {}",
                         o.len(),
                         self.out_max_len
                     );
                 }
+                if o.byte_estimate() > 2 * OUT_MAX_BYTES {
+                    debug!(
+                        "MERGER OVERWEIGHT ITEM  {} vs {}",
+                        o.byte_estimate(),
+                        OUT_MAX_BYTES
+                    );
+                }
                 trace3!("decide to output");
                 self.do_clear_out = false;
-                //Break(Ready(Some(Ok(self.out.take().unwrap()))))
                 let item = sitem_data(self.out.take().unwrap());
                 self.out_of_band_queue.push_back(item);
                 Continue(())
@@ -431,9 +439,7 @@ where
         let _spg = span1.enter();
         loop {
             trace3!("poll");
-            break if let Some(item) = self.log_queue.pop_front() {
-                Ready(Some(Ok(StreamItem::Log(item))))
-            } else if self.poll_count == usize::MAX {
+            break if self.poll_count == usize::MAX {
                 self.done_range_complete = true;
                 continue;
             } else if self.complete {
@@ -441,46 +447,42 @@ where
             } else if self.done_range_complete {
                 self.complete = true;
                 Ready(None)
-            } else if self.done_buffered {
-                self.done_range_complete = true;
-                if self.range_complete.iter().all(|x| *x) {
-                    trace!("emit RangeComplete");
-                    Ready(Some(Ok(StreamItem::DataItem(
-                        RangeCompletableItem::RangeComplete,
-                    ))))
-                } else {
-                    continue;
-                }
-            } else if self.done_data {
-                trace!("done_data");
-                self.done_buffered = true;
-                if let Some(out) = self.out.take() {
-                    trace!("done_data emit buffered  len {}", out.len());
-                    Ready(Some(sitem_data(out)))
-                } else {
-                    continue;
-                }
+            } else if let Some(item) = self.log_queue.pop_front() {
+                Ready(Some(Ok(StreamItem::Log(item))))
             } else if let Some(item) = self.out_of_band_queue.pop_front() {
+                trace_emit!("emit item");
                 let item = on_sitemty_data!(item, |k: T| {
-                    trace3!("emit out-of-band data  len {}", k.len());
+                    trace_emit!("emit item len {}", k.len());
                     sitem_data(k)
                 });
                 Ready(Some(item))
-            } else {
+            } else if self.done_inp == false {
                 match Self::poll2(self.as_mut(), cx) {
                     ControlFlow::Continue(()) => continue,
                     ControlFlow::Break(k) => match k {
                         Ready(Some(e)) => {
-                            self.done_data = true;
+                            self.done_inp = true;
                             Ready(Some(Err(sitem_err2_from_string(e))))
                         }
                         Ready(None) => {
-                            self.done_data = true;
+                            self.done_inp = true;
+                            if let Some(out) = self.out.take() {
+                                trace!("done_data emit buffered  len {}", out.len());
+                                self.out_of_band_queue.push_back(sitem_data(out));
+                            }
                             continue;
                         }
                         Pending => Pending,
                     },
                 }
+            } else {
+                self.done_range_complete = true;
+                if self.range_complete.iter().all(|x| *x) {
+                    trace!("emit RangeComplete");
+                    let item = Ok(StreamItem::DataItem(RangeCompletableItem::RangeComplete));
+                    self.out_of_band_queue.push_back(item);
+                }
+                continue;
             };
         }
     }
