@@ -1,5 +1,6 @@
 use crate::apitypes::ToUserFacingApiType;
 use crate::collect_s::CollectableDyn;
+use crate::collect_s::CollectorDyn;
 use crate::collect_s::ToCborValue;
 use crate::collect_s::ToJsonValue;
 use crate::container::ByteEstimate;
@@ -13,6 +14,7 @@ use crate::WithLen;
 use netpod::BinnedRange;
 use netpod::BinnedRangeEnum;
 use netpod::TsNano;
+use std::collections::VecDeque;
 use std::fmt;
 use std::ops::Range;
 
@@ -90,6 +92,7 @@ where
 
 pub trait BinningggContainerEventsDyn:
     fmt::Debug
+    + TypeName
     + Send
     + AsAnyRef
     + WithLen
@@ -98,8 +101,8 @@ pub trait BinningggContainerEventsDyn:
     + ToJsonValue
     + ToCborValue
     + ToUserFacingApiType
+    + CollectableDyn
 {
-    fn type_name(&self) -> &'static str;
     fn binned_events_timeweight_traitobj(
         &self,
         range: BinnedRange<TsNano>,
@@ -110,6 +113,7 @@ pub trait BinningggContainerEventsDyn:
     fn nty_id(&self) -> u32;
     fn eq(&self, rhs: &dyn BinningggContainerEventsDyn) -> bool;
     fn as_mergeable_dyn_mut(&mut self) -> &mut dyn MergeableDyn;
+    fn as_collectable_dyn_mut(&mut self) -> &mut dyn CollectableDyn;
 }
 
 impl<T> MergeableDyn for Box<T>
@@ -136,7 +140,7 @@ where
         self.as_ref().find_highest_index_lt(ts)
     }
 
-    fn tss_for_testing(&self) -> Vec<netpod::TsMs> {
+    fn tss_for_testing(&self) -> VecDeque<TsNano> {
         self.as_ref().tss_for_testing()
     }
 

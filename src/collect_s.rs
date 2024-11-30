@@ -1,3 +1,4 @@
+use crate::apitypes::ToUserFacingApiType;
 use crate::container::ByteEstimate;
 use crate::timebin::BinningggContainerBinsDyn;
 use crate::AsAnyMut;
@@ -8,9 +9,6 @@ use crate::WithLen;
 use daqbuf_err as err;
 use err::Error;
 use netpod::log::*;
-use netpod::range::evrange::SeriesRange;
-use netpod::BinnedRangeEnum;
-use serde::Serialize;
 use std::any;
 use std::any::Any;
 use std::fmt;
@@ -41,11 +39,11 @@ impl ToJsonValue for serde_json::Value {
     }
 }
 
-pub trait CollectedDyn: fmt::Debug + TypeName + Send + AsAnyRef + WithLen + ToJsonValue {}
+pub trait CollectedDyn: fmt::Debug + TypeName + Send + WithLen + ToUserFacingApiType {}
 
-impl ToJsonValue for Box<dyn CollectedDyn> {
-    fn to_json_value(&self) -> Result<serde_json::Value, serde_json::Error> {
-        ToJsonValue::to_json_value(self.as_ref())
+impl TypeName for Box<dyn CollectedDyn> {
+    fn type_name(&self) -> String {
+        self.as_ref().type_name()
     }
 }
 
@@ -55,42 +53,22 @@ impl WithLen for Box<dyn CollectedDyn> {
     }
 }
 
-impl TypeName for Box<dyn CollectedDyn> {
-    fn type_name(&self) -> String {
-        self.as_ref().type_name()
-    }
-}
-
-impl CollectedDyn for Box<dyn CollectedDyn> {}
-
 pub trait CollectorTy: fmt::Debug + Send + Unpin + WithLen + ByteEstimate {
     type Input: CollectableDyn;
-    type Output: CollectedDyn + ToJsonValue + Serialize;
-
+    type Output: CollectedDyn;
     fn ingest(&mut self, src: &mut Self::Input);
     fn set_range_complete(&mut self);
     fn set_timed_out(&mut self);
-    fn set_continue_at_here(&mut self);
-
     // TODO use this crate's Error instead:
-    fn result(
-        &mut self,
-        range: Option<SeriesRange>,
-        binrange: Option<BinnedRangeEnum>,
-    ) -> Result<Self::Output, Error>;
+    fn result(&mut self) -> Result<Self::Output, Error>;
 }
 
 pub trait CollectorDyn: fmt::Debug + Send + WithLen + ByteEstimate {
     fn ingest(&mut self, src: &mut dyn CollectableDyn);
     fn set_range_complete(&mut self);
     fn set_timed_out(&mut self);
-    fn set_continue_at_here(&mut self);
     // TODO factor the required parameters into new struct? Generic over events or binned?
-    fn result(
-        &mut self,
-        range: Option<SeriesRange>,
-        binrange: Option<BinnedRangeEnum>,
-    ) -> Result<Box<dyn CollectedDyn>, Error>;
+    fn result(&mut self) -> Result<Box<dyn CollectedDyn>, Error>;
 }
 
 impl<T> CollectorDyn for T
@@ -101,22 +79,20 @@ where
         if let Some(src) = src.as_any_mut().downcast_mut::<<T as CollectorTy>::Input>() {
             trace!("sees incoming &mut ref");
             T::ingest(self, src)
+        } else if let Some(src) = src
+            .as_any_mut()
+            .downcast_mut::<Box<<T as CollectorTy>::Input>>()
+        {
+            trace!("sees incoming &mut Box");
+            T::ingest(self, src)
         } else {
-            if let Some(src) = src
-                .as_any_mut()
-                .downcast_mut::<Box<<T as CollectorTy>::Input>>()
-            {
-                trace!("sees incoming &mut Box");
-                T::ingest(self, src)
-            } else {
-                error!(
-                    "No idea what this is. Expect: {}  input {}  got: {} {:?}",
-                    any::type_name::<T>(),
-                    any::type_name::<<T as CollectorTy>::Input>(),
-                    src.type_name(),
-                    src
-                );
-            }
+            error!(
+                "No idea what this is. Expect: {}  input {}  got: {} {:?}",
+                any::type_name::<T>(),
+                any::type_name::<<T as CollectorTy>::Input>(),
+                src.type_name(),
+                src
+            );
         }
     }
 
@@ -128,16 +104,8 @@ where
         T::set_timed_out(self)
     }
 
-    fn set_continue_at_here(&mut self) {
-        T::set_continue_at_here(self)
-    }
-
-    fn result(
-        &mut self,
-        range: Option<SeriesRange>,
-        binrange: Option<BinnedRangeEnum>,
-    ) -> Result<Box<dyn CollectedDyn>, Error> {
-        let ret = T::result(self, range, binrange)?;
+    fn result(&mut self) -> Result<Box<dyn CollectedDyn>, Error> {
+        let ret = T::result(self)?;
         Ok(Box::new(ret))
     }
 }

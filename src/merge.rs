@@ -5,6 +5,7 @@ use crate::WithLen;
 use core::ops::Range;
 use netpod::TsMs;
 use netpod::TsNano;
+use std::collections::VecDeque;
 use std::fmt;
 
 #[derive(Debug, thiserror::Error)]
@@ -44,7 +45,7 @@ pub trait MergeableTy: fmt::Debug + WithLen + ByteEstimate + Unpin + Sized {
     fn find_lowest_index_gt(&self, ts: TsNano) -> Option<usize>;
     fn find_lowest_index_ge(&self, ts: TsNano) -> Option<usize>;
     fn find_highest_index_lt(&self, ts: TsNano) -> Option<usize>;
-    fn tss_for_testing(&self) -> Vec<TsMs>;
+    fn tss_for_testing(&self) -> VecDeque<TsNano>;
     fn drain_into(&mut self, dst: &mut Self, range: Range<usize>) -> DrainIntoDstResult;
     fn drain_into_new(&mut self, range: Range<usize>) -> DrainIntoNewResult<Self>;
     fn is_consistent(&self) -> bool;
@@ -56,7 +57,7 @@ pub trait MergeableDyn: fmt::Debug + WithLen + ByteEstimate + Unpin + AsAnyMut {
     fn find_lowest_index_gt(&self, ts: TsNano) -> Option<usize>;
     fn find_lowest_index_ge(&self, ts: TsNano) -> Option<usize>;
     fn find_highest_index_lt(&self, ts: TsNano) -> Option<usize>;
-    fn tss_for_testing(&self) -> Vec<TsMs>;
+    fn tss_for_testing(&self) -> VecDeque<TsNano>;
     fn drain_into(&mut self, dst: &mut dyn MergeableDyn, range: Range<usize>)
         -> DrainIntoDstResult;
     fn drain_into_new(&mut self, range: Range<usize>) -> DrainIntoNewDynResult;
