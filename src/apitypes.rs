@@ -3,7 +3,7 @@ use serde::Serialize;
 use std::collections::BTreeMap;
 
 pub trait UserApiType {
-    fn into_serializable(self: Box<Self>) -> Box<dyn erased_serde::Serialize>;
+    fn into_serializable_normal(self: Box<Self>) -> Box<dyn erased_serde::Serialize>;
     fn into_serializable_json(self: Box<Self>) -> Box<dyn erased_serde::Serialize>;
 }
 
@@ -32,7 +32,7 @@ impl ToCborValue for EmptyStruct {
 }
 
 impl UserApiType for EmptyStruct {
-    fn into_serializable(self: Box<Self>) -> Box<dyn erased_serde::Serialize> {
+    fn into_serializable_normal(self: Box<Self>) -> Box<dyn erased_serde::Serialize> {
         Box::new(BTreeMap::<String, u32>::new())
     }
 

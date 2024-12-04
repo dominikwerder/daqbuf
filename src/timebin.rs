@@ -172,7 +172,7 @@ pub trait BinningggContainerBinsDyn:
         &self,
         range: BinnedRange<TsNano>,
     ) -> Box<dyn BinnedBinsTimeweightTrait>;
-    fn fix_numerics(&mut self);
+    fn boxed_into_collectable_box(self: Box<Self>) -> Box<dyn CollectableDyn>;
 }
 
 pub type BinsBoxed = Box<dyn BinningggContainerBinsDyn>;
