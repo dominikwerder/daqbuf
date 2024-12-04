@@ -4464,3 +4464,11 @@ pub fn req_uri_to_url(uri: &Uri) -> Result<Url, UriError> {
             .map_err(|_| UriError::ParseError(uri.clone()))
     }
 }
+
+pub unsafe fn extltref<'a, 'b, T>(t: &'a T) -> &'b T {
+    core::mem::transmute(t)
+}
+
+pub unsafe fn extltmut<'a, 'b, T>(t: &'a mut T) -> &'b mut T {
+    core::mem::transmute(t)
+}
