@@ -1,8 +1,5 @@
 use crate::apitypes::ToUserFacingApiType;
 use crate::collect_s::CollectableDyn;
-use crate::collect_s::CollectorDyn;
-use crate::collect_s::ToCborValue;
-use crate::collect_s::ToJsonValue;
 use crate::container::ByteEstimate;
 use crate::merge::DrainIntoDstResult;
 use crate::merge::DrainIntoNewDynResult;
@@ -98,8 +95,6 @@ pub trait BinningggContainerEventsDyn:
     + WithLen
     + ByteEstimate
     + MergeableDyn
-    + ToJsonValue
-    + ToCborValue
     + ToUserFacingApiType
     + CollectableDyn
 {

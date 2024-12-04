@@ -14,11 +14,13 @@ use std::any::Any;
 use std::fmt;
 
 pub trait ToJsonValue: fmt::Debug + Send {
-    fn to_json_value(&self) -> Result<serde_json::Value, serde_json::Error>;
+    fn into_fields(self) -> Vec<(String, Box<dyn erased_serde::Serialize>)>;
+    fn into_fields_box(self: Box<Self>) -> Vec<(String, Box<dyn erased_serde::Serialize>)>;
 }
 
 pub trait ToCborValue: fmt::Debug + Send {
-    fn to_cbor_value(&self) -> Result<ciborium::Value, ciborium::value::Error>;
+    fn into_fields(self) -> Vec<(String, Box<dyn erased_serde::Serialize>)>;
+    fn into_fields_box(self: Box<Self>) -> Vec<(String, Box<dyn erased_serde::Serialize>)>;
 }
 
 impl AsAnyRef for serde_json::Value {
@@ -30,12 +32,6 @@ impl AsAnyRef for serde_json::Value {
 impl AsAnyMut for serde_json::Value {
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
-    }
-}
-
-impl ToJsonValue for serde_json::Value {
-    fn to_json_value(&self) -> Result<serde_json::Value, serde_json::Error> {
-        Ok(self.clone())
     }
 }
 
@@ -77,7 +73,14 @@ where
 {
     fn ingest(&mut self, src: &mut dyn CollectableDyn) {
         if let Some(src) = src.as_any_mut().downcast_mut::<<T as CollectorTy>::Input>() {
-            trace!("sees incoming &mut ref");
+            let s1 = any::type_name::<T>();
+            let s2 = any::type_name::<<T as CollectorTy>::Input>();
+            trace!(
+                "sees incoming &mut ref  len {}  t1 {}  t2 {}",
+                src.len(),
+                s1,
+                s2
+            );
             T::ingest(self, src)
         } else if let Some(src) = src
             .as_any_mut()

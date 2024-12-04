@@ -1,13 +1,15 @@
 use crate::collect_s::ToCborValue;
-use crate::collect_s::ToJsonValue;
-use core::fmt;
 use serde::Serialize;
+use std::collections::BTreeMap;
 
-pub trait UserApiType: ToCborValue + ToJsonValue {}
+pub trait UserApiType {
+    fn into_serializable(self: Box<Self>) -> Box<dyn erased_serde::Serialize>;
+    fn into_serializable_json(self: Box<Self>) -> Box<dyn erased_serde::Serialize>;
+}
 
 pub trait ToUserFacingApiType {
-    fn to_user_facing_api_type(self) -> Box<dyn UserApiType>;
-    fn to_user_facing_api_type_box(self: Box<Self>) -> Box<dyn UserApiType>;
+    fn into_user_facing_api_type(self) -> Box<dyn UserApiType>;
+    fn into_user_facing_api_type_box(self: Box<Self>) -> Box<dyn UserApiType>;
 }
 
 #[derive(Debug, Serialize)]
@@ -20,17 +22,21 @@ impl EmptyStruct {
 }
 
 impl ToCborValue for EmptyStruct {
-    fn to_cbor_value(&self) -> Result<ciborium::Value, ciborium::value::Error> {
-        let ret = ciborium::Value::Map(Vec::new());
-        Ok(ret)
+    fn into_fields(self) -> Vec<(String, Box<dyn erased_serde::Serialize>)> {
+        Vec::new()
+    }
+
+    fn into_fields_box(self: Box<Self>) -> Vec<(String, Box<dyn erased_serde::Serialize>)> {
+        self.into_fields()
     }
 }
 
-impl ToJsonValue for EmptyStruct {
-    fn to_json_value(&self) -> Result<serde_json::Value, serde_json::Error> {
-        let ret = serde_json::to_value(self);
-        ret
+impl UserApiType for EmptyStruct {
+    fn into_serializable(self: Box<Self>) -> Box<dyn erased_serde::Serialize> {
+        Box::new(BTreeMap::<String, u32>::new())
+    }
+
+    fn into_serializable_json(self: Box<Self>) -> Box<dyn erased_serde::Serialize> {
+        Box::new(BTreeMap::<String, u32>::new())
     }
 }
-
-impl UserApiType for EmptyStruct {}
