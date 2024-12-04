@@ -9,8 +9,6 @@ use items_0::apitypes::UserApiType;
 use items_0::collect_s::CollectableDyn;
 use items_0::collect_s::CollectedDyn;
 use items_0::collect_s::CollectorDyn;
-use items_0::collect_s::ToCborValue;
-use items_0::collect_s::ToJsonValue;
 use items_0::container::ByteEstimate;
 use items_0::framable::FrameTypeInnerStatic;
 use items_0::isodate::IsoDateTime;
@@ -23,12 +21,9 @@ use items_0::timebin::BinningggContainerEventsDyn;
 use items_0::AsAnyMut;
 use items_0::AsAnyRef;
 use items_0::Empty;
-use items_0::EventsNonObj;
 use items_0::Extendable;
 use items_0::TypeName;
 use items_0::WithLen;
-use netpod::range::evrange::SeriesRange;
-use netpod::BinnedRangeEnum;
 use netpod::TsNano;
 use serde::Deserialize;
 use serde::Serialize;
@@ -816,12 +811,6 @@ impl MergeableTy for ChannelEvents {
             ChannelEvents::Events(x) => x.is_consistent(),
             ChannelEvents::Status(_) => true,
         }
-    }
-}
-
-impl EventsNonObj for ChannelEvents {
-    fn into_tss_pulses(self: Box<Self>) -> (VecDeque<u64>, VecDeque<u64>) {
-        todo!()
     }
 }
 

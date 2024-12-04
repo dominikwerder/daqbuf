@@ -4,9 +4,6 @@ pub mod binning;
 pub mod channelevents;
 pub mod empty;
 pub mod eventfull;
-pub mod eventsdim0;
-pub mod eventsdim0enum;
-pub mod eventsdim1;
 pub mod framable;
 pub mod frame;
 pub mod inmem;
@@ -21,7 +18,6 @@ pub mod testgen;
 
 use daqbuf_err as err;
 use items_0::isodate::IsoDateTime;
-use items_0::Events;
 use std::fmt;
 
 mod log {
