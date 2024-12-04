@@ -2,7 +2,6 @@
 mod test;
 
 use crate::log::*;
-use core::ops::Range;
 use futures_util::Stream;
 use futures_util::StreamExt;
 use items_0::container::ByteEstimate;
@@ -17,9 +16,6 @@ use items_0::streamitem::RangeCompletableItem;
 use items_0::streamitem::SitemErrTy;
 use items_0::streamitem::Sitemty;
 use items_0::streamitem::StreamItem;
-use items_0::Events;
-use items_0::WithLen;
-use netpod::TsMs;
 use netpod::TsNano;
 use std::collections::VecDeque;
 use std::fmt;
@@ -37,7 +33,7 @@ macro_rules! trace3 { ($($arg:tt)*) => ( if false { trace!($($arg)*); } ) }
 
 macro_rules! trace4 { ($($arg:tt)*) => ( if false { trace!($($arg)*); } ) }
 
-macro_rules! trace_emit { ($($arg:tt)*) => ( if true { trace!($($arg)*); } ) }
+macro_rules! trace_emit { ($($arg:tt)*) => ( if false { trace!($($arg)*); } ) }
 
 #[derive(Debug, thiserror::Error)]
 #[cstm(name = "MergerError")]
@@ -64,7 +60,6 @@ pub struct Merger<T> {
     done_inp: bool,
     done_range_complete: bool,
     complete: bool,
-    poll_count: usize,
 }
 
 impl<T> fmt::Debug for Merger<T>
@@ -104,7 +99,6 @@ where
             done_inp: false,
             done_range_complete: false,
             complete: false,
-            poll_count: 0,
         }
     }
 
@@ -411,7 +405,7 @@ where
                 Continue(())
             }
         } else {
-            trace!("no output candidate");
+            trace4!("no output candidate");
             if last_emit {
                 Break(Ready(None))
             } else {
@@ -439,15 +433,12 @@ where
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         use Poll::*;
-        self.poll_count += 1;
-        let span1 = span!(Level::INFO, "Merger", pc = self.poll_count);
+        // let span1 = span!(Level::INFO, "Merger", pc = self.poll_count);
+        let span1 = span!(Level::INFO, "Merger");
         let _spg = span1.enter();
         loop {
             trace3!("poll");
-            break if self.poll_count == usize::MAX {
-                self.done_range_complete = true;
-                continue;
-            } else if self.complete {
+            break if self.complete {
                 panic!("poll after complete");
             } else if self.done_range_complete {
                 self.complete = true;

@@ -116,7 +116,7 @@ where
                 Self::bound(&mut self.max, max, std::cmp::Ordering::Greater);
                 let dt = ts2.delta(ts1);
                 let bl = self.range.bin_len_dt_ns();
-                self.agg.ingest(dt, bl, cnt, agg.clone());
+                self.agg.ingest(dt, bl, cnt, agg.into());
                 self.non_fnl |= !fnl;
                 self.lst = Some(lst.into());
             }

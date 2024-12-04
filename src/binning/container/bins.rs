@@ -5,6 +5,7 @@ use serde::Deserialize;
 use serde::Serialize;
 use std::collections::VecDeque;
 use std::fmt;
+use std::ops::Range;
 
 pub trait AggBinValTw<BVT>: fmt::Debug + Send
 where
@@ -24,7 +25,9 @@ where
     fn new() -> Self;
     fn push_back(&mut self, val: BVT);
     fn pop_front(&mut self) -> Option<BVT>;
+    fn iter_ty_1(&self) -> impl Iterator<Item = BVT::IterTy1<'_>>;
     fn get_iter_ty_1<'a>(&'a self, pos: usize) -> Option<BVT::IterTy1<'a>>;
+    fn drain_into(&mut self, dst: &mut Self, range: Range<usize>);
 }
 
 pub trait BinAggedType:
@@ -35,47 +38,41 @@ pub trait BinAggedType:
     type IterTy1<'a>: fmt::Debug + Clone + PartialOrdEvtA<Self> + Into<Self>;
 }
 
-impl<BVT> BinAggedContainer<BVT> for VecDeque<f32>
-where
-    BVT: BinAggedType,
-{
-    fn new() -> Self {
-        todo!()
-    }
+macro_rules! impl_bin_agged_cont_simple_copyable {
+    ($evt:ty) => {
+        impl BinAggedContainer<$evt> for VecDeque<$evt> {
+            fn new() -> Self {
+                Self::new()
+            }
 
-    fn push_back(&mut self, val: BVT) {
-        todo!()
-    }
+            fn push_back(&mut self, val: $evt) {
+                self.push_back(val);
+            }
 
-    fn pop_front(&mut self) -> Option<BVT> {
-        todo!()
-    }
+            fn pop_front(&mut self) -> Option<$evt> {
+                self.pop_front()
+            }
 
-    fn get_iter_ty_1<'a>(&'a self, pos: usize) -> Option<<BVT as BinAggedType>::IterTy1<'a>> {
-        todo!()
-    }
+            fn iter_ty_1(&self) -> impl Iterator<Item = <$evt as BinAggedType>::IterTy1<'_>> {
+                self.iter().map(|&x| x)
+            }
+
+            fn get_iter_ty_1<'a>(
+                &'a self,
+                pos: usize,
+            ) -> Option<<$evt as BinAggedType>::IterTy1<'a>> {
+                self.get(pos).map(|&x| x)
+            }
+
+            fn drain_into(&mut self, dst: &mut Self, range: Range<usize>) {
+                dst.extend(self.drain(range));
+            }
+        }
+    };
 }
 
-impl<BVT> BinAggedContainer<BVT> for VecDeque<f64>
-where
-    BVT: BinAggedType,
-{
-    fn new() -> Self {
-        todo!()
-    }
-
-    fn push_back(&mut self, val: BVT) {
-        todo!()
-    }
-
-    fn pop_front(&mut self) -> Option<BVT> {
-        todo!()
-    }
-
-    fn get_iter_ty_1<'a>(&'a self, pos: usize) -> Option<<BVT as BinAggedType>::IterTy1<'a>> {
-        todo!()
-    }
-}
+impl_bin_agged_cont_simple_copyable!(f32);
+impl_bin_agged_cont_simple_copyable!(f64);
 
 impl BinAggedType for f32 {
     type Container = VecDeque<Self>;

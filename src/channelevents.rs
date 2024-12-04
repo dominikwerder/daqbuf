@@ -557,7 +557,6 @@ mod test_channel_events_serde {
     use super::ChannelEvents;
     use crate::binning::container_events::ContainerEvents;
     use crate::channelevents::ConnStatusEvent;
-    use crate::eventsdim0::EventsDim0;
     use bincode::config::FixintEncoding;
     use bincode::config::LittleEndian;
     use bincode::config::RejectTrailing;
@@ -601,9 +600,9 @@ mod test_channel_events_serde {
 
     #[test]
     fn channel_events_bincode() {
-        let mut evs = ContainerEvents::new();
-        evs.push_back(TsNano::from_ns(8), 3.0f32);
-        evs.push_back(TsNano::from_ns(12), 3.2f32);
+        let mut evs = ContainerEvents::<f32>::new();
+        evs.push_back(TsNano::from_ns(8), 3.0);
+        evs.push_back(TsNano::from_ns(12), 3.2);
         let item = ChannelEvents::from(evs);
         let opts = bincode_opts();
         let mut out = Vec::new();
@@ -617,7 +616,7 @@ mod test_channel_events_serde {
         } else {
             panic!()
         };
-        let item: &EventsDim0<f32> = item.as_any_ref().downcast_ref().unwrap();
+        let item: &ContainerEvents<f32> = item.as_any_ref().downcast_ref().unwrap();
         assert_eq!(item.tss().len(), 2);
         assert_eq!(item.tss()[1], 12);
     }

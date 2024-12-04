@@ -1,7 +1,6 @@
 pub mod events_gen;
 
-use crate::eventsdim0::EventsDim0;
-use crate::Events;
+use crate::binning::container_events::ContainerEvents;
 use items_0::Appendable;
 use items_0::Empty;
 use netpod::TsNano;
@@ -21,14 +20,14 @@ pub fn make_some_boxed_d0_f32(
     tstep: u64,
     tmask: u64,
     seed: u32,
-) -> Box<dyn Events> {
+) -> ContainerEvents<f32> {
     let mut vstate = seed;
-    let mut events = EventsDim0::empty();
+    let mut events = ContainerEvents::empty();
     for i in 0..n {
         vstate = xorshift32(vstate);
         let ts = t0 + i as u64 * tstep + (vstate as u64 & tmask);
         let value = i as f32 * 100. + vstate as f32 / u32::MAX as f32 / 10.;
         events.push(TsNano::from_ns(ts), value);
     }
-    Box::new(events)
+    events
 }

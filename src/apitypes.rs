@@ -87,7 +87,7 @@ impl<EVT> UserApiType for ContainerEventsApi<EVT>
 where
     EVT: EventValueType,
 {
-    fn into_serializable(self: Box<Self>) -> Box<dyn erased_serde::Serialize> {
+    fn into_serializable_normal(self: Box<Self>) -> Box<dyn erased_serde::Serialize> {
         let mut map = BTreeMap::new();
         for (k, v) in ToCborValue::into_fields_box(self) {
             map.insert(k, v);
@@ -115,7 +115,7 @@ where
     pub cnts: VecDeque<u64>,
     pub mins: <EVT as EventValueType>::Container,
     pub maxs: <EVT as EventValueType>::Container,
-    pub aggs: VecDeque<BVT>,
+    pub aggs: <BVT as BinAggedType>::Container,
     pub fnls: VecDeque<bool>,
 }
 
@@ -190,8 +190,28 @@ where
         ret.push(("ts2Ms".into(), Box::new(ts2_ms)));
         ret.push(("ts2Ns".into(), Box::new(ts2_ns)));
         ret.push(("counts".into(), Box::new(self.cnts)));
-        ret.push(("mins".into(), Box::new(self.mins)));
-        ret.push(("maxs".into(), Box::new(self.maxs)));
+        {
+            let fields = self.mins.into_user_facing_fields();
+            for (k, v) in fields {
+                let k = if k == "values" {
+                    "mins".to_string()
+                } else {
+                    format!("mins_{}", k)
+                };
+                ret.push((k, v));
+            }
+        }
+        {
+            let fields = self.maxs.into_user_facing_fields();
+            for (k, v) in fields {
+                let k = if k == "values" {
+                    "maxs".to_string()
+                } else {
+                    format!("maxs_{}", k)
+                };
+                ret.push((k, v));
+            }
+        }
         ret.push(("avgs".into(), Box::new(self.aggs)));
         ret
     }
@@ -206,7 +226,7 @@ where
     EVT: EventValueType,
     BVT: BinAggedType,
 {
-    fn into_serializable(self: Box<Self>) -> Box<dyn erased_serde::Serialize> {
+    fn into_serializable_normal(self: Box<Self>) -> Box<dyn erased_serde::Serialize> {
         let mut map = BTreeMap::new();
         for (k, v) in ToCborValue::into_fields_box(self) {
             map.insert(k, v);

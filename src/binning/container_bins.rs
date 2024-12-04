@@ -2,6 +2,7 @@ use super::container::bins::BinAggedType;
 use super::container_events::Container;
 use super::container_events::EventValueType;
 use crate::apitypes::ContainerBinsApi;
+use crate::binning::container::bins::BinAggedContainer;
 use crate::offsets::ts_offs_from_abs;
 use crate::offsets::ts_offs_from_abs_with_anchor;
 use core::fmt;
@@ -45,7 +46,7 @@ where
     pub cnt: u64,
     pub min: EVT::IterTy1<'a>,
     pub max: EVT::IterTy1<'a>,
-    pub agg: &'a BVT,
+    pub agg: BVT::IterTy1<'a>,
     pub lst: EVT::IterTy1<'a>,
     pub fnl: bool,
 }
@@ -79,7 +80,7 @@ where
                 cnt: b.cnts[i],
                 min: b.mins.get_iter_ty_1(i).unwrap(),
                 max: b.maxs.get_iter_ty_1(i).unwrap(),
-                agg: &b.aggs[i],
+                agg: BinAggedContainer::get_iter_ty_1(&b.aggs, i).unwrap(),
                 lst: b.lsts.get_iter_ty_1(i).unwrap(),
                 fnl: b.fnls[i],
             };
@@ -101,7 +102,7 @@ where
     cnts: VecDeque<u64>,
     mins: <EVT as EventValueType>::Container,
     maxs: <EVT as EventValueType>::Container,
-    aggs: VecDeque<BVT>,
+    aggs: <BVT as BinAggedType>::Container,
     lsts: <EVT as EventValueType>::Container,
     fnls: VecDeque<bool>,
 }
@@ -158,7 +159,7 @@ where
             cnts: VecDeque::new(),
             mins: <<EVT as EventValueType>::Container as Container<EVT>>::new(),
             maxs: <<EVT as EventValueType>::Container as Container<EVT>>::new(),
-            aggs: VecDeque::new(),
+            aggs: <<BVT as BinAggedType>::Container as BinAggedContainer<BVT>>::new(),
             lsts: <<EVT as EventValueType>::Container as Container<EVT>>::new(),
             fnls: VecDeque::new(),
         }
@@ -216,8 +217,8 @@ where
         self.maxs.iter_ty_1()
     }
 
-    pub fn aggs_iter(&self) -> std::collections::vec_deque::Iter<BVT> {
-        self.aggs.iter()
+    pub fn aggs_iter(&self) -> impl Iterator<Item = BVT::IterTy1<'_>> {
+        self.aggs.iter_ty_1()
     }
 
     pub fn lsts_iter(&self) -> impl Iterator<Item = EVT::IterTy1<'_>> {
@@ -246,7 +247,7 @@ where
                     >,
                     impl Iterator<Item = EVT::IterTy1<'_>>,
                 >,
-                std::collections::vec_deque::Iter<BVT>,
+                impl Iterator<Item = BVT::IterTy1<'_>>,
             >,
             impl Iterator<Item = EVT::IterTy1<'_>>,
         >,
@@ -615,7 +616,7 @@ where
             dst.cnts.extend(self.cnts.drain(range.clone()));
             self.mins.drain_into(&mut dst.mins, range.clone());
             self.maxs.drain_into(&mut dst.maxs, range.clone());
-            dst.aggs.extend(self.aggs.drain(range.clone()));
+            self.aggs.drain_into(&mut dst.aggs, range.clone());
             self.lsts.drain_into(&mut dst.lsts, range.clone());
             dst.fnls.extend(self.fnls.drain(range.clone()));
         } else {
@@ -635,7 +636,9 @@ where
         Box::new(ret)
     }
 
-    fn fix_numerics(&mut self) {}
+    fn boxed_into_collectable_box(self: Box<Self>) -> Box<dyn CollectableDyn> {
+        Box::new(*self)
+    }
 }
 
 pub struct ContainerBinsTakeUpTo<'a, EVT, BVT>

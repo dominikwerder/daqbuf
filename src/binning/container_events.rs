@@ -42,7 +42,7 @@ use serde::Serialize;
 use std::any;
 use std::collections::VecDeque;
 
-macro_rules! trace_init { ($($arg:tt)*) => ( if true { trace!($($arg)*); }) }
+macro_rules! trace_init { ($($arg:tt)*) => ( if false { trace!($($arg)*); }) }
 
 #[derive(Debug, ThisError)]
 #[cstm(name = "ValueContainerError")]
@@ -292,15 +292,11 @@ where
 {
     fn cmp_a(&self, other: &PulsedVal<EVT>) -> Option<std::cmp::Ordering> {
         use std::cmp::Ordering;
-        match self.pulse.cmp(&other.0) {
-            Ordering::Less => Some(Ordering::Less),
-            Ordering::Greater => Some(Ordering::Greater),
-            Ordering::Equal => match self.evt.cmp_a(&other.1) {
-                Some(Ordering::Less) => Some(Ordering::Less),
-                Some(Ordering::Greater) => Some(Ordering::Greater),
-                Some(Ordering::Equal) => Some(Ordering::Equal),
-                None => None,
-            },
+        match self.evt.cmp_a(&other.1) {
+            Some(Ordering::Less) => Some(Ordering::Less),
+            Some(Ordering::Greater) => Some(Ordering::Greater),
+            Some(Ordering::Equal) => Some(Ordering::Equal),
+            None => None,
         }
     }
 }
