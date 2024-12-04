@@ -14,7 +14,6 @@ use items_0::streamitem::LogItem;
 use items_0::streamitem::RangeCompletableItem;
 use items_0::streamitem::Sitemty;
 use items_0::streamitem::StreamItem;
-use items_0::Events;
 use items_2::channelevents::ChannelEvents;
 use items_2::jsonbytes::CborBytes;
 use netpod::log::Level;
@@ -203,7 +202,7 @@ impl<S> FramedBytesToChannelEventsStream<S> {
                         if let Some(y) = x.1.as_bool() {
                             if y {
                                 Some(StreamItem::DataItem(
-                                    RangeCompletableItem::<Box<dyn Events>>::RangeComplete,
+                                    RangeCompletableItem::<ChannelEvents>::RangeComplete,
                                 ))
                             } else {
                                 None

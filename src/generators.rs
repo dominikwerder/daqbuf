@@ -30,7 +30,6 @@ use std::task::Poll;
 #[cstm(name = "Generator")]
 pub enum Error {
     UnsupportedIsEventBlobs,
-    Transform(#[from] crate::transform::Error),
     Items2(#[from] items_2::Error),
     BadChannelName,
 }

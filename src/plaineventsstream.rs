@@ -16,7 +16,6 @@ use std::pin::Pin;
 #[cstm(name = "PlainEventsStream")]
 pub enum Error {
     Netpod(#[from] netpod::NetpodError),
-    Transform(#[from] crate::transform::Error),
     TcpRawClient(#[from] crate::tcprawclient::Error),
 }
 

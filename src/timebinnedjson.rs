@@ -18,7 +18,6 @@ use items_0::on_sitemty_data;
 use items_0::streamitem::RangeCompletableItem;
 use items_0::streamitem::Sitemty;
 use items_0::streamitem::StreamItem;
-use items_0::Events;
 use items_2::channelevents::ChannelEvents;
 use items_2::jsonbytes::JsonBytes;
 use items_2::merger::Merger;
@@ -31,7 +30,6 @@ use netpod::ReqCtx;
 use query::api4::binned::BinnedQuery;
 use query::api4::events::EventsSubQuerySettings;
 use query::transform::TransformQuery;
-use serde_json::Value as JsonValue;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
@@ -42,7 +40,6 @@ use std::time::Instant;
 pub enum Error {
     Query(#[from] query::api4::binned::Error),
     FromLayers(#[from] super::timebin::fromlayers::Error),
-    Transform(#[from] super::transform::Error),
     TcpRawClient(#[from] crate::tcprawclient::Error),
     Collect(#[from] crate::collect::Error),
     Json(#[from] serde_json::Error),
@@ -151,7 +148,7 @@ pub async fn timebinnable_stream_sf_databuffer_channelevents(
         let buffer_ptr = buffer_ptr[0].i32().unwrap();
         let stream = stream.map(move |x| {
             let memory = memory.clone();
-            let item = on_sitemty_data!(x, |mut evs: Box<dyn Events>| {
+            let item = on_sitemty_data!(x, |mut evs: Box<dyn TodoUseType>| {
                 let x = {
                     use items_0::AsAnyMut;
                     if true {
@@ -251,7 +248,7 @@ pub async fn timebinnable_stream_sf_databuffer_channelevents(
             // Box::new(item) as Box<dyn Framable + Send>
             item
         });
-        Box::pin(stream) as Pin<Box<dyn Stream<Item = Sitemty<Box<dyn Events>>> + Send>>
+        Box::pin(stream) as Pin<Box<dyn Stream<Item = Sitemty<Box<dyn TodoUseType>>> + Send>>
     } else {
         let stream = stream.map(|x| x);
         Box::pin(stream)
