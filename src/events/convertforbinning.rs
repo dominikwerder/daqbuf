@@ -34,7 +34,7 @@ impl Stream for ConvertForBinning {
                             .downcast_ref::<ContainerEvents<EnumVariant>>()
                         {
                             let mut dst = ContainerEvents::new();
-                            for (&ts, val) in evs.iter_zip() {
+                            for (ts, val) in evs.iter_zip() {
                                 dst.push_back(ts, val.ix);
                             }
                             let item = Ok(DataItem(Data(ChannelEvents::Events(Box::new(dst)))));
@@ -43,7 +43,7 @@ impl Stream for ConvertForBinning {
                             evs.as_any_ref().downcast_ref::<ContainerEvents<bool>>()
                         {
                             let mut dst = ContainerEvents::new();
-                            for (&ts, val) in evs.iter_zip() {
+                            for (ts, val) in evs.iter_zip() {
                                 dst.push_back(ts, val as u8);
                             }
                             let item = Ok(DataItem(Data(ChannelEvents::Events(Box::new(dst)))));
@@ -52,7 +52,7 @@ impl Stream for ConvertForBinning {
                             evs.as_any_ref().downcast_ref::<ContainerEvents<String>>()
                         {
                             let mut dst = ContainerEvents::new();
-                            for (&ts, _) in evs.iter_zip() {
+                            for (ts, _) in evs.iter_zip() {
                                 dst.push_back(ts, 1);
                             }
                             let item = Ok(DataItem(Data(ChannelEvents::Events(Box::new(dst)))));
@@ -96,7 +96,7 @@ impl Stream for ConvertForTesting {
                             let s = String::from_utf8_lossy(&buf);
                             if s.contains("u8") {
                                 let mut dst = Cont::new();
-                                for (&ts, val) in evs.iter_zip() {
+                                for (ts, val) in evs.iter_zip() {
                                     let v = (val * 1e6) as u8;
                                     dst.push_back(ts, v);
                                 }
@@ -104,7 +104,7 @@ impl Stream for ConvertForTesting {
                                 Ready(Some(item))
                             } else if s.contains("i16") {
                                 let mut dst = Cont::new();
-                                for (&ts, val) in evs.iter_zip() {
+                                for (ts, val) in evs.iter_zip() {
                                     let v = (val * 1e6) as i16 - 50;
                                     dst.push_back(ts, v);
                                 }
@@ -112,7 +112,7 @@ impl Stream for ConvertForTesting {
                                 Ready(Some(item))
                             } else if s.contains("bool") {
                                 let mut dst = Cont::new();
-                                for (&ts, val) in evs.iter_zip() {
+                                for (ts, val) in evs.iter_zip() {
                                     let g = u64::from_ne_bytes(val.to_ne_bytes());
                                     let val = g % 2 == 0;
                                     dst.push_back(ts, val);
@@ -121,7 +121,7 @@ impl Stream for ConvertForTesting {
                                 Ready(Some(item))
                             } else if s.contains("enum") {
                                 let mut dst = Cont::new();
-                                for (&ts, val) in evs.iter_zip() {
+                                for (ts, val) in evs.iter_zip() {
                                     let buf = val.to_ne_bytes();
                                     let h = buf[0]
                                         ^ buf[1]
@@ -138,7 +138,7 @@ impl Stream for ConvertForTesting {
                                 Ready(Some(item))
                             } else if s.contains("string") {
                                 let mut dst = Cont::new();
-                                for (&ts, val) in evs.iter_zip() {
+                                for (ts, val) in evs.iter_zip() {
                                     dst.push_back(ts, val.to_string());
                                 }
                                 let item = Ok(DataItem(Data(ChannelEvents::Events(Box::new(dst)))));

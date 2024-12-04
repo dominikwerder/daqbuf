@@ -124,6 +124,7 @@ where
 {
     debug!("make wasm transform");
     use httpclient::url::Url;
+    use items_2::binning::container_events::ContainerEvents;
     use wasmer::Value;
     use wasmer::WasmSlice;
     let t = httpclient::http_get(
@@ -157,46 +158,35 @@ where
                 if true {
                     let r1 = evs
                         .as_any_mut()
-                        .downcast_mut::<items_2::eventsdim0::EventsDim0<f64>>()
+                        .downcast_mut::<ContainerEvents<f64>>()
                         .is_some();
                     let r2 = evs
-                        .as_mut()
                         .as_any_mut()
-                        .downcast_mut::<items_2::eventsdim0::EventsDim0<f64>>()
+                        .downcast_mut::<Box<ContainerEvents<f64>>>()
                         .is_some();
                     let r3 = evs
-                        .as_any_mut()
-                        .downcast_mut::<Box<items_2::eventsdim0::EventsDim0<f64>>>()
-                        .is_some();
-                    let r4 = evs
-                        .as_mut()
-                        .as_any_mut()
-                        .downcast_mut::<Box<items_2::eventsdim0::EventsDim0<f64>>>()
-                        .is_some();
-                    let r5 = evs
                         .as_mut()
                         .as_any_mut()
                         .downcast_mut::<ChannelEvents>()
                         .is_some();
-                    let r6 = evs
+                    let r4 = evs
                         .as_mut()
                         .as_any_mut()
                         .downcast_mut::<Box<ChannelEvents>>()
                         .is_some();
-                    debug!("wasm  castings:  {r1}  {r2}  {r3}  {r4}  {r5}  {r6}");
+                    debug!("wasm  castings:  {r1}  {r2}  {r3}  {r4}");
                 }
                 if let Some(evs) = evs.as_any_mut().downcast_mut::<ChannelEvents>() {
                     match evs {
                         ChannelEvents::Events(evs) => {
-                            if let Some(evs) = evs
-                                .as_any_mut()
-                                .downcast_mut::<items_2::eventsdim0::EventsDim0<f64>>()
+                            if let Some(evs) =
+                                evs.as_any_mut().downcast_mut::<ContainerEvents<f64>>()
                             {
                                 use items_0::WithLen;
                                 if evs.len() == 0 {
-                                    debug!("wasm  empty EventsDim0<f64>");
+                                    debug!("wasm  empty");
                                 } else {
-                                    debug!("wasm  see EventsDim0<f64>");
+                                    debug!("wasm  see");
                                     let max_len_needed = 16000;
                                     let dummy1 = instance.exports.get_function("dummy1").unwrap();
                                     let s = evs.values.as_mut_slices();
@@ -252,7 +242,6 @@ where
             };
             Ok(StreamItem::DataItem(RangeCompletableItem::Data(x)))
         });
-        // Box::new(item) as Box<dyn Framable + Send>
         item
     });
     let ret: Pin<Box<dyn Stream<Item = Sitemty<Box<dyn Events>>> + Send>> = Box::pin(stream);

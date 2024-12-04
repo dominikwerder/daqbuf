@@ -28,7 +28,7 @@ where
                 stream::iter([Ok(b2.freeze()), Ok(buf), Ok(b3.freeze())])
             }
             Err(e) => {
-                error!("{e}");
+                error!("{}", e);
                 stream::iter([Ok(Bytes::new()), Ok(Bytes::new()), Ok(Bytes::new())])
             }
         })
@@ -58,7 +58,7 @@ where
                 stream::iter([Ok::<_, E>(b2), Ok(s), Ok(String::from("\n"))])
             }
             Err(e) => {
-                error!("{e}");
+                error!("{}", e);
                 stream::iter([Ok(String::new()), Ok(String::new()), Ok(String::new())])
             }
         })

@@ -1,4 +1,5 @@
 use crate::streamtimeout::StreamTimeout2;
+use core::fmt;
 use futures_util::Future;
 use futures_util::FutureExt;
 use futures_util::Stream;
@@ -40,7 +41,11 @@ where
     }
 }
 
-pub enum CollectResult<T> {
+#[derive(Debug)]
+pub enum CollectResult<T>
+where
+    T: fmt::Debug,
+{
     Timeout,
     Some(T),
 }

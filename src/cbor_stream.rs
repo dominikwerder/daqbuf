@@ -7,6 +7,7 @@ use bytes::Bytes;
 use bytes::BytesMut;
 use futures_util::Stream;
 use futures_util::StreamExt;
+use items_0::apitypes::ToUserFacingApiType;
 use items_0::streamitem::sitem_err2_from_string;
 use items_0::streamitem::sitem_err_from_string;
 use items_0::streamitem::LogItem;
@@ -14,7 +15,6 @@ use items_0::streamitem::RangeCompletableItem;
 use items_0::streamitem::Sitemty;
 use items_0::streamitem::StreamItem;
 use items_0::Events;
-use items_0::WithLen;
 use items_2::channelevents::ChannelEvents;
 use items_2::jsonbytes::CborBytes;
 use netpod::log::Level;
@@ -66,15 +66,16 @@ pub fn events_stream_to_cbor_stream(
     stream
 }
 
-fn map_events(x: Sitemty<ChannelEvents>) -> Result<CborBytes, Error> {
+fn map_events<T>(x: Sitemty<T>) -> Result<CborBytes, Error>
+where
+    T: ToUserFacingApiType,
+{
     match x {
         Ok(x) => match x {
             StreamItem::DataItem(x) => match x {
                 RangeCompletableItem::Data(evs) => {
-                    trace!("map_events  Data  evs  len {}", evs.len());
-                    use items_0::apitypes::ToUserFacingApiType;
-                    let val = evs.to_user_facing_api_type();
-                    let val = val.to_cbor_value()?;
+                    let val = evs.into_user_facing_api_type();
+                    let val = val.into_serializable();
                     let mut buf = Vec::with_capacity(64);
                     ciborium::into_writer(&val, &mut buf).map_err(|e| Error::Msg(e.to_string()))?;
                     let bytes = Bytes::from(buf);

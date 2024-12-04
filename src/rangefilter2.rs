@@ -247,7 +247,7 @@ where
                                 }
                                 Ok(None) => continue,
                                 Err(e) => {
-                                    error!("sees: {e}");
+                                    error!("sees: {}", e);
                                     self.inp_done = true;
                                     Ready(Some(sitem_err_from_string(e)))
                                 }

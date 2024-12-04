@@ -1,3 +1,4 @@
+use crate::log::*;
 use crate::slidebuf::SlideBuf;
 use bytes::Bytes;
 use futures_util::pin_mut;
@@ -8,11 +9,8 @@ use items_0::streamitem::SitemErrTy;
 use items_0::streamitem::Sitemty;
 use items_0::streamitem::StreamItem;
 use items_0::streamitem::TERM_FRAME_TYPE_ID;
-use items_2::framable::INMEM_FRAME_FOOT;
 use items_2::framable::INMEM_FRAME_HEAD;
-use items_2::framable::INMEM_FRAME_MAGIC;
 use items_2::inmem::InMemoryFrame;
-use netpod::log::*;
 use netpod::ByteSize;
 use std::pin::Pin;
 use std::task::Context;
@@ -31,6 +29,7 @@ pub enum Error {
     TryFromSlice(#[from] std::array::TryFromSliceError),
     BadCrc,
     EnoughInputNothingParsed,
+    InMemParse(#[from] items_2::inmem::Error),
 }
 
 pub type BoxedBytesStream = Pin<Box<dyn Stream<Item = Result<Bytes, SitemErrTy>> + Send>>;
@@ -76,9 +75,6 @@ where
     fn poll_upstream(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<usize, Error>> {
         trace2!("poll_upstream");
         use Poll::*;
-        // use tokio::io::AsyncRead;
-        // use tokio::io::ReadBuf;
-        // let mut buf = ReadBuf::new(self.buf.available_writable_area(self.need_min.saturating_sub(self.buf.len()))?);
         let inp = &mut self.inp;
         pin_mut!(inp);
         match inp.poll_next(cx) {
@@ -94,16 +90,6 @@ where
             Ready(None) => Ready(Ok(0)),
             Pending => Pending,
         }
-        // match AsyncRead::poll_read(inp, cx, &mut buf) {
-        //     Ready(Ok(())) => {
-        //         let n = buf.filled().len();
-        //         self.buf.wadv(n)?;
-        //         trace2!("recv bytes {}", n);
-        //         Ready(Ok(n))
-        //     }
-        //     Ready(Err(e)) => Ready(Err(e.into())),
-        //     Pending => Pending,
-        // }
     }
 
     // Try to consume bytes to parse a frame.
@@ -114,70 +100,22 @@ where
         if buf.len() < self.need_min {
             return Err(Error::LessThanNeedMin);
         }
-        if buf.len() < INMEM_FRAME_HEAD {
-            return Err(Error::LessThanHeader);
+        use items_2::inmem::ParseResult;
+        match InMemoryFrame::parse(buf) {
+            Ok(x) => match x {
+                ParseResult::NotEnoughData(n) => {
+                    self.need_min = n;
+                    Ok(None)
+                }
+                ParseResult::Parsed(lentot, val) => {
+                    self.buf.adv(lentot)?;
+                    self.need_min = INMEM_FRAME_HEAD;
+                    self.inp_bytes_consumed += lentot as u64;
+                    Ok(Some(val))
+                }
+            },
+            Err(e) => Err(e.into()),
         }
-        let magic = u32::from_le_bytes(buf[0..4].try_into()?);
-        let encid = u32::from_le_bytes(buf[4..8].try_into()?);
-        let tyid = u32::from_le_bytes(buf[8..12].try_into()?);
-        let len = u32::from_le_bytes(buf[12..16].try_into()?);
-        let payload_crc_exp = u32::from_le_bytes(buf[16..20].try_into()?);
-        if magic != INMEM_FRAME_MAGIC {
-            let n = buf.len().min(64);
-            let u = String::from_utf8_lossy(&buf[0..n]);
-            let msg = format!(
-                "InMemoryFrameAsyncReadStream  tryparse  incorrect magic: {}  buf as utf8: {:?}",
-                magic, u
-            );
-            error!("{msg}");
-            return Err(Error::BadMagic(magic));
-        }
-        if len > 1024 * 1024 * 50 {
-            let msg = format!(
-                "InMemoryFrameAsyncReadStream  tryparse  huge buffer  len {}  self.inp_bytes_consumed {}",
-                len, self.inp_bytes_consumed
-            );
-            error!("{msg}");
-            return Err(Error::HugeFrame(len));
-        }
-        let lentot = INMEM_FRAME_HEAD + INMEM_FRAME_FOOT + len as usize;
-        if buf.len() < lentot {
-            // TODO count cases in production
-            self.need_min = lentot;
-            return Ok(None);
-        }
-        let p1 = INMEM_FRAME_HEAD + len as usize;
-        let mut h = crc32fast::Hasher::new();
-        h.update(&buf[..p1]);
-        let frame_crc = h.finalize();
-        let mut h = crc32fast::Hasher::new();
-        h.update(&buf[INMEM_FRAME_HEAD..p1]);
-        let payload_crc = h.finalize();
-        let frame_crc_ind = u32::from_le_bytes(buf[p1..p1 + 4].try_into()?);
-        let payload_crc_match = payload_crc_exp == payload_crc;
-        let frame_crc_match = frame_crc_ind == frame_crc;
-        if !frame_crc_match || !payload_crc_match {
-            let _ss = String::from_utf8_lossy(&buf[..buf.len().min(256)]);
-            let msg = format!(
-                "InMemoryFrameAsyncReadStream  tryparse  crc mismatch A  {}  {}",
-                payload_crc_match, frame_crc_match,
-            );
-            error!("{msg}");
-            let e = Error::BadCrc;
-            return Err(e);
-        }
-        self.inp_bytes_consumed += lentot as u64;
-        // TODO metrics
-        //trace!("parsed frame well  len {}", len);
-        let ret = InMemoryFrame {
-            len,
-            tyid,
-            encid,
-            buf: Bytes::from(buf[INMEM_FRAME_HEAD..p1].to_vec()),
-        };
-        self.buf.adv(lentot)?;
-        self.need_min = INMEM_FRAME_HEAD;
-        Ok(Some(ret))
     }
 }
 

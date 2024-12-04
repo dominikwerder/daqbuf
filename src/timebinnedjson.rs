@@ -12,6 +12,7 @@ use crate::timebin::cached::reader::EventsReadProvider;
 use futures_util::future::BoxFuture;
 use futures_util::Stream;
 use futures_util::StreamExt;
+use futures_util::TryStreamExt;
 use items_0::collect_s::CollectableDyn;
 use items_0::on_sitemty_data;
 use items_0::streamitem::RangeCompletableItem;
@@ -320,7 +321,7 @@ pub async fn timebinned_json(
     cache_read_provider: Arc<dyn CacheReadProvider>,
     events_read_provider: Arc<dyn EventsReadProvider>,
     timeout_provider: Box<dyn StreamTimeout2>,
-) -> Result<CollectResult<JsonValue>, Error> {
+) -> Result<CollectResult<JsonBytes>, Error> {
     let deadline = Instant::now()
         + query
             .timeout_content()
@@ -353,9 +354,10 @@ pub async fn timebinned_json(
     let collres = collected.await?;
     match collres {
         CollectResult::Some(collres) => {
-            let x = collres.to_user_facing_api_type_box();
-            let jsval = x.to_json_value()?;
-            Ok(CollectResult::Some(jsval))
+            let x = collres.into_user_facing_api_type_box();
+            let val = x.into_serializable();
+            let jsval = serde_json::to_string(&val)?;
+            Ok(CollectResult::Some(JsonBytes::new(jsval)))
         }
         CollectResult::Timeout => Ok(CollectResult::Timeout),
     }
@@ -363,16 +365,17 @@ pub async fn timebinned_json(
 
 fn take_collector_result(
     coll: &mut Box<dyn items_0::collect_s::CollectorDyn>,
-) -> Option<serde_json::Value> {
+) -> Option<JsonBytes> {
     match coll.result() {
         Ok(collres) => {
-            let x = collres.to_user_facing_api_type_box();
-            match x.to_json_value() {
-                Ok(val) => Some(val),
-                Err(e) => Some(serde_json::Value::String(format!("{e}"))),
+            let x = collres.into_user_facing_api_type_box();
+            let val = x.into_serializable();
+            match serde_json::to_string(&val) {
+                Ok(jsval) => Some(JsonBytes::new(jsval)),
+                Err(e) => Some(JsonBytes::new("{\"ERROR\":true}")),
             }
         }
-        Err(e) => Some(serde_json::Value::String(format!("{e}"))),
+        Err(e) => Some(JsonBytes::new("{\"ERROR\":true}")),
     }
 }
 
@@ -474,11 +477,12 @@ pub async fn timebinned_json_framed(
     });
     let stream = stream.filter_map(|x| futures_util::future::ready(x));
     // TODO skip the intermediate conversion to js value, go directly to string data
-    let stream = stream.map(|x| match x {
-        Ok(x) => Ok(JsonBytes::new(serde_json::to_string(&x).unwrap())),
-        Err(e) => Err(crate::json_stream::Error::from(crate::json_stream::ErrMsg(
-            e,
-        ))),
-    });
+    // let stream = stream.map(|x| match x {
+    //     Ok(x) => Ok(JsonBytes::new(serde_json::to_string(&x).unwrap())),
+    //     Err(e) => Err(crate::json_stream::Error::from(crate::json_stream::ErrMsg(
+    //         e,
+    //     ))),
+    // });
+    let stream = stream.map_err(|e| crate::json_stream::Error::Msg(e.to_string()));
     Ok(Box::pin(stream))
 }

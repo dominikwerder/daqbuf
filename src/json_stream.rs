@@ -3,17 +3,12 @@ use crate::streamtimeout::StreamTimeout2;
 use crate::streamtimeout::TimeoutableStream;
 use futures_util::Stream;
 use futures_util::StreamExt;
-use items_0::collect_s::ToJsonValue;
+use items_0::apitypes::ToUserFacingApiType;
 use items_0::streamitem::RangeCompletableItem;
 use items_0::streamitem::Sitemty;
 use items_0::streamitem::StreamItem;
-use items_0::Events;
-use items_0::WithLen;
-use items_2::binning::container_events::ContainerEvents;
-use items_2::channelevents::ChannelEvents;
 use items_2::jsonbytes::JsonBytes;
 use netpod::log::*;
-use netpod::EnumVariant;
 use std::pin::Pin;
 use std::time::Duration;
 
@@ -54,13 +49,14 @@ pub fn events_stream_to_json_stream(
 
 fn map_events<T>(x: Sitemty<T>) -> Result<JsonBytes, Error>
 where
-    T: ToJsonValue,
+    T: ToUserFacingApiType,
 {
     match x {
         Ok(x) => match x {
             StreamItem::DataItem(x) => match x {
                 RangeCompletableItem::Data(evs) => {
-                    let val = evs.to_json_value()?;
+                    let val = evs.into_user_facing_api_type();
+                    let val = val.into_serializable_json();
                     let s = serde_json::to_string(&val)?;
                     let item = JsonBytes::new(s);
                     Ok(item)

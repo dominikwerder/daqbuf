@@ -11,6 +11,7 @@ use crate::tcprawclient::OpenBoxedBytesStreamsBox;
 use futures_util::StreamExt;
 use items_0::collect_s::CollectableDyn;
 use items_0::on_sitemty_data;
+use items_2::jsonbytes::JsonBytes;
 use netpod::log::*;
 use netpod::ChannelTypeConfigGen;
 use netpod::Cluster;
@@ -36,7 +37,7 @@ pub async fn plain_events_json(
     _cluster: &Cluster,
     open_bytes: OpenBoxedBytesStreamsBox,
     timeout_provider: Box<dyn StreamTimeout2>,
-) -> Result<CollectResult<JsonValue>, Error> {
+) -> Result<CollectResult<JsonBytes>, Error> {
     debug!("plain_events_json  evquery {:?}", evq);
     let deadline = Instant::now() + evq.timeout_content_or_default();
     let stream = dyn_events_stream(evq, ch_conf, ctx, open_bytes).await?;
@@ -55,12 +56,13 @@ pub async fn plain_events_json(
         timeout_provider,
     )
     .await?;
-    debug!("plain_events_json  collected");
+    warn!("plain_events_json  collected  {:?}", collected);
     if let CollectResult::Some(x) = collected {
-        let x = x.to_user_facing_api_type_box();
-        let jsval = x.to_json_value()?;
+        let x = x.into_user_facing_api_type_box();
+        let val = x.into_serializable_json();
+        let jsval = serde_json::to_string(&val)?;
         debug!("plain_events_json  json serialized");
-        Ok(CollectResult::Some(jsval))
+        Ok(CollectResult::Some(JsonBytes::new(jsval)))
     } else {
         debug!("plain_events_json  timeout");
         Ok(CollectResult::Timeout)
