@@ -157,40 +157,29 @@ pub async fn timebinnable_stream_sf_databuffer_channelevents(
                     if true {
                         let r1 = evs
                             .as_any_mut()
-                            .downcast_mut::<items_2::eventsdim0::EventsDim0<f64>>()
+                            .downcast_mut::<ContainerEvents<f64>>()
                             .is_some();
                         let r2 = evs
-                            .as_mut()
                             .as_any_mut()
-                            .downcast_mut::<items_2::eventsdim0::EventsDim0<f64>>()
+                            .downcast_mut::<Box<ContainerEvents<f64>>>()
                             .is_some();
                         let r3 = evs
-                            .as_any_mut()
-                            .downcast_mut::<Box<items_2::eventsdim0::EventsDim0<f64>>>()
-                            .is_some();
-                        let r4 = evs
-                            .as_mut()
-                            .as_any_mut()
-                            .downcast_mut::<Box<items_2::eventsdim0::EventsDim0<f64>>>()
-                            .is_some();
-                        let r5 = evs
                             .as_mut()
                             .as_any_mut()
                             .downcast_mut::<ChannelEvents>()
                             .is_some();
-                        let r6 = evs
+                        let r4 = evs
                             .as_mut()
                             .as_any_mut()
                             .downcast_mut::<Box<ChannelEvents>>()
                             .is_some();
-                        debug!("wasm  castings:  {r1}  {r2}  {r3}  {r4}  {r5}  {r6}");
+                        debug!("wasm  castings:  {r1}  {r2}  {r3}  {r4}");
                     }
                     if let Some(evs) = evs.as_any_mut().downcast_mut::<ChannelEvents>() {
                         match evs {
                             ChannelEvents::Events(evs) => {
-                                if let Some(evs) = evs
-                                    .as_any_mut()
-                                    .downcast_mut::<items_2::eventsdim0::EventsDim0<f64>>()
+                                if let Some(evs) =
+                                    evs.as_any_mut().downcast_mut::<ContainerEvents<f64>>()
                                 {
                                     use items_0::WithLen;
                                     if evs.len() == 0 {
@@ -304,9 +293,8 @@ async fn timebinned_stream(
     )?;
     let stream = stream.map(|item| {
         use items_0::timebin::BinningggContainerBinsDyn;
-        on_sitemty_data!(item, |mut x: Box<dyn BinningggContainerBinsDyn>| {
-            x.fix_numerics();
-            let ret = Box::new(x) as Box<dyn CollectableDyn>;
+        on_sitemty_data!(item, |x: Box<dyn BinningggContainerBinsDyn>| {
+            let ret = x.boxed_into_collectable_box();
             Ok(StreamItem::DataItem(RangeCompletableItem::Data(ret)))
         })
     });
@@ -355,7 +343,7 @@ pub async fn timebinned_json(
     match collres {
         CollectResult::Some(collres) => {
             let x = collres.into_user_facing_api_type_box();
-            let val = x.into_serializable();
+            let val = x.into_serializable_json();
             let jsval = serde_json::to_string(&val)?;
             Ok(CollectResult::Some(JsonBytes::new(jsval)))
         }
@@ -369,7 +357,7 @@ fn take_collector_result(
     match coll.result() {
         Ok(collres) => {
             let x = collres.into_user_facing_api_type_box();
-            let val = x.into_serializable();
+            let val = x.into_serializable_json();
             match serde_json::to_string(&val) {
                 Ok(jsval) => Some(JsonBytes::new(jsval)),
                 Err(e) => Some(JsonBytes::new("{\"ERROR\":true}")),
@@ -387,7 +375,6 @@ pub async fn timebinned_json_framed(
     events_read_provider: Arc<dyn EventsReadProvider>,
     timeout_provider: Box<dyn StreamTimeout2>,
 ) -> Result<JsonStream, Error> {
-    trace!("timebinned_json_framed");
     let binned_range = query.covering_range()?;
     // TODO derive better values, from query
     let stream = timebinned_stream(

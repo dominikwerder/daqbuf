@@ -45,8 +45,6 @@ pub enum Error {
     Framable(#[from] items_2::framable::Error),
     Json(#[from] serde_json::Error),
     Http(#[from] http::Error),
-    // HttpClient(#[from] httpclient::Error),
-    // Hyper(#[from] httpclient::hyper::Error),
     #[error("ServerError({0:?}, {1})")]
     ServerError(http::response::Parts, String),
     HttpBody(Box<dyn std::error::Error + Send>),
@@ -187,26 +185,7 @@ where
 {
     let frames = InMemoryFrameStream::new(inp, bufcap);
     let frames = frames.map_err(sitem_err2_from_string);
-    let frames = frames.inspect(|x| {
-        if true {
-            trace!("container_stream_from_bytes_stream  see frame  {:?}", x);
-        }
-    });
     let stream = EventsFromFrames::<T, _>::new(frames, dbgdesc);
-    let stream = stream.inspect(|x| {
-        if true {
-            use items_0::streamitem::RangeCompletableItem::*;
-            use items_0::streamitem::StreamItem::*;
-            match x {
-                Ok(DataItem(Data(x))) => {
-                    trace!("EventsFromFrames  yields item len {}", x.len());
-                }
-                _ => {
-                    trace!("EventsFromFrames  yields item {:?}", x);
-                }
-            }
-        }
-    });
     Ok(stream)
 }
 

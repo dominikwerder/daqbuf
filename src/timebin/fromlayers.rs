@@ -25,6 +25,8 @@ use std::sync::Arc;
 use std::task::Context;
 use std::task::Poll;
 
+macro_rules! trace_init { ($($arg:tt)*) => ( if false { trace!($($arg)*); } ) }
+
 #[derive(Debug, thiserror::Error)]
 #[cstm(name = "TimeBinnedFromLayers")]
 pub enum Error {
@@ -58,7 +60,7 @@ impl TimeBinnedFromLayers {
         cache_read_provider: Arc<dyn CacheReadProvider>,
         events_read_provider: Arc<dyn EventsReadProvider>,
     ) -> Result<Self, Error> {
-        debug!(
+        trace_init!(
             "{}::new  {:?}  {:?}  {:?}",
             Self::type_name(),
             ch_conf.series(),
@@ -67,7 +69,7 @@ impl TimeBinnedFromLayers {
         );
         let bin_len = DtMs::from_ms_u64(range.bin_len.ms());
         if bin_len_layers.contains(&bin_len) {
-            debug!("{}::new  bin_len in layers  {:?}", Self::type_name(), range);
+            trace_init!("{}::new  bin_len in layers  {:?}", Self::type_name(), range);
             let inp = GapFill::new(
                 "FromLayers-ongrid".into(),
                 ch_conf.clone(),
@@ -85,7 +87,7 @@ impl TimeBinnedFromLayers {
             let ret = Self { inp: Box::pin(inp) };
             Ok(ret)
         } else {
-            debug!(
+            trace_init!(
                 "{}::new  bin_len off layers  {:?}",
                 Self::type_name(),
                 range
@@ -96,7 +98,7 @@ impl TimeBinnedFromLayers {
                         return Err(Error::FinerGridMismatch(bin_len, finer));
                     }
                     let range_finer = BinnedRange::from_nano_range(range.to_nano_range(), finer);
-                    debug!(
+                    trace_init!(
                         "{}::new  next finer from bins {:?}  {:?}",
                         Self::type_name(),
                         finer,
@@ -121,7 +123,7 @@ impl TimeBinnedFromLayers {
                     Ok(ret)
                 }
                 None => {
-                    debug!("{}::new  next finer from events", Self::type_name());
+                    trace_init!("{}::new  next finer from events", Self::type_name());
                     let series_range = SeriesRange::TimeRange(range.to_nano_range());
                     let one_before_range = true;
                     let select = EventsSubQuerySelect::new(
@@ -139,7 +141,7 @@ impl TimeBinnedFromLayers {
                     let inp =
                         BinnedFromEvents::new(range, evq, do_time_weight, events_read_provider)?;
                     let ret = Self { inp: Box::pin(inp) };
-                    debug!("{}::new  setup from events", Self::type_name());
+                    trace_init!("{}::new  setup from events", Self::type_name());
                     Ok(ret)
                 }
             }

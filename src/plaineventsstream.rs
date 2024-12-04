@@ -3,10 +3,7 @@ use crate::tcprawclient::container_stream_from_bytes_stream;
 use crate::tcprawclient::make_sub_query;
 use crate::tcprawclient::OpenBoxedBytesStreamsBox;
 use futures_util::Stream;
-use futures_util::StreamExt;
-use items_0::on_sitemty_data;
 use items_0::streamitem::Sitemty;
-use items_0::Events;
 use items_2::channelevents::ChannelEvents;
 use items_2::merger::Merger;
 use netpod::log::*;
@@ -58,39 +55,7 @@ pub async fn dyn_events_stream(
     // TODO propagate also the max-buf-len for the first stage event reader.
     // TODO use a mixture of count and byte-size as threshold.
     let stream = Merger::new(inps, evq.merger_out_len_max());
-    let stream = stream.inspect(|x| {
-        if true {
-            use items_0::streamitem::RangeCompletableItem::*;
-            use items_0::streamitem::StreamItem::*;
-            use items_0::WithLen;
-            use items_2::channelevents::ChannelEvents;
-            match x {
-                Ok(DataItem(Data(ChannelEvents::Events(x)))) => {
-                    trace!("after MERGE  yields item len {}", x.len());
-                }
-                _ => {
-                    trace!("after MERGE  yields item {:?}", x);
-                }
-            }
-        }
-    });
     let stream = RangeFilter2::new(stream, evq.range().try_into()?, evq.one_before_range());
-    let stream = stream.inspect(|x| {
-        if true {
-            use items_0::streamitem::RangeCompletableItem::*;
-            use items_0::streamitem::StreamItem::*;
-            use items_0::WithLen;
-            use items_2::channelevents::ChannelEvents;
-            match x {
-                Ok(DataItem(Data(ChannelEvents::Events(x)))) => {
-                    trace!("after merge and filter  yields item len {}", x.len());
-                }
-                _ => {
-                    trace!("after merge and filter  yields item {:?}", x);
-                }
-            }
-        }
-    });
     if let Some(wasmname) = evq.test_do_wasm() {
         let stream =
             transform_wasm::<_, items_0::streamitem::SitemErrTy>(stream, wasmname, ctx).await?;
