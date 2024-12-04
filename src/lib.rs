@@ -11,8 +11,14 @@ pub mod streamitem;
 pub mod subfr;
 pub mod test;
 pub mod timebin;
-pub mod transform;
 pub mod vecpreview;
+
+mod log {
+    #[cfg(not(test))]
+    pub use netpod::log::*;
+    #[cfg(test)]
+    pub use netpod::log_direct::*;
+}
 
 pub mod bincode {
     pub use bincode::*;

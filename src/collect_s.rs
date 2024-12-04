@@ -1,14 +1,12 @@
 use crate::apitypes::ToUserFacingApiType;
 use crate::container::ByteEstimate;
-use crate::timebin::BinningggContainerBinsDyn;
+use crate::log::*;
 use crate::AsAnyMut;
 use crate::AsAnyRef;
-use crate::Events;
 use crate::TypeName;
 use crate::WithLen;
 use daqbuf_err as err;
 use err::Error;
-use netpod::log::*;
 use std::any;
 use std::any::Any;
 use std::fmt;
@@ -121,36 +119,6 @@ pub trait CollectableType: fmt::Debug + WithLen + AsAnyRef + AsAnyMut + TypeName
 
 pub trait CollectableDyn: fmt::Debug + WithLen + AsAnyRef + AsAnyMut + Send + TypeName {
     fn new_collector(&self) -> Box<dyn CollectorDyn>;
-}
-
-impl TypeName for Box<dyn BinningggContainerBinsDyn> {
-    fn type_name(&self) -> String {
-        self.as_ref().type_name()
-    }
-}
-
-impl WithLen for Box<dyn BinningggContainerBinsDyn> {
-    fn len(&self) -> usize {
-        WithLen::len(self.as_ref())
-    }
-}
-
-impl CollectableDyn for Box<dyn BinningggContainerBinsDyn> {
-    fn new_collector(&self) -> Box<dyn CollectorDyn> {
-        self.as_ref().new_collector()
-    }
-}
-
-impl TypeName for Box<dyn Events> {
-    fn type_name(&self) -> String {
-        self.as_ref().type_name()
-    }
-}
-
-impl CollectableDyn for Box<dyn Events> {
-    fn new_collector(&self) -> Box<dyn CollectorDyn> {
-        self.as_ref().new_collector()
-    }
 }
 
 impl<T> CollectableDyn for T

@@ -1,8 +1,6 @@
 use crate::apitypes::ToUserFacingApiType;
 use crate::collect_s::CollectableDyn;
 use crate::container::ByteEstimate;
-use crate::merge::DrainIntoDstResult;
-use crate::merge::DrainIntoNewDynResult;
 use crate::merge::MergeableDyn;
 use crate::AsAnyMut;
 use crate::AsAnyRef;
@@ -11,7 +9,6 @@ use crate::WithLen;
 use netpod::BinnedRange;
 use netpod::BinnedRangeEnum;
 use netpod::TsNano;
-use std::collections::VecDeque;
 use std::fmt;
 use std::ops::Range;
 
@@ -109,51 +106,6 @@ pub trait BinningggContainerEventsDyn:
     fn eq(&self, rhs: &dyn BinningggContainerEventsDyn) -> bool;
     fn as_mergeable_dyn_mut(&mut self) -> &mut dyn MergeableDyn;
     fn as_collectable_dyn_mut(&mut self) -> &mut dyn CollectableDyn;
-}
-
-impl<T> MergeableDyn for Box<T>
-where
-    T: MergeableDyn,
-{
-    fn ts_min(&self) -> Option<TsNano> {
-        self.as_ref().ts_min()
-    }
-
-    fn ts_max(&self) -> Option<TsNano> {
-        self.as_ref().ts_max()
-    }
-
-    fn find_lowest_index_gt(&self, ts: TsNano) -> Option<usize> {
-        self.as_ref().find_lowest_index_gt(ts)
-    }
-
-    fn find_lowest_index_ge(&self, ts: TsNano) -> Option<usize> {
-        self.as_ref().find_lowest_index_ge(ts)
-    }
-
-    fn find_highest_index_lt(&self, ts: TsNano) -> Option<usize> {
-        self.as_ref().find_highest_index_lt(ts)
-    }
-
-    fn tss_for_testing(&self) -> VecDeque<TsNano> {
-        self.as_ref().tss_for_testing()
-    }
-
-    fn drain_into(
-        &mut self,
-        dst: &mut dyn MergeableDyn,
-        range: Range<usize>,
-    ) -> DrainIntoDstResult {
-        self.as_mut().drain_into(dst, range)
-    }
-
-    fn drain_into_new(&mut self, range: Range<usize>) -> DrainIntoNewDynResult {
-        self.as_mut().drain_into_new(range)
-    }
-
-    fn is_consistent(&self) -> bool {
-        self.as_ref().is_consistent()
-    }
 }
 
 pub trait BinningggContainerBinsDyn:
