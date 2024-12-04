@@ -208,7 +208,7 @@ where
                 }
             }
         }
-        trace4!("tslows {tslows:?}");
+        trace4!("tslows {:?}", tslows);
         if let Some((il0, _tl0)) = tslows[0] {
             if let Some((_il1, tl1)) = tslows[1] {
                 // There is a second input, take only up to the second highest timestamp
@@ -218,7 +218,7 @@ where
                         // Can take the whole item
                         // TODO gather stats about this case. Should be never for databuffer, and often for scylla.
                         let mut item = self.items[il0].take().unwrap();
-                        trace3!("Take all from item {item:?}");
+                        trace3!("Take all from item {:?}", item);
                         match self.take_into_output_all(&mut item) {
                             DrainIntoDstResult::Done => Ok(Break(())),
                             DrainIntoDstResult::Partial => {
@@ -239,7 +239,7 @@ where
                     } else {
                         // Take only up to the lowest ts of the second-lowest input
                         let mut item = self.items[il0].take().unwrap();
-                        trace3!("Take up to {tl1} from item {item:?}");
+                        trace3!("Take up to {} from item {:?}", tl1, item);
                         match self.take_into_output_upto(&mut item, tl1) {
                             DrainIntoDstResult::Done => {
                                 if item.len() == 0 {
@@ -272,7 +272,7 @@ where
             } else {
                 // No other input, take the whole item
                 let mut item = self.items[il0].take().unwrap();
-                trace3!("Take all from item (no other input) {item:?}");
+                trace3!("Take all from item (no other input) {:?}", item);
                 match self.take_into_output_all(&mut item) {
                     DrainIntoDstResult::Done => Ok(Break(())),
                     DrainIntoDstResult::Partial => {
@@ -363,7 +363,12 @@ where
             .zip(self.items.iter())
             .filter(|(a, b)| a.is_some() && b.is_none())
             .count();
-        trace3!("ninps {ninps}  nitems {nitems}  nitemsmissing {nitemsmissing}");
+        trace3!(
+            "ninps {}  nitems {}  nitemsmissing {}",
+            ninps,
+            nitems,
+            nitemsmissing
+        );
         if nitemsmissing != 0 {
             let e = Error::NoPendingButMissing;
             return Break(Ready(Some(e)));

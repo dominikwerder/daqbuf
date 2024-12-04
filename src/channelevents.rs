@@ -223,8 +223,13 @@ impl AsAnyMut for ChannelEvents {
 mod serde_channel_events {
     use super::ChannelEvents;
     use crate::binning::container_events::ContainerEvents;
+    use crate::binning::container_events::PulsedVal;
     use crate::channelevents::ConnStatusEvent;
     use crate::log::*;
+    use items_0::subfr::is_container_events;
+    use items_0::subfr::is_pulsed_subfr;
+    use items_0::subfr::is_vec_subfr;
+    use items_0::subfr::subfr_scalar_type;
     use items_0::subfr::SubFrId;
     use items_0::timebin::BinningggContainerEventsDyn;
     use netpod::EnumVariant;
@@ -240,6 +245,11 @@ mod serde_channel_events {
     use std::fmt;
 
     macro_rules! trace_serde { ($($arg:tt)*) => ( if false { eprintln!($($arg)*); }) }
+
+    type C01<T> = ContainerEvents<T>;
+    type C02<T> = ContainerEvents<Vec<T>>;
+    type C03<T> = ContainerEvents<PulsedVal<T>>;
+    type C04<T> = ContainerEvents<PulsedVal<Vec<T>>>;
 
     fn try_serialize<S, T>(
         v: &dyn BinningggContainerEventsDyn,
@@ -258,6 +268,34 @@ mod serde_channel_events {
         }
     }
 
+    macro_rules! ser_inner_nty {
+        ($ser:expr, $cont1:ident, $nty:expr, $val:expr) => {{
+            let ser = $ser;
+            let nty_id = subfr_scalar_type($nty);
+            let v = $val;
+            type C<T> = $cont1<T>;
+            match nty_id {
+                u8::SUB => try_serialize::<S, C<u8>>(v, ser),
+                // u16::SUB => try_serialize::<S, C1<u16>>(v, ser)?,
+                // u32::SUB => try_serialize::<S, C1<u32>>(v, ser)?,
+                // u64::SUB => try_serialize::<S, C1<u64>>(v, ser)?,
+                // i8::SUB => try_serialize::<S, C1<i8>>(v, ser)?,
+                // i16::SUB => try_serialize::<S, C1<i16>>(v, ser)?,
+                // i32::SUB => try_serialize::<S, C1<i32>>(v, ser)?,
+                // i64::SUB => try_serialize::<S, C1<i64>>(v, ser)?,
+                f32::SUB => try_serialize::<S, C<f32>>(v, ser),
+                // f64::SUB => try_serialize::<S, C1<f64>>(v, ser)?,
+                // bool::SUB => try_serialize::<S, C1<bool>>(v, ser)?,
+                // String::SUB => try_serialize::<S, C1<String>>(v, ser)?,
+                // EnumVariant::SUB => try_serialize::<S, C1<EnumVariant>>(v, ser)?,
+                _ => {
+                    let msg = format!("serde  ser  not supported evt id 0x{:x}", nty_id);
+                    return Err(serde::ser::Error::custom(msg));
+                }
+            }
+        }};
+    }
+
     struct EvRef<'a>(&'a dyn BinningggContainerEventsDyn);
 
     struct EvBox(Box<dyn BinningggContainerEventsDyn>);
@@ -270,35 +308,25 @@ mod serde_channel_events {
             let mut ser = ser.serialize_seq(Some(3))?;
             ser.serialize_element(&self.0.serde_id())?;
             ser.serialize_element(&self.0.nty_id())?;
-            use items_0::streamitem::CONTAINER_EVENTS_TYPE_ID;
-            type C1<T> = ContainerEvents<T>;
-            match self.0.serde_id() {
-                CONTAINER_EVENTS_TYPE_ID => match self.0.nty_id() {
-                    u8::SUB => try_serialize::<S, C1<u8>>(self.0, &mut ser)?,
-                    u16::SUB => try_serialize::<S, C1<u16>>(self.0, &mut ser)?,
-                    u32::SUB => try_serialize::<S, C1<u32>>(self.0, &mut ser)?,
-                    u64::SUB => try_serialize::<S, C1<u64>>(self.0, &mut ser)?,
-                    i8::SUB => try_serialize::<S, C1<i8>>(self.0, &mut ser)?,
-                    i16::SUB => try_serialize::<S, C1<i16>>(self.0, &mut ser)?,
-                    i32::SUB => try_serialize::<S, C1<i32>>(self.0, &mut ser)?,
-                    i64::SUB => try_serialize::<S, C1<i64>>(self.0, &mut ser)?,
-                    f32::SUB => try_serialize::<S, C1<f32>>(self.0, &mut ser)?,
-                    f64::SUB => try_serialize::<S, C1<f64>>(self.0, &mut ser)?,
-                    bool::SUB => try_serialize::<S, C1<bool>>(self.0, &mut ser)?,
-                    String::SUB => try_serialize::<S, C1<String>>(self.0, &mut ser)?,
-                    EnumVariant::SUB => try_serialize::<S, C1<EnumVariant>>(self.0, &mut ser)?,
-                    //
-                    Vec::<f32>::SUB => try_serialize::<S, C1<Vec<f32>>>(self.0, &mut ser)?,
-                    _ => {
-                        let msg = format!("not supported evt id {}", self.0.nty_id());
-                        return Err(serde::ser::Error::custom(msg));
+            let nty_id = self.0.nty_id() as u16;
+            if is_container_events(self.0.serde_id()) {
+                if is_pulsed_subfr(nty_id) {
+                    if is_vec_subfr(nty_id) {
+                        ser_inner_nty!(&mut ser, C04, nty_id, self.0)
+                    } else {
+                        ser_inner_nty!(&mut ser, C03, nty_id, self.0)
                     }
-                },
-                _ => {
-                    let msg = format!("not supported obj id {}", self.0.serde_id());
-                    return Err(serde::ser::Error::custom(msg));
+                } else {
+                    if is_vec_subfr(nty_id) {
+                        ser_inner_nty!(&mut ser, C02, nty_id, self.0)
+                    } else {
+                        ser_inner_nty!(&mut ser, C01, nty_id, self.0)
+                    }
                 }
-            }
+            } else {
+                let msg = format!("not supported obj id {}", self.0.serde_id());
+                return Err(serde::ser::Error::custom(msg));
+            }?;
             ser.end()
         }
     }
@@ -316,10 +344,38 @@ mod serde_channel_events {
         A: de::SeqAccess<'de>,
         T: Deserialize<'de> + BinningggContainerEventsDyn + 'static,
     {
+        let s = std::any::type_name::<T>();
+        trace_serde!("get_2nd_or_err  {}", s);
         let obj: T = seq
             .next_element()?
             .ok_or_else(|| de::Error::missing_field("[2] obj"))?;
         Ok(EvBox(Box::new(obj)))
+    }
+
+    macro_rules! de_inner_nty {
+        ($seq:expr, $cont1:ident, $nty:expr) => {{
+            let seq = $seq;
+            let nty = subfr_scalar_type($nty);
+            match nty {
+                u8::SUB => get_2nd_or_err::<$cont1<u8>, _>(seq),
+                u16::SUB => get_2nd_or_err::<$cont1<u16>, _>(seq),
+                u32::SUB => get_2nd_or_err::<$cont1<u32>, _>(seq),
+                u64::SUB => get_2nd_or_err::<$cont1<u64>, _>(seq),
+                i8::SUB => get_2nd_or_err::<$cont1<i8>, _>(seq),
+                i16::SUB => get_2nd_or_err::<$cont1<i16>, _>(seq),
+                i32::SUB => get_2nd_or_err::<$cont1<i32>, _>(seq),
+                i64::SUB => get_2nd_or_err::<$cont1<i64>, _>(seq),
+                f32::SUB => get_2nd_or_err::<$cont1<f32>, _>(seq),
+                f64::SUB => get_2nd_or_err::<$cont1<f64>, _>(seq),
+                bool::SUB => get_2nd_or_err::<$cont1<bool>, _>(seq),
+                String::SUB => get_2nd_or_err::<$cont1<String>, _>(seq),
+                EnumVariant::SUB => get_2nd_or_err::<$cont1<EnumVariant>, _>(seq),
+                _ => {
+                    error!("TODO serde::de  nty 0x{:x}", nty);
+                    Err(de::Error::custom(&format!("unknown nty 0x{:x}", nty)))
+                }
+            }
+        }};
     }
 
     impl<'de> Visitor<'de> for EvBoxVis {
@@ -334,49 +390,31 @@ mod serde_channel_events {
             A: de::SeqAccess<'de>,
         {
             trace_serde!("EvBoxVis::visit_seq");
-            type C1<EVT> = ContainerEvents<EVT>;
             let cty: u32 = seq
                 .next_element()?
                 .ok_or_else(|| de::Error::missing_field("[0] cty"))?;
-            let nty: u32 = seq
+            let nty: u16 = seq
                 .next_element()?
                 .ok_or_else(|| de::Error::missing_field("[1] nty"))?;
-            if cty == C1::<u8>::serde_id() {
-                match nty {
-                    u8::SUB => get_2nd_or_err::<C1<u8>, _>(&mut seq),
-                    u16::SUB => get_2nd_or_err::<C1<u16>, _>(&mut seq),
-                    u32::SUB => get_2nd_or_err::<C1<u32>, _>(&mut seq),
-                    u64::SUB => get_2nd_or_err::<C1<u64>, _>(&mut seq),
-                    i8::SUB => get_2nd_or_err::<C1<i8>, _>(&mut seq),
-                    i16::SUB => get_2nd_or_err::<C1<i16>, _>(&mut seq),
-                    i32::SUB => get_2nd_or_err::<C1<i32>, _>(&mut seq),
-                    i64::SUB => get_2nd_or_err::<C1<i64>, _>(&mut seq),
-                    f32::SUB => get_2nd_or_err::<C1<f32>, _>(&mut seq),
-                    f64::SUB => get_2nd_or_err::<C1<f64>, _>(&mut seq),
-                    bool::SUB => get_2nd_or_err::<C1<bool>, _>(&mut seq),
-                    String::SUB => get_2nd_or_err::<C1<String>, _>(&mut seq),
-                    EnumVariant::SUB => get_2nd_or_err::<C1<EnumVariant>, _>(&mut seq),
-                    Vec::<u8>::SUB => get_2nd_or_err::<C1<Vec<u8>>, _>(&mut seq),
-                    Vec::<u16>::SUB => get_2nd_or_err::<C1<Vec<u16>>, _>(&mut seq),
-                    Vec::<u32>::SUB => get_2nd_or_err::<C1<Vec<u32>>, _>(&mut seq),
-                    Vec::<u64>::SUB => get_2nd_or_err::<C1<Vec<u64>>, _>(&mut seq),
-                    Vec::<i8>::SUB => get_2nd_or_err::<C1<Vec<i8>>, _>(&mut seq),
-                    Vec::<i16>::SUB => get_2nd_or_err::<C1<Vec<i16>>, _>(&mut seq),
-                    Vec::<i32>::SUB => get_2nd_or_err::<C1<Vec<i32>>, _>(&mut seq),
-                    Vec::<i64>::SUB => get_2nd_or_err::<C1<Vec<i64>>, _>(&mut seq),
-                    Vec::<f32>::SUB => get_2nd_or_err::<C1<Vec<f32>>, _>(&mut seq),
-                    Vec::<f64>::SUB => get_2nd_or_err::<C1<Vec<f64>>, _>(&mut seq),
-                    Vec::<bool>::SUB => get_2nd_or_err::<C1<Vec<bool>>, _>(&mut seq),
-                    Vec::<String>::SUB => get_2nd_or_err::<C1<Vec<String>>, _>(&mut seq),
-                    Vec::<EnumVariant>::SUB => get_2nd_or_err::<C1<Vec<EnumVariant>>, _>(&mut seq),
-                    _ => {
-                        error!("TODO serde  cty {cty}  nty {nty}");
-                        Err(de::Error::custom(&format!("unknown nty {nty}")))
+            let seq = &mut seq;
+            trace_serde!("EvBoxVis  cty 0x{:x}  nty 0x{:X}", cty, nty);
+            if is_container_events(cty) {
+                if is_pulsed_subfr(nty) {
+                    if is_vec_subfr(nty) {
+                        de_inner_nty!(seq, C04, nty)
+                    } else {
+                        de_inner_nty!(seq, C03, nty)
+                    }
+                } else {
+                    if is_vec_subfr(nty) {
+                        de_inner_nty!(seq, C02, nty)
+                    } else {
+                        de_inner_nty!(seq, C01, nty)
                     }
                 }
             } else {
-                error!("unsupported serde  cty {cty}  nty {nty}");
-                Err(de::Error::custom(&format!("unknown cty {cty}")))
+                error!("unsupported serde  cty 0x{:x}  nty 0x{:x}", cty, nty);
+                Err(de::Error::custom(&format!("unknown cty 0x{:x}", cty)))
             }
         }
     }
@@ -682,13 +720,13 @@ impl MergeableTy for ChannelEvents {
                     Some(_) => DrainIntoDstResult::Partial,
                     None => {
                         if range.len() != 1 {
-                            trace!("try to add empty range to status container {range:?}");
+                            trace!("try to add empty range to status container {:?}", range);
                         }
                         if range.start != 0 {
-                            trace!("weird range {range:?}");
+                            trace!("weird range {:?}", range);
                         }
                         if range.end > 1 {
-                            trace!("weird range {range:?}");
+                            trace!("weird range {:?}", range);
                         }
                         *j = k.take();
                         DrainIntoDstResult::Done
@@ -824,11 +862,11 @@ impl WithLen for ChannelEventsCollectorOutput {
 }
 
 impl ToUserFacingApiType for ChannelEventsCollectorOutput {
-    fn to_user_facing_api_type(self: Self) -> Box<dyn UserApiType> {
+    fn into_user_facing_api_type(self: Self) -> Box<dyn UserApiType> {
         todo!()
     }
 
-    fn to_user_facing_api_type_box(self: Box<Self>) -> Box<dyn UserApiType> {
+    fn into_user_facing_api_type_box(self: Box<Self>) -> Box<dyn UserApiType> {
         todo!()
     }
 }
@@ -921,51 +959,23 @@ impl CollectorDyn for ChannelEventsCollector {
             }
             None => {
                 let e = err::Error::with_public_msg_no_trace("nothing collected [caa8d2565]");
-                error!("{e}");
+                error!("{}", e);
                 Err(e)
             }
         }
     }
 }
 
-impl ToJsonValue for ChannelEvents {
-    fn to_json_value(&self) -> Result<serde_json::Value, serde_json::Error> {
-        let ret = match self {
-            ChannelEvents::Events(x) => x.to_json_value().unwrap(),
-            ChannelEvents::Status(x) => serde_json::json!({
-               "_private_channel_status": x,
-            }),
-        };
-        Ok(ret)
-    }
-}
-
-impl ToCborValue for ChannelEvents {
-    fn to_cbor_value(&self) -> Result<ciborium::Value, ciborium::value::Error> {
-        let ret = match self {
-            ChannelEvents::Events(x) => x.to_cbor_value()?,
-            ChannelEvents::Status(x) => {
-                use ciborium::cbor;
-                cbor!({
-                   "_private_channel_status" => x,
-                })
-                .unwrap()
-            }
-        };
-        Ok(ret)
-    }
-}
-
 impl ToUserFacingApiType for ChannelEvents {
-    fn to_user_facing_api_type(self) -> Box<dyn UserApiType> {
+    fn into_user_facing_api_type(self) -> Box<dyn UserApiType> {
         match self {
-            ChannelEvents::Events(x) => x.to_user_facing_api_type_box(),
+            ChannelEvents::Events(x) => x.into_user_facing_api_type_box(),
             ChannelEvents::Status(x) => Box::new(items_0::apitypes::EmptyStruct::new()),
         }
     }
 
-    fn to_user_facing_api_type_box(self: Box<Self>) -> Box<dyn UserApiType> {
+    fn into_user_facing_api_type_box(self: Box<Self>) -> Box<dyn UserApiType> {
         let this = *self;
-        this.to_user_facing_api_type()
+        this.into_user_facing_api_type()
     }
 }

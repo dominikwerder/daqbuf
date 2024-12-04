@@ -337,11 +337,11 @@ impl<STY: ScalarOps> WithLen for EventsDim1CollectorOutput<STY> {
 }
 
 impl<STY: ScalarOps> ToUserFacingApiType for EventsDim1CollectorOutput<STY> {
-    fn to_user_facing_api_type(self: Self) -> Box<dyn items_0::apitypes::UserApiType> {
+    fn into_user_facing_api_type(self: Self) -> Box<dyn items_0::apitypes::UserApiType> {
         todo!()
     }
 
-    fn to_user_facing_api_type_box(self: Box<Self>) -> Box<dyn items_0::apitypes::UserApiType> {
+    fn into_user_facing_api_type_box(self: Box<Self>) -> Box<dyn items_0::apitypes::UserApiType> {
         todo!()
     }
 }
@@ -589,7 +589,7 @@ impl<STY: ScalarOps> Events for EventsDim1<STY> {
     }
 
     fn nty_id(&self) -> u32 {
-        STY::SUB
+        STY::SUB as u32
     }
 
     fn clone_dyn(&self) -> Box<dyn Events> {

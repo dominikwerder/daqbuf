@@ -2,6 +2,7 @@ use crate::binning::container::bins::AggBinValTw;
 use crate::binning::container::bins::BinAggedType;
 use crate::binning::container_bins::ContainerBins;
 use crate::binning::container_events::EventValueType;
+use crate::binning::container_events::PartialOrdEvtA;
 use crate::log::*;
 use items_0::timebin::BinnedBinsTimeweightTrait;
 use items_0::timebin::BinningggError;
@@ -86,13 +87,16 @@ where
         self.non_fnl = false;
     }
 
-    fn bound(a: &mut Option<EVT>, b: &EVT, f: impl Fn(&EVT, &EVT) -> bool) {
+    fn bound(a: &mut Option<EVT>, b: <EVT as EventValueType>::IterTy1<'_>, d: std::cmp::Ordering) {
         if let Some(x) = a.as_mut() {
-            if f(b, x) {
-                *x = b.clone();
+            match b.cmp_a(x) {
+                Some(x) if x == d => {
+                    *a = Some(b.into());
+                }
+                Some(_) | None => {}
             }
         } else {
-            *a = Some(b.clone());
+            *a = Some(b.into());
         }
     }
 
@@ -101,20 +105,20 @@ where
             let grid = self.range.bin_len_dt_ns();
             trace_ingest_bin!("grid {:?}  ts1 {:?}  agg {:?}", grid, ts1, agg);
             if ts1 < self.active_beg {
-                self.lst = Some(lst.clone());
+                self.lst = Some(lst.into());
             } else {
                 if ts1 >= self.active_end {
                     self.maybe_emit_active();
                     self.active_forward(ts1);
                 }
                 self.cnt += cnt;
-                Self::bound(&mut self.min, min, PartialOrd::lt);
-                Self::bound(&mut self.max, max, PartialOrd::gt);
+                Self::bound(&mut self.min, min, std::cmp::Ordering::Less);
+                Self::bound(&mut self.max, max, std::cmp::Ordering::Greater);
                 let dt = ts2.delta(ts1);
                 let bl = self.range.bin_len_dt_ns();
                 self.agg.ingest(dt, bl, cnt, agg.clone());
                 self.non_fnl |= !fnl;
-                self.lst = Some(lst.clone());
+                self.lst = Some(lst.into());
             }
         }
         Ok(())

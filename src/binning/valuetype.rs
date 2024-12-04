@@ -42,14 +42,6 @@ impl Container<EnumVariant> for EnumVariantContainer {
         self.names.push_back(name);
     }
 
-    fn pop_front(&mut self) -> Option<EnumVariant> {
-        if let (Some(a), Some(b)) = (self.ixs.pop_front(), self.names.pop_front()) {
-            Some(EnumVariant::new(a, b))
-        } else {
-            None
-        }
-    }
-
     fn get_iter_ty_1(&self, pos: usize) -> Option<<EnumVariant as EventValueType>::IterTy1<'_>> {
         if let (Some(&ix), Some(name)) = (self.ixs.get(pos), self.names.get(pos)) {
             let ret = EnumVariantRef {
@@ -75,6 +67,20 @@ impl Container<EnumVariant> for EnumVariantContainer {
     fn drain_into(&mut self, dst: &mut Self, range: std::ops::Range<usize>) {
         dst.ixs.extend(self.ixs.drain(range.clone()));
         dst.names.extend(self.names.drain(range));
+    }
+
+    fn into_user_facing_fields(self) -> Vec<(String, Box<dyn erased_serde::Serialize>)> {
+        vec![
+            ("values".into(), Box::new(self.ixs)),
+            ("valuestrings".into(), Box::new(self.names)),
+        ]
+    }
+
+    fn into_user_facing_fields_json(self) -> Vec<(String, Box<dyn erased_serde::Serialize>)> {
+        vec![
+            ("values".into(), Box::new(self.ixs)),
+            ("valuestrings".into(), Box::new(self.names)),
+        ]
     }
 }
 
@@ -130,6 +136,6 @@ impl EventValueType for EnumVariant {
     type AggregatorTimeWeight = EnumVariantAggregatorTimeWeight;
     type AggTimeWeightOutputAvg = f32;
     type IterTy1<'a> = EnumVariantRef<'a>;
-    const SERDE_ID: u32 = Self::SUB;
+    const SERDE_ID: u32 = Self::SUB as u32;
     const BYTE_ESTIMATE_V00: u32 = 40;
 }

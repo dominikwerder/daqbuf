@@ -1,4 +1,5 @@
 use bytes::Bytes;
+use core::fmt;
 use items_0::WithLen;
 
 pub struct JsonBytes(String);
@@ -14,6 +15,18 @@ impl JsonBytes {
 
     pub fn len(&self) -> u32 {
         self.0.len() as _
+    }
+
+    pub fn into_bytes(self) -> Vec<u8> {
+        self.0.as_bytes().to_vec()
+    }
+}
+
+impl fmt::Debug for JsonBytes {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        fmt.debug_tuple("JsonBytes")
+            .field(&self.0.chars().take(40).collect::<String>())
+            .finish()
     }
 }
 

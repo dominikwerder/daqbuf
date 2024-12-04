@@ -1,4 +1,5 @@
 use super::container::bins::BinAggedType;
+use super::container_events::Container;
 use super::container_events::EventValueType;
 use crate::apitypes::ContainerBinsApi;
 use crate::offsets::ts_offs_from_abs;
@@ -42,10 +43,10 @@ where
     pub ts1: TsNano,
     pub ts2: TsNano,
     pub cnt: u64,
-    pub min: &'a EVT,
-    pub max: &'a EVT,
+    pub min: EVT::IterTy1<'a>,
+    pub max: EVT::IterTy1<'a>,
     pub agg: &'a BVT,
-    pub lst: &'a EVT,
+    pub lst: EVT::IterTy1<'a>,
     pub fnl: bool,
 }
 
@@ -67,6 +68,7 @@ where
     type Item = BinRef<'a, EVT, BVT>;
 
     fn next(&mut self) -> Option<Self::Item> {
+        use crate::binning::container_events::Container;
         if self.ix < self.bins.len() && self.ix < self.len {
             let b = &self.bins;
             let i = self.ix;
@@ -75,10 +77,10 @@ where
                 ts1: b.ts1s[i],
                 ts2: b.ts2s[i],
                 cnt: b.cnts[i],
-                min: &b.mins[i],
-                max: &b.maxs[i],
+                min: b.mins.get_iter_ty_1(i).unwrap(),
+                max: b.maxs.get_iter_ty_1(i).unwrap(),
                 agg: &b.aggs[i],
-                lst: &b.lsts[i],
+                lst: b.lsts.get_iter_ty_1(i).unwrap(),
                 fnl: b.fnls[i],
             };
             Some(ret)
@@ -97,10 +99,10 @@ where
     ts1s: VecDeque<TsNano>,
     ts2s: VecDeque<TsNano>,
     cnts: VecDeque<u64>,
-    mins: VecDeque<EVT>,
-    maxs: VecDeque<EVT>,
+    mins: <EVT as EventValueType>::Container,
+    maxs: <EVT as EventValueType>::Container,
     aggs: VecDeque<BVT>,
-    lsts: VecDeque<EVT>,
+    lsts: <EVT as EventValueType>::Container,
     fnls: VecDeque<bool>,
 }
 
@@ -145,28 +147,6 @@ where
     EVT: EventValueType,
     BVT: BinAggedType,
 {
-    pub fn from_constituents(
-        ts1s: VecDeque<TsNano>,
-        ts2s: VecDeque<TsNano>,
-        cnts: VecDeque<u64>,
-        mins: VecDeque<EVT>,
-        maxs: VecDeque<EVT>,
-        aggs: VecDeque<BVT>,
-        lsts: VecDeque<EVT>,
-        fnls: VecDeque<bool>,
-    ) -> Self {
-        Self {
-            ts1s,
-            ts2s,
-            cnts,
-            mins,
-            maxs,
-            aggs,
-            lsts,
-            fnls,
-        }
-    }
-
     pub fn type_name() -> &'static str {
         any::type_name::<Self>()
     }
@@ -176,10 +156,10 @@ where
             ts1s: VecDeque::new(),
             ts2s: VecDeque::new(),
             cnts: VecDeque::new(),
-            mins: VecDeque::new(),
-            maxs: VecDeque::new(),
+            mins: <<EVT as EventValueType>::Container as Container<EVT>>::new(),
+            maxs: <<EVT as EventValueType>::Container as Container<EVT>>::new(),
             aggs: VecDeque::new(),
-            lsts: VecDeque::new(),
+            lsts: <<EVT as EventValueType>::Container as Container<EVT>>::new(),
             fnls: VecDeque::new(),
         }
     }
@@ -228,20 +208,20 @@ where
         self.cnts.iter()
     }
 
-    pub fn mins_iter(&self) -> std::collections::vec_deque::Iter<EVT> {
-        self.mins.iter()
+    pub fn mins_iter(&self) -> impl Iterator<Item = EVT::IterTy1<'_>> {
+        self.mins.iter_ty_1()
     }
 
-    pub fn maxs_iter(&self) -> std::collections::vec_deque::Iter<EVT> {
-        self.maxs.iter()
+    pub fn maxs_iter(&self) -> impl Iterator<Item = EVT::IterTy1<'_>> {
+        self.maxs.iter_ty_1()
     }
 
     pub fn aggs_iter(&self) -> std::collections::vec_deque::Iter<BVT> {
         self.aggs.iter()
     }
 
-    pub fn lsts_iter(&self) -> std::collections::vec_deque::Iter<EVT> {
-        self.lsts.iter()
+    pub fn lsts_iter(&self) -> impl Iterator<Item = EVT::IterTy1<'_>> {
+        self.lsts.iter_ty_1()
     }
 
     pub fn fnls_iter(&self) -> std::collections::vec_deque::Iter<bool> {
@@ -262,13 +242,13 @@ where
                             >,
                             std::collections::vec_deque::Iter<u64>,
                         >,
-                        std::collections::vec_deque::Iter<EVT>,
+                        impl Iterator<Item = EVT::IterTy1<'_>>,
                     >,
-                    std::collections::vec_deque::Iter<EVT>,
+                    impl Iterator<Item = EVT::IterTy1<'_>>,
                 >,
                 std::collections::vec_deque::Iter<BVT>,
             >,
-            std::collections::vec_deque::Iter<EVT>,
+            impl Iterator<Item = EVT::IterTy1<'_>>,
         >,
         std::collections::vec_deque::Iter<bool>,
     > {
@@ -487,40 +467,12 @@ where
     // finished_at: Option<IsoDateTime>,
 }
 
-impl<EVT, BVT> ToJsonValue for ContainerBinsCollectorOutput<EVT, BVT>
-where
-    EVT: EventValueType,
-    BVT: BinAggedType,
-{
-    fn to_json_value(&self) -> Result<serde_json::Value, serde_json::Error> {
-        let bins = &self.bins;
-        let (ts_anch, ts1ms, ts1ns) = ts_offs_from_abs(&bins.ts1s);
-        let (ts2ms, ts2ns) = ts_offs_from_abs_with_anchor(ts_anch, &bins.ts2s);
-        let counts = bins.cnts.clone();
-        let mins = bins.mins.clone();
-        let maxs = bins.maxs.clone();
-        let aggs = bins.aggs.clone();
-        let val = ContainerBinsCollectorOutputUser::<EVT, BVT> {
-            ts_anchor_sec: ts_anch,
-            ts1_off_ms: ts1ms,
-            ts2_off_ms: ts2ms,
-            ts1_off_ns: ts1ns,
-            ts2_off_ns: ts2ns,
-            counts,
-            mins,
-            maxs,
-            aggs,
-        };
-        serde_json::to_value(&val)
-    }
-}
-
 impl<EVT, BVT> ToUserFacingApiType for ContainerBinsCollectorOutput<EVT, BVT>
 where
     EVT: EventValueType,
     BVT: BinAggedType,
 {
-    fn to_user_facing_api_type(self) -> Box<dyn items_0::apitypes::UserApiType> {
+    fn into_user_facing_api_type(self) -> Box<dyn items_0::apitypes::UserApiType> {
         let ret = ContainerBinsApi::<EVT, BVT> {
             ts1s: self.bins.ts1s,
             ts2s: self.bins.ts2s,
@@ -533,8 +485,8 @@ where
         Box::new(ret)
     }
 
-    fn to_user_facing_api_type_box(self: Box<Self>) -> Box<dyn items_0::apitypes::UserApiType> {
-        (*self).to_user_facing_api_type()
+    fn into_user_facing_api_type_box(self: Box<Self>) -> Box<dyn items_0::apitypes::UserApiType> {
+        (*self).into_user_facing_api_type()
     }
 }
 
@@ -661,10 +613,10 @@ where
             dst.ts1s.extend(self.ts1s.drain(range.clone()));
             dst.ts2s.extend(self.ts2s.drain(range.clone()));
             dst.cnts.extend(self.cnts.drain(range.clone()));
-            dst.mins.extend(self.mins.drain(range.clone()));
-            dst.maxs.extend(self.maxs.drain(range.clone()));
+            self.mins.drain_into(&mut dst.mins, range.clone());
+            self.maxs.drain_into(&mut dst.maxs, range.clone());
             dst.aggs.extend(self.aggs.drain(range.clone()));
-            dst.lsts.extend(self.lsts.drain(range.clone()));
+            self.lsts.drain_into(&mut dst.lsts, range.clone());
             dst.fnls.extend(self.fnls.drain(range.clone()));
         } else {
             let styn = any::type_name::<EVT>();
@@ -683,14 +635,7 @@ where
         Box::new(ret)
     }
 
-    fn fix_numerics(&mut self) {
-        for ((_min, _max), _avg) in self
-            .mins
-            .iter_mut()
-            .zip(self.maxs.iter_mut())
-            .zip(self.aggs.iter_mut())
-        {}
-    }
+    fn fix_numerics(&mut self) {}
 }
 
 pub struct ContainerBinsTakeUpTo<'a, EVT, BVT>

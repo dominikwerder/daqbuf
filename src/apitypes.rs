@@ -1,4 +1,5 @@
 use crate::binning::container::bins::BinAggedType;
+use crate::binning::container_events::Container;
 use crate::binning::container_events::EventValueType;
 use crate::offsets::ts_offs_from_abs;
 use crate::offsets::ts_offs_from_abs_with_anchor;
@@ -7,6 +8,7 @@ use items_0::collect_s::ToCborValue;
 use items_0::collect_s::ToJsonValue;
 use netpod::TsNano;
 use serde::Serialize;
+use std::collections::BTreeMap;
 use std::collections::VecDeque;
 use std::fmt;
 
@@ -15,7 +17,7 @@ pub struct ContainerEventsApi<EVT>
 where
     EVT: EventValueType,
 {
-    pub tss: VecDeque<u64>,
+    pub tss: VecDeque<TsNano>,
     pub values: EVT::Container,
     #[serde(skip_serializing_if = "netpod::is_false")]
     pub range_final: bool,
@@ -39,9 +41,21 @@ impl<EVT> ToCborValue for ContainerEventsApi<EVT>
 where
     EVT: EventValueType,
 {
-    fn to_cbor_value(&self) -> Result<ciborium::Value, ciborium::value::Error> {
-        let val = ciborium::value::Value::serialized(self).unwrap();
-        Ok(val)
+    fn into_fields(self) -> Vec<(String, Box<dyn erased_serde::Serialize>)> {
+        let tss: Vec<_> = self.tss.into_iter().map(|x| x.ns()).collect();
+        let mut ret = self.values.into_user_facing_fields();
+        ret.push(("tss".into(), Box::new(tss)));
+        if self.range_final {
+            ret.push(("rangeFinal".into(), Box::new(true)));
+        }
+        if self.timed_out {
+            ret.push(("timedOut".into(), Box::new(true)));
+        }
+        ret
+    }
+
+    fn into_fields_box(self: Box<Self>) -> Vec<(String, Box<dyn erased_serde::Serialize>)> {
+        ToCborValue::into_fields(*self)
     }
 }
 
@@ -49,13 +63,46 @@ impl<EVT> ToJsonValue for ContainerEventsApi<EVT>
 where
     EVT: EventValueType,
 {
-    fn to_json_value(&self) -> Result<serde_json::Value, serde_json::Error> {
-        let ret = serde_json::to_value(self);
+    fn into_fields(self) -> Vec<(String, Box<dyn erased_serde::Serialize>)> {
+        let mut ret = self.values.into_user_facing_fields_json();
+        let (ts_anch, ts_ms, ts_ns) = ts_offs_from_abs(&self.tss);
+        ret.push(("tsAnchor".into(), Box::new(ts_anch)));
+        ret.push(("tsMs".into(), Box::new(ts_ms)));
+        ret.push(("tsNs".into(), Box::new(ts_ns)));
+        if self.range_final {
+            ret.push(("rangeFinal".into(), Box::new(true)));
+        }
+        if self.timed_out {
+            ret.push(("timedOut".into(), Box::new(true)));
+        }
         ret
+    }
+
+    fn into_fields_box(self: Box<Self>) -> Vec<(String, Box<dyn erased_serde::Serialize>)> {
+        ToJsonValue::into_fields(*self)
     }
 }
 
-impl<EVT> UserApiType for ContainerEventsApi<EVT> where EVT: EventValueType {}
+impl<EVT> UserApiType for ContainerEventsApi<EVT>
+where
+    EVT: EventValueType,
+{
+    fn into_serializable(self: Box<Self>) -> Box<dyn erased_serde::Serialize> {
+        let mut map = BTreeMap::new();
+        for (k, v) in ToCborValue::into_fields_box(self) {
+            map.insert(k, v);
+        }
+        Box::new(map)
+    }
+
+    fn into_serializable_json(self: Box<Self>) -> Box<dyn erased_serde::Serialize> {
+        let mut map = BTreeMap::new();
+        for (k, v) in ToJsonValue::into_fields_box(self) {
+            map.insert(k, v);
+        }
+        Box::new(map)
+    }
+}
 
 #[derive(Serialize)]
 pub struct ContainerBinsApi<EVT, BVT>
@@ -66,8 +113,8 @@ where
     pub ts1s: VecDeque<TsNano>,
     pub ts2s: VecDeque<TsNano>,
     pub cnts: VecDeque<u64>,
-    pub mins: VecDeque<EVT>,
-    pub maxs: VecDeque<EVT>,
+    pub mins: <EVT as EventValueType>::Container,
+    pub maxs: <EVT as EventValueType>::Container,
     pub aggs: VecDeque<BVT>,
     pub fnls: VecDeque<bool>,
 }
@@ -90,11 +137,40 @@ where
     EVT: EventValueType,
     BVT: BinAggedType,
 {
-    fn to_cbor_value(&self) -> Result<ciborium::Value, ciborium::value::Error> {
-        // let val = ciborium::value::Value::serialized(self).unwrap();
-        // Ok(val)
-        let e = ciborium::value::Error::Custom("binned data as cbor is not yet available".into());
-        Err(e)
+    fn into_fields(self) -> Vec<(String, Box<dyn erased_serde::Serialize>)> {
+        let mut ret = Vec::<(String, Box<dyn erased_serde::Serialize>)>::new();
+        // let mut ret = self.aggs.into_user_facing_fields_json();
+        ret.push(("ts1s".into(), Box::new(self.ts1s)));
+        ret.push(("ts2s".into(), Box::new(self.ts2s)));
+        ret.push(("counts".into(), Box::new(self.cnts)));
+        {
+            let fields = self.mins.into_user_facing_fields();
+            for (k, v) in fields {
+                let k = if k == "values" {
+                    "mins".to_string()
+                } else {
+                    format!("mins_{}", k)
+                };
+                ret.push((k, v));
+            }
+        }
+        {
+            let fields = self.maxs.into_user_facing_fields();
+            for (k, v) in fields {
+                let k = if k == "values" {
+                    "maxs".to_string()
+                } else {
+                    format!("maxs_{}", k)
+                };
+                ret.push((k, v));
+            }
+        }
+        ret.push(("avgs".into(), Box::new(self.aggs)));
+        ret
+    }
+
+    fn into_fields_box(self: Box<Self>) -> Vec<(String, Box<dyn erased_serde::Serialize>)> {
+        ToCborValue::into_fields(*self)
     }
 }
 
@@ -103,26 +179,25 @@ where
     EVT: EventValueType,
     BVT: BinAggedType,
 {
-    fn to_json_value(&self) -> Result<serde_json::Value, serde_json::Error> {
-        use serde_json::json;
-        use serde_json::Value;
-        // let ret = serde_json::to_value(self);
-        // ret
-        let (ts_anch, ts1ms, ts1ns) = ts_offs_from_abs(&self.ts1s);
-        let (ts2ms, ts2ns) = ts_offs_from_abs_with_anchor(ts_anch, &self.ts2s);
+    fn into_fields(self) -> Vec<(String, Box<dyn erased_serde::Serialize>)> {
+        let mut ret = Vec::<(String, Box<dyn erased_serde::Serialize>)>::new();
+        // let mut ret = self.aggs.into_user_facing_fields_json();
+        let (ts_anch, ts1_ms, ts1_ns) = ts_offs_from_abs(&self.ts1s);
+        let (ts2_ms, ts2_ns) = ts_offs_from_abs_with_anchor(ts_anch, &self.ts2s);
+        ret.push(("tsAnchor".into(), Box::new(ts_anch)));
+        ret.push(("ts1Ms".into(), Box::new(ts1_ms)));
+        ret.push(("ts1Ns".into(), Box::new(ts1_ns)));
+        ret.push(("ts2Ms".into(), Box::new(ts2_ms)));
+        ret.push(("ts2Ns".into(), Box::new(ts2_ns)));
+        ret.push(("counts".into(), Box::new(self.cnts)));
+        ret.push(("mins".into(), Box::new(self.mins)));
+        ret.push(("maxs".into(), Box::new(self.maxs)));
+        ret.push(("avgs".into(), Box::new(self.aggs)));
+        ret
+    }
 
-        let ret = json!({
-            "tsAnchor": ts_anch,
-            "ts1Ms": ts1ms,
-            "ts2Ms": ts2ms,
-            "ts1Ns": ts1ns,
-            "ts2Ns": ts2ns,
-            "counts": self.cnts,
-            "mins": self.mins,
-            "maxs": self.maxs,
-            "avgs": self.aggs,
-        });
-        Ok(ret)
+    fn into_fields_box(self: Box<Self>) -> Vec<(String, Box<dyn erased_serde::Serialize>)> {
+        ToJsonValue::into_fields(*self)
     }
 }
 
@@ -131,4 +206,19 @@ where
     EVT: EventValueType,
     BVT: BinAggedType,
 {
+    fn into_serializable(self: Box<Self>) -> Box<dyn erased_serde::Serialize> {
+        let mut map = BTreeMap::new();
+        for (k, v) in ToCborValue::into_fields_box(self) {
+            map.insert(k, v);
+        }
+        Box::new(map)
+    }
+
+    fn into_serializable_json(self: Box<Self>) -> Box<dyn erased_serde::Serialize> {
+        let mut map = BTreeMap::new();
+        for (k, v) in ToJsonValue::into_fields_box(self) {
+            map.insert(k, v);
+        }
+        Box::new(map)
+    }
 }

@@ -129,11 +129,11 @@ impl TypeName for EventsDim0EnumCollectorOutput {
 }
 
 impl ToUserFacingApiType for EventsDim0EnumCollectorOutput {
-    fn to_user_facing_api_type(self: Self) -> Box<dyn items_0::apitypes::UserApiType> {
+    fn into_user_facing_api_type(self: Self) -> Box<dyn items_0::apitypes::UserApiType> {
         todo!()
     }
 
-    fn to_user_facing_api_type_box(self: Box<Self>) -> Box<dyn items_0::apitypes::UserApiType> {
+    fn into_user_facing_api_type_box(self: Box<Self>) -> Box<dyn items_0::apitypes::UserApiType> {
         todo!()
     }
 }

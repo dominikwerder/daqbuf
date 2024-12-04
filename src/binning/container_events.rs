@@ -1,10 +1,12 @@
 use super::aggregator::AggTimeWeightOutputAvg;
 use super::aggregator::AggregatorNumeric;
+use super::aggregator::AggregatorPulsedNumeric;
 use super::aggregator::AggregatorTimeWeight;
 use super::aggregator::AggregatorVecNumeric;
 use super::timeweight::timeweight_events_dyn::BinnedEventsTimeweightDynbox;
 use crate::apitypes::ContainerEventsApi;
 use crate::log::*;
+use crate::offsets::pulse_offs_from_abs;
 use core::fmt;
 use core::ops::Range;
 use daqbuf_err as err;
@@ -16,8 +18,6 @@ use items_0::collect_s::CollectableDyn;
 use items_0::collect_s::CollectedDyn;
 use items_0::collect_s::CollectorDyn;
 use items_0::collect_s::CollectorTy;
-use items_0::collect_s::ToCborValue;
-use items_0::collect_s::ToJsonValue;
 use items_0::container::ByteEstimate;
 use items_0::merge::DrainIntoDstResult;
 use items_0::merge::DrainIntoNewDynResult;
@@ -55,10 +55,11 @@ where
 {
     fn new() -> Self;
     fn push_back(&mut self, val: EVT);
-    fn pop_front(&mut self) -> Option<EVT>;
     fn get_iter_ty_1(&self, pos: usize) -> Option<EVT::IterTy1<'_>>;
     fn iter_ty_1(&self) -> impl Iterator<Item = EVT::IterTy1<'_>>;
     fn drain_into(&mut self, dst: &mut Self, range: Range<usize>);
+    fn into_user_facing_fields(self) -> Vec<(String, Box<dyn erased_serde::Serialize>)>;
+    fn into_user_facing_fields_json(self) -> Vec<(String, Box<dyn erased_serde::Serialize>)>;
 }
 
 pub trait PartialOrdEvtA<EVT> {
@@ -89,10 +90,6 @@ where
         self.push_back(val);
     }
 
-    fn pop_front(&mut self) -> Option<EVT> {
-        self.pop_front()
-    }
-
     fn get_iter_ty_1(&self, pos: usize) -> Option<EVT::IterTy1<'_>> {
         self.get(pos).map(|x| x.clone())
     }
@@ -104,6 +101,14 @@ where
     fn drain_into(&mut self, dst: &mut Self, range: Range<usize>) {
         dst.extend(self.drain(range));
     }
+
+    fn into_user_facing_fields(self) -> Vec<(String, Box<dyn erased_serde::Serialize>)> {
+        vec![("values".into(), Box::new(self))]
+    }
+
+    fn into_user_facing_fields_json(self) -> Vec<(String, Box<dyn erased_serde::Serialize>)> {
+        vec![("values".into(), Box::new(self))]
+    }
 }
 
 impl Container<String> for VecDeque<String> {
@@ -113,10 +118,6 @@ impl Container<String> for VecDeque<String> {
 
     fn push_back(&mut self, val: String) {
         self.push_back(val);
-    }
-
-    fn pop_front(&mut self) -> Option<String> {
-        self.pop_front()
     }
 
     fn get_iter_ty_1(&self, pos: usize) -> Option<&str> {
@@ -130,6 +131,14 @@ impl Container<String> for VecDeque<String> {
     fn drain_into(&mut self, dst: &mut Self, range: Range<usize>) {
         dst.extend(self.drain(range))
     }
+
+    fn into_user_facing_fields(self) -> Vec<(String, Box<dyn erased_serde::Serialize>)> {
+        vec![("values".into(), Box::new(self))]
+    }
+
+    fn into_user_facing_fields_json(self) -> Vec<(String, Box<dyn erased_serde::Serialize>)> {
+        vec![("values".into(), Box::new(self))]
+    }
 }
 
 macro_rules! impl_event_value_type {
@@ -139,7 +148,7 @@ macro_rules! impl_event_value_type {
             type AggregatorTimeWeight = AggregatorNumeric;
             type AggTimeWeightOutputAvg = f64;
             type IterTy1<'a> = $evt;
-            const SERDE_ID: u32 = <$evt as SubFrId>::SUB;
+            const SERDE_ID: u32 = <$evt as SubFrId>::SUB as _;
             const BYTE_ESTIMATE_V00: u32 = core::mem::size_of::<$evt>() as u32;
         }
 
@@ -191,7 +200,7 @@ impl EventValueType for f32 {
     type AggregatorTimeWeight = AggregatorNumeric;
     type AggTimeWeightOutputAvg = f32;
     type IterTy1<'a> = f32;
-    const SERDE_ID: u32 = <f32 as SubFrId>::SUB;
+    const SERDE_ID: u32 = <f32 as SubFrId>::SUB as _;
     const BYTE_ESTIMATE_V00: u32 = core::mem::size_of::<Self>() as u32;
 }
 
@@ -200,7 +209,7 @@ impl EventValueType for f64 {
     type AggregatorTimeWeight = AggregatorNumeric;
     type AggTimeWeightOutputAvg = f64;
     type IterTy1<'a> = f64;
-    const SERDE_ID: u32 = <f64 as SubFrId>::SUB;
+    const SERDE_ID: u32 = <f64 as SubFrId>::SUB as _;
     const BYTE_ESTIMATE_V00: u32 = core::mem::size_of::<Self>() as u32;
 }
 
@@ -209,7 +218,7 @@ impl EventValueType for bool {
     type AggregatorTimeWeight = AggregatorNumeric;
     type AggTimeWeightOutputAvg = f64;
     type IterTy1<'a> = bool;
-    const SERDE_ID: u32 = <bool as SubFrId>::SUB;
+    const SERDE_ID: u32 = <bool as SubFrId>::SUB as _;
     const BYTE_ESTIMATE_V00: u32 = core::mem::size_of::<Self>() as u32;
 }
 
@@ -218,7 +227,7 @@ impl EventValueType for String {
     type AggregatorTimeWeight = AggregatorNumeric;
     type AggTimeWeightOutputAvg = f64;
     type IterTy1<'a> = &'a str;
-    const SERDE_ID: u32 = <String as SubFrId>::SUB;
+    const SERDE_ID: u32 = <String as SubFrId>::SUB as _;
     const BYTE_ESTIMATE_V00: u32 = 400;
 }
 
@@ -229,7 +238,7 @@ macro_rules! impl_event_value_type_vec {
             type AggregatorTimeWeight = AggregatorVecNumeric;
             type AggTimeWeightOutputAvg = f32;
             type IterTy1<'a> = Vec<$evt>;
-            const SERDE_ID: u32 = <Vec<$evt> as SubFrId>::SUB;
+            const SERDE_ID: u32 = <Vec<$evt> as SubFrId>::SUB as _;
             // TODO must use a more precise number dependent on actual elements
             const BYTE_ESTIMATE_V00: u32 = 1200 * core::mem::size_of::<Self>() as u32;
         }
@@ -256,8 +265,57 @@ impl_event_value_type_vec!(bool);
 impl_event_value_type_vec!(String);
 impl_event_value_type_vec!(EnumVariant);
 
-#[derive(Debug, Clone, PartialEq, PartialOrd, Serialize)]
-pub struct PulsedVal<EVT>(EVT)
+#[derive(Debug)]
+pub struct PulsedValIterTy<'a, EVT>
+where
+    EVT: EventValueType,
+{
+    pulse: u64,
+    evt: EVT::IterTy1<'a>,
+}
+
+impl<'a, EVT> Clone for PulsedValIterTy<'a, EVT>
+where
+    EVT: EventValueType + SubFrId,
+{
+    fn clone(&self) -> Self {
+        Self {
+            pulse: self.pulse,
+            evt: self.evt.clone(),
+        }
+    }
+}
+
+impl<'a, EVT> PartialOrdEvtA<PulsedVal<EVT>> for PulsedValIterTy<'a, EVT>
+where
+    EVT: EventValueType + SubFrId,
+{
+    fn cmp_a(&self, other: &PulsedVal<EVT>) -> Option<std::cmp::Ordering> {
+        use std::cmp::Ordering;
+        match self.pulse.cmp(&other.0) {
+            Ordering::Less => Some(Ordering::Less),
+            Ordering::Greater => Some(Ordering::Greater),
+            Ordering::Equal => match self.evt.cmp_a(&other.1) {
+                Some(Ordering::Less) => Some(Ordering::Less),
+                Some(Ordering::Greater) => Some(Ordering::Greater),
+                Some(Ordering::Equal) => Some(Ordering::Equal),
+                None => None,
+            },
+        }
+    }
+}
+
+impl<'a, EVT> From<PulsedValIterTy<'a, EVT>> for PulsedVal<EVT>
+where
+    EVT: EventValueType,
+{
+    fn from(value: PulsedValIterTy<'a, EVT>) -> Self {
+        Self(value.pulse, value.evt.into())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct PulsedVal<EVT>(pub u64, pub EVT)
 where
     EVT: EventValueType;
 
@@ -267,6 +325,15 @@ where
 {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         write!(fmt, "{:?}", self)
+    }
+}
+
+impl<EVT> PartialOrd for PulsedVal<EVT>
+where
+    EVT: EventValueType,
+{
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        self.1.partial_cmp(&other.1)
     }
 }
 
@@ -303,14 +370,18 @@ where
     EVT: EventValueType,
 {
     fn preview<'a>(&'a self) -> Box<dyn fmt::Debug + 'a> {
-        todo!()
+        let ret = items_0::vecpreview::PreviewCell {
+            a: self.pulses.front(),
+            b: self.pulses.back(),
+        };
+        Box::new(ret)
     }
 }
 
 impl<EVT> Container<PulsedVal<EVT>> for VecDequePulsed<EVT>
 where
     EVT: EventValueType,
-    PulsedVal<EVT>: EventValueType,
+    for<'a> PulsedVal<EVT>: EventValueType<IterTy1<'a> = PulsedValIterTy<'a, EVT>>,
 {
     fn new() -> Self {
         Self {
@@ -320,48 +391,69 @@ where
     }
 
     fn push_back(&mut self, val: PulsedVal<EVT>) {
-        todo!()
-    }
-
-    fn pop_front(&mut self) -> Option<PulsedVal<EVT>> {
-        todo!()
+        self.pulses.push_back(val.0);
+        self.vals.push_back(val.1);
     }
 
     fn get_iter_ty_1(&self, pos: usize) -> Option<<PulsedVal<EVT> as EventValueType>::IterTy1<'_>> {
-        todo!()
+        if let (Some(&pulse), Some(val)) = (self.pulses.get(pos), self.vals.get_iter_ty_1(pos)) {
+            let x = PulsedValIterTy { pulse, evt: val };
+            Some(x)
+        } else {
+            None
+        }
     }
 
     fn iter_ty_1(&self) -> impl Iterator<Item = <PulsedVal<EVT> as EventValueType>::IterTy1<'_>> {
-        todo!();
-        self.vals.iter_ty_1().map(|x| todo!())
+        self.pulses
+            .iter()
+            .map(|&x| x)
+            .zip(self.vals.iter_ty_1())
+            .map(|(pulse, evt)| PulsedValIterTy { pulse, evt })
     }
 
     fn drain_into(&mut self, dst: &mut Self, range: Range<usize>) {
         dst.pulses.extend(self.pulses.drain(range.clone()));
         self.vals.drain_into(&mut dst.vals, range.clone());
     }
+
+    fn into_user_facing_fields(self) -> Vec<(String, Box<dyn erased_serde::Serialize>)> {
+        vec![
+            ("pulses".into(), Box::new(self.pulses)),
+            ("values".into(), Box::new(self.vals)),
+        ]
+    }
+
+    fn into_user_facing_fields_json(self) -> Vec<(String, Box<dyn erased_serde::Serialize>)> {
+        let (pulses_anch, pulses_offs) = pulse_offs_from_abs(&self.pulses);
+        vec![
+            ("pulseAnchor".into(), Box::new(pulses_anch)),
+            ("pulseOff".into(), Box::new(pulses_offs)),
+            ("values".into(), Box::new(self.vals)),
+        ]
+    }
 }
 
-macro_rules! impl_pulse_evt {
-    ($evt:ty) => {
-        impl EventValueType for PulsedVal<$evt> {
-            type Container = VecDequePulsed<$evt>;
-            type AggregatorTimeWeight = AggregatorNumeric;
-            type AggTimeWeightOutputAvg = f64;
-            type IterTy1<'a> = PulsedVal<$evt>;
-            const SERDE_ID: u32 = <$evt as SubFrId>::SUB;
-            const BYTE_ESTIMATE_V00: u32 = core::mem::size_of::<$evt>() as u32;
-        }
-
-        impl PartialOrdEvtA<PulsedVal<$evt>> for PulsedVal<$evt> {
-            fn cmp_a(&self, other: &PulsedVal<$evt>) -> Option<std::cmp::Ordering> {
-                self.partial_cmp(other)
-            }
-        }
-    };
+impl<EVT> PartialOrdEvtA<PulsedVal<EVT>> for PulsedVal<EVT>
+where
+    EVT: EventValueType,
+{
+    fn cmp_a(&self, other: &PulsedVal<EVT>) -> Option<std::cmp::Ordering> {
+        self.partial_cmp(other)
+    }
 }
 
-impl_pulse_evt!(u8);
+impl<EVT> EventValueType for PulsedVal<EVT>
+where
+    EVT: EventValueType + SubFrId,
+{
+    type Container = VecDequePulsed<EVT>;
+    type AggregatorTimeWeight = AggregatorPulsedNumeric<EVT>;
+    type AggTimeWeightOutputAvg = EVT::AggTimeWeightOutputAvg;
+    type IterTy1<'a> = PulsedValIterTy<'a, EVT>;
+    const SERDE_ID: u32 = items_0::subfr::pulsed_subfr(<EVT as SubFrId>::SUB) as _;
+    const BYTE_ESTIMATE_V00: u32 = core::mem::size_of::<EVT>() as u32;
+}
 
 #[derive(Debug, Clone)]
 pub struct EventSingleRef<'a, EVT>
@@ -578,8 +670,8 @@ where
         self.vals.push_back(val);
     }
 
-    pub fn iter_zip<'a>(&'a self) -> impl Iterator<Item = (&TsNano, EVT::IterTy1<'a>)> {
-        self.tss.iter().zip(self.vals.iter_ty_1())
+    pub fn iter_zip<'a>(&'a self) -> impl Iterator<Item = (TsNano, EVT::IterTy1<'a>)> {
+        self.tss.iter().map(|&x| x).zip(self.vals.iter_ty_1())
     }
 
     pub fn serde_id() -> u32 {
@@ -664,6 +756,7 @@ where
     evs: &'a ContainerEvents<EVT>,
     end: usize,
     pos: usize,
+    // it: Box<dyn Iterator<Item = (TsNano, EVT::IterTy1<'static>)>>,
 }
 
 impl<'a, EVT> ContainerEventsTakeUpTo<'a, EVT>
@@ -671,10 +764,13 @@ where
     EVT: EventValueType,
 {
     pub fn new(evs: &'a ContainerEvents<EVT>) -> Self {
+        // let it = unsafe { netpod::extltref(evs) }.iter_zip();
+        // let it = Box::new(it);
         Self {
             evs,
             end: evs.len(),
             pos: 0,
+            // it,
         }
     }
 
@@ -884,9 +980,9 @@ impl<EVT> ToUserFacingApiType for ContainerEventsCollected<EVT>
 where
     EVT: EventValueType,
 {
-    fn to_user_facing_api_type(self: Self) -> Box<dyn UserApiType> {
+    fn into_user_facing_api_type(self: Self) -> Box<dyn UserApiType> {
         let evs = ContainerEventsApi::<EVT> {
-            tss: self.evs.tss.into_iter().map(|x| x.ns()).collect(),
+            tss: self.evs.tss,
             values: self.evs.vals,
             range_final: self.range_final,
             timed_out: self.timed_out,
@@ -894,8 +990,8 @@ where
         Box::new(evs)
     }
 
-    fn to_user_facing_api_type_box(self: Box<Self>) -> Box<dyn UserApiType> {
-        (*self).to_user_facing_api_type()
+    fn into_user_facing_api_type_box(self: Box<Self>) -> Box<dyn UserApiType> {
+        (*self).into_user_facing_api_type()
     }
 }
 
@@ -925,6 +1021,7 @@ where
     EVT: EventValueType,
 {
     pub fn new() -> Self {
+        debug!("ContainerEventsCollector::new");
         Self {
             evs: ContainerEvents::new(),
             range_final: false,
@@ -950,9 +1047,7 @@ where
     type Output = ContainerEventsCollected<EVT>;
 
     fn ingest(&mut self, src: &mut Self::Input) {
-        let n = self.len();
-        info!("CollectorTy for ContainerEventsCollector  n {}", n);
-        MergeableTy::drain_into(src, &mut self.evs, 0..n);
+        MergeableTy::drain_into(src, &mut self.evs, 0..src.len());
     }
 
     fn set_range_complete(&mut self) {
@@ -983,31 +1078,13 @@ where
     }
 }
 
-impl<EVT> ToCborValue for ContainerEvents<EVT>
-where
-    EVT: EventValueType,
-{
-    fn to_cbor_value(&self) -> Result<ciborium::Value, ciborium::value::Error> {
-        ciborium::value::Value::serialized(self)
-    }
-}
-
-impl<EVT> ToJsonValue for ContainerEvents<EVT>
-where
-    EVT: EventValueType,
-{
-    fn to_json_value(&self) -> Result<serde_json::Value, serde_json::Error> {
-        serde_json::to_value(self)
-    }
-}
-
 impl<EVT> ToUserFacingApiType for ContainerEvents<EVT>
 where
     EVT: EventValueType,
 {
-    fn to_user_facing_api_type(self: Self) -> Box<dyn UserApiType> {
+    fn into_user_facing_api_type(self: Self) -> Box<dyn UserApiType> {
         let ret = ContainerEventsApi::<EVT> {
-            tss: self.tss.into_iter().map(|x| x.ns()).collect(),
+            tss: self.tss,
             values: self.vals,
             range_final: false,
             timed_out: false,
@@ -1015,9 +1092,9 @@ where
         Box::new(ret)
     }
 
-    fn to_user_facing_api_type_box(self: Box<Self>) -> Box<dyn UserApiType> {
+    fn into_user_facing_api_type_box(self: Box<Self>) -> Box<dyn UserApiType> {
         let this = *self;
-        this.to_user_facing_api_type()
+        this.into_user_facing_api_type()
     }
 }
 
@@ -1071,29 +1148,26 @@ mod test_frame {
     use super::*;
     use crate::channelevents::ChannelEvents;
     use crate::framable::Framable;
-    use crate::framable::INMEM_FRAME_ENCID;
     use crate::frame::decode_frame;
     use crate::inmem::InMemoryFrame;
+    use crate::inmem::ParseResult;
+    use items_0::streamitem::sitem_data;
     use items_0::streamitem::RangeCompletableItem;
     use items_0::streamitem::Sitemty;
     use items_0::streamitem::StreamItem;
-    use netpod::TsMs;
 
     #[test]
     fn events_serialize() {
-        let mut evs = ContainerEvents::new();
-        evs.push_back(TsNano::from_ns(123), 55f32);
+        let mut evs = ContainerEvents::<f32>::new();
+        evs.push_back(TsNano::from_ns(123), 55.);
+        evs.push_back(TsNano::from_ns(124), 56.);
         let item = ChannelEvents::from(evs);
-        let item: Sitemty<_> = Ok(StreamItem::DataItem(RangeCompletableItem::Data(item)));
-        let mut buf = item.make_frame_dyn().unwrap();
-        let s = String::from_utf8_lossy(&buf[20..buf.len() - 4]);
-        eprintln!("[[{s}]]");
-        let buflen = buf.len();
-        let frame = InMemoryFrame {
-            encid: INMEM_FRAME_ENCID,
-            tyid: 0x2500,
-            len: (buflen - 24) as _,
-            buf: buf.split_off(20).split_to(buflen - 20 - 4).freeze(),
+        let item: Sitemty<_> = sitem_data(item);
+        let buf = item.make_frame_dyn().unwrap();
+        let frame = match InMemoryFrame::parse(&buf) {
+            Ok(ParseResult::Parsed(n, val)) => val,
+            Ok(ParseResult::NotEnoughData(n)) => panic!(),
+            Err(e) => panic!("{}", e),
         };
         let item: Sitemty<ChannelEvents> = decode_frame(&frame).unwrap();
         let item = if let Ok(x) = item { x } else { panic!() };
@@ -1119,7 +1193,7 @@ mod test_frame {
         };
         assert_eq!(
             MergeableTy::tss_for_testing(item),
-            &[TsMs::from_ms_u64(123)]
+            &[TsNano::from_ns(123), TsNano::from_ns(124)]
         );
     }
 }

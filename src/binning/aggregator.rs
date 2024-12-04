@@ -2,7 +2,9 @@ pub mod agg_bins;
 
 use super::container::bins::BinAggedType;
 use super::container_events::EventValueType;
+use super::container_events::PulsedVal;
 use core::fmt;
+use items_0::subfr::SubFrId;
 use netpod::log::*;
 use netpod::DtNano;
 use netpod::EnumVariant;
@@ -371,5 +373,40 @@ impl AggregatorTimeWeight<Vec<EnumVariant>> for AggregatorVecNumeric {
         );
         self.sum = 0.;
         sum / filled_width_fraction
+    }
+}
+
+#[derive(Debug)]
+pub struct AggregatorPulsedNumeric<EVT>
+where
+    EVT: EventValueType,
+{
+    evt_agg: EVT::AggregatorTimeWeight,
+}
+
+impl<EVT> AggregatorTimeWeight<PulsedVal<EVT>> for AggregatorPulsedNumeric<EVT>
+where
+    EVT: EventValueType + SubFrId,
+{
+    fn new() -> Self {
+        Self {
+            evt_agg: EVT::AggregatorTimeWeight::new(),
+        }
+    }
+
+    fn ingest(&mut self, dt: DtNano, bl: DtNano, val: PulsedVal<EVT>) {
+        self.evt_agg.ingest(dt, bl, val.1);
+    }
+
+    fn reset_for_new_bin(&mut self) {
+        self.evt_agg.reset_for_new_bin();
+    }
+
+    fn result_and_reset_for_new_bin(
+        &mut self,
+        filled_width_fraction: f32,
+    ) -> <PulsedVal<EVT> as EventValueType>::AggTimeWeightOutputAvg {
+        self.evt_agg
+            .result_and_reset_for_new_bin(filled_width_fraction)
     }
 }
