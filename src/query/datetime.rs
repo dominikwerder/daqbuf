@@ -1,7 +1,6 @@
+use crate::Error;
 use chrono::DateTime;
 use chrono::FixedOffset;
-use daqbuf_err as err;
-use err::Error;
 use serde::de::Visitor;
 use serde::Deserialize;
 use serde::Serialize;
@@ -21,8 +20,7 @@ impl TryFrom<&str> for Datetime {
     type Error = Error;
 
     fn try_from(val: &str) -> Result<Self, Self::Error> {
-        let dt = DateTime::<FixedOffset>::parse_from_rfc3339(val)
-            .map_err(|e| Error::with_msg_no_trace(format!("{e}")))?;
+        let dt = DateTime::<FixedOffset>::parse_from_rfc3339(val).map_err(|_| Error::InputBad)?;
         Ok(Datetime(dt))
     }
 }

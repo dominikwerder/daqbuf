@@ -75,15 +75,10 @@ pub mod log_direct {
     pub use tracing::{self, event, span, Level};
 }
 
-use daqbuf_err as err;
-
 use bytes::Bytes;
 use chrono::DateTime;
 use chrono::TimeZone;
 use chrono::Utc;
-use err::thiserror;
-use err::Error;
-use err::ThisError;
 use futures_util::Stream;
 use futures_util::StreamExt;
 use http::Request;
@@ -198,42 +193,49 @@ impl CmpZero for usize {
     }
 }
 
-#[derive(Debug, ThisError)]
-#[cstm(name = "Netpod")]
-pub enum NetpodError {
-    UnknownSeriesKind(i64),
-    BadInt(#[from] std::num::ParseIntError),
-    ChronoParse(#[from] chrono::ParseError),
-    HumantimeDurationParse(#[from] humantime::DurationError),
-    MissingQueryParameters,
-    MissingSeries,
-    MissingBackend,
-    MissingTimerange,
-    BadTimerange,
-    NoSeriesNoName,
-    BadScalarTypeIndex(i64),
-    UnsupportedDtype(u8),
-    JsonParse(#[from] serde_json::Error),
-    BadScalarTypeVariant(String),
-    BadScalarTypeCaId(u16),
-    ScalarTypeNotInCa,
-    MissingScalarType,
-    MissingShape,
-    MissingBinningScheme,
-    BadCacheUsage(String),
-    TimelikeBinWidthImpossibleForPulseRange,
-    BinCountTooLarge,
-    BinCountTooSmall,
-    BinnedNoGridMatch,
-    NotTimerange,
-}
+autoerr::create_error_v1!(
+    name(Error, "NetpodError"),
+    enum variants {
+        NodeMissing,
+        UnknownSeriesKind(i64),
+        BadInt(#[from] std::num::ParseIntError),
+        ChronoParse(#[from] chrono::ParseError),
+        HumantimeDurationParse(#[from] humantime::DurationError),
+        MissingQueryParameters,
+        MissingSeries,
+        MissingBackend,
+        MissingTimerange,
+        BadTimerange,
+        NoSeriesNoName,
+        BadScalarTypeIndex(i64),
+        UnsupportedDtype(u8),
+        JsonParse(#[from] serde_json::Error),
+        BadScalarTypeVariant(String),
+        BadScalarTypeCaId(u16),
+        ScalarTypeNotInCa,
+        MissingScalarType,
+        MissingShape,
+        MissingBinningScheme,
+        BadCacheUsage(String),
+        TimelikeBinWidthImpossibleForPulseRange,
+        BinCountTooLarge,
+        BinCountTooSmall,
+        BinnedNoGridMatch,
+        NotTimerange,
+        AggKind,
+        TypeMismatch,
+        ShapeBad,
+        InputBad,
+    },
+);
 
-#[derive(Debug, ThisError)]
-#[cstm(name = "AsyncChannelError")]
-pub enum AsyncChannelError {
-    Send,
-    Recv,
-}
+autoerr::create_error_v1!(
+    name(AsyncChannelError, "AsyncChannelError"),
+    enum variants {
+        Send,
+        Recv,
+    },
+);
 
 pub struct BodyStream<E>
 where
@@ -259,12 +261,12 @@ impl SeriesKind {
         }
     }
 
-    pub fn from_db_i16(x: i16) -> Result<Self, NetpodError> {
+    pub fn from_db_i16(x: i16) -> Result<Self, Error> {
         let ret = match x {
             1 => Self::ChannelStatus,
             2 => Self::ChannelData,
             3 => Self::CaStatus,
-            _ => return Err(NetpodError::UnknownSeriesKind(x as i64)),
+            _ => return Err(Error::UnknownSeriesKind(x as i64)),
         };
         Ok(ret)
     }
@@ -277,7 +279,7 @@ impl Default for SeriesKind {
 }
 
 impl FromUrl for SeriesKind {
-    type Error = NetpodError;
+    type Error = Error;
 
     fn from_url(url: &Url) -> Result<Self, Self::Error> {
         let pairs = get_url_query_pairs(url);
@@ -409,7 +411,7 @@ pub trait HasScalarType {
 }
 
 impl ScalarType {
-    pub fn from_dtype_index(ix: u8) -> Result<Self, NetpodError> {
+    pub fn from_dtype_index(ix: u8) -> Result<Self, Error> {
         use ScalarType::*;
         let g = match ix {
             0 => BOOL,
@@ -426,7 +428,7 @@ impl ScalarType {
             12 => F64,
             13 => STRING,
             15 => Enum,
-            _ => return Err(NetpodError::UnsupportedDtype(ix)),
+            _ => return Err(Error::UnsupportedDtype(ix)),
         };
         Ok(g)
     }
@@ -450,7 +452,7 @@ impl ScalarType {
         }
     }
 
-    pub fn from_variant_str(s: &str) -> Result<Self, NetpodError> {
+    pub fn from_variant_str(s: &str) -> Result<Self, Error> {
         use ScalarType::*;
         let ret = match s {
             "u8" => U8,
@@ -466,7 +468,7 @@ impl ScalarType {
             "bool" => BOOL,
             "string" => STRING,
             "enum" => Enum,
-            _ => return Err(NetpodError::BadScalarTypeVariant(s.into())),
+            _ => return Err(Error::BadScalarTypeVariant(s.into())),
         };
         Ok(ret)
     }
@@ -490,7 +492,7 @@ impl ScalarType {
         }
     }
 
-    pub fn from_bsread_str(s: &str) -> Result<Self, NetpodError> {
+    pub fn from_bsread_str(s: &str) -> Result<Self, Error> {
         use ScalarType::*;
         let ret = match s {
             "uint8" => U8,
@@ -508,12 +510,12 @@ impl ScalarType {
             "bool" => BOOL,
             "string" => STRING,
             "enum" => Enum,
-            _ => return Err(NetpodError::BadScalarTypeVariant(s.into())),
+            _ => return Err(Error::BadScalarTypeVariant(s.into())),
         };
         Ok(ret)
     }
 
-    pub fn from_ca_id(k: u16) -> Result<Self, NetpodError> {
+    pub fn from_ca_id(k: u16) -> Result<Self, Error> {
         use ScalarType::*;
         let ret = match k {
             0 => STRING,
@@ -523,12 +525,12 @@ impl ScalarType {
             4 => I8,
             5 => I32,
             6 => F64,
-            _ => return Err(NetpodError::BadScalarTypeCaId(k)),
+            _ => return Err(Error::BadScalarTypeCaId(k)),
         };
         Ok(ret)
     }
 
-    pub fn to_ca_id(&self) -> Result<u16, NetpodError> {
+    pub fn to_ca_id(&self) -> Result<u16, Error> {
         use ScalarType::*;
         let ret = match self {
             I8 => 4,
@@ -538,12 +540,12 @@ impl ScalarType {
             F64 => 6,
             STRING => 0,
             Enum => 3,
-            _ => return Err(NetpodError::ScalarTypeNotInCa),
+            _ => return Err(Error::ScalarTypeNotInCa),
         };
         Ok(ret)
     }
 
-    pub fn from_archeng_db_str(s: &str) -> Result<Self, NetpodError> {
+    pub fn from_archeng_db_str(s: &str) -> Result<Self, Error> {
         use ScalarType::*;
         let ret = match s {
             "I8" => I8,
@@ -552,14 +554,14 @@ impl ScalarType {
             "I64" => I64,
             "F32" => F32,
             "F64" => F64,
-            _ => return Err(NetpodError::BadScalarTypeVariant(s.into())),
+            _ => return Err(Error::BadScalarTypeVariant(s.into())),
         };
         Ok(ret)
     }
 
-    pub fn from_scylla_i32(k: i32) -> Result<Self, NetpodError> {
+    pub fn from_scylla_i32(k: i32) -> Result<Self, Error> {
         if k < 0 || k > u8::MAX as i32 {
-            return Err(NetpodError::BadScalarTypeIndex(k as i64));
+            return Err(Error::BadScalarTypeIndex(k as i64));
         }
         Self::from_dtype_index(k as u8)
     }
@@ -611,7 +613,7 @@ impl ScalarType {
         self.index() as i32
     }
 
-    pub fn from_url_str(s: &str) -> Result<Self, NetpodError> {
+    pub fn from_url_str(s: &str) -> Result<Self, Error> {
         let ret = serde_json::from_str(&format!("\"{s}\""))?;
         Ok(ret)
     }
@@ -1067,7 +1069,7 @@ impl From<NodeConfig> for Result<NodeConfigCached, Error> {
                 };
                 Ok(ret)
             }
-            None => Err(Error::with_msg(format!("can not find node {:?}", k))),
+            None => Err(Error::NodeMissing),
         }
     }
 }
@@ -1083,9 +1085,20 @@ pub struct TableSizes {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub enum NodeStatusSubError {}
+
+impl fmt::Display for NodeStatusSubError {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        write!(fmt, "{:?}", self)
+    }
+}
+
+impl std::error::Error for NodeStatusSubError {}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct NodeStatusSub {
     pub url: String,
-    pub status: Result<NodeStatus, Error>,
+    pub status: Result<NodeStatus, NodeStatusSubError>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1179,7 +1192,7 @@ impl fmt::Display for SfDbChannel {
 }
 
 impl FromUrl for SfDbChannel {
-    type Error = NetpodError;
+    type Error = Error;
 
     fn from_url(url: &Url) -> Result<Self, Self::Error> {
         let pairs = get_url_query_pairs(url);
@@ -1190,7 +1203,7 @@ impl FromUrl for SfDbChannel {
         let ret = SfDbChannel {
             backend: pairs
                 .get("backend")
-                .ok_or_else(|| NetpodError::MissingBackend)?
+                .ok_or_else(|| Error::MissingBackend)?
                 .into(),
             name: pairs
                 .get("channelName")
@@ -1203,7 +1216,7 @@ impl FromUrl for SfDbChannel {
             kind: SeriesKind::from_pairs(pairs)?,
         };
         if ret.name.is_empty() && ret.series.is_none() {
-            return Err(NetpodError::NoSeriesNoName);
+            return Err(Error::NoSeriesNoName);
         }
         Ok(ret)
     }
@@ -1266,7 +1279,7 @@ impl DaqbufSeries {
 }
 
 impl FromUrl for DaqbufSeries {
-    type Error = NetpodError;
+    type Error = Error;
 
     fn from_url(url: &Url) -> Result<Self, Self::Error> {
         let pairs = get_url_query_pairs(url);
@@ -1277,11 +1290,11 @@ impl FromUrl for DaqbufSeries {
         let ret = DaqbufSeries {
             series: pairs
                 .get("seriesId")
-                .ok_or_else(|| NetpodError::MissingSeries)
+                .ok_or_else(|| Error::MissingSeries)
                 .map(|x| x.parse::<u64>())??,
             backend: pairs
                 .get("backend")
-                .ok_or_else(|| NetpodError::MissingBackend)?
+                .ok_or_else(|| Error::MissingBackend)?
                 .into(),
             name: pairs
                 .get("channelName")
@@ -1355,10 +1368,7 @@ impl ByteOrder {
         match s {
             "little" => Ok(ByteOrder::Little),
             "big" => Ok(ByteOrder::Big),
-            _ => Err(Error::with_msg_no_trace(format!(
-                "ByteOrder::from_bsread_str can not understand {}",
-                s
-            ))),
+            _ => Err(Error::InputBad),
         }
     }
 
@@ -1505,11 +1515,7 @@ impl Shape {
                 0 => Shape::Scalar,
                 1 => Shape::Wave(a[0]),
                 2 => Shape::Image(a[0], a[1]),
-                _ => {
-                    return Err(Error::with_msg_no_trace(
-                        "can not understand sf databuffer shape spec",
-                    ))
-                }
+                _ => return Err(Error::InputBad),
             },
             None => Shape::Scalar,
         };
@@ -1524,25 +1530,13 @@ impl Shape {
                     JsVal::Number(v) => match v.as_u64() {
                         Some(0) | Some(1) => Ok(Shape::Scalar),
                         Some(v) => Ok(Shape::Wave(v as u32)),
-                        None => Err(Error::with_msg_no_trace(format!(
-                            "Shape from_bsread_jsval can not understand {:?}",
-                            v
-                        ))),
+                        None => Err(Error::ShapeBad),
                     },
-                    _ => Err(Error::with_msg_no_trace(format!(
-                        "Shape from_bsread_jsval can not understand {:?}",
-                        v
-                    ))),
+                    _ => Err(Error::ShapeBad),
                 },
-                _ => Err(Error::with_msg_no_trace(format!(
-                    "Shape from_bsread_jsval can not understand {:?}",
-                    v
-                ))),
+                _ => Err(Error::ShapeBad),
             },
-            _ => Err(Error::with_msg_no_trace(format!(
-                "Shape from_bsread_jsval can not understand {:?}",
-                v
-            ))),
+            _ => Err(Error::ShapeBad),
         }
     }
 
@@ -1553,28 +1547,16 @@ impl Shape {
                 if s == "Scalar" {
                     Ok(Shape::Scalar)
                 } else {
-                    Err(Error::with_msg_no_trace(format!(
-                        "Shape from_db_jsval can not understand {:?}",
-                        v
-                    )))
+                    Err(Error::ShapeBad)
                 }
             }
             JsVal::Object(j) => match j.get("Wave") {
-                Some(JsVal::Number(j)) => Ok(Shape::Wave(j.as_u64().ok_or_else(|| {
-                    Error::with_msg_no_trace(format!(
-                        "Shape from_db_jsval can not understand {:?}",
-                        v
-                    ))
-                })? as u32)),
-                _ => Err(Error::with_msg_no_trace(format!(
-                    "Shape from_db_jsval can not understand {:?}",
-                    v
-                ))),
+                Some(JsVal::Number(j)) => Ok(Shape::Wave(
+                    j.as_u64().ok_or_else(|| Error::ShapeBad)? as u32,
+                )),
+                _ => Err(Error::ShapeBad),
             },
-            _ => Err(Error::with_msg_no_trace(format!(
-                "Shape from_db_jsval can not understand {:?}",
-                v
-            ))),
+            _ => Err(Error::ShapeBad),
         }
     }
 
@@ -1587,9 +1569,7 @@ impl Shape {
         } else if a.len() == 2 {
             Ok(Shape::Image(a[0], a[1]))
         } else {
-            Err(Error::with_public_msg_no_trace(
-                "only scalar, 1d and 2d supported",
-            ))
+            Err(Error::ShapeBad)
         }
     }
 
@@ -1601,26 +1581,20 @@ impl Shape {
         } else if v.len() == 2 {
             Shape::Image(v[0] as u32, v[1] as u32)
         } else {
-            return Err(Error::with_public_msg_no_trace(format!(
-                "bad shape_dims {v:?}"
-            )));
+            return Err(Error::ShapeBad);
         };
         Ok(res)
     }
 
     pub fn from_ca_count(k: u32) -> Result<Self, Error> {
         if k == 0 {
-            Err(Error::with_public_msg_no_trace(format!(
-                "zero sized ca data count {k:?}"
-            )))
+            Err(Error::InputBad)
         } else if k == 1 {
             Ok(Shape::Scalar)
         } else if k <= 1024 * 3000 {
             Ok(Shape::Wave(k))
         } else {
-            Err(Error::with_public_msg_no_trace(format!(
-                "too large ca data count {k:?}"
-            )))
+            Err(Error::InputBad)
         }
     }
 
@@ -1629,11 +1603,7 @@ impl Shape {
         let res = match self {
             Scalar => 1,
             Wave(n) => *n as u32,
-            _ => {
-                return Err(Error::with_msg_no_trace(format!(
-                    "can not represent {self:?} as CA count"
-                )))
-            }
+            _ => return Err(Error::InputBad),
         };
         Ok(res)
     }
@@ -1668,7 +1638,7 @@ impl Shape {
         }
     }
 
-    pub fn from_url_str(s: &str) -> Result<Self, NetpodError> {
+    pub fn from_url_str(s: &str) -> Result<Self, Error> {
         let ret = serde_json::from_str(s)?;
         Ok(ret)
     }
@@ -2410,10 +2380,10 @@ where
 {
     fn append_to_url(&self, url: &mut Url) {
         error!("TODO AppendToUrl for PreBinnedPatchCoord");
-        err::todo();
         // TODO must also emit the type of the series index
         let mut g = url.query_pairs_mut();
         g.append_pair("patchTlen", &format!("{}", 4242));
+        todo!();
     }
 }
 
@@ -2456,7 +2426,7 @@ impl PreBinnedPatchCoordEnum {
 }
 
 impl FromUrl for PreBinnedPatchCoordEnum {
-    type Error = NetpodError;
+    type Error = Error;
 
     fn from_url(_url: &Url) -> Result<Self, Self::Error> {
         todo!()
@@ -2487,13 +2457,14 @@ where
     T: Dim0Index,
 {
     pub fn edges(&self) -> Vec<u64> {
-        err::todo();
-        let ret = Vec::new();
-        ret
+        // let ret = Vec::new();
+        // ret
+        panic!()
     }
 
     pub fn series_range(&self) -> SeriesRange {
-        T::series_range(err::todoval(), err::todoval())
+        // T::series_range(todo!(), todo!())
+        panic!()
     }
 
     pub fn patch_count(&self) -> u64 {
@@ -2501,7 +2472,7 @@ where
     }
 
     pub fn bin_count(&self) -> u64 {
-        err::todoval()
+        panic!()
     }
 }
 
@@ -2518,13 +2489,10 @@ impl PreBinnedPatchRangeEnum {
     {
         let opts = T::prebin_bin_len_opts();
         if min_bin_count < 1 {
-            Err(Error::with_msg("min_bin_count < 1"))?;
+            Err(Error::BinCountTooSmall)?;
         }
         if min_bin_count > 20000 {
-            Err(Error::with_msg(format!(
-                "min_bin_count > 20000: {}",
-                min_bin_count
-            )))?;
+            Err(Error::BinCountTooLarge)?;
         }
         let du = b.sub(&a);
         let max_bin_len = du.div_n(min_bin_count as u64);
@@ -2540,9 +2508,7 @@ impl PreBinnedPatchRangeEnum {
                 return Ok(ret);
             }
         }
-        Err(Error::with_msg_no_trace(
-            "can not find matching pre-binned grid",
-        ))
+        Err(Error::BinnedNoGridMatch)
     }
 
     /// Cover at least the given range with at least as many as the requested number of bins.
@@ -2612,7 +2578,7 @@ impl BinnedRange<TsNano> {
         }
     }
 
-    pub fn covering_range_time(range: NanoRange, bin_len_req: DtMs) -> Result<Self, NetpodError> {
+    pub fn covering_range_time(range: NanoRange, bin_len_req: DtMs) -> Result<Self, Error> {
         let opts = <TsNano as Dim0Index>::binned_bin_len_opts();
         let bin_len_req = if bin_len_req.ms() < opts[0].ms() {
             DtMs::from_ms_u64(opts[0].ms())
@@ -2727,17 +2693,17 @@ pub enum BinnedRangeEnum {
 }
 
 impl BinnedRangeEnum {
-    fn covering_range_ty<T>(a: T, b: T, min_bin_count: u32) -> Result<Self, NetpodError>
+    fn covering_range_ty<T>(a: T, b: T, min_bin_count: u32) -> Result<Self, Error>
     where
         T: Dim0Index + 'static,
     {
         let opts = T::binned_bin_len_opts();
         if min_bin_count < 1 {
-            Err(NetpodError::BinCountTooSmall)?;
+            Err(Error::BinCountTooSmall)?;
         }
         let bin_count_max = i32::MAX as u32;
         if min_bin_count > bin_count_max {
-            Err(NetpodError::BinCountTooLarge)?;
+            Err(Error::BinCountTooLarge)?;
         }
         let du = b.sub(&a);
         let max_bin_len = du.div_n(min_bin_count as u64);
@@ -2751,22 +2717,22 @@ impl BinnedRangeEnum {
                 return Ok(ret);
             }
         }
-        Err(NetpodError::BinnedNoGridMatch)
+        Err(Error::BinnedNoGridMatch)
     }
 
     /// Cover at least the given range while selecting the bin width which best fits the requested bin width.
-    pub fn covering_range_time(range: SeriesRange, bin_len_req: DtMs) -> Result<Self, NetpodError> {
+    pub fn covering_range_time(range: SeriesRange, bin_len_req: DtMs) -> Result<Self, Error> {
         match range {
             SeriesRange::TimeRange(k) => Ok(Self::Time(BinnedRange::covering_range_time(
                 k,
                 bin_len_req,
             )?)),
-            SeriesRange::PulseRange(_) => Err(NetpodError::TimelikeBinWidthImpossibleForPulseRange),
+            SeriesRange::PulseRange(_) => Err(Error::TimelikeBinWidthImpossibleForPulseRange),
         }
     }
 
     /// Cover at least the given range with at least as many as the requested number of bins.
-    pub fn covering_range(range: SeriesRange, min_bin_count: u32) -> Result<Self, NetpodError> {
+    pub fn covering_range(range: SeriesRange, min_bin_count: u32) -> Result<Self, Error> {
         match range {
             SeriesRange::TimeRange(k) => {
                 Self::covering_range_ty(TsNano(k.beg), TsNano(k.end), min_bin_count)
@@ -2985,7 +2951,7 @@ impl FromStr for AggKind {
         } else if s == "PulseIdDiff" {
             Ok(AggKind::PulseIdDiff)
         } else {
-            Err(Error::with_msg(format!("can not parse {} as AggKind", s)))
+            Err(Error::AggKind)
         }
     }
 }
@@ -3339,7 +3305,7 @@ impl Default for DiskIoTune {
 }
 
 impl FromUrl for DiskIoTune {
-    type Error = NetpodError;
+    type Error = Error;
 
     fn from_url(url: &Url) -> Result<Self, Self::Error> {
         Self::from_pairs(&get_url_query_pairs(url))
@@ -3382,7 +3348,7 @@ pub struct ChannelSearchQuery {
 }
 
 impl ChannelSearchQuery {
-    pub fn from_url(url: &Url) -> Result<Self, NetpodError> {
+    pub fn from_url(url: &Url) -> Result<Self, Error> {
         let pairs = get_url_query_pairs(url);
         let ret = Self {
             backend: pairs.get("backend").map(Into::into),
@@ -3506,7 +3472,7 @@ impl AppendToUrl for MapQuery {
 }
 
 impl FromUrl for MapQuery {
-    type Error = NetpodError;
+    type Error = Error;
 
     fn from_url(url: &Url) -> Result<Self, Self::Error> {
         let pairs = get_url_query_pairs(url);
@@ -3566,7 +3532,7 @@ impl HasTimeout for ChannelConfigQuery {
 }
 
 impl FromUrl for ChannelConfigQuery {
-    type Error = NetpodError;
+    type Error = Error;
 
     fn from_url(url: &Url) -> Result<Self, Self::Error> {
         let pairs = get_url_query_pairs(url);
@@ -3858,9 +3824,7 @@ impl ChannelTypeConfigGen {
         if let ChannelTypeConfigGen::Scylla(k) = self {
             Ok(k.clone())
         } else {
-            Err(Error::with_msg_no_trace(
-                "this ChannelTypeConfigGen is not for scylla",
-            ))
+            Err(Error::TypeMismatch)
         }
     }
 
@@ -3868,9 +3832,7 @@ impl ChannelTypeConfigGen {
         if let ChannelTypeConfigGen::SfDatabuffer(k) = self {
             Ok(k.clone())
         } else {
-            Err(Error::with_msg_no_trace(
-                "this ChannelTypeConfigGen is not for scylla",
-            ))
+            Err(Error::TypeMismatch)
         }
     }
 
@@ -4100,7 +4062,7 @@ mod test_parse {
         for (k, v) in url.query_pairs() {
             let k = k.to_string();
             let v = v.to_string();
-            info!("k {k:?}  v {v:?}");
+            info!("k {:?}  v {:?}", k, v);
             a.insert(k, v);
         }
         assert_eq!(a.get("scalarType").unwrap(), "f32");
@@ -4232,7 +4194,7 @@ pub struct StatusBoardEntry {
     // #[serde(skip_serializing_if = "is_false")]
     done: bool,
     // #[serde(skip_serializing_if = "Vec::is_empty")]
-    errors: Vec<err::Error>,
+    errors: Vec<String>,
     // TODO make this a better Stats container and remove pub access.
     // #[serde(default, skip_serializing_if = "CmpZero::is_zero")]
     error_count: usize,
@@ -4302,7 +4264,7 @@ pub struct StatusBoardEntryUser {
     // #[serde(default, skip_serializing_if = "CmpZero::is_zero")]
     channel_not_found: usize,
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    errors: Vec<err::PublicError>,
+    errors: Vec<String>,
 }
 
 impl StatusBoardEntryUser {
@@ -4322,11 +4284,7 @@ impl From<&StatusBoardEntry> for StatusBoardEntryUser {
             error_count: e.error_count,
             warn_count: e.warn_count,
             channel_not_found: e.channel_not_found,
-            errors: e
-                .errors
-                .iter()
-                .map(|e| err::ToPublicError::to_public_error(e))
-                .collect(),
+            errors: e.errors.iter().map(|e| e.to_string()).collect(),
         }
     }
 }
@@ -4392,7 +4350,7 @@ impl StatusBoard {
         }
     }
 
-    pub fn add_error(&mut self, status_id: &str, err: err::Error) {
+    pub fn add_error(&mut self, status_id: &str, err: String) {
         match self.entries.get_mut(status_id) {
             Some(e) => {
                 e.ts_updated = SystemTime::now();
@@ -4447,11 +4405,12 @@ pub fn status_board_init() {
     });
 }
 
-#[derive(Debug, ThisError)]
-#[cstm(name = "UriError")]
-pub enum UriError {
-    ParseError(Uri),
-}
+autoerr::create_error_v1!(
+    name(UriError, "UriError"),
+    enum variants {
+        ParseError(Uri),
+    },
+);
 
 pub fn req_uri_to_url(uri: &Uri) -> Result<Url, UriError> {
     if uri.scheme().is_none() {

@@ -13,7 +13,7 @@ serde_json = "1.0"
 http = "1.0.0"
 humantime = "2.1.0"
 humantime-serde = "1.1.1"
-bytes = "1.4.0"
+bytes = "1.8.0"
 chrono = { version = "0.4.19", features = ["serde"] }
 futures-util = "0.3.14"
 tracing = "0.1.37"
@@ -21,8 +21,4 @@ url = "2.5.3"
 num-traits = "0.2.16"
 hex = "0.4.3"
 rand = "0.8.5"
-thiserror = "0.0.1"
-daqbuf-err = { path = "../daqbuf-err" }
-
-[patch.crates-io]
-thiserror = { git = "https://github.com/dominikwerder/thiserror.git", branch = "cstm" }
+autoerr = "0.0.3"

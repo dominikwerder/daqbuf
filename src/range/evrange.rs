@@ -3,8 +3,8 @@ use crate::query::TimeRangeQuery;
 use crate::timeunits::SEC;
 use crate::AppendToUrl;
 use crate::Dim0Kind;
+use crate::Error;
 use crate::FromUrl;
-use crate::NetpodError;
 use crate::TsNano;
 use crate::MS;
 use chrono::DateTime;
@@ -134,12 +134,12 @@ impl From<(u64, u64)> for NanoRange {
 }
 
 impl TryFrom<&SeriesRange> for NanoRange {
-    type Error = NetpodError;
+    type Error = Error;
 
     fn try_from(val: &SeriesRange) -> Result<NanoRange, Self::Error> {
         match val {
             SeriesRange::TimeRange(x) => Ok(x.clone()),
-            SeriesRange::PulseRange(_) => Err(NetpodError::NotTimerange),
+            SeriesRange::PulseRange(_) => Err(Error::NotTimerange),
         }
     }
 }
@@ -222,7 +222,7 @@ impl From<PulseRange> for SeriesRange {
 }
 
 impl FromUrl for SeriesRange {
-    type Error = NetpodError;
+    type Error = Error;
 
     fn from_url(url: &url::Url) -> Result<Self, Self::Error> {
         let pairs = crate::get_url_query_pairs(url);
@@ -235,7 +235,7 @@ impl FromUrl for SeriesRange {
         } else if let Ok(x) = PulseRangeQuery::from_pairs(pairs) {
             SeriesRange::PulseRange(x.into())
         } else {
-            return Err(NetpodError::MissingTimerange);
+            return Err(Error::MissingTimerange);
         };
         Ok(ret)
     }

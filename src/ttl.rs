@@ -1,7 +1,4 @@
 use core::fmt;
-use daqbuf_err as err;
-use err::thiserror;
-use err::ThisError;
 use serde::Deserialize;
 use serde::Serialize;
 use std::str::FromStr;
@@ -82,13 +79,12 @@ impl fmt::Display for RetentionTime {
     }
 }
 
-#[derive(Debug, ThisError)]
-#[cstm(name = "TTL")]
-pub enum Error {
-    Parse,
-}
-
-// err::err_dbg_dis!(Error, "ttl::Error::");
+autoerr::create_error_v1!(
+    name(Error, "TtlError"),
+    enum variants {
+        Parse,
+    },
+);
 
 impl FromStr for RetentionTime {
     type Err = Error;
@@ -103,13 +99,3 @@ impl FromStr for RetentionTime {
         Ok(ret)
     }
 }
-
-// impl ToString for RetentionTime {
-//     fn to_string(&self) -> String {
-//         match self {
-//             RetentionTime::Short => "short".into(),
-//             RetentionTime::Medium => "medium".into(),
-//             RetentionTime::Long => "long".into(),
-//         }
-//     }
-// }

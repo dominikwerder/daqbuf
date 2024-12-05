@@ -1,4 +1,9 @@
-use daqbuf_err as err;
+autoerr::create_error_v1!(
+    name(Error, "ChannelStatusError"),
+    enum variants {
+        UnknownStatus,
+    },
+);
 
 #[derive(Debug, Clone)]
 pub enum ChannelStatusClosedReason {
@@ -57,7 +62,7 @@ impl ChannelStatus {
         }
     }
 
-    pub fn from_kind(kind: u32) -> Result<Self, err::Error> {
+    pub fn from_kind(kind: u32) -> Result<Self, Error> {
         use ChannelStatus::*;
         use ChannelStatusClosedReason::*;
         let ret = match kind {
@@ -81,9 +86,7 @@ impl ChannelStatus {
             29 => HaveStatusId,
             30 => HaveAddress,
             _ => {
-                return Err(err::Error::with_msg_no_trace(format!(
-                    "unknown ChannelStatus kind {kind}"
-                )));
+                return Err(Error::UnknownStatus);
             }
         };
         Ok(ret)

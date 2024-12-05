@@ -1,8 +1,8 @@
-use daqbuf_err as err;
-use err::Error;
-use futures_util::{Stream, StreamExt};
+use futures_util::Stream;
+use futures_util::StreamExt;
 use std::pin::Pin;
-use std::task::{Context, Poll};
+use std::task::Context;
+use std::task::Poll;
 
 pub struct SCC<S>
 where
@@ -26,9 +26,9 @@ where
     }
 }
 
-impl<S, I> Stream for SCC<S>
+impl<S, I, E> Stream for SCC<S>
 where
-    S: Stream<Item = Result<I, Error>> + Unpin,
+    S: Stream<Item = Result<I, E>> + Unpin,
 {
     type Item = <S as Stream>::Item;
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {

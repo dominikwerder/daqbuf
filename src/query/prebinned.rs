@@ -4,8 +4,8 @@ use super::CacheUsage;
 use crate::AggKind;
 use crate::AppendToUrl;
 use crate::ByteSize;
+use crate::Error;
 use crate::FromUrl;
-use crate::NetpodError;
 use crate::PreBinnedPatchCoordEnum;
 use crate::ScalarType;
 use crate::SfDbChannel;
@@ -48,7 +48,7 @@ impl PreBinnedQuery {
         }
     }
 
-    pub fn from_url(url: &Url) -> Result<Self, NetpodError> {
+    pub fn from_url(url: &Url) -> Result<Self, Error> {
         let mut pairs = BTreeMap::new();
         for (j, k) in url.query_pairs() {
             pairs.insert(j.to_string(), k.to_string());
@@ -56,11 +56,11 @@ impl PreBinnedQuery {
         let pairs = pairs;
         let scalar_type = pairs
             .get("scalarType")
-            .ok_or_else(|| NetpodError::MissingScalarType)
+            .ok_or_else(|| Error::MissingScalarType)
             .map(|x| ScalarType::from_url_str(&x))??;
         let shape = pairs
             .get("shape")
-            .ok_or_else(|| NetpodError::MissingShape)
+            .ok_or_else(|| Error::MissingShape)
             .map(|x| Shape::from_url_str(&x))??;
         let ret = Self {
             patch: PreBinnedPatchCoordEnum::from_pairs(&pairs)?,

@@ -2,17 +2,15 @@ pub mod api1;
 pub mod datetime;
 pub mod prebinned;
 
-use daqbuf_err as err;
-
 use crate::get_url_query_pairs;
 use crate::log::*;
 use crate::AggKind;
 use crate::AppendToUrl;
+use crate::Error;
 use crate::FromUrl;
 use crate::HasBackend;
 use crate::HasTimeout;
 use crate::NanoRange;
-use crate::NetpodError;
 use crate::PulseRange;
 use crate::SfDbChannel;
 use crate::ToNanos;
@@ -20,7 +18,6 @@ use crate::DATETIME_FMT_6MS;
 use chrono::DateTime;
 use chrono::TimeZone;
 use chrono::Utc;
-use err::Error;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -48,7 +45,7 @@ impl CacheUsage {
     }
 
     // Missing query parameter is not an error
-    pub fn from_pairs(pairs: &BTreeMap<String, String>) -> Result<Option<Self>, NetpodError> {
+    pub fn from_pairs(pairs: &BTreeMap<String, String>) -> Result<Option<Self>, Error> {
         pairs
             .get("cacheUsage")
             .map(|k| {
@@ -61,7 +58,7 @@ impl CacheUsage {
                 } else if k == "v0nocache" {
                     Ok(Some(CacheUsage::V0NoCache))
                 } else {
-                    Err(NetpodError::BadCacheUsage(k.clone()))?
+                    Err(Error::BadCacheUsage(k.clone()))?
                 }
             })
             .unwrap_or(Ok(None))
@@ -77,10 +74,7 @@ impl CacheUsage {
         } else if s == "v0nocache" {
             CacheUsage::V0NoCache
         } else {
-            return Err(Error::with_msg(format!(
-                "can not interpret cache usage string: {}",
-                s
-            )));
+            return Err(Error::InputBad);
         };
         Ok(ret)
     }
@@ -115,22 +109,22 @@ pub struct TimeRangeQuery {
     range: NanoRange,
 }
 
-fn parse_time(v: &str) -> Result<DateTime<Utc>, NetpodError> {
+fn parse_time(v: &str) -> Result<DateTime<Utc>, Error> {
     if let Ok(x) = v.parse() {
         Ok(x)
     } else {
         if v.ends_with("ago") {
-            let d = humantime::parse_duration(&v[..v.len() - 3])
-                .map_err(|_| NetpodError::BadTimerange)?;
+            let d =
+                humantime::parse_duration(&v[..v.len() - 3]).map_err(|_| Error::BadTimerange)?;
             Ok(Utc::now() - d)
         } else {
-            Err(NetpodError::BadTimerange)
+            Err(Error::BadTimerange)
         }
     }
 }
 
 impl FromUrl for TimeRangeQuery {
-    type Error = NetpodError;
+    type Error = Error;
 
     fn from_url(url: &Url) -> Result<Self, Self::Error> {
         let pairs = get_url_query_pairs(url);
@@ -155,7 +149,7 @@ impl FromUrl for TimeRangeQuery {
             };
             Ok(ret)
         } else {
-            Err(NetpodError::MissingTimerange)
+            Err(Error::MissingTimerange)
         }
     }
 }
@@ -216,7 +210,7 @@ pub struct PulseRangeQuery {
 }
 
 impl FromUrl for PulseRangeQuery {
-    type Error = NetpodError;
+    type Error = Error;
 
     fn from_url(url: &Url) -> Result<Self, Self::Error> {
         let pairs = get_url_query_pairs(url);
@@ -233,7 +227,7 @@ impl FromUrl for PulseRangeQuery {
             };
             Ok(ret)
         } else {
-            Err(NetpodError::MissingQueryParameters)
+            Err(Error::MissingQueryParameters)
         }
     }
 }
@@ -283,7 +277,7 @@ pub fn binning_scheme_append_to_url(agg_kind: &AggKind, url: &mut Url) {
 // Absent AggKind is not considered an error.
 pub fn agg_kind_from_binning_scheme(
     pairs: &BTreeMap<String, String>,
-) -> Result<Option<AggKind>, NetpodError> {
+) -> Result<Option<AggKind>, Error> {
     let key = "binningScheme";
     if let Some(s) = pairs.get(key) {
         let ret = if s == "eventBlobs" {
@@ -300,7 +294,7 @@ pub fn agg_kind_from_binning_scheme(
         } else if s == "pulseIdDiff" {
             AggKind::PulseIdDiff
         } else {
-            return Err(NetpodError::MissingBinningScheme);
+            return Err(Error::MissingBinningScheme);
         };
         Ok(Some(ret))
     } else {
@@ -349,7 +343,7 @@ impl HasTimeout for ChannelStateEventsQuery {
 }
 
 impl FromUrl for ChannelStateEventsQuery {
-    type Error = NetpodError;
+    type Error = Error;
 
     fn from_url(url: &Url) -> Result<Self, Self::Error> {
         let pairs = get_url_query_pairs(url);
@@ -359,10 +353,10 @@ impl FromUrl for ChannelStateEventsQuery {
     fn from_pairs(pairs: &BTreeMap<String, String>) -> Result<Self, Self::Error> {
         let beg_date = pairs
             .get("begDate")
-            .ok_or_else(|| NetpodError::MissingTimerange)?;
+            .ok_or_else(|| Error::MissingTimerange)?;
         let end_date = pairs
             .get("endDate")
-            .ok_or_else(|| NetpodError::MissingTimerange)?;
+            .ok_or_else(|| Error::MissingTimerange)?;
         let ret = Self {
             channel: SfDbChannel::from_pairs(&pairs)?,
             range: NanoRange {
