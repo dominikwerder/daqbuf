@@ -28,7 +28,7 @@ pub enum Error {
     MissingTimerange,
     BadQuery,
     Transform(#[from] crate::transform::Error),
-    Netpod(#[from] netpod::NetpodError),
+    Netpod(#[from] netpod::Error),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

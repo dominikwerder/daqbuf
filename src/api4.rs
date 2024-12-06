@@ -55,7 +55,7 @@ impl HasTimeout for AccountingIngestedBytesQuery {
 }
 
 impl FromUrl for AccountingIngestedBytesQuery {
-    type Error = netpod::NetpodError;
+    type Error = netpod::Error;
 
     fn from_url(url: &Url) -> Result<Self, Self::Error> {
         let pairs = get_url_query_pairs(url);
@@ -66,7 +66,7 @@ impl FromUrl for AccountingIngestedBytesQuery {
         let ret = Self {
             backend: pairs
                 .get("backend")
-                .ok_or_else(|| netpod::NetpodError::MissingBackend)?
+                .ok_or_else(|| netpod::Error::MissingBackend)?
                 .to_string(),
             range: SeriesRange::from_pairs(pairs)?,
         };

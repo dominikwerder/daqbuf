@@ -25,7 +25,7 @@ pub enum Error {
     BadInt(#[from] std::num::ParseIntError),
     MultipleBinCountBinWidth,
     BadUseRt,
-    Netpod(#[from] netpod::NetpodError),
+    Netpod(#[from] netpod::Error),
     Transform(#[from] crate::transform::Error),
 }
 
