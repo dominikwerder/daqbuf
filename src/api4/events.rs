@@ -21,15 +21,16 @@ use std::collections::BTreeMap;
 use std::time::Duration;
 use url::Url;
 
-#[derive(Debug, thiserror::Error)]
-#[cstm(name = "EventsQuery")]
-pub enum Error {
-    BadInt(#[from] std::num::ParseIntError),
-    MissingTimerange,
-    BadQuery,
-    Transform(#[from] crate::transform::Error),
-    Netpod(#[from] netpod::Error),
-}
+autoerr::create_error_v1!(
+    name(Error, "EventsQuery"),
+    enum variants {
+        BadInt(#[from] std::num::ParseIntError),
+        MissingTimerange,
+        BadQuery,
+        Transform(#[from] crate::transform::Error),
+        Netpod(#[from] netpod::Error),
+    },
+);
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PlainEventsQuery {
@@ -120,6 +121,10 @@ impl PlainEventsQuery {
 
     pub fn range(&self) -> &SeriesRange {
         &self.range
+    }
+
+    pub fn beg_excl(&self) -> bool {
+        self.beg_excl
     }
 
     pub fn one_before_range(&self) -> bool {

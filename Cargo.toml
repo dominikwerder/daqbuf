@@ -12,8 +12,5 @@ chrono = { version = "0.4.38", features = ["serde"] }
 url = "2.5.3"
 humantime = "2.1.0"
 humantime-serde = "1.1.1"
-thiserror = "=0.0.1"
+autoerr = "0.0.3"
 netpod = { path = "../daqbuf-netpod", package = "daqbuf-netpod" }
-
-[patch.crates-io]
-thiserror = { git = "https://github.com/dominikwerder/thiserror.git", branch = "cstm" }

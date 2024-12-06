@@ -5,16 +5,16 @@ use netpod::FromUrl;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::BTreeMap;
-use thiserror;
 use url::Url;
 
-#[derive(Debug, thiserror::Error)]
-#[cstm(name = "Query")]
-pub enum Error {
-    ParseInt(#[from] std::num::ParseIntError),
-    BadEnumAsString,
-    BadBinningScheme,
-}
+autoerr::create_error_v1!(
+    name(Error, "Transform"),
+    enum variants {
+        ParseInt(#[from] std::num::ParseIntError),
+        BadEnumAsString,
+        BadBinningScheme,
+    },
+);
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum EventTransformQuery {

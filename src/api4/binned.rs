@@ -19,15 +19,16 @@ use std::collections::BTreeMap;
 use std::time::Duration;
 use url::Url;
 
-#[derive(Debug, thiserror::Error)]
-#[cstm(name = "BinnedQuery")]
-pub enum Error {
-    BadInt(#[from] std::num::ParseIntError),
-    MultipleBinCountBinWidth,
-    BadUseRt,
-    Netpod(#[from] netpod::Error),
-    Transform(#[from] crate::transform::Error),
-}
+autoerr::create_error_v1!(
+    name(Error, "BinnedQuery"),
+    enum variants {
+        BadInt(#[from] std::num::ParseIntError),
+        MultipleBinCountBinWidth,
+        BadUseRt,
+        Netpod(#[from] netpod::Error),
+        Transform(#[from] crate::transform::Error),
+    },
+);
 
 mod serde_option_vec_duration {
     use serde::Deserialize;
@@ -105,15 +106,21 @@ pub struct BinnedQuery {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     disk_stats_every: Option<ByteSize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub merger_out_len_max: Option<u32>,
+    merger_out_len_max: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     scylla_read_queue_len: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     test_do_wasm: Option<String>,
     #[serde(default)]
     log_level: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     use_rt: Option<RetentionTime>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    allow_from_events: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    allow_from_prebinned: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    allow_rebin: Option<bool>,
 }
 
 impl BinnedQuery {
@@ -134,6 +141,9 @@ impl BinnedQuery {
             test_do_wasm: None,
             log_level: String::new(),
             use_rt: None,
+            allow_from_events: None,
+            allow_from_prebinned: None,
+            allow_rebin: None,
         }
     }
 
@@ -324,6 +334,15 @@ impl FromUrl for BinnedQuery {
             use_rt: pairs.get("useRt").map_or(Ok(None), |k| {
                 k.parse().map(Some).map_err(|_| Error::BadUseRt)
             })?,
+            allow_from_events: pairs
+                .get("allow_from_events")
+                .and_then(|x| x.parse::<bool>().ok()),
+            allow_from_prebinned: pairs
+                .get("allow_from_prebinned")
+                .and_then(|x| x.parse::<bool>().ok()),
+            allow_rebin: pairs
+                .get("allow_rebin")
+                .and_then(|x| x.parse::<bool>().ok()),
         };
         debug!("BinnedQuery::from_url  {:?}", ret);
         Ok(ret)
@@ -394,6 +413,15 @@ impl AppendToUrl for BinnedQuery {
         }
         if let Some(x) = self.use_rt.as_ref() {
             g.append_pair("useRt", &x.to_string());
+        }
+        if let Some(x) = self.allow_from_events.as_ref() {
+            g.append_pair("allow_from_events", &x.to_string());
+        }
+        if let Some(x) = self.allow_from_prebinned.as_ref() {
+            g.append_pair("allow_from_prebinned", &x.to_string());
+        }
+        if let Some(x) = self.allow_rebin.as_ref() {
+            g.append_pair("allow_rebin", &x.to_string());
         }
     }
 }

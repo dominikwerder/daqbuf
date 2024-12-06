@@ -20,15 +20,16 @@ use std::collections::BTreeMap;
 use std::time::Duration;
 use url::Url;
 
-#[derive(Debug, thiserror::Error)]
-#[cstm(name = "Query")]
-pub enum Error {
-    MissingTimerange,
-    ChronoParse(#[from] chrono::ParseError),
-    HumantimeDurationParse(#[from] humantime::DurationError),
-    MissingBackend,
-    MissingRetentionTime,
-}
+autoerr::create_error_v1!(
+    name(Error, "Query"),
+    enum variants {
+        MissingTimerange,
+        ChronoParse(#[from] chrono::ParseError),
+        HumantimeDurationParse(#[from] humantime::DurationError),
+        MissingBackend,
+        MissingRetentionTime,
+    },
+);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AccountingIngestedBytesQuery {
