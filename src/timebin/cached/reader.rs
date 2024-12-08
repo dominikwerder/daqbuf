@@ -1,11 +1,11 @@
 use crate as streams;
+use crate::log::*;
 use futures_util::FutureExt;
 use futures_util::Stream;
 use futures_util::StreamExt;
 use items_0::streamitem::Sitemty;
 use items_0::timebin::BinsBoxed;
 use items_2::channelevents::ChannelEvents;
-use netpod::log::*;
 use netpod::BinnedRange;
 use netpod::DtMs;
 use netpod::TsNano;
@@ -17,16 +17,21 @@ use std::sync::Arc;
 use std::task::Context;
 use std::task::Poll;
 
-#[derive(Debug, thiserror::Error)]
-#[cstm(name = "BinCachedReader")]
-pub enum Error {
-    TodoImpl,
-    ChannelSend,
-    ChannelRecv,
-    Scylla(String),
-}
+autoerr::create_error_v1!(
+    name(Error, "BinCachedReader"),
+    enum variants {
+        TodoImpl,
+        ChannelSend,
+        ChannelRecv,
+        Scylla(String),
+    },
+);
 
 macro_rules! trace_emit { ($($arg:tt)*) => ( if true { trace!($($arg)*); } ) }
+
+pub type BinsReadResErr = streams::timebin::cached::reader::Error;
+pub type BinsReadRes = Result<Option<BinsBoxed>, BinsReadResErr>;
+pub type BinsReadFutBoxed = Pin<Box<dyn Future<Output = BinsReadRes> + Send>>;
 
 pub fn off_max() -> u64 {
     1000
@@ -74,30 +79,17 @@ pub trait EventsReadProvider: Send + Sync {
 }
 
 pub struct CacheReading {
-    fut: Pin<
-        Box<
-            dyn Future<Output = Result<Option<BinsBoxed>, streams::timebin::cached::reader::Error>>
-                + Send,
-        >,
-    >,
+    fut: BinsReadFutBoxed,
 }
 
 impl CacheReading {
-    pub fn new(
-        fut: Pin<
-            Box<
-                dyn Future<
-                        Output = Result<Option<BinsBoxed>, streams::timebin::cached::reader::Error>,
-                    > + Send,
-            >,
-        >,
-    ) -> Self {
+    pub fn new(fut: BinsReadFutBoxed) -> Self {
         Self { fut }
     }
 }
 
 impl Future for CacheReading {
-    type Output = Result<Option<BinsBoxed>, streams::timebin::cached::reader::Error>;
+    type Output = BinsReadRes;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         self.fut.poll_unpin(cx)

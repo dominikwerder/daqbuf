@@ -1,7 +1,7 @@
 pub mod cached;
 pub mod fromevents;
 pub mod fromlayers;
-pub mod timebin;
+pub mod opts;
 
 mod basic;
 mod gapfill;

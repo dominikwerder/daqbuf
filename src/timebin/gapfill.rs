@@ -1,5 +1,6 @@
 use super::cached::reader::CacheReadProvider;
 use super::cached::reader::EventsReadProvider;
+use super::opts::BinningOptions;
 use crate::log::*;
 use crate::timebin::fromevents::BinnedFromEvents;
 use futures_util::FutureExt;
@@ -11,7 +12,6 @@ use items_0::streamitem::Sitemty;
 use items_0::streamitem::StreamItem;
 use items_0::timebin::BinsBoxed;
 use items_2::binning::timeweight::timeweight_bins_stream::BinnedBinsTimeweightStream;
-use netpod::query::CacheUsage;
 use netpod::range::evrange::NanoRange;
 use netpod::range::evrange::SeriesRange;
 use netpod::BinnedRange;
@@ -28,30 +28,27 @@ use std::sync::Arc;
 use std::task::Context;
 use std::task::Poll;
 
-#[allow(unused)]
 macro_rules! debug_init { ($($arg:tt)*) => ( if true { debug!($($arg)*); } ) }
 
-#[allow(unused)]
 macro_rules! debug_setup { ($($arg:tt)*) => ( if true { debug!($($arg)*); } ) }
 
-#[allow(unused)]
-macro_rules! debug_cache { ($($arg:tt)*) => ( if true { debug!($($arg)*); } ) }
+macro_rules! trace_cache { ($($arg:tt)*) => ( if true { debug!($($arg)*); } ) }
 
-#[allow(unused)]
 macro_rules! trace_handle { ($($arg:tt)*) => ( if true { trace!($($arg)*); } ) }
 
-#[derive(Debug, thiserror::Error)]
-#[cstm(name = "BinCachedGapFill")]
-pub enum Error {
-    CacheReader(#[from] super::cached::reader::Error),
-    #[error("GapFromFiner({0}, {1}, {2})")]
-    GapFromFiner(TsNano, TsNano, DtMs),
-    #[error("MissingBegFromFiner({0}, {1}, {2})")]
-    MissingBegFromFiner(TsNano, TsNano, DtMs),
-    #[error("InputBeforeRange({0}, {1})")]
-    InputBeforeRange(NanoRange, BinnedRange<TsNano>),
-    EventsReader(#[from] super::fromevents::Error),
-}
+autoerr::create_error_v1!(
+    name(Error, "BinCachedGapFill"),
+    enum variants {
+        CacheReader(#[from] super::cached::reader::Error),
+        // #[error("GapFromFiner({0}, {1}, {2})")]
+        GapFromFiner(TsNano, TsNano, DtMs),
+        // #[error("MissingBegFromFiner({0}, {1}, {2})")]
+        MissingBegFromFiner(TsNano, TsNano, DtMs),
+        // #[error("InputBeforeRange({0}, {1})")]
+        InputBeforeRange(NanoRange, BinnedRange<TsNano>),
+        EventsReader(#[from] super::fromevents::Error),
+    },
+);
 
 type Input = Pin<Box<dyn Stream<Item = Sitemty<BinsBoxed>> + Send>>;
 
@@ -60,7 +57,7 @@ type Input = Pin<Box<dyn Stream<Item = Sitemty<BinsBoxed>> + Send>>;
 pub struct GapFill {
     dbgname: String,
     ch_conf: ChannelTypeConfigGen,
-    cache_usage: CacheUsage,
+    binning_opts: BinningOptions,
     transform_query: TransformQuery,
     sub: EventsSubQuerySettings,
     log_level: String,
@@ -90,7 +87,7 @@ impl GapFill {
     pub fn new(
         dbgname_parent: String,
         ch_conf: ChannelTypeConfigGen,
-        cache_usage: CacheUsage,
+        binning_opts: BinningOptions,
         transform_query: TransformQuery,
         sub: EventsSubQuerySettings,
         log_level: String,
@@ -103,7 +100,7 @@ impl GapFill {
     ) -> Result<Self, Error> {
         let dbgname = format!("{}--[{}]", dbgname_parent, range);
         debug_init!("new  dbgname {}", dbgname);
-        let inp = if cache_usage.is_cache_read() {
+        let inp = if binning_opts.cache_usage().is_cache_read() {
             let series = ch_conf.series().expect("series id for cache read");
             let stream = super::cached::reader::CachedReader::new(
                 series,
@@ -122,7 +119,7 @@ impl GapFill {
         let ret = Self {
             dbgname,
             ch_conf,
-            cache_usage,
+            binning_opts,
             transform_query,
             sub,
             log_level,
@@ -173,13 +170,14 @@ impl GapFill {
                 .get_or_insert_with(|| bins.empty());
             bins2.drain_into(dst.as_mut(), 0..bins2.len());
         }
-        if self.cache_usage.is_cache_write() {
+        if self.binning_opts.cache_usage().is_cache_write() {
             self.cache_write_intermediate()?;
-        } // TODO make sure that input does not send "made-up" empty future bins.
-          // On the other hand, if the request is over past range, but the channel was silent ever since?
-          // Then we should in principle know that from is-alive status checking.
-          // So, until then, allow made-up bins?
-          // Maybe, for now, only write those bins before some last non-zero-count bin. The only safe way.
+        }
+        // TODO make sure that input does not send "made-up" empty future bins.
+        // On the other hand, if the request is over past range, but the channel was silent ever since?
+        // Then we should in principle know that from is-alive status checking.
+        // So, until then, allow made-up bins?
+        // Maybe, for now, only write those bins before some last non-zero-count bin. The only safe way.
         Ok(bins)
     }
 
@@ -265,7 +263,7 @@ impl GapFill {
             let inp_finer = GapFill::new(
                 self.dbgname.clone(),
                 self.ch_conf.clone(),
-                self.cache_usage.clone(),
+                self.binning_opts.clone(),
                 self.transform_query.clone(),
                 self.sub.clone(),
                 self.log_level.clone(),
@@ -338,6 +336,7 @@ impl GapFill {
 
     fn cache_write_intermediate(self: Pin<&mut Self>) -> Result<(), Error> {
         // TODO See cache_write_on_end
+        trace_cache!("maybe write to cache");
         Ok(())
     }
 }
@@ -377,7 +376,7 @@ impl Stream for GapFill {
                             trace_handle!("{}  RECV RANGE FINAL", self.dbgname);
                             self.inp_finer_range_final = true;
                             self.inp_finer_range_final_cnt += 1;
-                            if self.cache_usage.is_cache_write() {
+                            if self.binning_opts.cache_usage().is_cache_write() {
                                 match self.as_mut().cache_write_on_end() {
                                     Ok(()) => continue,
                                     Err(e) => Ready(Some(sitem_err_from_string(e))),

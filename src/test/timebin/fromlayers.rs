@@ -2,6 +2,7 @@ use crate::eventsplainreader::DummyCacheReadProvider;
 use crate::log::*;
 use crate::test::events_reader::TestEventsReader;
 use crate::timebin::fromlayers::TimeBinnedFromLayers;
+use crate::timebin::opts::BinningOptions;
 use futures_util::StreamExt;
 use netpod::query::CacheUsage;
 use netpod::range::evrange::NanoRange;
@@ -38,6 +39,7 @@ async fn timebin_from_layers_inner() -> Result<(), Error> {
         "basictest-f32",
     ));
     let cache_usage = CacheUsage::Ignore;
+    let binning_opts: BinningOptions = todo!();
     let transform_query = TransformQuery::default_time_binned();
     let nano_range = NanoRange {
         beg: 1000 * 1000 * 1000 * 1,
@@ -63,7 +65,7 @@ async fn timebin_from_layers_inner() -> Result<(), Error> {
     let range = BinnedRange::from_nano_range(nano_range, bin_len);
     let mut stream = TimeBinnedFromLayers::new(
         ch_conf,
-        cache_usage,
+        binning_opts,
         transform_query,
         settings,
         log_level.into(),
@@ -100,6 +102,7 @@ async fn timebin_from_layers_1layer_inner() -> Result<(), Error> {
         "basictest-f32",
     ));
     let cache_usage = CacheUsage::Ignore;
+    let binning_opts: BinningOptions = todo!();
     let transform_query = TransformQuery::default_time_binned();
     let nano_range = NanoRange {
         beg: 1000 * 1000 * 1000 * 1,
@@ -125,7 +128,7 @@ async fn timebin_from_layers_1layer_inner() -> Result<(), Error> {
     let range = BinnedRange::from_nano_range(nano_range, bin_len);
     let mut stream = TimeBinnedFromLayers::new(
         ch_conf,
-        cache_usage,
+        binning_opts,
         transform_query,
         settings,
         log_level.into(),

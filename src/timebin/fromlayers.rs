@@ -1,5 +1,6 @@
 use super::cached::reader::CacheReadProvider;
 use super::cached::reader::EventsReadProvider;
+use super::opts::BinningOptions;
 use crate::log::*;
 use crate::timebin::fromevents::BinnedFromEvents;
 use crate::timebin::gapfill::GapFill;
@@ -9,7 +10,6 @@ use futures_util::StreamExt;
 use items_0::streamitem::Sitemty;
 use items_0::timebin::BinsBoxed;
 use items_2::binning::timeweight::timeweight_bins_stream::BinnedBinsTimeweightStream;
-use netpod::query::CacheUsage;
 use netpod::range::evrange::SeriesRange;
 use netpod::BinnedRange;
 use netpod::ChannelTypeConfigGen;
@@ -27,14 +27,14 @@ use std::task::Poll;
 
 macro_rules! trace_init { ($($arg:tt)*) => ( if false { trace!($($arg)*); } ) }
 
-#[derive(Debug, thiserror::Error)]
-#[cstm(name = "TimeBinnedFromLayers")]
-pub enum Error {
-    GapFill(#[from] super::gapfill::Error),
-    BinnedFromEvents(#[from] super::fromevents::Error),
-    #[error("FinerGridMismatch({0}, {1})")]
-    FinerGridMismatch(DtMs, DtMs),
-}
+autoerr::create_error_v1!(
+    name(Error, "TimeBinnedFromLayers"),
+    enum variants {
+        GapFill(#[from] super::gapfill::Error),
+        BinnedFromEvents(#[from] super::fromevents::Error),
+        FinerGridMismatch(DtMs, DtMs),
+    },
+);
 
 type BoxedInput = Pin<Box<dyn Stream<Item = Sitemty<BinsBoxed>> + Send>>;
 
@@ -49,7 +49,7 @@ impl TimeBinnedFromLayers {
 
     pub fn new(
         ch_conf: ChannelTypeConfigGen,
-        cache_usage: CacheUsage,
+        binning_opts: BinningOptions,
         transform_query: TransformQuery,
         sub: EventsSubQuerySettings,
         log_level: String,
@@ -73,7 +73,7 @@ impl TimeBinnedFromLayers {
             let inp = GapFill::new(
                 "FromLayers-ongrid".into(),
                 ch_conf.clone(),
-                cache_usage.clone(),
+                binning_opts.clone(),
                 transform_query.clone(),
                 sub.clone(),
                 log_level.clone(),
@@ -107,7 +107,7 @@ impl TimeBinnedFromLayers {
                     let inp = GapFill::new(
                         "FromLayers-finergrid".into(),
                         ch_conf.clone(),
-                        cache_usage.clone(),
+                        binning_opts.clone(),
                         transform_query.clone(),
                         sub.clone(),
                         log_level.clone(),

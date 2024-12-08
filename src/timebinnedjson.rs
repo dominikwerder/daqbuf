@@ -265,7 +265,6 @@ async fn timebinned_stream(
     events_read_provider: Arc<dyn EventsReadProvider>,
 ) -> Result<Pin<Box<dyn Stream<Item = Sitemty<Box<dyn CollectableDyn>>> + Send>>, Error> {
     use netpod::query::CacheUsage;
-    let cache_usage = query.cache_usage().unwrap_or(CacheUsage::Ignore);
     let do_time_weight = true;
     let bin_len_layers = if let Some(subgrids) = query.subgrids() {
         subgrids
@@ -277,7 +276,7 @@ async fn timebinned_stream(
     };
     let stream = crate::timebin::fromlayers::TimeBinnedFromLayers::new(
         ch_conf,
-        cache_usage,
+        (&query).into(),
         query.transform().clone(),
         EventsSubQuerySettings::from(&query),
         query.log_level().into(),
