@@ -247,6 +247,18 @@ impl BinnedQuery {
         self.use_rt.clone()
     }
 
+    pub fn allow_from_events(&self) -> Option<bool> {
+        self.allow_from_events.clone()
+    }
+
+    pub fn allow_from_prebinned(&self) -> Option<bool> {
+        self.allow_from_prebinned.clone()
+    }
+
+    pub fn allow_rebin(&self) -> Option<bool> {
+        self.allow_rebin.clone()
+    }
+
     pub fn covering_range(&self) -> Result<BinnedRangeEnum, Error> {
         match &self.range {
             SeriesRange::TimeRange(range) => match self.bin_width {
