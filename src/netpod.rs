@@ -1085,7 +1085,9 @@ pub struct TableSizes {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub enum NodeStatusSubError {}
+pub enum NodeStatusSubError {
+    Msg(String),
+}
 
 impl fmt::Display for NodeStatusSubError {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
