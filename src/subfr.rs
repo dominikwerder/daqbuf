@@ -62,6 +62,10 @@ impl SubFrId for EnumVariant {
     const SUB: SubIdTy = 0x0d;
 }
 
+impl SubFrId for netpod::UnsupEvt {
+    const SUB: SubIdTy = 0x0e;
+}
+
 impl SubFrId for Vec<u8> {
     const SUB: SubIdTy = VEC_FLAG | <u8 as SubFrId>::SUB;
 }
@@ -112,6 +116,10 @@ impl SubFrId for Vec<String> {
 
 impl SubFrId for Vec<EnumVariant> {
     const SUB: SubIdTy = VEC_FLAG | <EnumVariant as SubFrId>::SUB;
+}
+
+impl SubFrId for Vec<netpod::UnsupEvt> {
+    const SUB: SubIdTy = VEC_FLAG | <netpod::UnsupEvt as SubFrId>::SUB;
 }
 
 pub const fn is_vec_subfr(x: SubIdTy) -> bool {
