@@ -768,6 +768,9 @@ impl fmt::Display for EnumVariant {
     }
 }
 
+#[derive(Debug, Clone, PartialOrd, PartialEq, Serialize, Deserialize)]
+pub struct UnsupEvt(pub u32);
+
 impl AppendToUrl for ScalarType {
     fn append_to_url(&self, url: &mut Url) {
         let mut g = url.query_pairs_mut();
