@@ -13,6 +13,10 @@ use items_0::apitypes::ToUserFacingApiType;
 use items_0::collect_s::CollectableDyn;
 use items_0::collect_s::CollectedDyn;
 use items_0::collect_s::ToJsonValue;
+use items_0::container::ByteEstimate;
+use items_0::merge::DrainIntoDstResult;
+use items_0::merge::DrainIntoNewResult;
+use items_0::merge::MergeableTy;
 use items_0::timebin::BinningggContainerBinsDyn;
 use items_0::timebin::BinsBoxed;
 use items_0::vecpreview::VecPreview;
@@ -383,6 +387,17 @@ where
     }
 }
 
+impl<EVT, BVT> ByteEstimate for ContainerBins<EVT, BVT>
+where
+    EVT: EventValueType,
+    BVT: BinAggedType,
+{
+    fn byte_estimate(&self) -> u64 {
+        // TODO ByteEstimate for ContainerBins
+        128 * self.len() as u64
+    }
+}
+
 #[derive(Debug)]
 pub struct ContainerBinsCollectorOutput<EVT, BVT>
 where
@@ -544,7 +559,8 @@ where
 {
     fn ingest(&mut self, src: &mut dyn CollectableDyn) {
         if let Some(src) = src.as_any_mut().downcast_mut::<ContainerBins<EVT, BVT>>() {
-            src.drain_into(&mut self.bins, 0..src.len());
+            MergeableTy::drain_into(src, &mut self.bins, 0..src.len());
+            // src.drain_into(&mut self.bins, 0..src.len());
         } else {
             let srcn = src.type_name();
             panic!("wrong src type {srcn}");
@@ -638,6 +654,86 @@ where
 
     fn boxed_into_collectable_box(self: Box<Self>) -> Box<dyn CollectableDyn> {
         Box::new(*self)
+    }
+}
+
+impl<EVT, BVT> MergeableTy for ContainerBins<EVT, BVT>
+where
+    EVT: EventValueType,
+    BVT: BinAggedType,
+{
+    fn ts_min(&self) -> Option<TsNano> {
+        self.ts1s.front().copied()
+    }
+
+    fn ts_max(&self) -> Option<TsNano> {
+        self.ts1s.back().copied()
+    }
+
+    fn find_lowest_index_gt(&self, ts: TsNano) -> Option<usize> {
+        let x = self.ts1s.partition_point(|&x| x <= ts);
+        if x >= self.ts1s.len() {
+            None
+        } else {
+            Some(x)
+        }
+    }
+
+    fn find_lowest_index_ge(&self, ts: TsNano) -> Option<usize> {
+        let x = self.ts1s.partition_point(|&x| x < ts);
+        if x >= self.ts1s.len() {
+            None
+        } else {
+            Some(x)
+        }
+    }
+
+    fn find_highest_index_lt(&self, ts: TsNano) -> Option<usize> {
+        let x = self.ts1s.partition_point(|&x| x < ts);
+        if x == 0 {
+            None
+        } else {
+            Some(x - 1)
+        }
+    }
+
+    fn tss_for_testing(&self) -> VecDeque<TsNano> {
+        self.ts1s.clone()
+    }
+
+    fn drain_into(
+        &mut self,
+        dst: &mut Self,
+        range: std::ops::Range<usize>,
+    ) -> items_0::merge::DrainIntoDstResult {
+        dst.ts1s.extend(self.ts1s.drain(range.clone()));
+        dst.ts2s.extend(self.ts2s.drain(range.clone()));
+        dst.cnts.extend(self.cnts.drain(range.clone()));
+        self.mins.drain_into(&mut dst.mins, range.clone());
+        self.maxs.drain_into(&mut dst.maxs, range.clone());
+        self.aggs.drain_into(&mut dst.aggs, range.clone());
+        self.lsts.drain_into(&mut dst.lsts, range.clone());
+        dst.fnls.extend(self.fnls.drain(range.clone()));
+        DrainIntoDstResult::Done
+    }
+
+    fn drain_into_new(
+        &mut self,
+        range: std::ops::Range<usize>,
+    ) -> items_0::merge::DrainIntoNewResult<Self> {
+        let mut dst = Self::new();
+        MergeableTy::drain_into(self, &mut dst, range);
+        DrainIntoNewResult::Done(dst)
+    }
+
+    fn is_consistent(&self) -> bool {
+        let n = self.ts1s.len();
+        let mut same_len = true;
+        same_len &= n == self.ts2s.len();
+        same_len &= n == self.cnts.len();
+        same_len &= n == self.mins.len();
+        same_len &= n == self.ts2s.len();
+        same_len
     }
 }
 

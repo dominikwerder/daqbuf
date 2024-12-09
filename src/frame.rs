@@ -4,6 +4,7 @@ use crate::framable::INMEM_FRAME_FOOT;
 use crate::framable::INMEM_FRAME_HEAD;
 use crate::framable::INMEM_FRAME_MAGIC;
 use crate::inmem::InMemoryFrame;
+use crate::log::*;
 use bincode::config::FixintEncoding;
 use bincode::config::LittleEndian;
 use bincode::config::RejectTrailing;
@@ -23,7 +24,6 @@ use items_0::streamitem::LOG_FRAME_TYPE_ID;
 use items_0::streamitem::RANGE_COMPLETE_FRAME_TYPE_ID;
 use items_0::streamitem::STATS_FRAME_TYPE_ID;
 use items_0::streamitem::TERM_FRAME_TYPE_ID;
-use netpod::log::*;
 use serde::Serialize;
 use std::any;
 use std::io;
@@ -32,26 +32,23 @@ const USE_JSON: bool = false;
 const EMIT_JSON_DEBUG: bool = false;
 const EMIT_POSTCARD_DEBUG: bool = false;
 
-#[derive(Debug, thiserror::Error)]
-#[cstm(name = "ItemFrame")]
-pub enum Error {
-    TooLongPayload(usize),
-    UnknownEncoder(u32),
-    #[error("BufferMismatch({0}, {1}, {2})")]
-    BufferMismatch(u32, usize, u32),
-    #[error("TyIdMismatch({0}, {1})")]
-    TyIdMismatch(u32, u32),
-    Msg(String),
-    Bincode(#[from] Box<bincode::ErrorKind>),
-    RmpEnc(#[from] rmp_serde::encode::Error),
-    RmpDec(#[from] rmp_serde::decode::Error),
-    ErasedSerde(#[from] erased_serde::Error),
-    #[error("PostcardSer({0})")]
-    PostcardSer(postcard::Error),
-    #[error("PostcardDe({0}, {1}, {2:?}, {3})")]
-    PostcardDe(postcard::Error, usize, Vec<u8>, &'static str),
-    SerdeJson(#[from] serde_json::Error),
-}
+autoerr::create_error_v1!(
+    name(Error, "ItemFrame"),
+    enum variants {
+        TooLongPayload(usize),
+        UnknownEncoder(u32),
+        BufferMismatch(u32, usize, u32),
+        TyIdMismatch(u32, u32),
+        Msg(String),
+        Bincode(#[from] Box<bincode::ErrorKind>),
+        RmpEnc(#[from] rmp_serde::encode::Error),
+        RmpDec(#[from] rmp_serde::decode::Error),
+        ErasedSerde(#[from] erased_serde::Error),
+        PostcardSer(postcard::Error),
+        PostcardDe(postcard::Error, usize, String, String),
+        SerdeJson(#[from] serde_json::Error),
+    },
+);
 
 struct ErrMsg<E>(E)
 where
@@ -187,8 +184,8 @@ where
         Error::PostcardDe(
             e,
             buf.len(),
-            buf[0..buf.len().min(40)].to_vec(),
-            std::any::type_name::<T>(),
+            format!("{:?}", buf[0..buf.len().min(40)].to_vec()),
+            std::any::type_name::<T>().into(),
         )
     })?;
     Ok(x)
@@ -271,7 +268,10 @@ where
     } else if false {
         msgpack_erased_to_vec(item)
     } else {
-        postcard_erased_to_vec(item)
+        let x = postcard_erased_to_vec(item);
+        // let s = std::any::type_name::<T>();
+        // warn!("encode_erased_to_vec  is_ok {}  T {}", x.is_ok(), s);
+        x
     }
 }
 
@@ -507,6 +507,7 @@ where
                         frame.tyid(),
                         any::type_name::<T>()
                     );
+                    error!("decode_from_slice error  {}", e);
                     let n = frame.buf().len().min(64);
                     let s = String::from_utf8_lossy(&frame.buf()[..n]);
                     error!(

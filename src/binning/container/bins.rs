@@ -18,7 +18,7 @@ where
 }
 
 pub trait BinAggedContainer<BVT>:
-    fmt::Debug + Send + Clone + PreviewRange + Serialize + for<'a> Deserialize<'a>
+    fmt::Debug + Send + Clone + Unpin + PreviewRange + Serialize + for<'a> Deserialize<'a>
 where
     BVT: BinAggedType,
 {

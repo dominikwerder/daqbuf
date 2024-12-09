@@ -61,8 +61,8 @@ fn exp_u64<'a>(
 }
 
 fn exp_f32<'a>(
-    vals: impl Iterator<Item = &'a f32>,
-    exps: impl Iterator<Item = &'a f32>,
+    vals: impl Iterator<Item = f32>,
+    exps: impl Iterator<Item = f32>,
     tag: &str,
 ) -> Result<(), Error> {
     let mut it_a = vals;
@@ -74,7 +74,7 @@ fn exp_f32<'a>(
         if a.is_none() && b.is_none() {
             break;
         }
-        if let (Some(&val), Some(&exp)) = (a, b) {
+        if let (Some(val), Some(exp)) = (a, b) {
             if netpod::f32_close(val, exp) == false {
                 return Err(Error::AssertMsg(format!(
                     "{tag}  val {}  exp {}  i {}",
@@ -106,7 +106,7 @@ pub(super) fn exp_mins(
 ) -> Result<(), Error> {
     exp_f32(
         bins.mins_iter(),
-        exps.into_vec_deque_f32().iter(),
+        exps.into_vec_deque_f32().into_iter(),
         "exp_mins",
     )
 }
@@ -117,7 +117,7 @@ pub(super) fn exp_maxs(
 ) -> Result<(), Error> {
     exp_f32(
         bins.maxs_iter(),
-        exps.into_vec_deque_f32().iter(),
+        exps.into_vec_deque_f32().into_iter(),
         "exp_maxs",
     )
 }
@@ -137,7 +137,7 @@ pub(super) fn exp_avgs(
             break;
         }
         if let (Some(a), Some(&exp)) = (a, b) {
-            let val = *a.agg as f32;
+            let val = a.agg as f32;
             if netpod::f32_close(val, exp) == false {
                 return Err(Error::AssertMsg(format!(
                     "exp_avgs  val {}  exp {}  i {}",

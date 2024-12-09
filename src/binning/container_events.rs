@@ -54,6 +54,7 @@ where
     EVT: EventValueType,
 {
     fn new() -> Self;
+    fn len(&self) -> usize;
     fn push_back(&mut self, val: EVT);
     fn get_iter_ty_1(&self, pos: usize) -> Option<EVT::IterTy1<'_>>;
     fn iter_ty_1(&self) -> impl Iterator<Item = EVT::IterTy1<'_>>;
@@ -86,6 +87,10 @@ where
         VecDeque::new()
     }
 
+    fn len(&self) -> usize {
+        self.len()
+    }
+
     fn push_back(&mut self, val: EVT) {
         self.push_back(val);
     }
@@ -114,6 +119,10 @@ where
 impl Container<String> for VecDeque<String> {
     fn new() -> Self {
         VecDeque::new()
+    }
+
+    fn len(&self) -> usize {
+        self.len()
     }
 
     fn push_back(&mut self, val: String) {
@@ -384,6 +393,10 @@ where
             pulses: VecDeque::new(),
             vals: <<EVT as EventValueType>::Container as Container<EVT>>::new(),
         }
+    }
+
+    fn len(&self) -> usize {
+        self.vals.len()
     }
 
     fn push_back(&mut self, val: PulsedVal<EVT>) {

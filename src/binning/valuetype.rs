@@ -36,6 +36,10 @@ impl Container<EnumVariant> for EnumVariantContainer {
         }
     }
 
+    fn len(&self) -> usize {
+        self.ixs.len()
+    }
+
     fn push_back(&mut self, val: EnumVariant) {
         let (ix, name) = val.into_parts();
         self.ixs.push_back(ix);
@@ -136,6 +140,81 @@ impl EventValueType for EnumVariant {
     type AggregatorTimeWeight = EnumVariantAggregatorTimeWeight;
     type AggTimeWeightOutputAvg = f32;
     type IterTy1<'a> = EnumVariantRef<'a>;
-    const SERDE_ID: u32 = Self::SUB as u32;
+    const SERDE_ID: u32 = <Self as SubFrId>::SUB as u32;
     const BYTE_ESTIMATE_V00: u32 = 40;
+}
+
+impl PartialOrdEvtA<netpod::UnsupEvt> for netpod::UnsupEvt {
+    fn cmp_a(&self, other: &netpod::UnsupEvt) -> Option<std::cmp::Ordering> {
+        todo!()
+    }
+}
+
+impl PartialOrdEvtA<Vec<netpod::UnsupEvt>> for Vec<netpod::UnsupEvt> {
+    fn cmp_a(&self, other: &Vec<netpod::UnsupEvt>) -> Option<std::cmp::Ordering> {
+        todo!()
+    }
+}
+
+#[derive(Debug)]
+pub struct UnsupEvtAgg;
+
+impl AggregatorTimeWeight<netpod::UnsupEvt> for UnsupEvtAgg {
+    fn new() -> Self {
+        todo!()
+    }
+
+    fn ingest(&mut self, dt: DtNano, bl: DtNano, val: netpod::UnsupEvt) {
+        todo!()
+    }
+
+    fn reset_for_new_bin(&mut self) {
+        todo!()
+    }
+
+    fn result_and_reset_for_new_bin(
+        &mut self,
+        filled_width_fraction: f32,
+    ) -> <netpod::UnsupEvt as EventValueType>::AggTimeWeightOutputAvg {
+        todo!()
+    }
+}
+
+impl AggregatorTimeWeight<Vec<netpod::UnsupEvt>> for UnsupEvtAgg {
+    fn new() -> Self {
+        todo!()
+    }
+
+    fn ingest(&mut self, dt: DtNano, bl: DtNano, val: Vec<netpod::UnsupEvt>) {
+        todo!()
+    }
+
+    fn reset_for_new_bin(&mut self) {
+        todo!()
+    }
+
+    fn result_and_reset_for_new_bin(
+        &mut self,
+        filled_width_fraction: f32,
+    ) -> <Vec<netpod::UnsupEvt> as EventValueType>::AggTimeWeightOutputAvg {
+        todo!()
+    }
+}
+
+impl EventValueType for netpod::UnsupEvt {
+    type Container = std::collections::VecDeque<netpod::UnsupEvt>;
+    type AggregatorTimeWeight = UnsupEvtAgg;
+    type AggTimeWeightOutputAvg = f32;
+    type IterTy1<'a> = netpod::UnsupEvt;
+    const SERDE_ID: u32 = <Self as SubFrId>::SUB as u32;
+    const BYTE_ESTIMATE_V00: u32 = 4;
+}
+
+impl EventValueType for Vec<netpod::UnsupEvt> {
+    type Container = std::collections::VecDeque<Vec<netpod::UnsupEvt>>;
+    type AggregatorTimeWeight = UnsupEvtAgg;
+    type AggTimeWeightOutputAvg = f32;
+    type IterTy1<'a> = Vec<netpod::UnsupEvt>;
+    const SERDE_ID: u32 = <Self as SubFrId>::SUB as u32;
+    const BYTE_ESTIMATE_V00: u32 = 4;
 }

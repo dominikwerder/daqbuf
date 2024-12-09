@@ -239,7 +239,7 @@ mod serde_channel_events {
     use serde::Serializer;
     use std::fmt;
 
-    macro_rules! trace_serde { ($($arg:tt)*) => ( if false { eprintln!($($arg)*); }) }
+    macro_rules! trace_serde { ($($arg:tt)*) => ( if false { trace!($($arg)*); }) }
 
     type C01<T> = ContainerEvents<T>;
     type C02<T> = ContainerEvents<Vec<T>>;
@@ -271,21 +271,22 @@ mod serde_channel_events {
             type C<T> = $cont1<T>;
             match nty_id {
                 u8::SUB => try_serialize::<S, C<u8>>(v, ser),
-                // u16::SUB => try_serialize::<S, C1<u16>>(v, ser)?,
-                // u32::SUB => try_serialize::<S, C1<u32>>(v, ser)?,
-                // u64::SUB => try_serialize::<S, C1<u64>>(v, ser)?,
-                // i8::SUB => try_serialize::<S, C1<i8>>(v, ser)?,
-                // i16::SUB => try_serialize::<S, C1<i16>>(v, ser)?,
-                // i32::SUB => try_serialize::<S, C1<i32>>(v, ser)?,
-                // i64::SUB => try_serialize::<S, C1<i64>>(v, ser)?,
+                u16::SUB => try_serialize::<S, C<u16>>(v, ser),
+                u32::SUB => try_serialize::<S, C<u32>>(v, ser),
+                u64::SUB => try_serialize::<S, C<u64>>(v, ser),
+                i8::SUB => try_serialize::<S, C<i8>>(v, ser),
+                i16::SUB => try_serialize::<S, C<i16>>(v, ser),
+                i32::SUB => try_serialize::<S, C<i32>>(v, ser),
+                i64::SUB => try_serialize::<S, C<i64>>(v, ser),
                 f32::SUB => try_serialize::<S, C<f32>>(v, ser),
-                // f64::SUB => try_serialize::<S, C1<f64>>(v, ser)?,
-                // bool::SUB => try_serialize::<S, C1<bool>>(v, ser)?,
-                // String::SUB => try_serialize::<S, C1<String>>(v, ser)?,
-                // EnumVariant::SUB => try_serialize::<S, C1<EnumVariant>>(v, ser)?,
+                f64::SUB => try_serialize::<S, C<f64>>(v, ser),
+                bool::SUB => try_serialize::<S, C<bool>>(v, ser),
+                String::SUB => try_serialize::<S, C<String>>(v, ser),
+                EnumVariant::SUB => try_serialize::<S, C<EnumVariant>>(v, ser),
                 _ => {
                     let msg = format!("serde  ser  not supported evt id 0x{:x}", nty_id);
-                    return Err(serde::ser::Error::custom(msg));
+                    error!("{}", msg);
+                    Err(serde::ser::Error::custom(msg))
                 }
             }
         }};
@@ -304,7 +305,7 @@ mod serde_channel_events {
             ser.serialize_element(&self.0.serde_id())?;
             ser.serialize_element(&self.0.nty_id())?;
             let nty_id = self.0.nty_id() as u16;
-            if is_container_events(self.0.serde_id()) {
+            let x = if is_container_events(self.0.serde_id()) {
                 if is_pulsed_subfr(nty_id) {
                     if is_vec_subfr(nty_id) {
                         ser_inner_nty!(&mut ser, C04, nty_id, self.0)
@@ -320,8 +321,11 @@ mod serde_channel_events {
                 }
             } else {
                 let msg = format!("not supported obj id {}", self.0.serde_id());
-                return Err(serde::ser::Error::custom(msg));
-            }?;
+                Err(serde::ser::Error::custom(msg))
+            };
+            // warn!("Serialize for EvRef  is_ok {}", x.is_ok());
+            let _: () = x?;
+            // warn!("Serialize for EvRef  ending");
             ser.end()
         }
     }
@@ -351,6 +355,12 @@ mod serde_channel_events {
         ($seq:expr, $cont1:ident, $nty:expr) => {{
             let seq = $seq;
             let nty = subfr_scalar_type($nty);
+            let cc = std::any::type_name::<$cont1<u8>>();
+            trace_serde!(
+                "EvBoxVis::visit_seq  de_inner_nty  nty 0x{:X}  cont1<FIX u8> {}",
+                nty,
+                cc
+            );
             match nty {
                 u8::SUB => get_2nd_or_err::<$cont1<u8>, _>(seq),
                 u16::SUB => get_2nd_or_err::<$cont1<u16>, _>(seq),
@@ -365,8 +375,12 @@ mod serde_channel_events {
                 bool::SUB => get_2nd_or_err::<$cont1<bool>, _>(seq),
                 String::SUB => get_2nd_or_err::<$cont1<String>, _>(seq),
                 EnumVariant::SUB => get_2nd_or_err::<$cont1<EnumVariant>, _>(seq),
+                netpod::UnsupEvt::SUB => get_2nd_or_err::<$cont1<netpod::UnsupEvt>, _>(seq),
                 _ => {
                     error!("TODO serde::de  nty 0x{:x}", nty);
+                    if true {
+                        panic!("TODO serde::de  nty 0x{:x}", nty);
+                    }
                     Err(de::Error::custom(&format!("unknown nty 0x{:x}", nty)))
                 }
             }
@@ -392,7 +406,7 @@ mod serde_channel_events {
                 .next_element()?
                 .ok_or_else(|| de::Error::missing_field("[1] nty"))?;
             let seq = &mut seq;
-            trace_serde!("EvBoxVis  cty 0x{:x}  nty 0x{:X}", cty, nty);
+            trace_serde!("EvBoxVis::visit_seq  cty 0x{:x}  nty 0x{:x}", cty, nty);
             if is_container_events(cty) {
                 if is_pulsed_subfr(nty) {
                     if is_vec_subfr(nty) {
@@ -432,7 +446,14 @@ mod serde_channel_events {
             let vars = ChannelEventsVis::allowed_variants();
             match self {
                 ChannelEvents::Events(obj) => {
-                    serializer.serialize_newtype_variant(name, 0, vars[0], &EvRef(obj.as_ref()))
+                    let x = serializer.serialize_newtype_variant(
+                        name,
+                        0,
+                        vars[0],
+                        &EvRef(obj.as_ref()),
+                    );
+                    // warn!("Serialize for ChannelEvents  is_ok {}", x.is_ok());
+                    x
                 }
                 ChannelEvents::Status(val) => {
                     serializer.serialize_newtype_variant(name, 1, vars[1], val)
@@ -552,6 +573,9 @@ mod test_channel_events_serde {
     use super::ChannelEvents;
     use crate::binning::container_events::ContainerEvents;
     use crate::channelevents::ConnStatusEvent;
+    use crate::framable::Framable;
+    use crate::inmem::InMemoryFrame;
+    use crate::log::*;
     use bincode::config::FixintEncoding;
     use bincode::config::LittleEndian;
     use bincode::config::RejectTrailing;
@@ -560,12 +584,39 @@ mod test_channel_events_serde {
     use bincode::config::WithOtherTrailing;
     use bincode::DefaultOptions;
     use items_0::bincode;
+    use items_0::streamitem::sitem_data;
+    use items_0::streamitem::Sitemty;
+    use items_0::timebin::BinningggContainerEventsDyn;
     use items_0::Appendable;
     use items_0::Empty;
     use netpod::TsNano;
+    use netpod::UnsupEvt;
     use serde::Deserialize;
     use serde::Serialize;
     use std::time::SystemTime;
+
+    #[test]
+    fn channel_events_unsup_evt() {
+        let mut evs = ContainerEvents::new();
+        evs.push_back(TsNano::from_ns(8), UnsupEvt(4));
+        let item = ChannelEvents::from(evs);
+        // let item: Box<dyn BinningggContainerEventsDyn> = Box::new(evs);
+        let item = sitem_data(item);
+        match item.make_frame_dyn() {
+            Ok(frame) => {
+                panic!("this should have failed");
+                let imfr = if let Ok(crate::inmem::ParseResult::Parsed(_, x)) =
+                    InMemoryFrame::parse(&frame)
+                {
+                    x
+                } else {
+                    panic!();
+                };
+                crate::frame::decode_frame::<Sitemty<ChannelEvents>>(&imfr).unwrap();
+            }
+            Err(_) => (),
+        }
+    }
 
     #[test]
     fn channel_events() {
@@ -612,8 +663,9 @@ mod test_channel_events_serde {
             panic!()
         };
         let item: &ContainerEvents<f32> = item.as_any_ref().downcast_ref().unwrap();
-        assert_eq!(item.tss().len(), 2);
-        assert_eq!(item.tss()[1], 12);
+        use items_0::merge::MergeableTy;
+        assert_eq!(item.tss_for_testing().len(), 2);
+        assert_eq!(item.tss_for_testing()[1], TsNano::from_ns(12));
     }
 
     #[test]
@@ -866,7 +918,6 @@ pub struct ChannelEventsCollector {
     coll: Option<Box<dyn CollectorDyn>>,
     range_complete: bool,
     timed_out: bool,
-    needs_continue_at: bool,
     tmp_warned_status: bool,
     tmp_error_unknown_type: bool,
 }
@@ -881,7 +932,6 @@ impl ChannelEventsCollector {
             coll: None,
             range_complete: false,
             timed_out: false,
-            needs_continue_at: false,
             tmp_warned_status: false,
             tmp_error_unknown_type: false,
         }
