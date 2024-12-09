@@ -25,7 +25,7 @@ use std::sync::Arc;
 use std::task::Context;
 use std::task::Poll;
 
-macro_rules! trace_init { ($($arg:tt)*) => ( if false { trace!($($arg)*); } ) }
+macro_rules! trace_init { ($($arg:tt)*) => ( if true { trace!($($arg)*); } ) }
 
 autoerr::create_error_v1!(
     name(Error, "TimeBinnedFromLayers"),
@@ -61,11 +61,12 @@ impl TimeBinnedFromLayers {
         events_read_provider: Arc<dyn EventsReadProvider>,
     ) -> Result<Self, Error> {
         trace_init!(
-            "{}::new  {:?}  {:?}  {:?}",
+            "{}::new  {:?}  {:?}  {:?}  {:?}",
             Self::type_name(),
             ch_conf.series(),
             range,
-            bin_len_layers
+            bin_len_layers,
+            binning_opts
         );
         let bin_len = DtMs::from_ms_u64(range.bin_len.ms());
         if bin_len_layers.contains(&bin_len) {
@@ -123,26 +124,37 @@ impl TimeBinnedFromLayers {
                     Ok(ret)
                 }
                 None => {
-                    trace_init!("{}::new  next finer from events", Self::type_name());
-                    let series_range = SeriesRange::TimeRange(range.to_nano_range());
-                    let one_before_range = true;
-                    let select = EventsSubQuerySelect::new(
-                        ch_conf.clone(),
-                        series_range,
-                        one_before_range,
-                        transform_query.clone(),
-                    );
-                    let evq = EventsSubQuery::from_parts(
-                        select,
-                        sub.clone(),
-                        ctx.reqid().into(),
-                        log_level.clone(),
-                    );
-                    let inp =
-                        BinnedFromEvents::new(range, evq, do_time_weight, events_read_provider)?;
-                    let ret = Self { inp: Box::pin(inp) };
-                    trace_init!("{}::new  setup from events", Self::type_name());
-                    Ok(ret)
+                    if binning_opts.allow_from_events() {
+                        trace_init!("{}::new  next finer from events", Self::type_name());
+                        let series_range = SeriesRange::TimeRange(range.to_nano_range());
+                        let one_before_range = true;
+                        let select = EventsSubQuerySelect::new(
+                            ch_conf.clone(),
+                            series_range,
+                            one_before_range,
+                            transform_query.clone(),
+                        );
+                        let evq = EventsSubQuery::from_parts(
+                            select,
+                            sub.clone(),
+                            ctx.reqid().into(),
+                            log_level.clone(),
+                        );
+                        let inp = BinnedFromEvents::new(
+                            range,
+                            evq,
+                            do_time_weight,
+                            events_read_provider,
+                        )?;
+                        let ret = Self { inp: Box::pin(inp) };
+                        trace_init!("{}::new  setup from events", Self::type_name());
+                        Ok(ret)
+                    } else {
+                        let inp = futures_util::stream::iter([]);
+                        let ret = Self { inp: Box::pin(inp) };
+                        trace_init!("{}::new  setup nothing", Self::type_name());
+                        Ok(ret)
+                    }
                 }
             }
         }

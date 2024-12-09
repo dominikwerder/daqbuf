@@ -285,7 +285,7 @@ impl GapFill {
                 panic!("TODO unweighted")
             };
             self.inp_finer = Some(Box::pin(stream));
-        } else {
+        } else if self.binning_opts.allow_from_events() {
             debug_setup!(
                 "{}  setup_inp_finer  next finer from events  {}",
                 self.dbgname,
@@ -313,6 +313,9 @@ impl GapFill {
                 self.events_read_provider.clone(),
             )?;
             self.inp_finer = Some(Box::pin(inp));
+        } else {
+            let stream = futures_util::stream::iter([]);
+            self.inp_finer = Some(Box::pin(stream));
         }
         Ok(())
     }
