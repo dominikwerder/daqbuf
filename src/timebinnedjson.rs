@@ -264,7 +264,6 @@ async fn timebinned_stream(
     cache_read_provider: Arc<dyn CacheReadProvider>,
     events_read_provider: Arc<dyn EventsReadProvider>,
 ) -> Result<Pin<Box<dyn Stream<Item = Sitemty<Box<dyn CollectableDyn>>> + Send>>, Error> {
-    use netpod::query::CacheUsage;
     let do_time_weight = true;
     let bin_len_layers = if let Some(subgrids) = query.subgrids() {
         subgrids
