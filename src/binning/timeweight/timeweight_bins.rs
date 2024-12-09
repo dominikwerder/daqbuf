@@ -13,7 +13,7 @@ use std::any;
 
 macro_rules! trace_init { ($($arg:tt)*) => ( if true { trace!($($arg)*); }) }
 
-macro_rules! trace_ingest_bin { ($($arg:tt)*) => ( if true { trace!($($arg)*); }) }
+macro_rules! trace_ingest_bin { ($($arg:tt)*) => ( if false { trace!($($arg)*); }) }
 
 #[derive(Debug, thiserror::Error)]
 #[cstm(name = "BinBinsTimeweight")]
@@ -103,7 +103,7 @@ where
     fn ingest_bins(&mut self, bins: &ContainerBins<EVT, BVT>) -> Result<(), BinningggError> {
         for (((((((&ts1, &ts2), &cnt), min), max), agg), lst), &fnl) in bins.zip_iter() {
             let grid = self.range.bin_len_dt_ns();
-            trace_ingest_bin!("grid {:?}  ts1 {:?}  agg {:?}", grid, ts1, agg);
+            trace_ingest_bin!("ingest_bins  grid {:?}  ts1 {:?}  agg {:?}", grid, ts1, agg);
             if ts1 < self.active_beg {
                 self.lst = Some(lst.into());
             } else {
