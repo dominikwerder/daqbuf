@@ -237,6 +237,7 @@ mod serde_channel_events {
     use serde::Deserializer;
     use serde::Serialize;
     use serde::Serializer;
+    use std::cell::RefCell;
     use std::fmt;
 
     macro_rules! trace_serde { ($($arg:tt)*) => ( if false { trace!($($arg)*); }) }
@@ -267,7 +268,7 @@ mod serde_channel_events {
         ($ser:expr, $cont1:ident, $nty:expr, $val:expr) => {{
             let ser = $ser;
             let nty_id = subfr_scalar_type($nty);
-            let v = $val;
+            let v = $val.0;
             type C<T> = $cont1<T>;
             match nty_id {
                 u8::SUB => try_serialize::<S, C<u8>>(v, ser),
@@ -284,15 +285,16 @@ mod serde_channel_events {
                 String::SUB => try_serialize::<S, C<String>>(v, ser),
                 EnumVariant::SUB => try_serialize::<S, C<EnumVariant>>(v, ser),
                 _ => {
+                    *$val.1.borrow_mut() = 1;
                     let msg = format!("serde  ser  not supported evt id 0x{:x}", nty_id);
-                    error!("{}", msg);
+                    // error!("{}", msg);
                     Err(serde::ser::Error::custom(msg))
                 }
             }
         }};
     }
 
-    struct EvRef<'a>(&'a dyn BinningggContainerEventsDyn);
+    struct EvRef<'a>(&'a dyn BinningggContainerEventsDyn, RefCell<u8>);
 
     struct EvBox(Box<dyn BinningggContainerEventsDyn>);
 
@@ -305,27 +307,24 @@ mod serde_channel_events {
             ser.serialize_element(&self.0.serde_id())?;
             ser.serialize_element(&self.0.nty_id())?;
             let nty_id = self.0.nty_id() as u16;
-            let x = if is_container_events(self.0.serde_id()) {
+            if is_container_events(self.0.serde_id()) {
                 if is_pulsed_subfr(nty_id) {
                     if is_vec_subfr(nty_id) {
-                        ser_inner_nty!(&mut ser, C04, nty_id, self.0)
+                        ser_inner_nty!(&mut ser, C04, nty_id, self)
                     } else {
-                        ser_inner_nty!(&mut ser, C03, nty_id, self.0)
+                        ser_inner_nty!(&mut ser, C03, nty_id, self)
                     }
                 } else {
                     if is_vec_subfr(nty_id) {
-                        ser_inner_nty!(&mut ser, C02, nty_id, self.0)
+                        ser_inner_nty!(&mut ser, C02, nty_id, self)
                     } else {
-                        ser_inner_nty!(&mut ser, C01, nty_id, self.0)
+                        ser_inner_nty!(&mut ser, C01, nty_id, self)
                     }
                 }
             } else {
                 let msg = format!("not supported obj id {}", self.0.serde_id());
                 Err(serde::ser::Error::custom(msg))
-            };
-            // warn!("Serialize for EvRef  is_ok {}", x.is_ok());
-            let _: () = x?;
-            // warn!("Serialize for EvRef  ending");
+            }?;
             ser.end()
         }
     }
@@ -376,13 +375,7 @@ mod serde_channel_events {
                 String::SUB => get_2nd_or_err::<$cont1<String>, _>(seq),
                 EnumVariant::SUB => get_2nd_or_err::<$cont1<EnumVariant>, _>(seq),
                 netpod::UnsupEvt::SUB => get_2nd_or_err::<$cont1<netpod::UnsupEvt>, _>(seq),
-                _ => {
-                    error!("TODO serde::de  nty 0x{:x}", nty);
-                    if true {
-                        panic!("TODO serde::de  nty 0x{:x}", nty);
-                    }
-                    Err(de::Error::custom(&format!("unknown nty 0x{:x}", nty)))
-                }
+                _ => Err(de::Error::custom(&format!("unknown nty 0x{:x}", nty))),
             }
         }};
     }
@@ -438,7 +431,7 @@ mod serde_channel_events {
     }
 
     impl Serialize for ChannelEvents {
-        fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        fn serialize<S>(&self, ser: S) -> Result<S::Ok, S::Error>
         where
             S: Serializer,
         {
@@ -446,18 +439,17 @@ mod serde_channel_events {
             let vars = ChannelEventsVis::allowed_variants();
             match self {
                 ChannelEvents::Events(obj) => {
-                    let x = serializer.serialize_newtype_variant(
-                        name,
-                        0,
-                        vars[0],
-                        &EvRef(obj.as_ref()),
-                    );
-                    // warn!("Serialize for ChannelEvents  is_ok {}", x.is_ok());
-                    x
+                    let evref = EvRef(obj.as_ref(), RefCell::new(0));
+                    let x = ser.serialize_newtype_variant(name, 0, vars[0], &evref);
+                    let j = *evref.1.borrow();
+                    if j != 0 {
+                        let msg = format!("serialization failed");
+                        Err(serde::ser::Error::custom(msg))
+                    } else {
+                        x
+                    }
                 }
-                ChannelEvents::Status(val) => {
-                    serializer.serialize_newtype_variant(name, 1, vars[1], val)
-                }
+                ChannelEvents::Status(val) => ser.serialize_newtype_variant(name, 1, vars[1], val),
             }
         }
     }
@@ -600,22 +592,17 @@ mod test_channel_events_serde {
         let mut evs = ContainerEvents::new();
         evs.push_back(TsNano::from_ns(8), UnsupEvt(4));
         let item = ChannelEvents::from(evs);
-        // let item: Box<dyn BinningggContainerEventsDyn> = Box::new(evs);
-        let item = sitem_data(item);
-        match item.make_frame_dyn() {
-            Ok(frame) => {
-                panic!("this should have failed");
-                let imfr = if let Ok(crate::inmem::ParseResult::Parsed(_, x)) =
-                    InMemoryFrame::parse(&frame)
-                {
-                    x
-                } else {
-                    panic!();
-                };
-                crate::frame::decode_frame::<Sitemty<ChannelEvents>>(&imfr).unwrap();
-            }
-            Err(_) => (),
+        type _A<T> = items_0::streamitem::StreamItem<T>;
+        type _B<T> = items_0::streamitem::RangeCompletableItem<T>;
+        {
+            let item = item.clone();
+            let item = items_0::streamitem::RangeCompletableItem::Data(item);
+            let x = crate::frame::encode_to_vec(item);
+            assert_eq!(x.is_ok(), false);
         }
+        let item = sitem_data(item);
+        assert_eq!(crate::frame::make_frame_2(&item, 0xcafe).is_ok(), false);
+        assert_eq!(item.make_frame_dyn().is_ok(), false);
     }
 
     #[test]

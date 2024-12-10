@@ -6,7 +6,6 @@ use crate::frame::make_stats_frame;
 use bytes::BytesMut;
 use core::fmt;
 use daqbuf_err as err;
-use items_0::framable::FrameTypeInnerDyn;
 use items_0::framable::FrameTypeInnerStatic;
 use items_0::streamitem::LogItem;
 use items_0::streamitem::RangeCompletableItem;
@@ -75,14 +74,6 @@ where
 
 pub trait Framable {
     fn make_frame_dyn(&self) -> Result<BytesMut, Error>;
-}
-
-pub trait FramableInner: erased_serde::Serialize + FrameTypeInnerDyn + Send {
-    fn _dummy(&self);
-}
-
-impl<T: erased_serde::Serialize + FrameTypeInnerDyn + Send> FramableInner for T {
-    fn _dummy(&self) {}
 }
 
 impl<T> Framable for Sitemty<T>

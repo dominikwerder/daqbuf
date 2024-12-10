@@ -29,6 +29,7 @@ use std::any;
 use std::io;
 
 const USE_JSON: bool = false;
+const USE_MSGPACK: bool = false;
 const EMIT_JSON_DEBUG: bool = false;
 const EMIT_POSTCARD_DEBUG: bool = false;
 
@@ -250,7 +251,7 @@ where
 {
     if USE_JSON {
         json_to_vec(item)
-    } else if false {
+    } else if USE_MSGPACK {
         msgpack_to_vec(item)
     } else if false {
         bincode_to_vec(item)
@@ -265,13 +266,10 @@ where
 {
     if USE_JSON {
         json_erased_to_vec(item)
-    } else if false {
+    } else if USE_MSGPACK {
         msgpack_erased_to_vec(item)
     } else {
-        let x = postcard_erased_to_vec(item);
-        // let s = std::any::type_name::<T>();
-        // warn!("encode_erased_to_vec  is_ok {}  T {}", x.is_ok(), s);
-        x
+        postcard_erased_to_vec(item)
     }
 }
 
@@ -281,7 +279,7 @@ where
 {
     if USE_JSON {
         json_from_slice(buf)
-    } else if false {
+    } else if USE_MSGPACK {
         msgpack_from_slice(buf)
     } else if false {
         bincode_from_slice(buf)
@@ -292,9 +290,9 @@ where
 
 pub fn make_frame_2<T>(item: T, fty: u32) -> Result<BytesMut, Error>
 where
-    T: erased_serde::Serialize + fmt::Debug,
+    T: serde::Serialize + fmt::Debug,
 {
-    let enc = encode_erased_to_vec(item)?;
+    let enc = encode_to_vec(item)?;
     if enc.len() > u32::MAX as usize {
         return Err(Error::TooLongPayload(enc.len()));
     }
