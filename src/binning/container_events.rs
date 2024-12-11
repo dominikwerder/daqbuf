@@ -67,15 +67,14 @@ pub trait PartialOrdEvtA<EVT> {
     fn cmp_a(&self, other: &EVT) -> Option<std::cmp::Ordering>;
 }
 
-pub trait EventValueType:
-    fmt::Debug + Clone + PartialOrd + Send + Unpin + 'static + Serialize + for<'a> Deserialize<'a>
-{
+pub trait EventValueType: fmt::Debug + Clone + PartialOrd + Send + Unpin + 'static {
     type Container: Container<Self>;
     type AggregatorTimeWeight: AggregatorTimeWeight<Self>;
     type AggTimeWeightOutputAvg: AggTimeWeightOutputAvg;
     type IterTy1<'a>: fmt::Debug + Clone + PartialOrdEvtA<Self> + Into<Self>;
     const SERDE_ID: u32;
     const BYTE_ESTIMATE_V00: u32;
+    fn to_f32_for_binning_v01(&self) -> f32;
 }
 
 impl<EVT> Container<EVT> for VecDeque<EVT>
@@ -159,6 +158,9 @@ macro_rules! impl_event_value_type {
             type IterTy1<'a> = $evt;
             const SERDE_ID: u32 = <$evt as SubFrId>::SUB as _;
             const BYTE_ESTIMATE_V00: u32 = core::mem::size_of::<$evt>() as u32;
+            fn to_f32_for_binning_v01(&self) -> f32 {
+                *self as _
+            }
         }
 
         impl PartialOrdEvtA<$evt> for $evt {
@@ -211,6 +213,9 @@ impl EventValueType for f32 {
     type IterTy1<'a> = f32;
     const SERDE_ID: u32 = <f32 as SubFrId>::SUB as _;
     const BYTE_ESTIMATE_V00: u32 = core::mem::size_of::<Self>() as u32;
+    fn to_f32_for_binning_v01(&self) -> f32 {
+        *self as _
+    }
 }
 
 impl EventValueType for f64 {
@@ -220,6 +225,9 @@ impl EventValueType for f64 {
     type IterTy1<'a> = f64;
     const SERDE_ID: u32 = <f64 as SubFrId>::SUB as _;
     const BYTE_ESTIMATE_V00: u32 = core::mem::size_of::<Self>() as u32;
+    fn to_f32_for_binning_v01(&self) -> f32 {
+        *self as _
+    }
 }
 
 impl EventValueType for bool {
@@ -229,6 +237,9 @@ impl EventValueType for bool {
     type IterTy1<'a> = bool;
     const SERDE_ID: u32 = <bool as SubFrId>::SUB as _;
     const BYTE_ESTIMATE_V00: u32 = core::mem::size_of::<Self>() as u32;
+    fn to_f32_for_binning_v01(&self) -> f32 {
+        f32::from(*self)
+    }
 }
 
 impl EventValueType for String {
@@ -238,6 +249,9 @@ impl EventValueType for String {
     type IterTy1<'a> = &'a str;
     const SERDE_ID: u32 = <String as SubFrId>::SUB as _;
     const BYTE_ESTIMATE_V00: u32 = 400;
+    fn to_f32_for_binning_v01(&self) -> f32 {
+        self.len() as _
+    }
 }
 
 macro_rules! impl_event_value_type_vec {
@@ -250,6 +264,9 @@ macro_rules! impl_event_value_type_vec {
             const SERDE_ID: u32 = <Vec<$evt> as SubFrId>::SUB as _;
             // TODO must use a more precise number dependent on actual elements
             const BYTE_ESTIMATE_V00: u32 = 1200 * core::mem::size_of::<Self>() as u32;
+            fn to_f32_for_binning_v01(&self) -> f32 {
+                self.iter().fold(0., |a, x| a + *x as f32)
+            }
         }
 
         impl PartialOrdEvtA<Vec<$evt>> for Vec<$evt> {
@@ -270,9 +287,65 @@ impl_event_value_type_vec!(i32);
 impl_event_value_type_vec!(i64);
 impl_event_value_type_vec!(f32);
 impl_event_value_type_vec!(f64);
-impl_event_value_type_vec!(bool);
-impl_event_value_type_vec!(String);
-impl_event_value_type_vec!(EnumVariant);
+// impl_event_value_type_vec!(String);
+// impl_event_value_type_vec!(EnumVariant);
+
+impl EventValueType for Vec<bool> {
+    type Container = VecDeque<Self>;
+    type AggregatorTimeWeight = AggregatorVecNumeric;
+    type AggTimeWeightOutputAvg = f32;
+    type IterTy1<'a> = Vec<bool>;
+    const SERDE_ID: u32 = <Vec<bool> as SubFrId>::SUB as _;
+    // TODO must use a more precise number dependent on actual elements
+    const BYTE_ESTIMATE_V00: u32 = 1200 * core::mem::size_of::<Self>() as u32;
+    fn to_f32_for_binning_v01(&self) -> f32 {
+        self.iter().fold(0., |a, x| a + f32::from(*x))
+    }
+}
+
+impl PartialOrdEvtA<Vec<bool>> for Vec<bool> {
+    fn cmp_a(&self, other: &Vec<bool>) -> Option<core::cmp::Ordering> {
+        self.partial_cmp(other)
+    }
+}
+
+impl EventValueType for Vec<String> {
+    type Container = VecDeque<Self>;
+    type AggregatorTimeWeight = AggregatorVecNumeric;
+    type AggTimeWeightOutputAvg = f32;
+    type IterTy1<'a> = Vec<String>;
+    const SERDE_ID: u32 = <Vec<String> as SubFrId>::SUB as _;
+    // TODO must use a more precise number dependent on actual elements
+    const BYTE_ESTIMATE_V00: u32 = 1200 * core::mem::size_of::<Self>() as u32;
+    fn to_f32_for_binning_v01(&self) -> f32 {
+        self.iter().fold(0., |a, x| a + x.len() as f32)
+    }
+}
+
+impl PartialOrdEvtA<Vec<String>> for Vec<String> {
+    fn cmp_a(&self, other: &Vec<String>) -> Option<core::cmp::Ordering> {
+        self.partial_cmp(other)
+    }
+}
+
+impl EventValueType for Vec<EnumVariant> {
+    type Container = VecDeque<Self>;
+    type AggregatorTimeWeight = AggregatorVecNumeric;
+    type AggTimeWeightOutputAvg = f32;
+    type IterTy1<'a> = Vec<EnumVariant>;
+    const SERDE_ID: u32 = <Vec<EnumVariant> as SubFrId>::SUB as _;
+    // TODO must use a more precise number dependent on actual elements
+    const BYTE_ESTIMATE_V00: u32 = 1200 * core::mem::size_of::<Self>() as u32;
+    fn to_f32_for_binning_v01(&self) -> f32 {
+        self.iter().fold(0., |a, x| a + x.ix() as f32)
+    }
+}
+
+impl PartialOrdEvtA<Vec<EnumVariant>> for Vec<EnumVariant> {
+    fn cmp_a(&self, other: &Vec<EnumVariant>) -> Option<core::cmp::Ordering> {
+        self.partial_cmp(other)
+    }
+}
 
 #[derive(Debug)]
 pub struct PulsedValIterTy<'a, EVT>
@@ -462,6 +535,9 @@ where
     type IterTy1<'a> = PulsedValIterTy<'a, EVT>;
     const SERDE_ID: u32 = items_0::subfr::pulsed_subfr(<EVT as SubFrId>::SUB) as _;
     const BYTE_ESTIMATE_V00: u32 = core::mem::size_of::<EVT>() as u32;
+    fn to_f32_for_binning_v01(&self) -> f32 {
+        self.1.to_f32_for_binning_v01()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1149,6 +1225,16 @@ where
 
     fn as_collectable_dyn_mut(&mut self) -> &mut dyn CollectableDyn {
         self
+    }
+
+    fn to_f32_for_binning_v01(&self) -> Box<dyn BinningggContainerEventsDyn> {
+        let mut ret = ContainerEvents::new();
+        for r in self.iter_zip() {
+            // TODO can be expensive
+            let v: EVT = r.1.into();
+            ret.push_back(r.0, v.to_f32_for_binning_v01());
+        }
+        Box::new(ret)
     }
 }
 

@@ -3,8 +3,6 @@ use super::container_events::Container;
 use super::container_events::EventValueType;
 use crate::apitypes::ContainerBinsApi;
 use crate::binning::container::bins::BinAggedContainer;
-use crate::offsets::ts_offs_from_abs;
-use crate::offsets::ts_offs_from_abs_with_anchor;
 use core::fmt;
 use daqbuf_err as err;
 use err::thiserror;
@@ -12,7 +10,6 @@ use err::ThisError;
 use items_0::apitypes::ToUserFacingApiType;
 use items_0::collect_s::CollectableDyn;
 use items_0::collect_s::CollectedDyn;
-use items_0::collect_s::ToJsonValue;
 use items_0::container::ByteEstimate;
 use items_0::merge::DrainIntoDstResult;
 use items_0::merge::DrainIntoNewResult;
@@ -25,7 +22,6 @@ use items_0::AsAnyRef;
 use items_0::TypeName;
 use items_0::WithLen;
 use netpod::TsNano;
-use serde::Serialize;
 use std::any;
 use std::collections::VecDeque;
 use std::mem;
@@ -447,42 +443,6 @@ where
     }
 }
 
-#[derive(Debug, Serialize)]
-struct ContainerBinsCollectorOutputUser<EVT, BVT>
-where
-    EVT: EventValueType,
-    BVT: BinAggedType,
-{
-    #[serde(rename = "tsAnchor")]
-    ts_anchor_sec: u64,
-    #[serde(rename = "ts1Ms")]
-    ts1_off_ms: VecDeque<u64>,
-    #[serde(rename = "ts2Ms")]
-    ts2_off_ms: VecDeque<u64>,
-    #[serde(rename = "ts1Ns")]
-    ts1_off_ns: VecDeque<u64>,
-    #[serde(rename = "ts2Ns")]
-    ts2_off_ns: VecDeque<u64>,
-    #[serde(rename = "counts")]
-    counts: VecDeque<u64>,
-    #[serde(rename = "mins")]
-    mins: VecDeque<EVT>,
-    #[serde(rename = "maxs")]
-    maxs: VecDeque<EVT>,
-    #[serde(rename = "avgs")]
-    aggs: VecDeque<BVT>,
-    // #[serde(rename = "rangeFinal", default, skip_serializing_if = "is_false")]
-    // range_final: bool,
-    // #[serde(rename = "timedOut", default, skip_serializing_if = "is_false")]
-    // timed_out: bool,
-    // #[serde(rename = "missingBins", default, skip_serializing_if = "CmpZero::is_zero")]
-    // missing_bins: u32,
-    // #[serde(rename = "continueAt", default, skip_serializing_if = "Option::is_none")]
-    // continue_at: Option<IsoDateTime>,
-    // #[serde(rename = "finishedAt", default, skip_serializing_if = "Option::is_none")]
-    // finished_at: Option<IsoDateTime>,
-}
-
 impl<EVT, BVT> ToUserFacingApiType for ContainerBinsCollectorOutput<EVT, BVT>
 where
     EVT: EventValueType,
@@ -560,10 +520,11 @@ where
     fn ingest(&mut self, src: &mut dyn CollectableDyn) {
         if let Some(src) = src.as_any_mut().downcast_mut::<ContainerBins<EVT, BVT>>() {
             MergeableTy::drain_into(src, &mut self.bins, 0..src.len());
-            // src.drain_into(&mut self.bins, 0..src.len());
         } else {
-            let srcn = src.type_name();
-            panic!("wrong src type {srcn}");
+            // TODO let trait return Result to avoid potential panic
+            let src_name = src.type_name();
+            let self_name = any::type_name::<Self>();
+            panic!("wrong src type  self_name {self_name}  src_name {src_name}");
         }
     }
 
@@ -654,6 +615,19 @@ where
 
     fn boxed_into_collectable_box(self: Box<Self>) -> Box<dyn CollectableDyn> {
         Box::new(*self)
+    }
+
+    fn fix_numerics(&mut self) {
+        if let Some(bins) = self.as_any_mut().downcast_mut::<ContainerBins<f32, f32>>() {
+            for ((min, max), agg) in bins
+                .mins
+                .iter_mut()
+                .zip(bins.maxs.iter_mut())
+                .zip(bins.aggs.iter_mut())
+            {
+                *agg = agg.min(*max).max(*min)
+            }
+        }
     }
 }
 

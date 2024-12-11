@@ -15,9 +15,12 @@ macro_rules! trace_init { ($($arg:tt)*) => ( if true { trace!($($arg)*); }) }
 
 macro_rules! trace_ingest_bin { ($($arg:tt)*) => ( if false { trace!($($arg)*); }) }
 
-#[derive(Debug, thiserror::Error)]
-#[cstm(name = "BinBinsTimeweight")]
-pub enum Error {}
+autoerr::create_error_v1!(
+    name(Error, "BinBinsTimeweight"),
+    enum variants {
+        Logic,
+    },
+);
 
 #[derive(Debug)]
 pub struct BinnedBinsTimeweight<EVT, BVT>

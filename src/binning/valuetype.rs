@@ -142,6 +142,9 @@ impl EventValueType for EnumVariant {
     type IterTy1<'a> = EnumVariantRef<'a>;
     const SERDE_ID: u32 = <Self as SubFrId>::SUB as u32;
     const BYTE_ESTIMATE_V00: u32 = 40;
+    fn to_f32_for_binning_v01(&self) -> f32 {
+        self.ix() as _
+    }
 }
 
 impl PartialOrdEvtA<netpod::UnsupEvt> for netpod::UnsupEvt {
@@ -208,6 +211,9 @@ impl EventValueType for netpod::UnsupEvt {
     type IterTy1<'a> = netpod::UnsupEvt;
     const SERDE_ID: u32 = <Self as SubFrId>::SUB as u32;
     const BYTE_ESTIMATE_V00: u32 = 4;
+    fn to_f32_for_binning_v01(&self) -> f32 {
+        todo!()
+    }
 }
 
 impl EventValueType for Vec<netpod::UnsupEvt> {
@@ -217,4 +223,7 @@ impl EventValueType for Vec<netpod::UnsupEvt> {
     type IterTy1<'a> = Vec<netpod::UnsupEvt>;
     const SERDE_ID: u32 = <Self as SubFrId>::SUB as u32;
     const BYTE_ESTIMATE_V00: u32 = 4;
+    fn to_f32_for_binning_v01(&self) -> f32 {
+        todo!()
+    }
 }
