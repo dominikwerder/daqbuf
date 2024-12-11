@@ -121,6 +121,8 @@ pub struct BinnedQuery {
     allow_from_prebinned: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     allow_rebin: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    datahub_bin_as_waveform: Option<bool>,
 }
 
 impl BinnedQuery {
@@ -144,6 +146,7 @@ impl BinnedQuery {
             allow_from_events: None,
             allow_from_prebinned: None,
             allow_rebin: None,
+            datahub_bin_as_waveform: None,
         }
     }
 
@@ -259,6 +262,10 @@ impl BinnedQuery {
         self.allow_rebin.clone()
     }
 
+    pub fn datahub_bin_as_waveform(&self) -> Option<bool> {
+        self.datahub_bin_as_waveform.clone()
+    }
+
     pub fn covering_range(&self) -> Result<BinnedRangeEnum, Error> {
         match &self.range {
             SeriesRange::TimeRange(range) => match self.bin_width {
@@ -355,6 +362,9 @@ impl FromUrl for BinnedQuery {
             allow_rebin: pairs
                 .get("allow_rebin")
                 .and_then(|x| x.parse::<bool>().ok()),
+            datahub_bin_as_waveform: pairs
+                .get("private_datahub_bin_as_waveform")
+                .and_then(|x| x.parse::<bool>().ok()),
         };
         debug!("BinnedQuery::from_url  {:?}", ret);
         Ok(ret)
@@ -434,6 +444,9 @@ impl AppendToUrl for BinnedQuery {
         }
         if let Some(x) = self.allow_rebin.as_ref() {
             g.append_pair("allow_rebin", &x.to_string());
+        }
+        if let Some(x) = self.datahub_bin_as_waveform.as_ref() {
+            g.append_pair("private_datahub_bin_as_waveform", &x.to_string());
         }
     }
 }
