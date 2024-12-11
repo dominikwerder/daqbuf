@@ -16,12 +16,13 @@ use std::task::Poll;
 
 macro_rules! trace_emit { ($($arg:tt)*) => ( if false { trace!($($arg)*); } ) }
 
-#[derive(Debug, thiserror::Error)]
-#[cstm(name = "ReadingBinnedFromEvents")]
-pub enum Error {
-    ExpectTimerange,
-    ExpectTimeweighted,
-}
+autoerr::create_error_v1!(
+    name(Error, "ReadingBinnedFromEvents"),
+    enum variants {
+        ExpectTimerange,
+        ExpectTimeweighted,
+    },
+);
 
 pub struct BinnedFromEvents {
     stream: Pin<Box<dyn Stream<Item = Sitemty<BinsBoxed>> + Send>>,
@@ -38,7 +39,7 @@ impl BinnedFromEvents {
             return Err(Error::ExpectTimerange);
         }
         let stream = read_provider.read(evq);
-        let stream = ConvertForBinning::new(Box::pin(stream));
+        let stream = ConvertForBinning::new(stream);
         let stream = if do_time_weight {
             let stream = Box::pin(stream);
             BinnedEventsTimeweightStream::new(range, stream)

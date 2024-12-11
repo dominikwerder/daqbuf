@@ -46,7 +46,10 @@ async fn timebin_from_layers_inner() -> Result<(), Error> {
         end: 1000 * 1000 * 1000 * 2,
     };
     let cache_read_provider = Arc::new(DummyCacheReadProvider::new());
-    let events_read_provider = Arc::new(TestEventsReader::new(nano_range.clone()));
+    let events_read_provider = Arc::new(TestEventsReader::new(
+        nano_range.clone(),
+        items_2::testgen::events_gen::new_events_gen_dim1_f32_v00,
+    ));
     // let one_before_range = true;
     // let series_range = SeriesRange::TimeRange(nano_range.clone());
     // let select = EventsSubQuerySelect::new(
@@ -109,7 +112,10 @@ async fn timebin_from_layers_1layer_inner() -> Result<(), Error> {
         end: 1000 * 1000 * 1000 * 2,
     };
     let cache_read_provider = Arc::new(DummyCacheReadProvider::new());
-    let events_read_provider = Arc::new(TestEventsReader::new(nano_range.clone()));
+    let events_read_provider = Arc::new(TestEventsReader::new(
+        nano_range.clone(),
+        items_2::testgen::events_gen::new_events_gen_dim1_f32_v00,
+    ));
     // let one_before_range = true;
     // let series_range = SeriesRange::TimeRange(nano_range.clone());
     // let select = EventsSubQuerySelect::new(

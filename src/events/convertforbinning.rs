@@ -1,5 +1,6 @@
 use futures_util::Stream;
 use futures_util::StreamExt;
+use items_0::streamitem::sitem_data;
 use items_0::streamitem::RangeCompletableItem::*;
 use items_0::streamitem::Sitemty;
 use items_0::streamitem::StreamItem::*;
@@ -10,17 +11,20 @@ use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
 
-pub struct ConvertForBinning {
-    inp: Pin<Box<dyn Stream<Item = Sitemty<ChannelEvents>> + Send>>,
+pub struct ConvertForBinning<INP> {
+    inp: INP,
 }
 
-impl ConvertForBinning {
-    pub fn new(inp: Pin<Box<dyn Stream<Item = Sitemty<ChannelEvents>> + Send>>) -> Self {
+impl<INP> ConvertForBinning<INP> {
+    pub fn new(inp: INP) -> Self {
         Self { inp }
     }
 }
 
-impl Stream for ConvertForBinning {
+impl<INP> Stream for ConvertForBinning<INP>
+where
+    INP: Stream<Item = Sitemty<ChannelEvents>> + Unpin,
+{
     type Item = Sitemty<ChannelEvents>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
@@ -29,38 +33,44 @@ impl Stream for ConvertForBinning {
             Ready(Some(item)) => match &item {
                 Ok(DataItem(Data(cevs))) => match cevs {
                     ChannelEvents::Events(evs) => {
-                        if let Some(evs) = evs
-                            .as_any_ref()
-                            .downcast_ref::<ContainerEvents<EnumVariant>>()
-                        {
-                            let mut dst = ContainerEvents::new();
-                            for (ts, val) in evs.iter_zip() {
-                                dst.push_back(ts, val.ix);
-                            }
-                            let item = Ok(DataItem(Data(ChannelEvents::Events(Box::new(dst)))));
-                            Ready(Some(item))
-                        } else if let Some(evs) =
-                            evs.as_any_ref().downcast_ref::<ContainerEvents<bool>>()
-                        {
-                            let mut dst = ContainerEvents::new();
-                            for (ts, val) in evs.iter_zip() {
-                                dst.push_back(ts, val as u8);
-                            }
-                            let item = Ok(DataItem(Data(ChannelEvents::Events(Box::new(dst)))));
-                            Ready(Some(item))
-                        } else if let Some(evs) =
-                            evs.as_any_ref().downcast_ref::<ContainerEvents<String>>()
-                        {
-                            let mut dst = ContainerEvents::new();
-                            for (ts, _) in evs.iter_zip() {
-                                dst.push_back(ts, 1);
-                            }
-                            let item = Ok(DataItem(Data(ChannelEvents::Events(Box::new(dst)))));
-                            Ready(Some(item))
-                        } else {
-                            Ready(Some(item))
-                        }
+                        let evs = evs.to_f32_for_binning_v01();
+                        let item = ChannelEvents::Events(evs);
+                        let item = sitem_data(item);
+                        Ready(Some(item))
                     }
+                    // ChannelEvents::Events(evs) => {
+                    //     if let Some(evs) = evs
+                    //         .as_any_ref()
+                    //         .downcast_ref::<ContainerEvents<EnumVariant>>()
+                    //     {
+                    //         let mut dst = ContainerEvents::new();
+                    //         for (ts, val) in evs.iter_zip() {
+                    //             dst.push_back(ts, val.ix);
+                    //         }
+                    //         let item = Ok(DataItem(Data(ChannelEvents::Events(Box::new(dst)))));
+                    //         Ready(Some(item))
+                    //     } else if let Some(evs) =
+                    //         evs.as_any_ref().downcast_ref::<ContainerEvents<bool>>()
+                    //     {
+                    //         let mut dst = ContainerEvents::new();
+                    //         for (ts, val) in evs.iter_zip() {
+                    //             dst.push_back(ts, val as u8);
+                    //         }
+                    //         let item = Ok(DataItem(Data(ChannelEvents::Events(Box::new(dst)))));
+                    //         Ready(Some(item))
+                    //     } else if let Some(evs) =
+                    //         evs.as_any_ref().downcast_ref::<ContainerEvents<String>>()
+                    //     {
+                    //         let mut dst = ContainerEvents::new();
+                    //         for (ts, _) in evs.iter_zip() {
+                    //             dst.push_back(ts, 1);
+                    //         }
+                    //         let item = Ok(DataItem(Data(ChannelEvents::Events(Box::new(dst)))));
+                    //         Ready(Some(item))
+                    //     } else {
+                    //         Ready(Some(item))
+                    //     }
+                    // }
                     ChannelEvents::Status(_) => Ready(Some(item)),
                 },
                 _ => Ready(Some(item)),

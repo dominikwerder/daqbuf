@@ -9,11 +9,12 @@ use netpod::ChannelTypeConfigGen;
 use netpod::ReqCtx;
 use query::api4::events::PlainEventsQuery;
 
-#[derive(Debug, thiserror::Error)]
-#[cstm(name = "PlainEventsCbor")]
-pub enum Error {
-    Stream(#[from] crate::plaineventsstream::Error),
-}
+autoerr::create_error_v1!(
+    name(Error, "PlainEventsCbor"),
+    enum variants {
+        Stream(#[from] crate::plaineventsstream::Error),
+    },
+);
 
 pub async fn plain_events_cbor_stream(
     evq: &PlainEventsQuery,

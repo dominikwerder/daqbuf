@@ -40,11 +40,8 @@ autoerr::create_error_v1!(
     name(Error, "BinCachedGapFill"),
     enum variants {
         CacheReader(#[from] super::cached::reader::Error),
-        // #[error("GapFromFiner({0}, {1}, {2})")]
         GapFromFiner(TsNano, TsNano, DtMs),
-        // #[error("MissingBegFromFiner({0}, {1}, {2})")]
         MissingBegFromFiner(TsNano, TsNano, DtMs),
-        // #[error("InputBeforeRange({0}, {1})")]
         InputBeforeRange(NanoRange, BinnedRange<TsNano>),
         EventsReader(#[from] super::fromevents::Error),
     },

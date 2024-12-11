@@ -1,3 +1,4 @@
+use crate::cbor_stream::CborStream;
 use crate::collect::Collect;
 use crate::collect::CollectResult;
 use crate::json_stream::JsonStream;
@@ -9,6 +10,7 @@ use crate::tcprawclient::make_sub_query;
 use crate::tcprawclient::OpenBoxedBytesStreamsBox;
 use crate::timebin::cached::reader::CacheReadProvider;
 use crate::timebin::cached::reader::EventsReadProvider;
+use bytes::Bytes;
 use futures_util::future::BoxFuture;
 use futures_util::Stream;
 use futures_util::StreamExt;
@@ -19,6 +21,7 @@ use items_0::streamitem::RangeCompletableItem;
 use items_0::streamitem::Sitemty;
 use items_0::streamitem::StreamItem;
 use items_2::channelevents::ChannelEvents;
+use items_2::jsonbytes::CborBytes;
 use items_2::jsonbytes::JsonBytes;
 use items_2::merger::Merger;
 use netpod::log::*;
@@ -35,16 +38,17 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
 
-#[derive(Debug, thiserror::Error)]
-#[cstm(name = "TimebinnedJson")]
-pub enum Error {
-    Query(#[from] query::api4::binned::Error),
-    FromLayers(#[from] super::timebin::fromlayers::Error),
-    TcpRawClient(#[from] crate::tcprawclient::Error),
-    Collect(#[from] crate::collect::Error),
-    Json(#[from] serde_json::Error),
-    Msg(String),
-}
+autoerr::create_error_v1!(
+    name(Error, "TimebinnedJson"),
+    enum variants {
+        Query(#[from] query::api4::binned::Error),
+        FromLayers(#[from] super::timebin::fromlayers::Error),
+        TcpRawClient(#[from] crate::tcprawclient::Error),
+        Collect(#[from] crate::collect::Error),
+        Json(#[from] serde_json::Error),
+        Msg(String),
+    },
+);
 
 struct ErrMsg<E>(E)
 where
@@ -287,8 +291,10 @@ async fn timebinned_stream(
         events_read_provider,
     )?;
     let stream = stream.map(|item| {
-        use items_0::timebin::BinningggContainerBinsDyn;
-        on_sitemty_data!(item, |x: Box<dyn BinningggContainerBinsDyn>| {
+        // use items_0::timebin::BinningggContainerBinsDyn;
+        use items_0::timebin::BinsBoxed;
+        on_sitemty_data!(item, |mut x: BinsBoxed| {
+            x.fix_numerics();
             let ret = x.boxed_into_collectable_box();
             Ok(StreamItem::DataItem(RangeCompletableItem::Data(ret)))
         })
@@ -346,7 +352,7 @@ pub async fn timebinned_json(
     }
 }
 
-fn take_collector_result(
+fn take_collector_result_json(
     coll: &mut Box<dyn items_0::collect_s::CollectorDyn>,
 ) -> Option<JsonBytes> {
     match coll.result() {
@@ -355,10 +361,45 @@ fn take_collector_result(
             let val = x.into_serializable_json();
             match serde_json::to_string(&val) {
                 Ok(jsval) => Some(JsonBytes::new(jsval)),
-                Err(e) => Some(JsonBytes::new("{\"ERROR\":true}")),
+                Err(e) => {
+                    error!("{}", e);
+                    Some(JsonBytes::new("{\"ERROR\":true}"))
+                }
             }
         }
-        Err(e) => Some(JsonBytes::new("{\"ERROR\":true}")),
+        Err(e) => {
+            error!("{}", e);
+            Some(JsonBytes::new("{\"ERROR\":true}"))
+        }
+    }
+}
+
+fn take_collector_result_cbor(
+    coll: &mut Box<dyn items_0::collect_s::CollectorDyn>,
+) -> Option<CborBytes> {
+    match coll.result() {
+        Ok(collres) => {
+            let x = collres.into_user_facing_api_type_box();
+            let val = x.into_serializable_normal();
+            let mut buf = Vec::with_capacity(64);
+            ciborium::into_writer(&val, &mut buf).expect("cbor serialize");
+            let bytes = Bytes::from(buf);
+            let item = CborBytes::new(bytes);
+            Some(item)
+        }
+        Err(e) => {
+            error!("{}", e);
+            use ciborium::cbor;
+            let val = cbor!({
+                "ERROR" => true,
+            })
+            .unwrap();
+            let mut buf = Vec::with_capacity(64);
+            ciborium::into_writer(&val, &mut buf).expect("cbor serialize");
+            let bytes = Bytes::from(buf);
+            let item = CborBytes::new(bytes);
+            Some(item)
+        }
     }
 }
 
@@ -408,7 +449,7 @@ pub async fn timebinned_json_framed(
                                 coll.ingest(&mut item);
                                 if coll.len() >= 128 || last_emit.elapsed() >= timeout_content_2 {
                                     last_emit = Instant::now();
-                                    take_collector_result(coll).map(|x| Ok(x))
+                                    take_collector_result_json(coll).map(|x| Ok(x))
                                 } else {
                                     // Some(serde_json::Value::String(format!("coll len {}", coll.len())))
                                     None
@@ -432,7 +473,7 @@ pub async fn timebinned_json_framed(
                 None => {
                     if let Some(coll) = coll.as_mut() {
                         last_emit = Instant::now();
-                        take_collector_result(coll).map(|x| Ok(x))
+                        take_collector_result_json(coll).map(|x| Ok(x))
                     } else {
                         // Some(serde_json::Value::String(format!(
                         //     "end of input but no collector to take something from"
@@ -445,7 +486,7 @@ pub async fn timebinned_json_framed(
                 if let Some(coll) = coll.as_mut() {
                     if coll.len() != 0 {
                         last_emit = Instant::now();
-                        take_collector_result(coll).map(|x| Ok(x))
+                        take_collector_result_json(coll).map(|x| Ok(x))
                     } else {
                         // Some(serde_json::Value::String(format!("timeout but nothing to do")))
                         None
@@ -458,13 +499,101 @@ pub async fn timebinned_json_framed(
         }
     });
     let stream = stream.filter_map(|x| futures_util::future::ready(x));
-    // TODO skip the intermediate conversion to js value, go directly to string data
-    // let stream = stream.map(|x| match x {
-    //     Ok(x) => Ok(JsonBytes::new(serde_json::to_string(&x).unwrap())),
-    //     Err(e) => Err(crate::json_stream::Error::from(crate::json_stream::ErrMsg(
-    //         e,
-    //     ))),
-    // });
     let stream = stream.map_err(|e| crate::json_stream::Error::Msg(e.to_string()));
+    Ok(Box::pin(stream))
+}
+
+pub async fn timebinned_cbor_framed(
+    query: BinnedQuery,
+    ch_conf: ChannelTypeConfigGen,
+    ctx: &ReqCtx,
+    cache_read_provider: Arc<dyn CacheReadProvider>,
+    events_read_provider: Arc<dyn EventsReadProvider>,
+    timeout_provider: Box<dyn StreamTimeout2>,
+) -> Result<CborStream, Error> {
+    let binned_range = query.covering_range()?;
+    // TODO derive better values, from query
+    let stream = timebinned_stream(
+        query.clone(),
+        binned_range.clone(),
+        ch_conf,
+        ctx,
+        cache_read_provider,
+        events_read_provider,
+    )
+    .await?;
+    let timeout_content_base = query
+        .timeout_content()
+        .unwrap_or(Duration::from_millis(1000))
+        .min(Duration::from_millis(5000))
+        .max(Duration::from_millis(100));
+    let timeout_content_2 = timeout_content_base * 2 / 3;
+    let mut coll = None;
+    let mut last_emit = Instant::now();
+    let stream = stream
+        .map(|x| Some(x))
+        .chain(futures_util::stream::iter([None]));
+    let stream = TimeoutableStream::new(timeout_content_base, timeout_provider, stream);
+    let stream = stream.map(move |x| {
+        match x {
+            Some(x) => match x {
+                Some(x) => match x {
+                    Ok(x) => match x {
+                        StreamItem::DataItem(x) => match x {
+                            RangeCompletableItem::Data(mut item) => {
+                                let coll = coll.get_or_insert_with(|| item.new_collector());
+                                coll.ingest(&mut item);
+                                if coll.len() >= 128 || last_emit.elapsed() >= timeout_content_2 {
+                                    last_emit = Instant::now();
+                                    take_collector_result_cbor(coll).map(|x| Ok(x))
+                                } else {
+                                    None
+                                }
+                            }
+                            RangeCompletableItem::RangeComplete => None,
+                        },
+                        StreamItem::Log(x) => {
+                            debug!("{x:?}");
+                            // Some(serde_json::Value::String(format!("{x:?}")))
+                            None
+                        }
+                        StreamItem::Stats(x) => {
+                            debug!("{x:?}");
+                            // Some(serde_json::Value::String(format!("{x:?}")))
+                            None
+                        }
+                    },
+                    Err(e) => Some(Err(e)),
+                },
+                None => {
+                    if let Some(coll) = coll.as_mut() {
+                        last_emit = Instant::now();
+                        take_collector_result_cbor(coll).map(|x| Ok(x))
+                    } else {
+                        // Some(serde_json::Value::String(format!(
+                        //     "end of input but no collector to take something from"
+                        // )))
+                        None
+                    }
+                }
+            },
+            None => {
+                if let Some(coll) = coll.as_mut() {
+                    if coll.len() != 0 {
+                        last_emit = Instant::now();
+                        take_collector_result_cbor(coll).map(|x| Ok(x))
+                    } else {
+                        // Some(serde_json::Value::String(format!("timeout but nothing to do")))
+                        None
+                    }
+                } else {
+                    // Some(serde_json::Value::String(format!("timeout but no collector")))
+                    None
+                }
+            }
+        }
+    });
+    let stream = stream.filter_map(|x| futures_util::future::ready(x));
+    let stream = stream.map_err(|e| crate::cbor_stream::Error::Msg(e.to_string()));
     Ok(Box::pin(stream))
 }
