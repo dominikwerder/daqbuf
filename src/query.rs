@@ -27,6 +27,7 @@ use url::Url;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum CacheUsage {
+    Read,
     Use,
     Ignore,
     Recreate,
@@ -36,6 +37,7 @@ pub enum CacheUsage {
 impl CacheUsage {
     pub fn query_param_value(&self) -> String {
         match self {
+            CacheUsage::Read => "read",
             CacheUsage::Use => "use",
             CacheUsage::Ignore => "ignore",
             CacheUsage::Recreate => "recreate",
@@ -49,7 +51,9 @@ impl CacheUsage {
         pairs
             .get("cacheUsage")
             .map(|k| {
-                if k == "use" {
+                if k == "read" {
+                    Ok(Some(CacheUsage::Read))
+                } else if k == "use" {
                     Ok(Some(CacheUsage::Use))
                 } else if k == "ignore" {
                     Ok(Some(CacheUsage::Ignore))
@@ -65,12 +69,14 @@ impl CacheUsage {
     }
 
     pub fn from_string(s: &str) -> Result<Self, Error> {
-        let ret = if s == "ignore" {
+        let ret = if s == "read" {
+            CacheUsage::Read
+        } else if s == "use" {
+            CacheUsage::Use
+        } else if s == "ignore" {
             CacheUsage::Ignore
         } else if s == "recreate" {
             CacheUsage::Recreate
-        } else if s == "use" {
-            CacheUsage::Use
         } else if s == "v0nocache" {
             CacheUsage::V0NoCache
         } else {
@@ -81,6 +87,7 @@ impl CacheUsage {
 
     pub fn is_cache_write(&self) -> bool {
         match self {
+            CacheUsage::Read => false,
             CacheUsage::Use => true,
             CacheUsage::Ignore => false,
             CacheUsage::Recreate => true,
@@ -90,6 +97,7 @@ impl CacheUsage {
 
     pub fn is_cache_read(&self) -> bool {
         match self {
+            CacheUsage::Read => true,
             CacheUsage::Use => true,
             CacheUsage::Ignore => false,
             CacheUsage::Recreate => false,
