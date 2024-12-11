@@ -12,37 +12,22 @@ use netpod::TsNano;
 use std::fmt;
 use std::ops::Range;
 
-// TODO can probably be removed.
-pub trait TimeBins {
-    fn ts_min(&self) -> Option<u64>;
-    fn ts_max(&self) -> Option<u64>;
-    fn ts_min_max(&self) -> Option<(u64, u64)>;
-}
-
 // TODO remove
 pub trait TimeBinnerTy: fmt::Debug + Send + Unpin {
     type Input: fmt::Debug;
     type Output: fmt::Debug;
-
     fn ingest(&mut self, item: &mut Self::Input);
-
     fn set_range_complete(&mut self);
-
     fn bins_ready_count(&self) -> usize;
-
     fn bins_ready(&mut self) -> Option<Self::Output>;
-
     /// If there is a bin in progress with non-zero count, push it to the result set.
     /// With push_empty == true, a bin in progress is pushed even if it contains no counts.
     fn push_in_progress(&mut self, push_empty: bool);
-
     /// Implies `Self::push_in_progress` but in addition, pushes a zero-count bin if the call
     /// to `push_in_progress` did not change the result count, as long as edges are left.
     /// The next call to `Self::bins_ready_count` must return one higher count than before.
     fn cycle(&mut self);
-
     fn empty(&self) -> Option<Self::Output>;
-
     fn append_empty_until_end(&mut self);
 }
 
@@ -57,8 +42,6 @@ pub trait TimeBinnableTy: fmt::Debug + WithLen + Send + Sized {
     ) -> Self::TimeBinner;
 }
 
-// #[derive(Debug, ThisError)]
-// #[cstm(name = "Binninggg")]
 pub enum BinningggError {
     Dyn(Box<dyn std::error::Error>),
     TypeMismatch { have: String, expect: String },
@@ -106,6 +89,7 @@ pub trait BinningggContainerEventsDyn:
     fn eq(&self, rhs: &dyn BinningggContainerEventsDyn) -> bool;
     fn as_mergeable_dyn_mut(&mut self) -> &mut dyn MergeableDyn;
     fn as_collectable_dyn_mut(&mut self) -> &mut dyn CollectableDyn;
+    fn to_f32_for_binning_v01(&self) -> Box<dyn BinningggContainerEventsDyn>;
 }
 
 pub trait BinningggContainerBinsDyn:
@@ -125,6 +109,7 @@ pub trait BinningggContainerBinsDyn:
         range: BinnedRange<TsNano>,
     ) -> Box<dyn BinnedBinsTimeweightTrait>;
     fn boxed_into_collectable_box(self: Box<Self>) -> Box<dyn CollectableDyn>;
+    fn fix_numerics(&mut self);
 }
 
 pub type BinsBoxed = Box<dyn BinningggContainerBinsDyn>;
