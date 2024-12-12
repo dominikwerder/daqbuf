@@ -9,8 +9,6 @@ use crate::binning::container_events::PartialOrdEvtA;
 use crate::log::*;
 use core::fmt;
 use daqbuf_err as err;
-use err::thiserror;
-use err::ThisError;
 use netpod::BinnedRange;
 use netpod::DtNano;
 use netpod::TsNano;
@@ -43,20 +41,21 @@ fn cold() {}
 
 const DEBUG_CHECKS: bool = true;
 
-#[derive(Debug, ThisError)]
-#[cstm(name = "BinnedEventsTimeweight")]
-pub enum Error {
-    BadContainer(#[from] super::super::container_events::EventsContainerError),
-    Unordered,
-    EventAfterRange,
-    NoLstAfterFirst,
-    EmptyContainerInnerHandler,
-    NoLstButMinMax,
-    WithLstButEventBeforeRange,
-    WithMinMaxButEventBeforeRange,
-    NoMinMaxAfterInit,
-    ExpectEventWithinRange,
-}
+autoerr::create_error_v1!(
+    name(Error, "BinnedEventsTimeweight"),
+    enum variants {
+        BadContainer(#[from] super::super::container_events::EventsContainerError),
+        Unordered,
+        EventAfterRange,
+        NoLstAfterFirst,
+        EmptyContainerInnerHandler,
+        NoLstButMinMax,
+        WithLstButEventBeforeRange,
+        WithMinMaxButEventBeforeRange,
+        NoMinMaxAfterInit,
+        ExpectEventWithinRange,
+    },
+);
 
 type MinMax<EVT> = (EventSingle<EVT>, EventSingle<EVT>);
 
@@ -254,7 +253,6 @@ where
 impl<EVT> InnerA<EVT>
 where
     EVT: EventValueType,
-    // BVT: BinAggedType,
 {
     fn apply_min_max(ev: &EventSingleRef<EVT>, minmax: &mut MinMax<EVT>) {
         if let Some(std::cmp::Ordering::Less) = ev.val.cmp_a(&minmax.0.val) {

@@ -9,9 +9,6 @@ use crate::log::*;
 use crate::offsets::pulse_offs_from_abs;
 use core::fmt;
 use core::ops::Range;
-use daqbuf_err as err;
-use err::thiserror;
-use err::ThisError;
 use items_0::apitypes::ToUserFacingApiType;
 use items_0::apitypes::UserApiType;
 use items_0::collect_s::CollectableDyn;
@@ -44,9 +41,19 @@ use std::collections::VecDeque;
 
 macro_rules! trace_init { ($($arg:tt)*) => ( if false { trace!($($arg)*); }) }
 
-#[derive(Debug, ThisError)]
-#[cstm(name = "ValueContainerError")]
-pub enum ValueContainerError {}
+autoerr::create_error_v1!(
+    name(Error, "ValueContainerError"),
+    enum variants {
+        Logic,
+    },
+);
+
+autoerr::create_error_v1!(
+    name(EventsContainerError, "EventsContainerError"),
+    enum variants {
+        Unordered,
+    },
+);
 
 pub trait Container<EVT>:
     fmt::Debug + Send + Unpin + Clone + PreviewRange + Serialize + for<'a> Deserialize<'a>
@@ -75,6 +82,7 @@ pub trait EventValueType: fmt::Debug + Clone + PartialOrd + Send + Unpin + 'stat
     const SERDE_ID: u32;
     const BYTE_ESTIMATE_V00: u32;
     fn to_f32_for_binning_v01(&self) -> f32;
+    fn scalar_type_name_string() -> String;
 }
 
 impl<EVT> Container<EVT> for VecDeque<EVT>
@@ -150,7 +158,7 @@ impl Container<String> for VecDeque<String> {
 }
 
 macro_rules! impl_event_value_type {
-    ($evt:ty) => {
+    ($evt:ty, $sctname:expr) => {
         impl EventValueType for $evt {
             type Container = VecDeque<Self>;
             type AggregatorTimeWeight = AggregatorNumeric;
@@ -160,6 +168,9 @@ macro_rules! impl_event_value_type {
             const BYTE_ESTIMATE_V00: u32 = core::mem::size_of::<$evt>() as u32;
             fn to_f32_for_binning_v01(&self) -> f32 {
                 *self as _
+            }
+            fn scalar_type_name_string() -> String {
+                $sctname.to_string()
             }
         }
 
@@ -171,14 +182,14 @@ macro_rules! impl_event_value_type {
     };
 }
 
-impl_event_value_type!(u8);
-impl_event_value_type!(u16);
-impl_event_value_type!(u32);
-impl_event_value_type!(u64);
-impl_event_value_type!(i8);
-impl_event_value_type!(i16);
-impl_event_value_type!(i32);
-impl_event_value_type!(i64);
+impl_event_value_type!(u8, "u8");
+impl_event_value_type!(u16, "u16");
+impl_event_value_type!(u32, "u32");
+impl_event_value_type!(u64, "u64");
+impl_event_value_type!(i8, "i8");
+impl_event_value_type!(i16, "i16");
+impl_event_value_type!(i32, "i32");
+impl_event_value_type!(i64, "i64");
 // impl_event_value_type!(f32);
 // impl_event_value_type!(f64);
 
@@ -216,6 +227,9 @@ impl EventValueType for f32 {
     fn to_f32_for_binning_v01(&self) -> f32 {
         *self as _
     }
+    fn scalar_type_name_string() -> String {
+        "f32".to_string()
+    }
 }
 
 impl EventValueType for f64 {
@@ -227,6 +241,9 @@ impl EventValueType for f64 {
     const BYTE_ESTIMATE_V00: u32 = core::mem::size_of::<Self>() as u32;
     fn to_f32_for_binning_v01(&self) -> f32 {
         *self as _
+    }
+    fn scalar_type_name_string() -> String {
+        "f64".to_string()
     }
 }
 
@@ -240,6 +257,9 @@ impl EventValueType for bool {
     fn to_f32_for_binning_v01(&self) -> f32 {
         f32::from(*self)
     }
+    fn scalar_type_name_string() -> String {
+        "bool".to_string()
+    }
 }
 
 impl EventValueType for String {
@@ -252,10 +272,13 @@ impl EventValueType for String {
     fn to_f32_for_binning_v01(&self) -> f32 {
         self.len() as _
     }
+    fn scalar_type_name_string() -> String {
+        "string".to_string()
+    }
 }
 
 macro_rules! impl_event_value_type_vec {
-    ($evt:ty) => {
+    ($evt:ty, $sctname:expr) => {
         impl EventValueType for Vec<$evt> {
             type Container = VecDeque<Self>;
             type AggregatorTimeWeight = AggregatorVecNumeric;
@@ -267,6 +290,9 @@ macro_rules! impl_event_value_type_vec {
             fn to_f32_for_binning_v01(&self) -> f32 {
                 self.iter().fold(0., |a, x| a + *x as f32)
             }
+            fn scalar_type_name_string() -> String {
+                $sctname.to_string()
+            }
         }
 
         impl PartialOrdEvtA<Vec<$evt>> for Vec<$evt> {
@@ -277,16 +303,16 @@ macro_rules! impl_event_value_type_vec {
     };
 }
 
-impl_event_value_type_vec!(u8);
-impl_event_value_type_vec!(u16);
-impl_event_value_type_vec!(u32);
-impl_event_value_type_vec!(u64);
-impl_event_value_type_vec!(i8);
-impl_event_value_type_vec!(i16);
-impl_event_value_type_vec!(i32);
-impl_event_value_type_vec!(i64);
-impl_event_value_type_vec!(f32);
-impl_event_value_type_vec!(f64);
+impl_event_value_type_vec!(u8, "u8");
+impl_event_value_type_vec!(u16, "u16");
+impl_event_value_type_vec!(u32, "u32");
+impl_event_value_type_vec!(u64, "u64");
+impl_event_value_type_vec!(i8, "i8");
+impl_event_value_type_vec!(i16, "i16");
+impl_event_value_type_vec!(i32, "i32");
+impl_event_value_type_vec!(i64, "i64");
+impl_event_value_type_vec!(f32, "f32");
+impl_event_value_type_vec!(f64, "f64");
 // impl_event_value_type_vec!(String);
 // impl_event_value_type_vec!(EnumVariant);
 
@@ -300,6 +326,9 @@ impl EventValueType for Vec<bool> {
     const BYTE_ESTIMATE_V00: u32 = 1200 * core::mem::size_of::<Self>() as u32;
     fn to_f32_for_binning_v01(&self) -> f32 {
         self.iter().fold(0., |a, x| a + f32::from(*x))
+    }
+    fn scalar_type_name_string() -> String {
+        "bool".to_string()
     }
 }
 
@@ -320,6 +349,9 @@ impl EventValueType for Vec<String> {
     fn to_f32_for_binning_v01(&self) -> f32 {
         self.iter().fold(0., |a, x| a + x.len() as f32)
     }
+    fn scalar_type_name_string() -> String {
+        "string".to_string()
+    }
 }
 
 impl PartialOrdEvtA<Vec<String>> for Vec<String> {
@@ -338,6 +370,9 @@ impl EventValueType for Vec<EnumVariant> {
     const BYTE_ESTIMATE_V00: u32 = 1200 * core::mem::size_of::<Self>() as u32;
     fn to_f32_for_binning_v01(&self) -> f32 {
         self.iter().fold(0., |a, x| a + x.ix() as f32)
+    }
+    fn scalar_type_name_string() -> String {
+        "enum".to_string()
     }
 }
 
@@ -538,6 +573,9 @@ where
     fn to_f32_for_binning_v01(&self) -> f32 {
         self.1.to_f32_for_binning_v01()
     }
+    fn scalar_type_name_string() -> String {
+        EVT::scalar_type_name_string()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -579,12 +617,6 @@ where
             val: value.val.clone().into(),
         }
     }
-}
-
-#[derive(Debug, ThisError)]
-#[cstm(name = "EventsContainerError")]
-pub enum EventsContainerError {
-    Unordered,
 }
 
 #[derive(Clone)]
@@ -1316,4 +1348,19 @@ mod test_serde_opt {
         .unwrap();
         assert_eq!(s, r#"{"a":null,"b":null}"#);
     }
+}
+
+#[test]
+fn float_cmp_00() {
+    use std::cmp::Ordering;
+    assert_eq!(f32::INFINITY.partial_cmp(&2.0_f32), Some(Ordering::Greater));
+    assert_eq!(
+        f32::INFINITY.partial_cmp(&f32::NEG_INFINITY),
+        Some(Ordering::Greater)
+    );
+    assert_eq!(
+        f32::INFINITY.partial_cmp(&f32::INFINITY),
+        Some(Ordering::Equal)
+    );
+    assert_eq!(f32::NAN.partial_cmp(&f32::INFINITY), None);
 }
