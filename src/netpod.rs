@@ -8,6 +8,78 @@ pub mod stream_impl_tracer;
 pub mod streamext;
 pub mod ttl;
 
+#[allow(unused)]
+#[inline(always)]
+pub fn is_log_direct() -> bool {
+    static ONCE: LazyLock<bool> =
+        LazyLock::new(|| std::env::var("LOG_DIRECT").map_or(false, |x| x.parse().unwrap_or(false)));
+    *ONCE
+}
+
+pub mod log_macros_branch {
+    #[allow(unused)]
+    #[macro_export]
+    macro_rules! branch_trace {
+        ($($arg:tt)*) => {
+            if $crate::is_log_direct() {
+                $crate::log_direct::trace!($($arg)*)
+            } else {
+                $crate::log::trace!($($arg)*)
+            }
+        };
+    }
+    #[allow(unused)]
+    #[macro_export]
+    macro_rules! branch_debug {
+        ($($arg:tt)*) => {
+            if $crate::is_log_direct() {
+                $crate::log_direct::debug!($($arg)*)
+            } else {
+                $crate::log::debug!($($arg)*)
+            }
+        };
+    }
+    #[allow(unused)]
+    #[macro_export]
+    macro_rules! branch_info {
+        ($($arg:tt)*) => {
+            if $crate::is_log_direct() {
+                $crate::log_direct::info!($($arg)*)
+            } else {
+                $crate::log::info!($($arg)*)
+            }
+        };
+    }
+    #[allow(unused)]
+    #[macro_export]
+    macro_rules! branch_warn {
+        ($($arg:tt)*) => {
+            if $crate::is_log_direct() {
+                $crate::log_direct::warn!($($arg)*)
+            } else {
+                $crate::log::warn!($($arg)*)
+            }
+        };
+    }
+    #[allow(unused)]
+    #[macro_export]
+    macro_rules! branch_error {
+        ($($arg:tt)*) => {
+            if $crate::is_log_direct() {
+                $crate::log_direct::error!($($arg)*)
+            } else {
+                $crate::log::error!($($arg)*)
+            }
+        };
+    }
+    pub use branch_debug as debug;
+    pub use branch_error as error;
+    pub use branch_info as info;
+    pub use branch_trace as trace;
+    pub use branch_warn as warn;
+    pub use tracing::{self, event, span, Level};
+}
+
 pub mod log_macros {
     #[allow(unused)]
     #[macro_export]
@@ -19,7 +91,6 @@ pub mod log_macros {
             eprintln!(concat!("TRACE ", $fmt), $($arg)*);
         };
     }
-
     #[allow(unused)]
     #[macro_export]
     macro_rules! debug {
@@ -30,7 +101,6 @@ pub mod log_macros {
             eprintln!(concat!("DEBUG ", $fmt), $($arg)*);
         };
     }
-
     #[allow(unused)]
     #[macro_export]
     macro_rules! info {
@@ -41,7 +111,6 @@ pub mod log_macros {
             eprintln!(concat!("INFO  ", $fmt), $($arg)*);
         };
     }
-
     #[allow(unused)]
     #[macro_export]
     macro_rules! warn {
@@ -52,7 +121,6 @@ pub mod log_macros {
             eprintln!(concat!("WARN  ", $fmt), $($arg)*);
         };
     }
-
     #[allow(unused)]
     #[macro_export]
     macro_rules! error {
@@ -99,6 +167,7 @@ use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::atomic;
 use std::sync::atomic::AtomicPtr;
+use std::sync::LazyLock;
 use std::sync::Once;
 use std::sync::RwLock;
 use std::sync::RwLockWriteGuard;
