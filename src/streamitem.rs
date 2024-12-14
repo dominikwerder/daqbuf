@@ -1,5 +1,5 @@
+use crate::log::Level;
 use daqbuf_err as err;
-use netpod::log::Level;
 use netpod::DiskStats;
 use netpod::EventDataReadStats;
 use netpod::RangeFilterStats;

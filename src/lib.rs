@@ -14,10 +14,7 @@ pub mod timebin;
 pub mod vecpreview;
 
 mod log {
-    #[cfg(not(test))]
-    pub use netpod::log::*;
-    #[cfg(test)]
-    pub use netpod::log_direct::*;
+    pub use netpod::log_macros_branch::*;
 }
 
 pub mod bincode {
