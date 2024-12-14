@@ -8,13 +8,12 @@ use crate::binning::container_events::EventSingleRef;
 use crate::binning::container_events::PartialOrdEvtA;
 use crate::log::*;
 use core::fmt;
-use daqbuf_err as err;
 use netpod::BinnedRange;
 use netpod::DtNano;
 use netpod::TsNano;
 use std::mem;
 
-macro_rules! trace_ { ($($arg:tt)*) => ( if false { eprintln!($($arg)*); }) }
+macro_rules! trace_ { ($($arg:tt)*) => ( if false { trace!($($arg)*); }) }
 
 macro_rules! trace_init { ($($arg:tt)*) => ( if true { trace_!($($arg)*); }) }
 
@@ -89,7 +88,7 @@ where
         lst: LstRef<EVT>,
     ) {
         let selfname = "ingest_event_with_lst_gt_range_beg_agg";
-        trace_ingest_event!("{selfname}  {:?}", ev);
+        trace_ingest_event!("{}  {:?}", selfname, ev);
         if DEBUG_CHECKS {
             if ev.ts <= self.active_beg {
                 panic!("should never get here");
@@ -99,7 +98,7 @@ where
             }
         }
         let dt = ev.ts.delta(self.filled_until);
-        trace_ingest_event!("{selfname}  dt {:?}  ev {:?}", dt, ev);
+        trace_ingest_event!("{}  dt {:?}  ev {:?}", selfname, dt, ev);
         // TODO can the caller already take the value and replace it afterwards with the current value?
         // This fn could swap the value in lst and directly use it.
         // This would require that any call path does not mess with lst.
@@ -115,7 +114,7 @@ where
         lst: LstMut<EVT>,
     ) -> Result<(), Error> {
         let selfname = "ingest_event_with_lst_gt_range_beg_2";
-        trace_ingest_event!("{selfname}");
+        trace_ingest_event!("{}", selfname);
         self.ingest_event_with_lst_gt_range_beg_agg(ev.clone(), LstRef(lst.0));
         InnerA::apply_lst_after_event_handled(ev, lst);
         // self.cnt += 1;
@@ -129,7 +128,7 @@ where
         minmax: &mut MinMax<EVT>,
     ) -> Result<(), Error> {
         let selfname = "ingest_event_with_lst_gt_range_beg";
-        trace_ingest_event!("{selfname}");
+        trace_ingest_event!("{}", selfname);
         // TODO if the event is exactly on the current bin first edge, then there is no contribution to the avg yet
         // and I must initialize the min/max with the current event.
         InnerA::apply_min_max(&ev, minmax);
@@ -144,7 +143,7 @@ where
         minmax: &mut MinMax<EVT>,
     ) -> Result<(), Error> {
         let selfname = "ingest_event_with_lst_eq_range_beg";
-        trace_ingest_event!("{selfname}");
+        trace_ingest_event!("{}", selfname);
         // TODO if the event is exactly on the current bin first edge, then there is no contribution to the avg yet
         // and I must initialize the min/max with the current event.
         InnerA::apply_min_max(&ev, minmax);
@@ -159,7 +158,7 @@ where
         minmax: &mut MinMax<EVT>,
     ) -> Result<(), Error> {
         let selfname = "ingest_with_lst_gt_range_beg";
-        trace_ingest_event!("{selfname}  len {}", evs.len());
+        trace_ingest_event!("{}  len {}", selfname, evs.len());
         while let Some(ev) = evs.next() {
             trace_event_next!("EVENT POP FRONT  {:?}  {:30}", ev, selfname);
             if ev.ts <= self.active_beg {
@@ -181,24 +180,25 @@ where
         minmax: &mut MinMax<EVT>,
     ) -> Result<(), Error> {
         let selfname = "ingest_with_lst_ge_range_beg";
-        trace_ingest_event!("{selfname}  len {}", evs.len());
+        trace_ingest_event!("{}  len {}", selfname, evs.len());
         while let Some(ev) = evs.next() {
             trace_event_next!("EVENT POP FRONT  {:?}  {:30}", ev, selfname);
             assert!(ev.ts >= self.active_beg);
             assert!(ev.ts < self.active_end);
             if ev.ts == self.active_beg {
-                trace_ingest_event!("{selfname}  ts == active_beg");
+                trace_ingest_event!("{}  ts == active_beg", selfname);
                 self.ingest_event_with_lst_eq_range_beg(ev, LstMut(lst.0), minmax)?;
                 self.cnt += 1;
             } else {
-                trace_ingest_event!("{selfname}  ts != active_beg");
+                trace_ingest_event!("{}  ts != active_beg", selfname);
                 self.ingest_event_with_lst_gt_range_beg(ev.clone(), LstMut(lst.0), minmax)?;
                 self.cnt += 1;
                 break;
             }
         }
         trace_ingest_event!(
-            "{selfname}  defer remainder to  ingest_with_lst_gt_range_beg  len {}",
+            "{}  defer remainder to  ingest_with_lst_gt_range_beg  len {}",
+            selfname,
             evs.len()
         );
         self.ingest_with_lst_gt_range_beg(evs, LstMut(lst.0), minmax)
@@ -211,11 +211,10 @@ where
         minmax: &mut MinMax<EVT>,
     ) -> Result<(), Error> {
         let selfname = "ingest_with_lst_minmax";
-        trace_ingest_event!("{selfname}  len {}", evs.len());
+        trace_ingest_event!("{}  len {}", selfname, evs.len());
         // TODO how to handle the min max? I don't take event data yet out of the container.
         if let Some(ts0) = evs.ts_first() {
-            trace_ingest_event!("EVENT POP FRONT  {selfname}");
-            trace_ingest_event!("EVENT TIMESTAMP FRONT  {:?}  {selfname}", ts0);
+            trace_ingest_event!("EVENT TIMESTAMP FRONT  {:?}  {}", ts0, selfname);
             if ts0 < self.active_beg {
                 panic!("should never get here");
             } else {
@@ -284,7 +283,7 @@ where
         lst: LstMut<EVT>,
     ) -> Result<(), Error> {
         let selfname = "ingest_with_lst";
-        trace_ingest_container!("{selfname}  len {}", evs.len());
+        trace_ingest_container!("{}  len {}", selfname, evs.len());
         let b = &mut self.inner_b;
         if let Some(minmax) = self.minmax.as_mut() {
             b.ingest_with_lst_minmax(evs, lst, minmax)
@@ -292,7 +291,7 @@ where
             let mut run_ingest_with_lst_minmax = false;
             let _ = run_ingest_with_lst_minmax;
             if let Some(ev) = evs.next() {
-                trace_event_next!("EVENT POP FRONT  {:?}  {selfname:30}", ev);
+                trace_event_next!("EVENT POP FRONT  {:?}  {:30}", ev, selfname);
                 let beg = b.active_beg;
                 let end = b.active_end;
                 if ev.ts < beg {
@@ -340,7 +339,8 @@ where
         let selfname = "reset_01";
         let b = &mut self.inner_b;
         trace_cycle!(
-            "{selfname}  active_end {:?}  filled_until {:?}",
+            "{}  active_end {:?}  filled_until {:?}",
+            selfname,
             b.active_end,
             b.filled_until
         );
@@ -368,7 +368,7 @@ where
         // TODO what logic can I save here? To output a bin I need to have min, max, lst.
         let b = &mut self.inner_b;
         let minmax = self.minmax.get_or_insert_with(|| {
-            trace_cycle!("{selfname}  minmax not yet set");
+            trace_cycle!("{}  minmax not yet set", selfname);
             (lst.0.clone(), lst.0.clone())
         });
         {
@@ -472,7 +472,7 @@ where
 
     fn ingest_without_lst(&mut self, evs: &mut ContainerEventsTakeUpTo<EVT>) -> Result<(), Error> {
         let selfname = "ingest_without_lst";
-        trace_ingest_container!("{selfname}  len {}", evs.len());
+        trace_ingest_container!("{}  len {}", selfname, evs.len());
         let mut run_ingest_with_lst = false;
         let _ = run_ingest_with_lst;
         if let Some(ev) = evs.next() {
@@ -498,10 +498,8 @@ where
     // and with respect to the last container, if any.
     fn ingest_ordered(&mut self, evs: &mut ContainerEventsTakeUpTo<EVT>) -> Result<(), Error> {
         let selfname = "ingest_ordered";
-        trace_ingest_container!(
-            "------------------------------------\n{selfname}  len {}",
-            evs.len()
-        );
+        trace_ingest_container!("--------------------------------------------------");
+        trace_ingest_container!("{}  len {}", selfname, evs.len());
         if let Some(lst) = self.lst.as_mut() {
             self.inner_a.ingest_with_lst(evs, LstMut(lst))
         } else {

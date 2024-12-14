@@ -21,10 +21,7 @@ use items_0::isodate::IsoDateTime;
 use std::fmt;
 
 mod log {
-    #[cfg(not(test))]
-    pub use netpod::log::*;
-    #[cfg(test)]
-    pub use netpod::log_direct::*;
+    pub use netpod::log_macros_branch::*;
 }
 
 #[derive(Debug, PartialEq)]

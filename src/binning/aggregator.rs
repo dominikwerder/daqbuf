@@ -3,19 +3,17 @@ pub mod agg_bins;
 use super::container::bins::BinAggedType;
 use super::container_events::EventValueType;
 use super::container_events::PulsedVal;
+use crate::log::*;
 use core::fmt;
 use items_0::subfr::SubFrId;
-use netpod::log::*;
 use netpod::DtNano;
 use netpod::EnumVariant;
 use serde::Deserialize;
 use serde::Serialize;
 
-#[allow(unused)]
 macro_rules! trace_event { ($($arg:tt)*) => ( if false { trace!($($arg)*); }) }
 
-#[allow(unused)]
-macro_rules! trace_result { ($($arg:tt)*) => ( if false { trace!($($arg)*); }) }
+macro_rules! trace_result { ($($arg:tt)*) => ( if true { trace!($($arg)*); }) }
 
 pub trait AggTimeWeightOutputAvg: BinAggedType + Serialize + for<'a> Deserialize<'a> {}
 
@@ -101,7 +99,7 @@ impl AggregatorTimeWeight<f32> for AggregatorNumeric {
 
     fn ingest(&mut self, dt: DtNano, bl: DtNano, val: f32) {
         let f = dt.ns() as f64 / bl.ns() as f64;
-        trace_event!("INGEST  {}  {}", f, val);
+        trace_event!("INGEST  {:5}  {:7.3}  {:7.3}", dt.ms_u64(), f, val);
         self.sum += f * val as f64;
     }
 

@@ -3,10 +3,9 @@ use super::container_events::Container;
 use super::container_events::EventValueType;
 use crate::apitypes::ContainerBinsApi;
 use crate::binning::container::bins::BinAggedContainer;
+use crate::log::*;
 use core::fmt;
 use daqbuf_err as err;
-use err::thiserror;
-use err::ThisError;
 use items_0::apitypes::ToUserFacingApiType;
 use items_0::collect_s::CollectableDyn;
 use items_0::collect_s::CollectedDyn;
@@ -21,19 +20,20 @@ use items_0::AsAnyMut;
 use items_0::AsAnyRef;
 use items_0::TypeName;
 use items_0::WithLen;
+use netpod::f32_close;
 use netpod::TsNano;
 use std::any;
 use std::collections::VecDeque;
 use std::mem;
 
-#[allow(unused)]
 macro_rules! trace_init { ($($arg:tt)*) => ( if true { trace!($($arg)*); }) }
 
-#[derive(Debug, ThisError)]
-#[cstm(name = "ContainerBins")]
-pub enum ContainerBinsError {
-    Unordered,
-}
+autoerr::create_error_v1!(
+    name(ContainerBinsError, "ContainerBins"),
+    enum variants {
+        Unordered,
+    },
+);
 
 #[derive(Debug, Clone)]
 pub struct BinRef<'a, EVT, BVT>
@@ -263,6 +263,33 @@ where
             .zip(self.fnls_iter())
     }
 
+    pub fn zip_iter_2(
+        &self,
+    ) -> impl Iterator<
+        Item = (
+            TsNano,
+            TsNano,
+            u64,
+            EVT::IterTy1<'_>,
+            EVT::IterTy1<'_>,
+            BVT::IterTy1<'_>,
+            EVT::IterTy1<'_>,
+            bool,
+        ),
+    > {
+        let bins = self;
+        itertools::izip!(
+            bins.ts1s_iter().map(Clone::clone),
+            bins.ts2s_iter().map(Clone::clone),
+            bins.cnts_iter().map(Clone::clone),
+            bins.mins_iter(),
+            bins.maxs_iter(),
+            bins.aggs_iter(),
+            bins.lsts_iter(),
+            bins.fnls_iter().map(Clone::clone),
+        )
+    }
+
     pub fn edges_iter(
         &self,
     ) -> std::iter::Zip<
@@ -310,6 +337,53 @@ where
             ix: 0,
             len: self.len(),
         }
+    }
+}
+
+pub fn compare_boxed_f32(lhs: &ContainerBins<f32, f32>, rhs: &ContainerBins<f32, f32>) -> bool {
+    if let Some(lhs) = lhs.as_any_ref().downcast_ref::<ContainerBins<f32, f32>>() {
+        if let Some(rhs) = rhs.as_any_ref().downcast_ref::<ContainerBins<f32, f32>>() {
+            if lhs.len() != rhs.len() {
+                error!("length differ");
+                false
+            } else {
+                for (a, b) in lhs.zip_iter_2().zip(rhs.zip_iter_2()) {
+                    if a.0 != b.0 {
+                        error!("ts1 differ");
+                        return false;
+                    }
+                    if a.1 != b.1 {
+                        error!("ts2 differ");
+                        return false;
+                    }
+                    if a.2 != b.2 {
+                        error!("cnt differ  {:?}  {:?}", a, b);
+                        return false;
+                    }
+                    if !f32_close(a.3, b.3) {
+                        error!("min differ  {:?}  {:?}", a, b);
+                        return false;
+                    }
+                    if !f32_close(a.4, b.4) {
+                        error!("max differ  {:?}  {:?}", a, b);
+                        return false;
+                    }
+                    if !f32_close(a.5, b.5) {
+                        error!("agg differ  {:?}  {:?}", a, b);
+                        return false;
+                    }
+                    if !f32_close(a.6, b.6) {
+                        error!("lst differ  {:?}  {:?}", a, b);
+                        return false;
+                    }
+                }
+                true
+            }
+        } else {
+            panic!("lhs is not bins f32")
+        }
+    } else {
+        panic!("lhs is not bins f32")
     }
 }
 

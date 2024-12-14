@@ -1,9 +1,9 @@
 use crate::binning::container_events::ContainerEvents;
 use crate::binning::container_events::PulsedVal;
+use crate::log::*;
 use crate::Error;
 use daqbuf_err as err;
 use items_0::timebin::BinningggContainerEventsDyn;
-use netpod::log::*;
 use netpod::EnumVariant;
 use netpod::ScalarType;
 use netpod::Shape;
@@ -52,7 +52,7 @@ pub fn empty_events_dyn_ev(
             }
         }
         Shape::Image(..) => {
-            error!("TODO empty_events_dyn_ev  {scalar_type:?}  {shape:?}");
+            error!("TODO empty_events_dyn_ev  {:?}  {:?}", scalar_type, shape);
             err::todoval()
         }
     };
@@ -85,7 +85,7 @@ pub fn empty_events_pulsed_dyn_ev(
         }
         Shape::Wave(..) => {
             use ScalarType::*;
-            type K<T> = ContainerEvents<Vec<T>>;
+            type K<T> = ContainerEvents<PulsedVal<Vec<T>>>;
             match scalar_type {
                 U8 => Box::new(K::<u8>::new()),
                 U16 => Box::new(K::<u16>::new()),
@@ -103,7 +103,7 @@ pub fn empty_events_pulsed_dyn_ev(
             }
         }
         Shape::Image(..) => {
-            error!("TODO empty_events_dyn_ev  {scalar_type:?}  {shape:?}");
+            error!("TODO empty_events_dyn_ev  {:?}  {:?}", scalar_type, shape);
             err::todoval()
         }
     };

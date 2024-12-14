@@ -15,13 +15,14 @@ use netpod::EnumVariant;
 use netpod::TsNano;
 use std::task::Context;
 
-#[derive(Debug, thiserror::Error)]
-#[cstm(name = "Error")]
-enum Error {
-    Timeweight(#[from] crate::binning::timeweight::timeweight_events::Error),
-    AssertMsg(String),
-    Compare(#[from] super::compare::Error),
-}
+autoerr::create_error_v1!(
+    name(Error, "Error"),
+    enum variants {
+        Timeweight(#[from] crate::binning::timeweight::timeweight_events::Error),
+        AssertMsg(String),
+        Compare(#[from] super::compare::Error),
+    },
+);
 
 #[test]
 fn test_bin_events_dim1_f32_00() -> Result<(), Error> {
