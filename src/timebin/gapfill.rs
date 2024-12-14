@@ -6,6 +6,7 @@ use crate::timebin::fromevents::BinnedFromEvents;
 use futures_util::FutureExt;
 use futures_util::Stream;
 use futures_util::StreamExt;
+use items_0::streamitem::sitem_data;
 use items_0::streamitem::sitem_err_from_string;
 use items_0::streamitem::RangeCompletableItem;
 use items_0::streamitem::Sitemty;
@@ -184,7 +185,10 @@ impl GapFill {
         Ok(())
     }
 
-    fn handle_bins(mut self: Pin<&mut Self>, bins: BinsBoxed) -> Result<BinsBoxed, Error> {
+    fn handle_bins(
+        mut self: Pin<&mut Self>,
+        bins: BinsBoxed,
+    ) -> Result<(BinsBoxed, BinsBoxed), Error> {
         trace_handle!("{}  handle_bins  {}", self.dbgname, bins);
         // TODO could use an interface to iterate over opaque bin items that only expose
         // edge and count information with all remaining values opaque.
@@ -206,13 +210,12 @@ impl GapFill {
                     let mut ret = bins.empty();
                     let mut bins = bins;
                     bins.drain_into(ret.as_mut(), 0..i);
-                    self.inp_buf = Some(bins);
                     let range = NanoRange {
                         beg: last.ns(),
                         end: ts1.ns(),
                     };
                     self.setup_sub(range)?;
-                    return Ok(ret);
+                    return Ok((bins, ret));
                 } else {
                     // nothing to do
                 }
@@ -228,11 +231,13 @@ impl GapFill {
                     end: ts1.ns(),
                 };
                 self.setup_sub(range)?;
-                return Ok(bins.empty());
+                let empty = bins.empty();
+                return Ok((bins, empty));
             }
             self.last_bin_ts2 = Some(ts2);
         }
-        Ok(bins)
+        let empty = bins.empty();
+        Ok((empty, bins))
     }
 
     fn setup_inp_finer(
@@ -401,7 +406,7 @@ impl Stream for GapFill {
                         );
                         self.inp_finer = None;
                         if let Some(j) = self.last_bin_ts2 {
-                            if j.ns() != exp_finer_range.end() {
+                            if j.ns() < exp_finer_range.end() {
                                 trace_handle!(
                                     "{}  inp_finer Ready(None)  last_bin_ts2 {:?}  exp_finer_range {:?}",
                                     self.dbgname,
@@ -419,44 +424,57 @@ impl Stream for GapFill {
                                     );
                                     continue;
                                 }
+                            } else if j.ns() > exp_finer_range.end() {
+                                continue;
                             } else {
                                 continue;
                             }
-                        } else if self.inp_finer_fills_gap {
-                            error!(
-                                "{}  inp_finer  Ready(None)  last_bin_ts2 {:?}",
-                                self.dbgname, self.last_bin_ts2
-                            );
-                            Ready(Some(sitem_err_from_string(
-                                "finer input delivered nothing, received nothing at all so far",
-                            )))
                         } else {
+                            warn!(
+                                "-----------------------------------------------------------------"
+                            );
                             warn!(
                                 "{}  inp_finer  Ready(None)  last_bin_ts2 {:?}",
                                 self.dbgname, self.last_bin_ts2
                             );
-                            continue;
+                            if self.inp_finer_fills_gap {
+                                error!(
+                                    "{}  inp_finer  Ready(None)  last_bin_ts2 {:?}  inp_finer_fills_gap {}",
+                                    self.dbgname, self.last_bin_ts2,self.inp_finer_fills_gap
+                                );
+                                Ready(Some(sitem_err_from_string(
+                                    "finer input delivered nothing, received nothing at all so far",
+                                )))
+                            } else {
+                                warn!(
+                                    "{}  inp_finer  Ready(None)  last_bin_ts2 {:?}",
+                                    self.dbgname, self.last_bin_ts2
+                                );
+                                continue;
+                            }
                         }
                     }
                     Pending => Pending,
                 }
             } else if let Some(x) = self.inp_buf.take() {
-                match self.as_mut().handle_bins_finer(x) {
-                    Ok(x) => Ready(Some(Ok(StreamItem::DataItem(RangeCompletableItem::Data(
-                        x,
-                    ))))),
+                match self.as_mut().handle_bins(x) {
+                    Ok((keep, item)) => {
+                        if keep.len() != 0 {
+                            self.inp_buf = Some(keep);
+                        }
+                        let item = sitem_data(item);
+                        Ready(Some(item))
+                    }
                     Err(e) => Ready(Some(sitem_err_from_string(e))),
                 }
             } else if let Some(inp) = self.inp.as_mut() {
                 match inp.poll_next_unpin(cx) {
                     Ready(Some(Ok(x))) => match x {
                         StreamItem::DataItem(RangeCompletableItem::Data(x)) => {
-                            match self.as_mut().handle_bins(x) {
-                                Ok(x) => Ready(Some(Ok(StreamItem::DataItem(
-                                    RangeCompletableItem::Data(x),
-                                )))),
-                                Err(e) => Ready(Some(sitem_err_from_string(e))),
+                            if x.len() != 0 {
+                                self.inp_buf = Some(x);
                             }
+                            continue;
                         }
                         StreamItem::DataItem(RangeCompletableItem::RangeComplete) => {
                             self.inp_range_final = true;

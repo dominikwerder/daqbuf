@@ -10,6 +10,24 @@ pub struct BinningOptions {
 }
 
 impl BinningOptions {
+    pub fn default() -> Self {
+        Self {
+            cache_usage: CacheUsage::Read,
+            allow_from_events: true,
+            allow_from_prebinned: true,
+            allow_rebin: true,
+        }
+    }
+
+    pub fn testing_no_events() -> Self {
+        Self {
+            cache_usage: CacheUsage::Read,
+            allow_from_events: false,
+            allow_from_prebinned: true,
+            allow_rebin: true,
+        }
+    }
+
     pub fn cache_usage(&self) -> &CacheUsage {
         &self.cache_usage
     }

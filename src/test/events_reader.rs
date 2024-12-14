@@ -9,25 +9,24 @@ use items_2::channelevents::ChannelEvents;
 use netpod::range::evrange::NanoRange;
 use query::api4::events::EventsSubQuery;
 
-pub struct TestEventsReader<GEN> {
+pub struct TestEventsReaderTy<GEN> {
     range: NanoRange,
     gen: GEN,
 }
 
-impl<GEN> TestEventsReader<GEN> {
+impl<GEN> TestEventsReaderTy<GEN> {
     pub fn new(range: NanoRange, gen: GEN) -> Self {
         Self { range, gen }
     }
 }
 
-impl<GEN, IT, TY> EventsReadProvider for TestEventsReader<GEN>
+impl<GEN, IT, TY> EventsReadProvider for TestEventsReaderTy<GEN>
 where
     GEN: Fn(NanoRange) -> IT + Send + Sync,
     IT: Iterator<Item = ContainerEvents<TY>> + Send + 'static,
     TY: EventValueType,
 {
     fn read(&self, evq: EventsSubQuery) -> EventsReading {
-        // let iter = items_2::testgen::events_gen::new_events_gen_dim1_f32_v00(self.range.clone());
         let iter = (self.gen)(self.range.clone());
         let iter = iter
             .map(|x| {
@@ -45,5 +44,28 @@ where
         let stream = Box::pin(futures_util::stream::iter(iter));
         let ret = EventsReading::new(stream);
         ret
+    }
+}
+
+pub struct TestEventsReadProvider {}
+
+impl TestEventsReadProvider {
+    pub fn new() -> Self {
+        Self {}
+    }
+}
+
+impl EventsReadProvider for TestEventsReadProvider {
+    fn read(&self, evq: EventsSubQuery) -> EventsReading {
+        let range: NanoRange = evq.range().try_into().unwrap();
+        if evq.ch_conf().series() == Some(123) && evq.name() == "test-reader-dim0-f32-00" {
+            let gen = TestEventsReaderTy::new(
+                range,
+                items_2::testgen::events_gen::new_events_gen_dim0_f32_v00,
+            );
+            gen.read(evq)
+        } else {
+            panic!()
+        }
     }
 }

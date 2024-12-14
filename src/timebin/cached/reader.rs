@@ -174,7 +174,6 @@ impl Future for CacheWriting {
 
 pub trait CacheReadProvider: Send + Sync {
     fn read(&self, series: u64, bin_len: DtMs, msp: u64, offs: Range<u32>) -> CacheReading;
-    fn write(&self, series: u64, bins: BinsBoxed) -> CacheWriting;
 }
 
 pub struct CachedReader {
