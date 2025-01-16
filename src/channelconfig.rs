@@ -21,6 +21,7 @@ use nom::Needed;
 use serde::Deserialize;
 use serde::Serialize;
 use std::fmt;
+use std::path::PathBuf;
 use std::time::Duration;
 use std::time::SystemTime;
 
@@ -29,7 +30,8 @@ use std::time::SystemTime;
 pub enum ConfigParseError {
     NotSupportedOnNode,
     FileNotFound,
-    PermissionDenied,
+    #[error("PermissionDenied({0:?})")]
+    PermissionDenied(PathBuf),
     IO,
     ParseError(String),
     NotSupported,
@@ -114,7 +116,10 @@ impl ConfigEntry {
                 } else {
                     // TODO
                     // Need a new Shape variant for images.
-                    return Err(Error::with_msg(format!("Channel config unsupported shape {:?}", self)))?;
+                    return Err(Error::with_msg(format!(
+                        "Channel config unsupported shape {:?}",
+                        self
+                    )))?;
                 }
             }
             None => Shape::Scalar,
@@ -296,7 +301,8 @@ fn parse_config_inner(inp: &[u8]) -> NRes<ChannelConfigs> {
 }
 
 pub fn parse_config(inp: &[u8]) -> Result<ChannelConfigs, ConfigParseError> {
-    let (_inp, ret) = parse_config_inner(inp).map_err(|e| ConfigParseError::ParseError(e.to_string()))?;
+    let (_inp, ret) =
+        parse_config_inner(inp).map_err(|e| ConfigParseError::ParseError(e.to_string()))?;
     Ok(ret)
 }
 
@@ -326,7 +332,12 @@ pub fn extract_matching_config_entry<'a>(
     if DO_DEBUG {
         debug!("extract_matching_config_entry  range {range:?}");
     }
-    let mut a: Vec<_> = channel_config.entries.iter().enumerate().map(|(i, x)| (i, x)).collect();
+    let mut a: Vec<_> = channel_config
+        .entries
+        .iter()
+        .enumerate()
+        .map(|(i, x)| (i, x))
+        .collect();
     a.sort_unstable_by_key(|(_, x)| x.ts.ns());
     let a = a;
 
@@ -438,7 +449,8 @@ mod test {
 
     #[test]
     fn parse_dummy() {
-        let config = parse_config(&[0, 0, 0, 0, 0, 11, 0x61, 0x62, 0x63, 0, 0, 0, 11, 0, 0, 0, 1]).unwrap();
+        let config =
+            parse_config(&[0, 0, 0, 0, 0, 11, 0x61, 0x62, 0x63, 0, 0, 0, 11, 0, 0, 0, 1]).unwrap();
         assert_eq!(0, config.format_version);
         assert_eq!("abc", config.channel_name);
     }
