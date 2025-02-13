@@ -5,10 +5,6 @@ use items_0::timebin::BinsBoxed;
 use netpod::BinnedRange;
 use netpod::TsNano;
 
-#[derive(Debug, thiserror::Error)]
-#[cstm(name = "BinnedBinsLazy")]
-pub enum Error {}
-
 #[derive(Debug)]
 pub struct BinnedBinsTimeweightLazy {
     range: BinnedRange<TsNano>,

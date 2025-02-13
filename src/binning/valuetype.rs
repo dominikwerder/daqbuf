@@ -2,6 +2,7 @@ use super::aggregator::AggregatorTimeWeight;
 use super::container_events::Container;
 use super::container_events::EventValueType;
 use super::container_events::PartialOrdEvtA;
+use crate::log;
 use core::fmt;
 use items_0::subfr::SubFrId;
 use items_0::vecpreview::PreviewRange;
@@ -11,6 +12,8 @@ use netpod::EnumVariantRef;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::VecDeque;
+
+macro_rules! trace_ingest_event { ($($arg:expr),*) => ( if false { log::trace!($($arg),*) } ); }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EnumVariantContainer {
@@ -44,6 +47,11 @@ impl Container<EnumVariant> for EnumVariantContainer {
         let (ix, name) = val.into_parts();
         self.ixs.push_back(ix);
         self.names.push_back(name);
+    }
+
+    fn clear(&mut self) {
+        self.ixs.clear();
+        self.names.clear();
     }
 
     fn get_iter_ty_1(&self, pos: usize) -> Option<<EnumVariant as EventValueType>::IterTy1<'_>> {
@@ -100,7 +108,7 @@ impl AggregatorTimeWeight<EnumVariant> for EnumVariantAggregatorTimeWeight {
 
     fn ingest(&mut self, dt: DtNano, bl: DtNano, val: EnumVariant) {
         let f = dt.ns() as f32 / bl.ns() as f32;
-        eprintln!("INGEST ENUM  {}  {:?}", f, val);
+        trace_ingest_event!("ingest enum  {:.3e}  {:?}", f, val);
         self.sum += f * val.ix() as f32;
     }
 

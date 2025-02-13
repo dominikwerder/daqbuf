@@ -1,11 +1,13 @@
 use crate::binning::container_bins::ContainerBins;
 use std::collections::VecDeque;
 
-#[derive(Debug, thiserror::Error)]
-#[cstm(name = "Compare")]
-pub enum Error {
-    AssertMsg(String),
-}
+autoerr::create_error_v1!(
+    name(Error, "Compare"),
+    enum variants {
+        AssertMsg(String),
+        BinLenMismatch(usize, usize),
+    },
+);
 
 pub(super) trait IntoVecDequeU64 {
     fn into_vec_deque_u64(self) -> VecDeque<u64>;
@@ -93,11 +95,13 @@ pub(super) fn exp_cnts(
     bins: &ContainerBins<f32, f32>,
     exps: impl IntoVecDequeU64,
 ) -> Result<(), Error> {
-    exp_u64(
-        bins.cnts_iter(),
-        exps.into_vec_deque_u64().iter(),
-        "exp_cnts",
-    )
+    let exps = exps.into_vec_deque_u64();
+    if bins.len() != exps.len() {
+        let e = Error::BinLenMismatch(bins.len(), exps.len());
+        Err(e)
+    } else {
+        exp_u64(bins.cnts_iter(), exps.iter(), "exp_cnts")
+    }
 }
 
 pub(super) fn exp_mins(

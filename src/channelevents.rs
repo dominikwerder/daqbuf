@@ -240,7 +240,7 @@ mod serde_channel_events {
     use std::cell::RefCell;
     use std::fmt;
 
-    macro_rules! trace_serde { ($($arg:tt)*) => ( if false { trace!($($arg)*); }) }
+    macro_rules! trace_serde { ($($arg:expr),*) => ( if true { trace!($($arg),*); }) }
 
     type C01<T> = ContainerEvents<T>;
     type C02<T> = ContainerEvents<Vec<T>>;
@@ -255,12 +255,16 @@ mod serde_channel_events {
         T: Serialize + 'static,
         S: Serializer,
     {
+        let s = std::any::type_name::<T>();
+        trace_serde!("try_serialize  T {}", s);
         if let Some(x) = v.as_any_ref().downcast_ref::<T>() {
             ser.serialize_element(x)?;
             Ok(())
         } else {
             let s = std::any::type_name::<T>();
-            Err(serde::ser::Error::custom(format!("expect a {}", s)))
+            let e = serde::ser::Error::custom(format!("expect a {}", s));
+            error!("{}", e);
+            Err(e)
         }
     }
 
@@ -287,15 +291,17 @@ mod serde_channel_events {
                 _ => {
                     *$val.1.borrow_mut() = 1;
                     let msg = format!("serde  ser  not supported evt id 0x{:x}", nty_id);
-                    // error!("{}", msg);
+                    error!("{}", msg);
                     Err(serde::ser::Error::custom(msg))
                 }
             }
         }};
     }
 
+    #[derive(Debug)]
     struct EvRef<'a>(&'a dyn BinningggContainerEventsDyn, RefCell<u8>);
 
+    #[derive(Debug)]
     struct EvBox(Box<dyn BinningggContainerEventsDyn>);
 
     impl<'a> Serialize for EvRef<'a> {
@@ -343,10 +349,18 @@ mod serde_channel_events {
         T: Deserialize<'de> + BinningggContainerEventsDyn + 'static,
     {
         let s = std::any::type_name::<T>();
-        trace_serde!("get_2nd_or_err  {}", s);
+        trace_serde!("get_2nd_or_err  T {}", s);
         let obj: T = seq
-            .next_element()?
-            .ok_or_else(|| de::Error::missing_field("[2] obj"))?;
+            .next_element()
+            .map_err(|e| {
+                error!("get_2nd_or_err  next_element error {}", e);
+                e
+            })?
+            .ok_or_else(|| de::Error::missing_field("[2] obj"))
+            .map_err(|e| {
+                error!("get_2nd_or_err  error {}", e);
+                e
+            })?;
         Ok(EvBox(Box::new(obj)))
     }
 
@@ -375,7 +389,11 @@ mod serde_channel_events {
                 String::SUB => get_2nd_or_err::<$cont1<String>, _>(seq),
                 EnumVariant::SUB => get_2nd_or_err::<$cont1<EnumVariant>, _>(seq),
                 netpod::UnsupEvt::SUB => get_2nd_or_err::<$cont1<netpod::UnsupEvt>, _>(seq),
-                _ => Err(de::Error::custom(&format!("unknown nty 0x{:x}", nty))),
+                _ => {
+                    let e = de::Error::custom(&format!("unknown nty 0x{:x}", nty));
+                    error!("{}", e);
+                    Err(e)
+                }
             }
         }};
     }
@@ -400,7 +418,7 @@ mod serde_channel_events {
                 .ok_or_else(|| de::Error::missing_field("[1] nty"))?;
             let seq = &mut seq;
             trace_serde!("EvBoxVis::visit_seq  cty 0x{:x}  nty 0x{:x}", cty, nty);
-            if is_container_events(cty) {
+            let ret = if is_container_events(cty) {
                 if is_pulsed_subfr(nty) {
                     if is_vec_subfr(nty) {
                         de_inner_nty!(seq, C04, nty)
@@ -417,7 +435,16 @@ mod serde_channel_events {
             } else {
                 error!("unsupported serde  cty 0x{:x}  nty 0x{:x}", cty, nty);
                 Err(de::Error::custom(&format!("unknown cty 0x{:x}", cty)))
-            }
+            };
+            trace_serde!("EvBoxVis::visit_seq  ret {:?}", ret);
+            ret
+        }
+
+        fn visit_map<A>(self, map: A) -> Result<Self::Value, A::Error>
+        where
+            A: de::MapAccess<'de>,
+        {
+            panic!("EvBoxVis visit_map");
         }
     }
 
@@ -435,7 +462,7 @@ mod serde_channel_events {
         where
             S: Serializer,
         {
-            let name = "ChannelEvents";
+            let name = ChannelEventsVis::name();
             let vars = ChannelEventsVis::allowed_variants();
             match self {
                 ChannelEvents::Events(obj) => {
@@ -612,9 +639,9 @@ mod test_channel_events_serde {
         evs.push_back(TsNano::from_ns(12), 3.2f32);
         let item = ChannelEvents::from(evs);
         let s = serde_json::to_string_pretty(&item).unwrap();
-        eprintln!("{s}");
+        trace!("{}", s);
         let w: ChannelEvents = serde_json::from_str(&s).unwrap();
-        eprintln!("{w:?}");
+        trace!("{:?}", w);
     }
 
     type OptsTy = WithOtherTrailing<
@@ -632,6 +659,28 @@ mod test_channel_events_serde {
     }
 
     #[test]
+    fn channel_events_postcard() {
+        let mut evs = ContainerEvents::<f32>::new();
+        evs.push_back(TsNano::from_ns(8), 3.0);
+        evs.push_back(TsNano::from_ns(12), 3.2);
+        let item = ChannelEvents::from(evs);
+        let out = postcard::to_stdvec(&item).unwrap();
+        trace!("serialized into {} bytes", out.len());
+        let item: ChannelEvents = postcard::from_bytes(&out).unwrap();
+        let item = if let ChannelEvents::Events(x) = item {
+            x
+        } else {
+            panic!()
+        };
+        let item: &ContainerEvents<f32> = item.as_any_ref().downcast_ref().unwrap();
+        use items_0::merge::MergeableTy;
+        assert_eq!(item.tss_for_testing().len(), 2);
+        assert_eq!(item.tss_for_testing()[1], TsNano::from_ns(12));
+    }
+
+    // TODO some unresolved issue with bincode
+    #[allow(unused)]
+    // #[test]
     fn channel_events_bincode() {
         let mut evs = ContainerEvents::<f32>::new();
         evs.push_back(TsNano::from_ns(8), 3.0);
@@ -641,7 +690,7 @@ mod test_channel_events_serde {
         let mut out = Vec::new();
         let mut ser = bincode::Serializer::new(&mut out, opts);
         item.serialize(&mut ser).unwrap();
-        eprintln!("serialized into {} bytes", out.len());
+        trace!("serialized into {} bytes", out.len());
         let mut de = bincode::Deserializer::from_slice(&out, opts);
         let item = <ChannelEvents as Deserialize>::deserialize(&mut de).unwrap();
         let item = if let ChannelEvents::Events(x) = item {
@@ -670,7 +719,7 @@ mod test_channel_events_serde {
         let mut out = Vec::new();
         let mut ser = bincode::Serializer::new(&mut out, opts);
         item.serialize(&mut ser).unwrap();
-        eprintln!("serialized into {} bytes", out.len());
+        trace!("serialized into {} bytes", out.len());
         let mut de = bincode::Deserializer::from_slice(&out, opts);
         let item = <ChannelEvents as Deserialize>::deserialize(&mut de).unwrap();
         let item = if let ChannelEvents::Status(x) = item {

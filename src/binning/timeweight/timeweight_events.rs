@@ -1,37 +1,49 @@
-use super::super::container_events::EventValueType;
 use crate::binning::aggregator::AggregatorTimeWeight;
 use crate::binning::container_bins::ContainerBins;
 use crate::binning::container_events::ContainerEvents;
 use crate::binning::container_events::ContainerEventsTakeUpTo;
 use crate::binning::container_events::EventSingle;
 use crate::binning::container_events::EventSingleRef;
+use crate::binning::container_events::EventValueType;
 use crate::binning::container_events::PartialOrdEvtA;
-use crate::log::*;
-use core::fmt;
+use crate::log;
 use netpod::BinnedRange;
 use netpod::DtNano;
 use netpod::TsNano;
+use std::fmt;
 use std::mem;
 
-macro_rules! trace_ { ($($arg:tt)*) => ( if false { trace!($($arg)*); }) }
+macro_rules! debug { ($($arg:expr),*) => ( if true { log::debug!($($arg),*); } ) }
 
-macro_rules! trace_init { ($($arg:tt)*) => ( if true { trace_!($($arg)*); }) }
+macro_rules! trace_ { ($($arg:expr),*) => ( if true { log::trace!($($arg),*); } ) }
 
-macro_rules! trace_cycle { ($($arg:tt)*) => ( if true { trace_!($($arg)*); }) }
+macro_rules! trace_init { ($($arg:expr),*) => ( if true { trace_!($($arg),*); } ) }
 
-macro_rules! trace_event_next { ($($arg:tt)*) => ( if true { trace_!($($arg)*); }) }
+macro_rules! trace_output { ($($arg:expr),*) => ( if true { trace_!($($arg),*); }) }
 
-macro_rules! trace_ingest_init_lst { ($($arg:tt)*) => ( if true { trace_!($($arg)*); }) }
+macro_rules! trace_cycle { ($($arg:expr),*) => ( if true { trace_!($($arg),*); }) }
 
-macro_rules! trace_ingest_minmax { ($($arg:tt)*) => ( if true { trace_!($($arg)*); }) }
+macro_rules! trace_event_next { ($fmt:expr, $($arg:expr),*) => ( if true {
+    trace_!(concat!("\x1b[1mEVENT POP FRONT\x1b[0m  ", $fmt), $($arg),*);
+}) }
 
-macro_rules! trace_ingest_event { ($($arg:tt)*) => ( if true { trace_!($($arg)*); }) }
+macro_rules! trace_ingest_init_lst { ($($arg:expr),*) => ( if true { trace_!($($arg),*); }) }
 
-macro_rules! trace_ingest_container { ($($arg:tt)*) => ( if true { trace_!($($arg)*); }) }
+macro_rules! trace_ingest_minmax { ($($arg:expr),*) => ( if true { trace_!($($arg),*); }) }
 
-macro_rules! trace_ingest_container_2 { ($($arg:tt)*) => ( if true { trace_!($($arg)*); }) }
+macro_rules! trace_ingest_event { ($($arg:expr),*) => ( if true { trace_!($($arg),*); }) }
 
-macro_rules! trace_fill_until { ($($arg:tt)*) => ( if true { trace_!($($arg)*); }) }
+macro_rules! trace_ingest_container { ($($arg:expr),*) => ( if true { trace_!($($arg),*); }) }
+
+macro_rules! trace_ingest_container_2 { ($($arg:expr),*) => ( if true { trace_!($($arg),*); }) }
+
+macro_rules! trace_fill_until { ($($arg:expr),*) => ( if true { trace_!($($arg),*); }) }
+
+const COL1: &'static str = "\x1b[1m";
+const RST: &'static str = "\x1b[0m";
+
+const VERIFY_INPUT_EVENTS: bool = false;
+const OUT_LEN_MAX: usize = 20000;
 
 #[cold]
 #[inline]
@@ -53,6 +65,7 @@ autoerr::create_error_v1!(
         WithMinMaxButEventBeforeRange,
         NoMinMaxAfterInit,
         ExpectEventWithinRange,
+        IngestNoProgress(usize, usize),
     },
 );
 
@@ -160,7 +173,7 @@ where
         let selfname = "ingest_with_lst_gt_range_beg";
         trace_ingest_event!("{}  len {}", selfname, evs.len());
         while let Some(ev) = evs.next() {
-            trace_event_next!("EVENT POP FRONT  {:?}  {:30}", ev, selfname);
+            trace_event_next!("{:?}  {:30}", ev, selfname);
             if ev.ts <= self.active_beg {
                 panic!("should never get here");
             }
@@ -182,7 +195,7 @@ where
         let selfname = "ingest_with_lst_ge_range_beg";
         trace_ingest_event!("{}  len {}", selfname, evs.len());
         while let Some(ev) = evs.next() {
-            trace_event_next!("EVENT POP FRONT  {:?}  {:30}", ev, selfname);
+            trace_event_next!("{:?}  {:30}", ev, selfname);
             assert!(ev.ts >= self.active_beg);
             assert!(ev.ts < self.active_end);
             if ev.ts == self.active_beg {
@@ -291,7 +304,7 @@ where
             let mut run_ingest_with_lst_minmax = false;
             let _ = run_ingest_with_lst_minmax;
             if let Some(ev) = evs.next() {
-                trace_event_next!("EVENT POP FRONT  {:?}  {:30}", ev, selfname);
+                trace_event_next!("{:?}  {:30}", ev, selfname);
                 let beg = b.active_beg;
                 let end = b.active_end;
                 if ev.ts < beg {
@@ -363,6 +376,7 @@ where
         out: &mut ContainerBins<EVT, EVT::AggTimeWeightOutputAvg>,
     ) {
         let selfname = "push_out_and_reset";
+        trace_output!("{}  range_final {}", selfname, range_final);
         // TODO there is not always good enough input to produce a meaningful bin.
         // TODO can we always reset, and what exactly does reset mean here?
         // TODO what logic can I save here? To output a bin I need to have min, max, lst.
@@ -393,11 +407,11 @@ pub struct BinnedEventsTimeweight<EVT>
 where
     EVT: EventValueType,
 {
-    lst: Option<EventSingle<EVT>>,
     range: BinnedRange<TsNano>,
+    produce_cnt_zero: bool,
+    lst: Option<EventSingle<EVT>>,
     inner_a: InnerA<EVT>,
     out: ContainerBins<EVT, EVT::AggTimeWeightOutputAvg>,
-    produce_cnt_zero: bool,
 }
 
 impl<EVT> fmt::Debug for BinnedEventsTimeweight<EVT>
@@ -406,8 +420,9 @@ where
 {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         fmt.debug_struct("BinnedEventsTimeweight")
-            .field("lst", &self.lst)
             .field("range", &self.range)
+            .field("produce_cnt_zero", &self.produce_cnt_zero)
+            .field("lst", &self.lst)
             .field("inner_a", &self.inner_a)
             .field("out", &self.out)
             .finish()
@@ -418,13 +433,19 @@ impl<EVT> BinnedEventsTimeweight<EVT>
 where
     EVT: EventValueType,
 {
+    pub fn type_name() -> &'static str {
+        std::any::type_name::<Self>()
+    }
+
     pub fn new(range: BinnedRange<TsNano>) -> Self {
-        trace_init!("BinnedEventsTimeweight::new  {}", range);
+        trace_init!("{}::new  {}", Self::type_name(), range);
         let active_beg = range.nano_beg();
         let active_end = active_beg.add_dt_nano(range.bin_len.to_dt_nano());
         let active_len = active_end.delta(active_beg);
         Self {
             range,
+            produce_cnt_zero: false,
+            lst: None,
             inner_a: InnerA::<EVT> {
                 inner_b: InnerB {
                     cnt: 0,
@@ -439,16 +460,12 @@ where
                 },
                 minmax: None,
             },
-            lst: None,
             out: ContainerBins::new(),
-            produce_cnt_zero: true,
         }
     }
 
-    pub fn disable_cnt_zero(self) -> Self {
-        let mut ret = self;
-        ret.produce_cnt_zero = false;
-        ret
+    pub fn cnt_zero_enable(&mut self) {
+        self.produce_cnt_zero = true;
     }
 
     fn ingest_event_without_lst(&mut self, ev: EventSingleRef<EVT>) -> Result<(), Error> {
@@ -476,7 +493,7 @@ where
         let mut run_ingest_with_lst = false;
         let _ = run_ingest_with_lst;
         if let Some(ev) = evs.next() {
-            trace_event_next!("EVENT POP FRONT  {:?}  {:30}", ev, selfname);
+            trace_event_next!("{:?}  {:30}", ev, selfname);
             assert!(ev.ts < self.inner_a.inner_b.active_end);
             self.ingest_event_without_lst(ev)?;
             run_ingest_with_lst = true;
@@ -527,7 +544,11 @@ where
                     i += 1;
                     assert!(i < 100000, "too many iterations");
                     let b = &self.inner_a.inner_b;
-                    if ts > b.filled_until {
+                    if self.out.len() > OUT_LEN_MAX {
+                        // TODO change api such that we can produce arbitrary bins as stream.
+                        panic!("cycle_01  break  out len {}", self.out.len());
+                        break;
+                    } else if ts > b.filled_until {
                         if ts >= b.active_end {
                             if b.filled_until < b.active_end {
                                 self.inner_a.inner_b.fill_until(b.active_end, lst.clone());
@@ -557,7 +578,6 @@ where
                 } else {
                     // TODO should never hit this case. Count.
                 }
-
                 // TODO jump to next bin
                 // TODO merge with the other reset
                 // Below uses the same code
@@ -609,8 +629,9 @@ where
         // ALSO: need to keep track of the "lst". Probably best done in this type as well?
 
         // TODO should rely on external stream adapter for verification to not duplicate things.
-        evs.verify()?;
-
+        if VERIFY_INPUT_EVENTS {
+            evs.verify()?;
+        }
         let mut evs = ContainerEventsTakeUpTo::new(evs);
 
         loop {
@@ -635,6 +656,8 @@ where
                     self.cycle_01(ts);
                 }
                 let n1 = evs.len();
+                // TODO instead of mutable constrain/expand, use cheap derived subslices.
+                // But inner must still communicate back how much was consumed.
                 evs.constrain_up_to_ts(self.inner_a.inner_b.active_end);
                 {
                     trace_ingest_container!(
@@ -651,14 +674,18 @@ where
                     } else {
                         self.ingest_ordered(&mut evs)?
                     };
-                    trace_ingest_container_2!("ingest  after still left len  evs {}", evs.len());
+                    trace_ingest_container_2!("ingest  after still left  evs len {}", evs.len());
                 }
                 evs.extend_to_all();
                 let n2 = evs.len();
+                trace_ingest_container_2!("ingest  extended again to all  evs len {}", evs.len());
                 if n2 == 0 {
                     // done
+                } else if n2 >= n1 {
+                    let e = Error::IngestNoProgress(n1, n2);
+                    debug!("{}", e);
+                    return Err(e);
                 } else {
-                    assert!(n2 < n1, "no progress");
                     continue;
                 }
             } else {
@@ -669,13 +696,13 @@ where
     }
 
     pub fn input_done_range_final(&mut self) -> Result<(), Error> {
-        trace_cycle!("input_done_range_final");
+        trace_cycle!("{}input_done_range_final{}", COL1, RST);
         self.cycle_01(self.range.nano_end());
         Ok(())
     }
 
     pub fn input_done_range_open(&mut self) -> Result<(), Error> {
-        trace_cycle!("input_done_range_open");
+        trace_cycle!("{}input_done_range_open{}", COL1, RST);
         self.cycle_02();
         Ok(())
     }

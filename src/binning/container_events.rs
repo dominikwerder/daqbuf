@@ -63,6 +63,7 @@ where
     fn new() -> Self;
     fn len(&self) -> usize;
     fn push_back(&mut self, val: EVT);
+    fn clear(&mut self);
     fn get_iter_ty_1(&self, pos: usize) -> Option<EVT::IterTy1<'_>>;
     fn iter_ty_1(&self) -> impl Iterator<Item = EVT::IterTy1<'_>>;
     fn drain_into(&mut self, dst: &mut Self, range: Range<usize>);
@@ -102,6 +103,10 @@ where
         self.push_back(val);
     }
 
+    fn clear(&mut self) {
+        self.clear();
+    }
+
     fn get_iter_ty_1(&self, pos: usize) -> Option<EVT::IterTy1<'_>> {
         self.get(pos).map(|x| x.clone())
     }
@@ -134,6 +139,10 @@ impl Container<String> for VecDeque<String> {
 
     fn push_back(&mut self, val: String) {
         self.push_back(val);
+    }
+
+    fn clear(&mut self) {
+        self.clear();
     }
 
     fn get_iter_ty_1(&self, pos: usize) -> Option<&str> {
@@ -512,6 +521,11 @@ where
         self.vals.push_back(val.1);
     }
 
+    fn clear(&mut self) {
+        self.pulses.clear();
+        self.vals.clear();
+    }
+
     fn get_iter_ty_1(&self, pos: usize) -> Option<<PulsedVal<EVT> as EventValueType>::IterTy1<'_>> {
         if let (Some(&pulse), Some(val)) = (self.pulses.get(pos), self.vals.get_iter_ty_1(pos)) {
             let x = PulsedValIterTy { pulse, evt: val };
@@ -793,6 +807,12 @@ where
 
     pub fn serde_id() -> u32 {
         items_0::streamitem::CONTAINER_EVENTS_TYPE_ID
+    }
+
+    pub fn clear(&mut self) {
+        self.tss.clear();
+        self.vals.clear();
+        self.byte_estimate = 0;
     }
 }
 
