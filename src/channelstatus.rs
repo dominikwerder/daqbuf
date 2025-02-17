@@ -29,6 +29,8 @@ pub enum ChannelStatus {
     MonitoringSilenceReadStart,
     MonitoringSilenceReadTimeout,
     MonitoringSilenceReadUnchanged,
+    MonitoringReadResultExpected,
+    MonitoringReadResultUnexpected,
     HaveStatusId,
     HaveAddress,
 }
@@ -59,6 +61,8 @@ impl ChannelStatus {
             MonitoringSilenceReadUnchanged => 28,
             HaveStatusId => 29,
             HaveAddress => 30,
+            MonitoringReadResultExpected => 31,
+            MonitoringReadResultUnexpected => 32,
         }
     }
 
@@ -85,6 +89,8 @@ impl ChannelStatus {
             28 => MonitoringSilenceReadUnchanged,
             29 => HaveStatusId,
             30 => HaveAddress,
+            31 => MonitoringReadResultExpected,
+            32 => MonitoringReadResultUnexpected,
             _ => {
                 return Err(Error::UnknownStatus);
             }
@@ -106,6 +112,8 @@ impl ChannelStatus {
             MonitoringSilenceReadStart => "MSRS",
             MonitoringSilenceReadTimeout => "MSRT",
             MonitoringSilenceReadUnchanged => "MSRU",
+            MonitoringReadResultExpected => "MRRE",
+            MonitoringReadResultUnexpected => "MRRU",
             HaveStatusId => "HaveStatusId",
             HaveAddress => "HaveAddress",
         };

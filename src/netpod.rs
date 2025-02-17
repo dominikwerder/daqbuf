@@ -22,9 +22,9 @@ pub mod log_macros_branch {
     macro_rules! branch_trace {
         ($($arg:tt)*) => {
             if $crate::is_log_direct() {
-                $crate::log_direct::trace!($($arg)*)
+                $crate::log_direct::trace!($($arg)*);
             } else {
-                $crate::log::trace!($($arg)*)
+                $crate::log::trace!($($arg)*);
             }
         };
     }
@@ -33,9 +33,9 @@ pub mod log_macros_branch {
     macro_rules! branch_debug {
         ($($arg:tt)*) => {
             if $crate::is_log_direct() {
-                $crate::log_direct::debug!($($arg)*)
+                $crate::log_direct::debug!($($arg)*);
             } else {
-                $crate::log::debug!($($arg)*)
+                $crate::log::debug!($($arg)*);
             }
         };
     }
@@ -44,9 +44,9 @@ pub mod log_macros_branch {
     macro_rules! branch_info {
         ($($arg:tt)*) => {
             if $crate::is_log_direct() {
-                $crate::log_direct::info!($($arg)*)
+                $crate::log_direct::info!($($arg)*);
             } else {
-                $crate::log::info!($($arg)*)
+                $crate::log::info!($($arg)*);
             }
         };
     }
@@ -55,9 +55,9 @@ pub mod log_macros_branch {
     macro_rules! branch_warn {
         ($($arg:tt)*) => {
             if $crate::is_log_direct() {
-                $crate::log_direct::warn!($($arg)*)
+                $crate::log_direct::warn!($($arg)*);
             } else {
-                $crate::log::warn!($($arg)*)
+                $crate::log::warn!($($arg)*);
             }
         };
     }
@@ -66,9 +66,9 @@ pub mod log_macros_branch {
     macro_rules! branch_error {
         ($($arg:tt)*) => {
             if $crate::is_log_direct() {
-                $crate::log_direct::error!($($arg)*)
+                $crate::log_direct::error!($($arg)*);
             } else {
-                $crate::log::error!($($arg)*)
+                $crate::log::error!($($arg)*);
             }
         };
     }
@@ -180,6 +180,8 @@ use std::time::UNIX_EPOCH;
 use timeunits::*;
 use url::Url;
 
+macro_rules! trace_covering_range { ($($arg:expr),*) => ( if true { branch_trace!($($arg),*); } ) }
+
 pub const APP_JSON: &str = "application/json";
 pub const APP_JSON_LINES: &str = "application/jsonlines";
 pub const APP_OCTET: &str = "application/octet-stream";
@@ -201,14 +203,6 @@ pub const DATETIME_FMT_6MS: &str = "%Y-%m-%dT%H:%M:%S.%6fZ";
 pub const DATETIME_FMT_9MS: &str = "%Y-%m-%dT%H:%M:%S.%9fZ";
 
 const TEST_BACKEND: &str = "testbackend-00";
-
-#[allow(non_upper_case_globals)]
-pub const trigger: [&'static str; 0] = [
-    //
-    // "S30CB05-VMCP-A010:PRESSURE",
-    // "ATSRF-CAV:TUN-DETUNING-REL-ACT",
-    // "S30CB14-KBOC-HPPI1:PI-OUT",
-];
 
 pub const TRACE_SERIES_ID: [u64; 1] = [
     //
@@ -2652,6 +2646,12 @@ impl BinnedRange<TsNano> {
         }
     }
 
+    pub fn from_beg_to_inf(beg: TsNano, bin_len: DtMs) -> Self {
+        let margin = 1000 * 1000 * 1000 * 60 * 60 * 24 * 40;
+        let end = (u64::MAX - margin) / bin_len.ns() * bin_len.ns();
+        BinnedRange::from_nano_range(NanoRange::from_ns_u64(beg.ns(), end), bin_len)
+    }
+
     pub fn covering_range_time(range: NanoRange, bin_len_req: DtMs) -> Result<Self, Error> {
         let opts = <TsNano as Dim0Index>::binned_bin_len_opts();
         let bin_len_req = if bin_len_req.ms() < opts[0].ms() {
@@ -2781,17 +2781,29 @@ impl BinnedRangeEnum {
         }
         let du = b.sub(&a);
         let max_bin_len = du.div_n(min_bin_count as u64);
+        let mut found_bin_len = None;
         for (_, bl) in opts.iter().enumerate().rev() {
-            if bl <= &max_bin_len {
-                let off_1 = a.div_v(&bl);
-                let off_2 = (b.add(&bl).sub_n(1)).div_v(&bl);
-                eprintln!("off_1 {off_1:?}  off_2 {off_2:?}");
-                let bin_cnt = off_2 - off_1;
-                let ret = T::to_binned_range_enum(bl, off_1, bin_cnt);
-                return Ok(ret);
+            if *bl <= max_bin_len {
+                found_bin_len = Some(bl.clone());
+                break;
             }
         }
-        Err(Error::BinnedNoGridMatch)
+        if false {
+            return Err(Error::BinnedNoGridMatch);
+        }
+        let bl = found_bin_len.unwrap_or(max_bin_len);
+        {
+            let off_1 = a.div_v(&bl);
+            let off_2 = (b.add(&bl).sub_n(1)).div_v(&bl);
+            trace_covering_range!(
+                "BinnedRangeEnum::covering_range_ty  off_1 {:?}  off_2 {:?}",
+                off_1,
+                off_2
+            );
+            let bin_cnt = off_2 - off_1;
+            let ret = T::to_binned_range_enum(&bl, off_1, bin_cnt);
+            Ok(ret)
+        }
     }
 
     /// Cover at least the given range while selecting the bin width which best fits the requested bin width.
@@ -3419,6 +3431,7 @@ pub struct ChannelSearchQuery {
     pub icase: bool,
     #[serde(default)]
     pub kind: SeriesKind,
+    pub log_level: String,
 }
 
 impl ChannelSearchQuery {
@@ -3438,6 +3451,7 @@ impl ChannelSearchQuery {
                 .map_or(None, |x| x.parse().ok())
                 .unwrap_or(false),
             kind: SeriesKind::from_pairs(&pairs)?,
+            log_level: pairs.get("log_level").map_or(String::new(), String::from),
         };
         Ok(ret)
     }
@@ -3451,8 +3465,15 @@ impl ChannelSearchQuery {
         qp.append_pair("sourceRegex", &self.source_regex);
         qp.append_pair("descriptionRegex", &self.description_regex);
         qp.append_pair("icase", &self.icase.to_string());
+        if self.log_level.len() != 0 {
+            qp.append_pair("log_level", &self.log_level);
+        }
         drop(qp);
         self.kind.append_to_url(url);
+    }
+
+    pub fn log_level(&self) -> &str {
+        &self.log_level
     }
 }
 

@@ -112,6 +112,12 @@ impl fmt::Display for CacheUsage {
     }
 }
 
+impl Default for CacheUsage {
+    fn default() -> Self {
+        Self::Ignore
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TimeRangeQuery {
     range: NanoRange,
