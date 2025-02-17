@@ -14,7 +14,7 @@ use std::sync::Arc;
 use std::task::Context;
 use std::task::Poll;
 
-macro_rules! trace_emit { ($($arg:tt)*) => ( if false { trace!($($arg)*); } ) }
+macro_rules! trace_emit { ($($arg:expr),*) => ( if true { trace!($($arg),*); } ) }
 
 autoerr::create_error_v1!(
     name(Error, "ReadingBinnedFromEvents"),
@@ -35,6 +35,7 @@ impl BinnedFromEvents {
         do_time_weight: bool,
         read_provider: Arc<dyn EventsReadProvider>,
     ) -> Result<Self, Error> {
+        trace_emit!("new");
         if !evq.range().is_time() {
             return Err(Error::ExpectTimerange);
         }

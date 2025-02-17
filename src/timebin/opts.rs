@@ -12,7 +12,7 @@ pub struct BinningOptions {
 impl BinningOptions {
     pub fn default() -> Self {
         Self {
-            cache_usage: CacheUsage::Read,
+            cache_usage: CacheUsage::default(),
             allow_from_events: true,
             allow_from_prebinned: true,
             allow_rebin: true,
@@ -21,7 +21,7 @@ impl BinningOptions {
 
     pub fn testing_no_events() -> Self {
         Self {
-            cache_usage: CacheUsage::Read,
+            cache_usage: CacheUsage::default(),
             allow_from_events: false,
             allow_from_prebinned: true,
             allow_rebin: true,
@@ -47,7 +47,7 @@ impl BinningOptions {
 
 impl From<&BinnedQuery> for BinningOptions {
     fn from(value: &BinnedQuery) -> Self {
-        let cache_usage = value.cache_usage().unwrap_or(CacheUsage::Ignore);
+        let cache_usage = value.cache_usage().unwrap_or(CacheUsage::default());
         Self {
             cache_usage,
             allow_from_events: value.allow_from_events().unwrap_or(true),

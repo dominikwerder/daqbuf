@@ -27,7 +27,9 @@ where
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         let mut this = self.project();
-        let _spg = this.span.enter();
-        this.inp.poll_next_unpin(cx)
+        let spg = this.span.enter();
+        let ret = this.inp.poll_next_unpin(cx);
+        drop(spg);
+        ret
     }
 }

@@ -32,6 +32,7 @@ query = { path = "../daqbuf-query", package = "daqbuf-query" }
 items_0 = { path = "../daqbuf-items-0", package = "daqbuf-items-0" }
 items_2 = { path = "../daqbuf-items-2", package = "daqbuf-items-2" }
 parse = { path = "../daqbuf-parse", package = "daqbuf-parse" }
+series = { path = "../daqbuf-series", package = "daqbuf-series" }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt"] }

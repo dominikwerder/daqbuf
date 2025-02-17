@@ -20,17 +20,18 @@ use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
 
-macro_rules! trace_inp { ($det:expr, $($arg:tt)*) => ( if false && $det { trace!($($arg)*); } ) }
+macro_rules! trace_inp { ($det:expr, $($arg:expr),*) => ( if false && $det { trace!($($arg),*); } ) }
 
-macro_rules! trace_init { ($det:expr, $($arg:tt)*) => ( if false { trace!($($arg)*); } ) }
+macro_rules! trace_init { ($det:expr, $($arg:expr),*) => ( if false { trace!($($arg),*); } ) }
 
-macro_rules! trace_emit { ($det:expr, $($arg:tt)*) => ( if false { trace!($($arg)*); } ) }
+macro_rules! trace_emit { ($det:expr, $($arg:expr),*) => ( if false { trace!($($arg),*); } ) }
 
-#[derive(Debug, thiserror::Error)]
-#[cstm(name = "Rangefilter")]
-pub enum Error {
-    DrainUnclean,
-}
+autoerr::create_error_v1!(
+    name(Error, "Rangefilter"),
+    enum variants {
+        DrainUnclean,
+    },
+);
 
 pub struct RangeFilter2<INP, ITY>
 where
@@ -167,7 +168,7 @@ where
                 }
                 None => {
                     // TODO keep stats about this case
-                    trace_emit!(self.trdet, "drain into to keep one before",);
+                    trace_emit!(self.trdet, "drain into to keep one before");
                     let n = item.len();
                     match item.drain_into_new(n.max(1) - 1..n) {
                         DrainIntoNewResult::Done(keep) => {

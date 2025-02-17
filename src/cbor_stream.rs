@@ -97,26 +97,26 @@ where
             StreamItem::Log(item) => {
                 match item.level {
                     Level::TRACE => {
-                        trace!("{item:?}");
+                        trace!("{:?}", item);
                     }
                     Level::DEBUG => {
-                        debug!("{item:?}");
+                        debug!("{:?}", item);
                     }
                     Level::INFO => {
-                        info!("{item:?}");
+                        info!("{:?}", item);
                     }
                     Level::WARN => {
-                        warn!("{item:?}");
+                        warn!("{:?}", item);
                     }
                     Level::ERROR => {
-                        error!("{item:?}");
+                        error!("{:?}", item);
                     }
                 }
                 let item = CborBytes::new(Bytes::new());
                 Ok(item)
             }
             StreamItem::Stats(item) => {
-                info!("{item:?}");
+                debug!("{:?}", item);
                 let item = CborBytes::new(Bytes::new());
                 Ok(item)
             }

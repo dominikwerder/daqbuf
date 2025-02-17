@@ -280,6 +280,7 @@ async fn timebinned_stream(
     let stream = crate::timebin::fromlayers::TimeBinnedFromLayers::new(
         ch_conf,
         (&query).into(),
+        query.cache_usage().unwrap_or(Default::default()),
         query.transform().clone(),
         EventsSubQuerySettings::from(&query),
         query.log_level().into(),
@@ -291,7 +292,6 @@ async fn timebinned_stream(
         events_read_provider,
     )?;
     let stream = stream.map(|item| {
-        // use items_0::timebin::BinningggContainerBinsDyn;
         use items_0::timebin::BinsBoxed;
         on_sitemty_data!(item, |mut x: BinsBoxed| {
             x.fix_numerics();
@@ -541,10 +541,11 @@ pub async fn timebinned_cbor_framed(
                     Ok(x) => match x {
                         StreamItem::DataItem(x) => match x {
                             RangeCompletableItem::Data(mut item) => {
+                                let tsnow = Instant::now();
                                 let coll = coll.get_or_insert_with(|| item.new_collector());
                                 coll.ingest(&mut item);
-                                if coll.len() >= 128 || last_emit.elapsed() >= timeout_content_2 {
-                                    last_emit = Instant::now();
+                                if coll.len() >= 128 || tsnow >= last_emit + timeout_content_2 {
+                                    last_emit = tsnow;
                                     take_collector_result_cbor(coll).map(|x| Ok(x))
                                 } else {
                                     None
