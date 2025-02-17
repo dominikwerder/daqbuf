@@ -5,6 +5,7 @@ use netpod::log::*;
 use netpod::timeunits::*;
 use slidebuf::SlideBuf;
 use std::collections::VecDeque;
+use std::fmt;
 use std::io;
 use std::pin::Pin;
 use std::task::Context;
@@ -1288,6 +1289,25 @@ pub struct CaProto<STATS = ()> {
     resqu: VecDeque<CaItem>,
     event_add_res_cnt: u32,
     bytes_recv_testing: u32,
+}
+
+impl fmt::Debug for CaProto {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        fmt.debug_struct("CaProto")
+            // .field("tcp", &self.tcp)
+            .field("tcp_eof", &self.tcp_eof)
+            .field("remote_name", &self.remote_name)
+            .field("state", &self.state)
+            .field("buf", &self.buf)
+            .field("outbuf", &self.outbuf)
+            .field("out", &self.out)
+            .field("array_truncate", &self.array_truncate)
+            .field("stats", &self.stats)
+            .field("resqu", &self.resqu)
+            .field("event_add_res_cnt", &self.event_add_res_cnt)
+            .field("bytes_recv_testing", &self.bytes_recv_testing)
+            .finish()
+    }
 }
 
 impl<STATS> CaProto<STATS>
