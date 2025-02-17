@@ -42,8 +42,9 @@ pub trait TimeBinnableTy: fmt::Debug + WithLen + Send + Sized {
     ) -> Self::TimeBinner;
 }
 
+#[derive(Debug)]
 pub enum BinningggError {
-    Dyn(Box<dyn std::error::Error>),
+    Dyn(Box<dyn std::error::Error + Send>),
     TypeMismatch { have: String, expect: String },
 }
 
@@ -60,7 +61,7 @@ impl fmt::Display for BinningggError {
 
 impl<E> From<E> for BinningggError
 where
-    E: std::error::Error + 'static,
+    E: std::error::Error + Send + 'static,
 {
     fn from(value: E) -> Self {
         Self::Dyn(Box::new(value))
@@ -136,6 +137,7 @@ pub trait BinningggBinnerDyn: fmt::Debug + Send {
 }
 
 pub trait BinnedEventsTimeweightTrait: fmt::Debug + Send {
+    fn cnt_zero_enable(&mut self);
     fn ingest(&mut self, evs: &EventsBoxed) -> Result<(), BinningggError>;
     fn input_done_range_final(&mut self) -> Result<(), BinningggError>;
     fn input_done_range_open(&mut self) -> Result<(), BinningggError>;
