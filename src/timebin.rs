@@ -136,9 +136,21 @@ pub trait BinningggBinnerDyn: fmt::Debug + Send {
     fn input_done_range_open(&mut self) -> Result<(), BinningggError>;
 }
 
+#[must_use]
+pub enum IngestReport {
+    ConsumedAll,
+    ConsumedPart(usize),
+}
+
+impl IngestReport {
+    pub fn ingest_again(&self) -> bool {
+        todo!()
+    }
+}
+
 pub trait BinnedEventsTimeweightTrait: fmt::Debug + Send {
     fn cnt_zero_enable(&mut self);
-    fn ingest(&mut self, evs: &EventsBoxed) -> Result<(), BinningggError>;
+    fn ingest(&mut self, evs: &EventsBoxed) -> Result<IngestReport, BinningggError>;
     fn input_done_range_final(&mut self) -> Result<(), BinningggError>;
     fn input_done_range_open(&mut self) -> Result<(), BinningggError>;
     fn output(&mut self) -> Result<Option<BinsBoxed>, BinningggError>;
