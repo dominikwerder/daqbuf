@@ -13,6 +13,7 @@ use items_0::timebin::BinningggContainerBinsDyn;
 use items_0::timebin::BinningggError;
 use items_0::timebin::BinsBoxed;
 use items_0::timebin::EventsBoxed;
+use items_0::timebin::IngestReport;
 use netpod::BinnedRange;
 use netpod::TsNano;
 use std::ops::ControlFlow;
@@ -66,7 +67,7 @@ where
         self.binner.cnt_zero_enable();
     }
 
-    fn ingest(&mut self, evs: &EventsBoxed) -> Result<(), BinningggError> {
+    fn ingest(&mut self, evs: &EventsBoxed) -> Result<IngestReport, BinningggError> {
         match evs.as_any_ref().downcast_ref::<ContainerEvents<EVT>>() {
             Some(evs) => Ok(self.binner.ingest(evs)?),
             None => {
@@ -124,7 +125,7 @@ impl BinnedEventsTimeweightTrait for BinnedEventsTimeweightLazy {
         self.enable_cnt_zero = true;
     }
 
-    fn ingest(&mut self, evs: &EventsBoxed) -> Result<(), BinningggError> {
+    fn ingest(&mut self, evs: &EventsBoxed) -> Result<IngestReport, BinningggError> {
         self.binned_events
             .get_or_insert_with(|| {
                 let mut v = evs.binned_events_timeweight_traitobj(self.range.clone());
@@ -203,7 +204,7 @@ impl BinnedEventsTimeweightStream {
                 DataItem(x) => match x {
                     Data(x) => match x {
                         ChannelEvents::Events(evs) => match self.binned_events.ingest(&evs) {
-                            Ok(()) => match self.binned_events.output() {
+                            Ok(report) => match self.binned_events.output() {
                                 Ok(Some(x)) => {
                                     if x.len() == 0 {
                                         Continue(())
