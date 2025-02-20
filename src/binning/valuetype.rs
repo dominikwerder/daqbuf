@@ -81,6 +81,14 @@ impl Container<EnumVariant> for EnumVariantContainer {
         dst.names.extend(self.names.drain(range));
     }
 
+    fn truncate_front(&mut self, len: usize) {
+        if self.len() > len {
+            let n = self.len() - len;
+            self.ixs.drain(0..n);
+            self.names.drain(0..n);
+        }
+    }
+
     fn into_user_facing_fields(self) -> Vec<(String, Box<dyn erased_serde::Serialize>)> {
         vec![
             ("values".into(), Box::new(self.ixs)),

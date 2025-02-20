@@ -67,6 +67,7 @@ where
     fn get_iter_ty_1(&self, pos: usize) -> Option<EVT::IterTy1<'_>>;
     fn iter_ty_1(&self) -> impl Iterator<Item = EVT::IterTy1<'_>>;
     fn drain_into(&mut self, dst: &mut Self, range: Range<usize>);
+    fn truncate_front(&mut self, len: usize);
     fn into_user_facing_fields(self) -> Vec<(String, Box<dyn erased_serde::Serialize>)>;
     fn into_user_facing_fields_json(self) -> Vec<(String, Box<dyn erased_serde::Serialize>)>;
 }
@@ -119,6 +120,13 @@ where
         dst.extend(self.drain(range));
     }
 
+    fn truncate_front(&mut self, len: usize) {
+        if self.len() > len {
+            let n = self.len() - len;
+            self.drain(0..n);
+        }
+    }
+
     fn into_user_facing_fields(self) -> Vec<(String, Box<dyn erased_serde::Serialize>)> {
         vec![("values".into(), Box::new(self))]
     }
@@ -155,6 +163,13 @@ impl Container<String> for VecDeque<String> {
 
     fn drain_into(&mut self, dst: &mut Self, range: Range<usize>) {
         dst.extend(self.drain(range))
+    }
+
+    fn truncate_front(&mut self, len: usize) {
+        if self.len() > len {
+            let n = self.len() - len;
+            self.drain(0..n);
+        }
     }
 
     fn into_user_facing_fields(self) -> Vec<(String, Box<dyn erased_serde::Serialize>)> {
@@ -548,6 +563,14 @@ where
         self.vals.drain_into(&mut dst.vals, range.clone());
     }
 
+    fn truncate_front(&mut self, len: usize) {
+        if self.len() > len {
+            let n = self.len() - len;
+            self.pulses.drain(0..n);
+            self.vals.truncate_front(len);
+        }
+    }
+
     fn into_user_facing_fields(self) -> Vec<(String, Box<dyn erased_serde::Serialize>)> {
         vec![
             ("pulses".into(), Box::new(self.pulses)),
@@ -813,6 +836,14 @@ where
         self.tss.clear();
         self.vals.clear();
         self.byte_estimate = 0;
+    }
+
+    pub fn truncate_front(&mut self, len: usize) {
+        if self.len() > len {
+            let n = self.len() - len;
+            self.tss.drain(0..n);
+            self.vals.truncate_front(len);
+        }
     }
 }
 
