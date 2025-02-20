@@ -1,5 +1,4 @@
 use netpod::DtMs;
-use std::fmt;
 
 autoerr::create_error_v1!(
     name(Error, "BinMsp"),
@@ -8,6 +7,7 @@ autoerr::create_error_v1!(
     },
 );
 
+#[derive(Debug, Clone)]
 pub enum PrebinnedPartitioning {
     Sec1,
     Sec10,
