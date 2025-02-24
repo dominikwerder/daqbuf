@@ -90,6 +90,7 @@ pub trait BinningggContainerEventsDyn:
     fn eq(&self, rhs: &dyn BinningggContainerEventsDyn) -> bool;
     fn as_mergeable_dyn_mut(&mut self) -> &mut dyn MergeableDyn;
     fn as_collectable_dyn_mut(&mut self) -> &mut dyn CollectableDyn;
+    fn truncate_front(&mut self, len: usize);
     fn to_f32_for_binning_v01(&self) -> Box<dyn BinningggContainerEventsDyn>;
 }
 
