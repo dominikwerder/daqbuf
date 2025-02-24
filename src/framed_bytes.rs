@@ -13,21 +13,15 @@ const FRAME_HEAD_LEN: usize = 16;
 const FRAME_PAYLOAD_MAX: u32 = 1024 * 1024 * 8;
 const BUF_MAX: usize = (FRAME_HEAD_LEN + FRAME_PAYLOAD_MAX as usize) * 2;
 
-#[allow(unused)]
-macro_rules! trace_parse {
-    ($($arg:tt)*) => {
-        if false {
-            trace!($($arg)*);
-        }
-    };
-}
+macro_rules! trace_parse { ($($arg:expr),*) => ( if false { trace!($($arg),*); } ); }
 
-#[derive(Debug, thiserror::Error)]
-#[cstm(name = "StreamFramedBytes")]
-pub enum Error {
-    FrameTooLarge,
-    Logic,
-}
+autoerr::create_error_v1!(
+    name(Error, "StreamFramedBytes"),
+    enum variants {
+        DataInput,
+        FrameTooLarge,
+    },
+);
 
 pub type BoxedFramedBytesStream = Pin<Box<dyn Stream<Item = Result<Bytes, Error>> + Send>>;
 
@@ -63,7 +57,7 @@ where
         if self.buf.len() < FRAME_HEAD_LEN {
             return Ok(None);
         }
-        let n = u32::from_le_bytes(self.buf[..4].try_into().map_err(|_| Error::Logic)?);
+        let n = u32::from_le_bytes(self.buf[..4].try_into().map_err(|_| Error::DataInput)?);
         trace_parse!("try_parse  n {}", n);
         if n > FRAME_PAYLOAD_MAX {
             let e = Error::FrameTooLarge;
