@@ -680,7 +680,7 @@ mod container_events_serde {
     use std::fmt;
     use std::marker::PhantomData;
 
-    macro_rules! trace_serde { ($($arg:tt)*) => ( if false { eprintln!($($arg)*); }) }
+    macro_rules! trace_serde { ($($arg:tt)*) => ( if true { eprintln!($($arg)*); }) }
 
     impl<EVT> Serialize for ContainerEvents<EVT>
     where
@@ -739,8 +739,8 @@ mod container_events_serde {
             trace_serde!("Vis ContainerEvents visit_map");
             let mut tss = None;
             let mut vals = None;
-            while let Some(key) = map.next_key::<&str>()? {
-                match key {
+            while let Some(key) = map.next_key::<String>()? {
+                match key.as_str() {
                     "tss" => {
                         tss = Some(map.next_value()?);
                     }
@@ -749,7 +749,7 @@ mod container_events_serde {
                     }
                     _ => {
                         use serde::de::Error;
-                        return Err(Error::unknown_field(key, &["tss", "vals"]));
+                        return Err(Error::unknown_field(&key, &["tss", "vals"]));
                     }
                 }
             }
@@ -1308,6 +1308,10 @@ where
 
     fn as_collectable_dyn_mut(&mut self) -> &mut dyn CollectableDyn {
         self
+    }
+
+    fn truncate_front(&mut self, len: usize) {
+        self.truncate_front(len);
     }
 
     fn to_f32_for_binning_v01(&self) -> Box<dyn BinningggContainerEventsDyn> {
