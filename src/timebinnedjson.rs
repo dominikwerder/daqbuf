@@ -342,12 +342,12 @@ pub async fn timebinned_json(
     let collected: BoxFuture<_> = Box::pin(collected);
     let collres = collected.await?;
     match collres {
-        CollectResult::Some(collres) => {
-            let x = collres.into_user_facing_api_type_box();
-            let val = x.into_serializable_json();
+        CollectResult::Some(res) => {
+            let val = res.into_user_facing_api_type_box().into_serializable_json();
             let jsval = serde_json::to_string(&val)?;
             Ok(CollectResult::Some(JsonBytes::new(jsval)))
         }
+        CollectResult::Empty => Ok(CollectResult::Empty),
         CollectResult::Timeout => Ok(CollectResult::Timeout),
     }
 }

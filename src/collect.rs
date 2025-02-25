@@ -21,12 +21,13 @@ use std::task::Context;
 use std::task::Poll;
 use std::time::Instant;
 
-#[derive(Debug, thiserror::Error)]
-#[cstm(name = "CollectDyn")]
-pub enum Error {
-    Msg(String),
-    NoResultNoCollector,
-}
+autoerr::create_error_v1!(
+    name(Error, "CollectDyn"),
+    enum variants {
+        Msg(String),
+        NoResultNoCollector,
+    },
+);
 
 struct ErrMsg<E>(E)
 where
@@ -46,6 +47,7 @@ pub enum CollectResult<T>
 where
     T: fmt::Debug,
 {
+    Empty,
     Timeout,
     Some(T),
 }
@@ -203,7 +205,7 @@ where
                     }
                     None => {
                         debug!("no result because no collector was created");
-                        Ready(Ok(CollectResult::Timeout))
+                        Ready(Ok(CollectResult::Empty))
                     }
                 }
             } else {

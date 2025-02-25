@@ -22,13 +22,14 @@ use serde_json::Value as JsonValue;
 use std::time::Duration;
 use std::time::Instant;
 
-#[derive(Debug, thiserror::Error)]
-#[cstm(name = "PlainEventsJson")]
-pub enum Error {
-    Stream(#[from] crate::plaineventsstream::Error),
-    Json(#[from] serde_json::Error),
-    Collect(#[from] crate::collect::Error),
-}
+autoerr::create_error_v1!(
+    name(Error, "PlainEventsJson"),
+    enum variants {
+        Stream(#[from] crate::plaineventsstream::Error),
+        Json(#[from] serde_json::Error),
+        Collect(#[from] crate::collect::Error),
+    },
+);
 
 pub async fn plain_events_json(
     evq: &PlainEventsQuery,
@@ -57,15 +58,22 @@ pub async fn plain_events_json(
     )
     .await?;
     warn!("plain_events_json  collected  {:?}", collected);
-    if let CollectResult::Some(x) = collected {
-        let x = x.into_user_facing_api_type_box();
-        let val = x.into_serializable_json();
-        let jsval = serde_json::to_string(&val)?;
-        debug!("plain_events_json  json serialized");
-        Ok(CollectResult::Some(JsonBytes::new(jsval)))
-    } else {
-        debug!("plain_events_json  timeout");
-        Ok(CollectResult::Timeout)
+    match collected {
+        CollectResult::Some(x) => {
+            let x = x.into_user_facing_api_type_box();
+            let val = x.into_serializable_json();
+            let jsval = serde_json::to_string(&val)?;
+            debug!("plain_events_json  json serialized");
+            Ok(CollectResult::Some(JsonBytes::new(jsval)))
+        }
+        CollectResult::Empty => {
+            debug!("plain_events_json  empty");
+            Ok(CollectResult::Empty)
+        }
+        CollectResult::Timeout => {
+            debug!("plain_events_json  timeout");
+            Ok(CollectResult::Timeout)
+        }
     }
 }
 
