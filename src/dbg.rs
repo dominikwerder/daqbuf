@@ -11,3 +11,13 @@ pub fn dbg_chn(chn: &str) -> bool {
         false
     }
 }
+
+pub fn binwrite2_enable(chn: &str) -> bool {
+    let chns = [
+        // "ARS05-RAMP-0230:PLC-COUNT-MON",
+        // "ARS09-R3HC-0150:TUN1-MOTOR-TEMP",
+        // "ARS09-R3HC-0150:HOM27-ATT-TEMP",
+        // "ARIDI-BLM01:LOSS7",
+    ];
+    chns.contains(&chn)
+}
