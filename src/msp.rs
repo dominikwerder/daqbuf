@@ -1,4 +1,6 @@
 use netpod::DtMs;
+use netpod::TsMs;
+use std::fmt;
 
 autoerr::create_error_v1!(
     name(Error, "BinMsp"),
@@ -15,6 +17,12 @@ pub enum PrebinnedPartitioning {
     Min10,
     Hour1,
     Day1,
+}
+
+impl fmt::Display for PrebinnedPartitioning {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        fmt::Debug::fmt(self, fmt)
+    }
 }
 
 impl PrebinnedPartitioning {
@@ -53,7 +61,7 @@ impl PrebinnedPartitioning {
         }
     }
 
-    pub fn quo_rem(&self, val: DtMs) -> (u64, u32) {
+    pub fn quo_rem(&self, val: TsMs) -> (u64, u32) {
         let valms = val.ms();
         let divms = self.msp_div().ms();
         let quo = valms / divms;
