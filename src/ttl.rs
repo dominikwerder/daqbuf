@@ -66,6 +66,14 @@ impl RetentionTime {
         // Current choice is to keep the TTL the same as for events
         self.ttl_events_d0()
     }
+
+    pub fn index_db_i32(&self) -> i32 {
+        match self {
+            RetentionTime::Short => 2,
+            RetentionTime::Medium => 4,
+            RetentionTime::Long => 12,
+        }
+    }
 }
 
 impl fmt::Display for RetentionTime {
