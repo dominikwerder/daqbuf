@@ -61,12 +61,14 @@ impl PrebinnedPartitioning {
         }
     }
 
-    pub fn quo_rem(&self, val: TsMs) -> (u64, u32) {
+    pub fn quo_rem(&self, val: TsMs) -> (u64, u32, u32, u32) {
+        let dv1 = self.msp_div().ms();
+        let dv2 = self.bin_len().ms();
         let valms = val.ms();
-        let divms = self.msp_div().ms();
-        let quo = valms / divms;
-        let rem = (valms - divms * quo) / self.bin_len().ms();
-        (quo, rem as u32)
+        let quo = valms / dv1;
+        let rrr = valms % dv1;
+        let rem = rrr / dv2;
+        (quo, rem as u32, dv1 as u32, dv2 as u32)
     }
 
     pub fn off_max(&self) -> u32 {
