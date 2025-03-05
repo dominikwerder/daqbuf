@@ -38,6 +38,7 @@ where
     agg: <BVT as BinAggedType>::AggregatorTw,
     non_fnl: bool,
     out: ContainerBins<EVT, BVT>,
+    produce_cnt_zero: bool,
 }
 
 impl<EVT, BVT> BinnedBinsTimeweight<EVT, BVT>
@@ -60,11 +61,16 @@ where
             agg: BVT::AggregatorTw::new(),
             non_fnl: false,
             out: ContainerBins::new(),
+            produce_cnt_zero: false,
         }
     }
 
+    pub fn cnt_zero_enable(&mut self) {
+        self.produce_cnt_zero = true;
+    }
+
     fn maybe_emit_active(&mut self) {
-        if self.cnt != 0 {
+        if self.cnt != 0 || self.produce_cnt_zero {
             let ts1 = self.active_beg;
             let ts2 = self.active_end;
             let cnt = self.cnt;
