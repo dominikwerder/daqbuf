@@ -26,14 +26,6 @@ impl fmt::Display for PrebinnedPartitioning {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct QuoRem {
-    dv1: u32,
-    dv2: u32,
-    quo: u32,
-    rem: u32,
-}
-
 impl PrebinnedPartitioning {
     pub fn from_dv1_abs(dv1: u32) -> Result<Self, Error> {
         use PrebinnedPartitioning::*;
@@ -72,7 +64,7 @@ impl PrebinnedPartitioning {
         }
     }
 
-    pub fn batch_len(&self) -> u32 {
+    pub fn patch_len(&self) -> u32 {
         use PrebinnedPartitioning::*;
         match self {
             Sec1 => 1200,
@@ -84,31 +76,22 @@ impl PrebinnedPartitioning {
         }
     }
 
-    pub fn batch_dt(&self) -> DtMs {
-        self.bin_len().mul(self.batch_len() as u64)
+    pub fn patch_dt(&self) -> DtMs {
+        self.bin_len().mul(self.patch_len() as u64)
     }
 
-    // how to decide if we use multi-level index?
-    // it is "this", the bin-len itself.
-    pub fn quo_rem_l1(&self, val: TsMs) -> (QuoRem, DtMs) {
-        let divms = self.batch_dt().ms();
-        let dv1 = self.bin_len_dv1_abs();
-        let dv2 = self.bin_len().ms();
+    pub fn msp_lsp(&self, val: TsMs) -> (u32, u32) {
+        let div1ms = self.patch_dt().ms();
+        let div2ms = self.bin_len().ms();
         let valms = val.ms();
-        let quo = valms / divms;
-        let rrr = valms % divms;
-        let rem = rrr / dv2;
-        let rr2 = rrr % dv2;
-        let quo_rem = QuoRem {
-            dv1,
-            dv2: dv2 as u32,
-            quo: quo as u32,
-            rem: rem as u32,
-        };
-        (quo_rem, DtMs::from_ms_u64(rr2))
+        let qu1 = valms / div1ms;
+        let re1 = valms % div1ms;
+        let qu2 = re1 / div2ms;
+        let _re2 = re1 % div2ms;
+        (qu1 as u32, qu2 as u32)
     }
 
-    pub fn uses_index_hour1(&self) -> bool {
+    pub fn uses_index_min10(&self) -> bool {
         use PrebinnedPartitioning::*;
         match self {
             Sec1 => true,
@@ -117,6 +100,18 @@ impl PrebinnedPartitioning {
             Min10 => false,
             Hour1 => false,
             Day1 => false,
+        }
+    }
+
+    pub fn db_ix(&self) -> u32 {
+        use PrebinnedPartitioning::*;
+        match self {
+            Sec1 => 1,
+            Sec10 => 2,
+            Min1 => 3,
+            Min10 => 4,
+            Hour1 => 5,
+            Day1 => 6,
         }
     }
 }
@@ -161,7 +156,7 @@ fn test_quo_rem_01() {
     let (qr, dt) = PrebinnedPartitioning::Day1.quo_rem_l1(ts1);
     let pbp = PrebinnedPartitioning::from_dv1_abs(qr.dv1).unwrap();
     eprintln!("{:?}", pbp);
-    let tsms = pbp.batch_dt().ms() * qr.quo as u64 + pbp.bin_len().ms() * qr.rem as u64 + dt.ms();
+    let tsms = pbp.patch_dt().ms() * qr.quo as u64 + pbp.bin_len().ms() * qr.rem as u64 + dt.ms();
     eprintln!("{:?}", tsms);
     eprintln!("{:?}", ts1.ms());
     panic!()
