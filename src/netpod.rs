@@ -1910,6 +1910,10 @@ impl DtMs {
     pub const fn to_i64(&self) -> i64 {
         self.0 as i64
     }
+
+    pub const fn mul(self, x: u64) -> DtMs {
+        Self(self.0 * x)
+    }
 }
 
 impl fmt::Display for DtMs {
