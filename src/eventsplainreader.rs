@@ -143,7 +143,7 @@ pub fn test_bins_gen_dim0_f32_v00(
         if off >= offs.end {
             break;
         }
-        let ts1 = TsNano::from_ns(partt.msp_div().ns() * msp + partt.bin_len().ns() * off as u64);
+        let ts1 = TsNano::from_ns(partt.patch_dt().ns() * msp + partt.bin_len().ns() * off as u64);
         let ts2 = ts1.add_dt_nano(partt.bin_len().dt_ns());
         off += 1;
         if (ts1.ns() / 1000000000) % 5 < 2 {

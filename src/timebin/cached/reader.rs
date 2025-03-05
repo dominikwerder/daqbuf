@@ -178,11 +178,11 @@ impl Stream for CachedReader {
                     match PrebinnedPartitioning::try_from(self.range.bin_len_dt_ms()) {
                         Ok(partt) => {
                             let binlen = self.bin_len.ns();
-                            let div = partt.msp_div().ns();
+                            let div = partt.patch_dt().ns();
                             let msp = self.ts1next.ns() / div;
                             let off1 = (self.ts1next.ns() - div * msp) / binlen;
                             let off2 = (self.range.nano_end().ns() - div * msp) / binlen;
-                            let off2 = partt.clamp_off(off2 as u32);
+                            let off2 = partt.patch_len().min(off2 as u32);
                             self.ts1next = TsNano::from_ns(binlen * off2 as u64 + div * msp);
                             let offs = off1 as u32..off2 as u32;
                             let fut =
