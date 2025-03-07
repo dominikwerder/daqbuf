@@ -1,6 +1,7 @@
 pub mod apitypes;
 pub mod collect_s;
 pub mod container;
+pub mod event_value_type;
 pub mod events;
 pub mod framable;
 pub mod isodate;

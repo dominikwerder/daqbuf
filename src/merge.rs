@@ -1,16 +1,18 @@
-use crate::container::ByteEstimate;
-use crate::timebin::BinningggContainerEventsDyn;
 use crate::AsAnyMut;
 use crate::WithLen;
-use core::ops::Range;
-use netpod::TsMs;
+use crate::container::ByteEstimate;
+use crate::timebin::BinningggContainerEventsDyn;
 use netpod::TsNano;
 use std::collections::VecDeque;
 use std::fmt;
+use std::ops::Range;
 
-#[derive(Debug, thiserror::Error)]
-#[cstm(name = "MergeError")]
-pub enum Error {}
+autoerr::create_error_v1!(
+    name(Error, "MergeError"),
+    enum variants {
+        Logic,
+    },
+);
 
 impl From<Error> for daqbuf_err::Error {
     fn from(e: Error) -> Self {
@@ -59,7 +61,7 @@ pub trait MergeableDyn: fmt::Debug + WithLen + ByteEstimate + Unpin + AsAnyMut {
     fn find_highest_index_lt(&self, ts: TsNano) -> Option<usize>;
     fn tss_for_testing(&self) -> VecDeque<TsNano>;
     fn drain_into(&mut self, dst: &mut dyn MergeableDyn, range: Range<usize>)
-        -> DrainIntoDstResult;
+    -> DrainIntoDstResult;
     fn drain_into_new(&mut self, range: Range<usize>) -> DrainIntoNewDynResult;
     fn is_consistent(&self) -> bool;
 }

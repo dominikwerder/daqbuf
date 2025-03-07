@@ -1,8 +1,8 @@
 [package]
 name = "daqbuf-items-0"
-version = "0.0.3"
+version = "0.0.4"
 authors = ["Dominik Werder <dominik.werder@gmail.com>"]
-edition = "2021"
+edition = "2024"
 
 [lib]
 path = "src/lib.rs"
@@ -14,12 +14,9 @@ typetag = "0.2"
 serde_json = "1"
 ciborium = "0.2.1"
 bincode = "1.3.3"
-bytes = "1.8.0"
+bytes = "1.10.0"
 futures-util = "0.3.24"
-thiserror = "=0.0.1"
+autoerr = "0.0.3"
 chrono = { version = "0.4.19", features = ["serde"] }
 netpod = { path = "../daqbuf-netpod", package = "daqbuf-netpod" }
 daqbuf-err = { path = "../daqbuf-err" }
-
-[patch.crates-io]
-thiserror = { git = "https://github.com/dominikwerder/thiserror.git", branch = "cstm" }

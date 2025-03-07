@@ -48,11 +48,7 @@ impl_as_prim_f32!(f64);
 
 impl AsPrimF32 for bool {
     fn as_prim_f32_b(&self) -> f32 {
-        if *self {
-            1.
-        } else {
-            0.
-        }
+        if *self { 1. } else { 0. }
     }
 }
 
@@ -87,7 +83,7 @@ pub trait ScalarOps:
 macro_rules! impl_scalar_ops {
     ($ty:ident, $zero:expr, $equal_slack:ident, $mac_add:ident, $mac_div:ident, $sty_name:expr, $byte_estimate:expr) => {
         impl ByteEstimate for $ty {
-            fn byte_estimate(&self) -> u64 {
+            fn byte_estimate(&self) -> u32 {
                 $byte_estimate
             }
         }
@@ -216,7 +212,7 @@ impl_scalar_ops!(
 );
 
 impl ByteEstimate for EnumVariant {
-    fn byte_estimate(&self) -> u64 {
+    fn byte_estimate(&self) -> u32 {
         12
     }
 }
