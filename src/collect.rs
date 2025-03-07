@@ -11,10 +11,7 @@ use items_0::streamitem::RangeCompletableItem;
 use items_0::streamitem::Sitemty;
 use items_0::streamitem::StatsItem;
 use items_0::streamitem::StreamItem;
-use items_0::WithLen;
 use netpod::log::*;
-use netpod::range::evrange::SeriesRange;
-use netpod::BinnedRangeEnum;
 use netpod::DiskStats;
 use std::pin::Pin;
 use std::task::Context;
@@ -56,8 +53,6 @@ pub struct Collect<ITEM> {
     inp: Pin<Box<dyn Stream<Item = Sitemty<ITEM>> + Send>>,
     events_max: u64,
     bytes_max: u64,
-    range: Option<SeriesRange>,
-    binrange: Option<BinnedRangeEnum>,
     collector: Option<Box<dyn CollectorDyn>>,
     range_final: bool,
     timeout: bool,
@@ -74,16 +69,12 @@ where
         deadline: Instant,
         events_max: u64,
         bytes_max: u64,
-        range: Option<SeriesRange>,
-        binrange: Option<BinnedRangeEnum>,
         timeout_provider: Box<dyn StreamTimeout2>,
     ) -> Self {
         Self {
             inp,
             events_max,
             bytes_max,
-            range,
-            binrange,
             collector: None,
             range_final: false,
             timeout: false,
@@ -114,7 +105,7 @@ where
                             info!("reached events_max {} / {}", coll.len(), self.events_max);
                             self.done_input = true;
                         }
-                        if coll.byte_estimate() >= self.bytes_max {
+                        if coll.byte_estimate() as u64 >= self.bytes_max {
                             info!(
                                 "reached bytes_max {} / {}",
                                 coll.byte_estimate(),

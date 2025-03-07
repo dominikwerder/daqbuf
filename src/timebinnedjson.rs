@@ -330,15 +330,7 @@ pub async fn timebinned_json(
         events_read_provider,
     )
     .await?;
-    let collected = Collect::new(
-        stream,
-        deadline,
-        collect_max,
-        bytes_max,
-        None,
-        Some(binned_range),
-        timeout_provider,
-    );
+    let collected = Collect::new(stream, deadline, collect_max, bytes_max, timeout_provider);
     let collected: BoxFuture<_> = Box::pin(collected);
     let collres = collected.await?;
     match collres {

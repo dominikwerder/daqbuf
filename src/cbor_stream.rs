@@ -151,7 +151,9 @@ fn make_keepalive() -> Result<CborBytes, Error> {
 
 pub struct FramedBytesToChannelEventsStream<S> {
     inp: S,
+    #[allow(unused)]
     scalar_type: ScalarType,
+    #[allow(unused)]
     shape: Shape,
     buf: BytesMut,
 }
@@ -222,6 +224,8 @@ impl<S> FramedBytesToChannelEventsStream<S> {
         } else {
             None
         };
+        debug!("TODO channel events discarded");
+        drop(item);
         let item = None;
         let item = if let Some(x) = item {
             Some(x)

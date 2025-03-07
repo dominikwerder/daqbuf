@@ -1,7 +1,7 @@
 use super::cached::reader::CacheReadProvider;
 use super::cached::reader::EventsReadProvider;
 use super::opts::BinningOptions;
-use crate::log::*;
+use crate::log;
 use crate::timebin::fromevents::BinnedFromEvents;
 use crate::timebin::gapfill::GapFill;
 use crate::timebin::grid::find_next_finer_bin_len;
@@ -26,7 +26,7 @@ use std::sync::Arc;
 use std::task::Context;
 use std::task::Poll;
 
-macro_rules! trace_init { ($($arg:tt)*) => ( if true { trace!($($arg)*); } ) }
+macro_rules! trace_init { ($($arg:expr),*) => ( if true { log::trace!($($arg),*); } ) }
 
 autoerr::create_error_v1!(
     name(Error, "TimeBinnedFromLayers"),
@@ -160,7 +160,7 @@ impl TimeBinnedFromLayers {
                         let inp = futures_util::stream::iter([]);
                         let ret = Self { inp: Box::pin(inp) };
                         trace_init!("{}::new  setup nothing", Self::type_name());
-                        info!("bin from events disabled on user request");
+                        trace_init!("bin from events disabled on user request");
                         Ok(ret)
                     }
                 }

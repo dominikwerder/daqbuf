@@ -6,20 +6,13 @@ use crate::json_stream::events_stream_to_json_stream;
 use crate::json_stream::JsonStream;
 use crate::plaineventsstream::dyn_events_stream;
 use crate::streamtimeout::StreamTimeout2;
-use crate::streamtimeout::TimeoutableStream;
 use crate::tcprawclient::OpenBoxedBytesStreamsBox;
-use futures_util::StreamExt;
-use items_0::collect_s::CollectableDyn;
-use items_0::on_sitemty_data;
 use items_2::jsonbytes::JsonBytes;
 use netpod::log::*;
 use netpod::ChannelTypeConfigGen;
 use netpod::Cluster;
-use netpod::HasTimeout;
 use netpod::ReqCtx;
 use query::api4::events::PlainEventsQuery;
-use serde_json::Value as JsonValue;
-use std::time::Duration;
 use std::time::Instant;
 
 autoerr::create_error_v1!(
@@ -52,8 +45,6 @@ pub async fn plain_events_json(
         deadline,
         evq.events_max(),
         evq.bytes_max(),
-        Some(evq.range().clone()),
-        None,
         timeout_provider,
     )
     .await?;

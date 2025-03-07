@@ -1,4 +1,4 @@
-use crate::log::*;
+use crate::log;
 use crate::slidebuf::SlideBuf;
 use bytes::Bytes;
 use futures_util::pin_mut;
@@ -16,25 +16,26 @@ use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
 
-#[derive(Debug, thiserror::Error)]
-#[cstm(name = "InMem")]
-pub enum Error {
-    Input,
-    Slidebuf(#[from] crate::slidebuf::Error),
-    IO(#[from] std::io::Error),
-    LessThanNeedMin,
-    LessThanHeader,
-    HugeFrame(u32),
-    BadMagic(u32),
-    TryFromSlice(#[from] std::array::TryFromSliceError),
-    BadCrc,
-    EnoughInputNothingParsed,
-    InMemParse(#[from] items_2::inmem::Error),
-}
+autoerr::create_error_v1!(
+    name(Error, "InMem"),
+    enum variants {
+        Input,
+        Slidebuf(#[from] crate::slidebuf::Error),
+        IO(#[from] std::io::Error),
+        LessThanNeedMin,
+        LessThanHeader,
+        HugeFrame(u32),
+        BadMagic(u32),
+        TryFromSlice(#[from] std::array::TryFromSliceError),
+        BadCrc,
+        EnoughInputNothingParsed,
+        InMemParse(#[from] items_2::inmem::Error),
+    },
+);
 
 pub type BoxedBytesStream = Pin<Box<dyn Stream<Item = Result<Bytes, SitemErrTy>> + Send>>;
 
-macro_rules! trace2 { ($($arg:tt)*) => ( if false { trace!($($arg)*); } ); }
+macro_rules! trace2 { ($($arg:expr),*) => ( if false { log::trace!($($arg),*); } ); }
 
 /// Interprets a byte stream as length-delimited frames.
 ///
@@ -84,7 +85,16 @@ where
                     self.buf.wadv(x.len())?;
                     Ready(Ok(x.len()))
                 }
-                Err(e) => Ready(Err(e.into())),
+                Err(e) => {
+                    log::error!(
+                        "{}  {:?}  inp len {}  need_min {}",
+                        e,
+                        self.buf,
+                        x.len(),
+                        self.need_min
+                    );
+                    Ready(Err(e.into()))
+                }
             },
             Ready(Some(Err(_e))) => Ready(Err(Error::Input)),
             Ready(None) => Ready(Ok(0)),
@@ -127,7 +137,7 @@ where
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         use Poll::*;
-        let span = span!(Level::INFO, "InMemRd");
+        let span = log::span!(log::Level::INFO, "InMemRd");
         let _spanguard = span.enter();
         loop {
             break if self.complete {
@@ -171,9 +181,11 @@ where
                         }
                     }
                     Ready(Err(e)) => {
-                        error!(
+                        log::error!(
                             "poll_upstream  need_min {}  buf {:?}  {:?}",
-                            self.need_min, self.buf, e
+                            self.need_min,
+                            self.buf,
+                            e
                         );
                         self.done = true;
                         Ready(Some(Err(sitem_err2_from_string(e))))

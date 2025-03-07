@@ -1,6 +1,6 @@
 use super::cached::reader::EventsReadProvider;
 use crate::events::convertforbinning::ConvertForBinning;
-use crate::log::*;
+use crate::log;
 use futures_util::Stream;
 use futures_util::StreamExt;
 use items_0::streamitem::Sitemty;
@@ -14,7 +14,7 @@ use std::sync::Arc;
 use std::task::Context;
 use std::task::Poll;
 
-macro_rules! trace_emit { ($($arg:expr),*) => ( if true { trace!($($arg),*); } ) }
+macro_rules! trace_emit { ($($arg:expr),*) => ( if true { log::trace!($($arg),*); } ) }
 
 autoerr::create_error_v1!(
     name(Error, "ReadingBinnedFromEvents"),
