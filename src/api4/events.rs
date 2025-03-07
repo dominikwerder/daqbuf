@@ -622,7 +622,7 @@ impl EventsSubQuery {
 
     pub fn inmem_bufcap(&self) -> ByteSize {
         // TODO should depend on the type of backend: only imagebuffer needs large size.
-        ByteSize::from_kb(1024 * 30)
+        ByteSize::from_kb(1024 * 80)
     }
 
     // A rough indication on how many bytes this request is allowed to return. Otherwise, the result should
