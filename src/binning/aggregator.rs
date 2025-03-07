@@ -11,9 +11,9 @@ use netpod::EnumVariant;
 use serde::Deserialize;
 use serde::Serialize;
 
-macro_rules! trace_event { ($($arg:tt)*) => ( if false { trace!($($arg)*); }) }
+macro_rules! trace_event { ($($arg:expr),*) => ( if false { trace!($($arg),*); }) }
 
-macro_rules! trace_result { ($($arg:tt)*) => ( if true { trace!($($arg)*); }) }
+macro_rules! trace_result { ($($arg:expr),*) => ( if false { trace!($($arg),*); }) }
 
 pub trait AggTimeWeightOutputAvg: BinAggedType + Serialize + for<'a> Deserialize<'a> {}
 

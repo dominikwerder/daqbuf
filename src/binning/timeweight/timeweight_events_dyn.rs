@@ -6,9 +6,11 @@ use crate::log;
 use daqbuf_err as err;
 use futures_util::Stream;
 use futures_util::StreamExt;
-use items_0::streamitem::sitem_data;
 use items_0::streamitem::LogItem;
+use items_0::streamitem::RangeCompletableItem;
 use items_0::streamitem::Sitemty;
+use items_0::streamitem::StreamItem;
+use items_0::streamitem::sitem_data;
 use items_0::timebin::BinnedEventsTimeweightTrait;
 use items_0::timebin::BinningggContainerBinsDyn;
 use items_0::timebin::BinningggContainerEventsDyn;
@@ -27,7 +29,7 @@ macro_rules! debug_input_container { ($($arg:expr),*) => ( if true { log::debug!
 
 macro_rules! debug { ($($arg:expr),*) => ( if true { log::debug!($($arg),*); }) }
 
-macro_rules! trace_input_container { ($($arg:expr),*) => ( if true { log::trace!($($arg),*); }) }
+macro_rules! trace_input_container { ($($arg:expr),*) => ( if false { log::trace!($($arg),*); }) }
 
 macro_rules! trace_emit { ($($arg:expr),*) => ( if true { log::trace!($($arg),*); }) }
 
@@ -287,10 +289,10 @@ impl BinnedEventsTimeweightStream {
         item: Sitemty<ChannelEvents>,
         _cx: &mut Context,
     ) -> ControlFlow<Poll<Option<<Self as Stream>::Item>>> {
-        use items_0::streamitem::RangeCompletableItem::*;
-        use items_0::streamitem::StreamItem::*;
         use ControlFlow::*;
         use Poll::*;
+        use items_0::streamitem::RangeCompletableItem::*;
+        use items_0::streamitem::StreamItem::*;
         match item {
             Ok(x) => match x {
                 DataItem(x) => match x {
@@ -322,8 +324,8 @@ impl BinnedEventsTimeweightStream {
         }
     }
 
-    fn test1(
-        mut self: Pin<&mut Self>,
+    fn _test1(
+        self: Pin<&mut Self>,
         _cx: &mut Context,
     ) -> Result<ControlFlow<Poll<Option<<Self as Stream>::Item>>>, Error> {
         use ControlFlow::*;
@@ -339,8 +341,8 @@ impl BinnedEventsTimeweightStream {
         }
     }
 
-    fn test2(
-        mut self: Pin<&mut Self>,
+    fn _test2(
+        self: Pin<&mut Self>,
         _cx: &mut Context,
     ) -> ControlFlow<Result<Poll<Option<<Self as Stream>::Item>>, Error>> {
         use ControlFlow::*;
@@ -350,19 +352,15 @@ impl BinnedEventsTimeweightStream {
         } else if false {
             Continue(())
         } else {
-            let e = Error::Dummy;
+            let _e = Error::Dummy;
             // unfortunately can not use the `?` operator here:
             // let _ = Err(e)?;
             Break(Ok(Pending))
         }
     }
 
-    fn handle_eos(
-        mut self: Pin<&mut Self>,
-        _cx: &mut Context,
-    ) -> Poll<Option<<Self as Stream>::Item>> {
+    fn handle_eos(mut self: Pin<&mut Self>, _cx: &mut Context) -> Result<(), err::Error> {
         debug_input_container!("handle_eos  range final {}", self.range_final);
-        use Poll::*;
         self.state = StreamState::Remains;
         if true || self.range_final {
             self.binned_events
@@ -373,7 +371,7 @@ impl BinnedEventsTimeweightStream {
                 .input_done_range_open()
                 .map_err(err::Error::from_string)?;
         }
-        Ready(None)
+        Ok(())
     }
 
     fn handle_remains(
@@ -381,9 +379,9 @@ impl BinnedEventsTimeweightStream {
         _cx: &mut Context,
     ) -> Poll<Option<<Self as Stream>::Item>> {
         debug_input_container!("handle_remains");
+        use Poll::*;
         use items_0::streamitem::RangeCompletableItem::*;
         use items_0::streamitem::StreamItem::*;
-        use Poll::*;
         debug!("handle_remains  binner {:?}", self.binned_events);
         match self
             .binned_events
@@ -409,7 +407,7 @@ impl BinnedEventsTimeweightStream {
         mut self: Pin<&mut Self>,
         cx: &mut Context,
     ) -> ControlFlow<Poll<Option<<Self as Stream>::Item>>> {
-        debug_input_container!("handle_main");
+        trace_input_container!("handle_main");
         use ControlFlow::*;
         use Poll::*;
         let ret = match &self.state {
@@ -418,7 +416,10 @@ impl BinnedEventsTimeweightStream {
             StreamState::Reading => match self.as_mut().inp.poll_next_unpin(cx) {
                 Ready(Some(x)) => self.as_mut().handle_sitemty(x, cx),
                 Ready(None) => {
-                    self.as_mut().handle_eos(cx);
+                    match self.as_mut().handle_eos(cx) {
+                        Ok(()) => {}
+                        Err(e) => return Break(Ready(Some(Err(e)))),
+                    }
                     Continue(())
                 }
                 Pending => Break(Pending),
@@ -435,6 +436,10 @@ impl BinnedEventsTimeweightStream {
         };
         if let Break(Ready(Some(Err(_)))) = ret {
             self.state = StreamState::Done;
+        }
+        if let Break(Ready(Some(Ok(StreamItem::DataItem(RangeCompletableItem::Data(item)))))) = &ret
+        {
+            trace_emit!("emit item len {}", item.len());
         }
         ret
     }

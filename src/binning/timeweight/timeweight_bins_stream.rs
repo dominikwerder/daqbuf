@@ -1,30 +1,28 @@
 use super::timeweight_bins_lazy::BinnedBinsTimeweightLazy;
-use crate::log::*;
+use crate::log;
 use futures_util::Stream;
 use futures_util::StreamExt;
-use items_0::streamitem::sitem_err2_from_string;
 use items_0::streamitem::LogItem;
 use items_0::streamitem::Sitemty;
-use items_0::timebin::BinnedBinsTimeweightTrait;
+use items_0::streamitem::sitem_err2_from_string;
 use items_0::timebin::BinningggContainerBinsDyn;
-use items_0::timebin::BinsBoxed;
 use netpod::BinnedRange;
 use netpod::TsNano;
-use std::fmt;
 use std::ops::ControlFlow;
 use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
 
-macro_rules! trace_input_container { ($($arg:tt)*) => ( if false { trace!($($arg)*); }) }
+macro_rules! trace_input_container { ($($arg:expr),*) => ( if false { log::trace!($($arg),*); }) }
 
-macro_rules! trace_emit { ($($arg:tt)*) => ( if false { trace!($($arg)*); }) }
+macro_rules! trace_emit { ($($arg:expr),*) => ( if false { log::trace!($($arg),*); }) }
 
-#[derive(Debug, thiserror::Error)]
-#[cstm(name = "BinnedEventsTimeweightDyn")]
-pub enum Error {
-    InnerDynMissing,
-}
+autoerr::create_error_v1!(
+    name(Error, "BinnedEventsTimeweightDyn"),
+    enum variants {
+        InnerDynMissing,
+    },
+);
 
 type ItemA = Box<dyn BinningggContainerBinsDyn>;
 type ItemB = Sitemty<ItemA>;
@@ -56,10 +54,10 @@ impl BinnedBinsTimeweightStream {
         item: ItemB,
         _cx: &mut Context,
     ) -> ControlFlow<Poll<Option<<Self as Stream>::Item>>> {
-        use items_0::streamitem::RangeCompletableItem::*;
-        use items_0::streamitem::StreamItem::*;
         use ControlFlow::*;
         use Poll::*;
+        use items_0::streamitem::RangeCompletableItem::*;
+        use items_0::streamitem::StreamItem::*;
         match item {
             Ok(x) => match x {
                 DataItem(x) => match x {
@@ -104,9 +102,9 @@ impl BinnedBinsTimeweightStream {
         _cx: &mut Context,
     ) -> Poll<Option<<Self as Stream>::Item>> {
         trace_input_container!("handle_eos");
+        use Poll::*;
         use items_0::streamitem::RangeCompletableItem::*;
         use items_0::streamitem::StreamItem::*;
-        use Poll::*;
         self.state = StreamState::Done;
         if self.range_complete {
             self.binned
@@ -123,7 +121,8 @@ impl BinnedBinsTimeweightStream {
                 Ready(Some(Ok(DataItem(Data(x)))))
             }
             None => {
-                let item = LogItem::from_node(888, Level::INFO, format!("no bins ready on eos"));
+                let item =
+                    LogItem::from_node(888, log::Level::INFO, format!("no bins ready on eos"));
                 Ready(Some(Ok(Log(item))))
             }
         }

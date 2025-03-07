@@ -1,19 +1,24 @@
 use crate::framable::INMEM_FRAME_FOOT;
 use crate::framable::INMEM_FRAME_HEAD;
 use crate::framable::INMEM_FRAME_MAGIC;
-use crate::log::*;
+use crate::log;
 use bytes::Bytes;
 use std::fmt;
 
-#[derive(Debug, thiserror::Error)]
-#[cstm(name = "InMemoryFrameError")]
-pub enum Error {
-    LessThanHeader,
-    TryFromSlice(#[from] std::array::TryFromSliceError),
-    BadMagic(u32),
-    HugeFrame(u32),
-    BadCrc,
-}
+macro_rules! error { ($($arg:expr),*) => ( if true { log::error!($($arg),*); }) }
+
+macro_rules! debug { ($($arg:expr),*) => ( if true { log::debug!($($arg),*); }) }
+
+autoerr::create_error_v1!(
+    name(Error, "InMemoryFrameError"),
+    enum variants {
+        LessThanHeader,
+        TryFromSlice(#[from] std::array::TryFromSliceError),
+        BadMagic(u32),
+        HugeFrame(u32),
+        BadCrc,
+    },
+);
 
 pub enum ParseResult<T> {
     NotEnoughData(usize),
@@ -56,6 +61,7 @@ impl InMemoryFrame {
         if magic != INMEM_FRAME_MAGIC {
             return Err(Error::BadMagic(magic));
         }
+        debug!("frame len {:10}", len);
         if len > 1024 * 1024 * 50 {
             return Err(Error::HugeFrame(len));
         }

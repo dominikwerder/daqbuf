@@ -183,8 +183,8 @@ impl WithLen for EventFull {
 }
 
 impl ByteEstimate for EventFull {
-    fn byte_estimate(&self) -> u64 {
-        self.len() as u64 * (64 + self.entry_payload_max)
+    fn byte_estimate(&self) -> u32 {
+        self.len() as u32 * (64 + self.entry_payload_max as u32)
     }
 }
 

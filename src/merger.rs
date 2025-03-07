@@ -4,18 +4,17 @@ mod test;
 use crate::log::*;
 use futures_util::Stream;
 use futures_util::StreamExt;
-use items_0::container::ByteEstimate;
 use items_0::merge::DrainIntoDstResult;
 use items_0::merge::DrainIntoNewResult;
 use items_0::merge::MergeableTy;
 use items_0::on_sitemty_data;
-use items_0::streamitem::sitem_data;
-use items_0::streamitem::sitem_err2_from_string;
 use items_0::streamitem::LogItem;
 use items_0::streamitem::RangeCompletableItem;
 use items_0::streamitem::SitemErrTy;
 use items_0::streamitem::Sitemty;
 use items_0::streamitem::StreamItem;
+use items_0::streamitem::sitem_data;
+use items_0::streamitem::sitem_err2_from_string;
 use netpod::TsNano;
 use std::collections::VecDeque;
 use std::fmt;
@@ -24,26 +23,27 @@ use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
 
-const OUT_MAX_BYTES: u64 = 1024 * 200;
+const OUT_MAX_BYTES: u32 = 1024 * 1024 * 20;
 const DO_DETECT_NON_MONO: bool = true;
 
-macro_rules! trace2 { ($($arg:tt)*) => ( if false { trace!($($arg)*); } ) }
+macro_rules! trace2 { ($($arg:expr),*) => ( if false { trace!($($arg),*); } ) }
 
-macro_rules! trace3 { ($($arg:tt)*) => ( if false { trace!($($arg)*); } ) }
+macro_rules! trace3 { ($($arg:expr),*) => ( if false { trace!($($arg),*); } ) }
 
-macro_rules! trace4 { ($($arg:tt)*) => ( if false { trace!($($arg)*); } ) }
+macro_rules! trace4 { ($($arg:expr),*) => ( if false { trace!($($arg),*); } ) }
 
-macro_rules! trace_emit { ($($arg:tt)*) => ( if false { trace!($($arg)*); } ) }
+macro_rules! trace_emit { ($($arg:expr),*) => ( if false { trace!($($arg),*); } ) }
 
-#[derive(Debug, thiserror::Error)]
-#[cstm(name = "MergerError")]
-pub enum Error {
-    NoPendingButMissing,
-    Input(SitemErrTy),
-    ShouldFindTsMin,
-    ItemShouldHaveTsMax,
-    PartialPathDrainedAllItems,
-}
+autoerr::create_error_v1!(
+    name(Error, "MergerError"),
+    enum variants {
+        NoPendingButMissing,
+        Input(SitemErrTy),
+        ShouldFindTsMin,
+        ItemShouldHaveTsMax,
+        PartialPathDrainedAllItems,
+    },
+);
 
 type MergeInp<T> = Pin<Box<dyn Stream<Item = Sitemty<T>> + Send>>;
 
@@ -382,15 +382,11 @@ where
                 || last_emit
             {
                 if o.len() > 2 * self.out_max_len {
-                    debug!(
-                        "MERGER OVERLENGTH ITEM  {} vs {}",
-                        o.len(),
-                        self.out_max_len
-                    );
+                    debug!("over length item  {} vs {}", o.len(), self.out_max_len);
                 }
                 if o.byte_estimate() > 2 * OUT_MAX_BYTES {
                     debug!(
-                        "MERGER OVERWEIGHT ITEM  {} vs {}",
+                        "over weight item  {} vs {}",
                         o.byte_estimate(),
                         OUT_MAX_BYTES
                     );

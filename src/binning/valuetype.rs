@@ -102,6 +102,10 @@ impl Container<EnumVariant> for EnumVariantContainer {
             ("valuestrings".into(), Box::new(self.names)),
         ]
     }
+
+    fn byte_estimate(&self) -> u32 {
+        self.len() as u32 * 24
+    }
 }
 
 #[derive(Debug)]
@@ -140,11 +144,7 @@ impl<'a> PartialOrdEvtA<EnumVariant> for EnumVariantRef<'a> {
         let x = self.ix.partial_cmp(&other.ix());
         if let Some(Equal) = x {
             let x = self.name.partial_cmp(other.name());
-            if let Some(Equal) = x {
-                Some(Equal)
-            } else {
-                x
-            }
+            if let Some(Equal) = x { Some(Equal) } else { x }
         } else {
             x
         }
@@ -157,23 +157,25 @@ impl EventValueType for EnumVariant {
     type AggTimeWeightOutputAvg = f32;
     type IterTy1<'a> = EnumVariantRef<'a>;
     const SERDE_ID: u32 = <Self as SubFrId>::SUB as u32;
-    const BYTE_ESTIMATE_V00: u32 = 40;
     fn to_f32_for_binning_v01(&self) -> f32 {
         self.ix() as _
     }
     fn scalar_type_name_string() -> String {
         "enum".to_string()
     }
+    fn byte_estimate(&self) -> u32 {
+        60
+    }
 }
 
 impl PartialOrdEvtA<netpod::UnsupEvt> for netpod::UnsupEvt {
-    fn cmp_a(&self, other: &netpod::UnsupEvt) -> Option<std::cmp::Ordering> {
+    fn cmp_a(&self, _other: &netpod::UnsupEvt) -> Option<std::cmp::Ordering> {
         todo!()
     }
 }
 
 impl PartialOrdEvtA<Vec<netpod::UnsupEvt>> for Vec<netpod::UnsupEvt> {
-    fn cmp_a(&self, other: &Vec<netpod::UnsupEvt>) -> Option<std::cmp::Ordering> {
+    fn cmp_a(&self, _other: &Vec<netpod::UnsupEvt>) -> Option<std::cmp::Ordering> {
         todo!()
     }
 }
@@ -186,7 +188,7 @@ impl AggregatorTimeWeight<netpod::UnsupEvt> for UnsupEvtAgg {
         todo!()
     }
 
-    fn ingest(&mut self, dt: DtNano, bl: DtNano, val: netpod::UnsupEvt) {
+    fn ingest(&mut self, _dt: DtNano, _bl: DtNano, _val: netpod::UnsupEvt) {
         todo!()
     }
 
@@ -196,7 +198,7 @@ impl AggregatorTimeWeight<netpod::UnsupEvt> for UnsupEvtAgg {
 
     fn result_and_reset_for_new_bin(
         &mut self,
-        filled_width_fraction: f32,
+        _filled_width_fraction: f32,
     ) -> <netpod::UnsupEvt as EventValueType>::AggTimeWeightOutputAvg {
         todo!()
     }
@@ -207,7 +209,7 @@ impl AggregatorTimeWeight<Vec<netpod::UnsupEvt>> for UnsupEvtAgg {
         todo!()
     }
 
-    fn ingest(&mut self, dt: DtNano, bl: DtNano, val: Vec<netpod::UnsupEvt>) {
+    fn ingest(&mut self, _dt: DtNano, _bl: DtNano, _val: Vec<netpod::UnsupEvt>) {
         todo!()
     }
 
@@ -217,7 +219,7 @@ impl AggregatorTimeWeight<Vec<netpod::UnsupEvt>> for UnsupEvtAgg {
 
     fn result_and_reset_for_new_bin(
         &mut self,
-        filled_width_fraction: f32,
+        _filled_width_fraction: f32,
     ) -> <Vec<netpod::UnsupEvt> as EventValueType>::AggTimeWeightOutputAvg {
         todo!()
     }
@@ -229,12 +231,14 @@ impl EventValueType for netpod::UnsupEvt {
     type AggTimeWeightOutputAvg = f32;
     type IterTy1<'a> = netpod::UnsupEvt;
     const SERDE_ID: u32 = <Self as SubFrId>::SUB as u32;
-    const BYTE_ESTIMATE_V00: u32 = 4;
     fn to_f32_for_binning_v01(&self) -> f32 {
         0.
     }
     fn scalar_type_name_string() -> String {
         "unsupevt".to_string()
+    }
+    fn byte_estimate(&self) -> u32 {
+        345
     }
 }
 
@@ -244,11 +248,13 @@ impl EventValueType for Vec<netpod::UnsupEvt> {
     type AggTimeWeightOutputAvg = f32;
     type IterTy1<'a> = Vec<netpod::UnsupEvt>;
     const SERDE_ID: u32 = <Self as SubFrId>::SUB as u32;
-    const BYTE_ESTIMATE_V00: u32 = 4;
     fn to_f32_for_binning_v01(&self) -> f32 {
         0.
     }
     fn scalar_type_name_string() -> String {
         "unsupevt".to_string()
+    }
+    fn byte_estimate(&self) -> u32 {
+        self.len() as u32 * 345
     }
 }

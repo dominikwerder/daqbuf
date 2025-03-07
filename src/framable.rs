@@ -25,13 +25,14 @@ pub const INMEM_FRAME_HEAD: usize = 20;
 pub const INMEM_FRAME_FOOT: usize = 4;
 pub const INMEM_FRAME_MAGIC: u32 = 0xc6c3b73d;
 
-#[derive(Debug, thiserror::Error)]
-#[cstm(name = "ItemFramable")]
-pub enum Error {
-    Msg(String),
-    DummyError,
-    Frame(#[from] crate::frame::Error),
-}
+autoerr::create_error_v1!(
+    name(Error, "ItemFramable"),
+    enum variants {
+        Msg(String),
+        DummyError,
+        Frame(#[from] crate::frame::Error),
+    },
+);
 
 struct ErrMsg<E>(E)
 where

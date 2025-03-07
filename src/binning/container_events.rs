@@ -37,6 +37,7 @@ use netpod::TsNano;
 use serde::Deserialize;
 use serde::Serialize;
 use std::any;
+use std::cell::RefCell;
 use std::collections::VecDeque;
 
 macro_rules! trace_init { ($($arg:tt)*) => ( if false { trace!($($arg)*); }) }
@@ -70,6 +71,7 @@ where
     fn truncate_front(&mut self, len: usize);
     fn into_user_facing_fields(self) -> Vec<(String, Box<dyn erased_serde::Serialize>)>;
     fn into_user_facing_fields_json(self) -> Vec<(String, Box<dyn erased_serde::Serialize>)>;
+    fn byte_estimate(&self) -> u32;
 }
 
 pub trait PartialOrdEvtA<EVT> {
@@ -82,9 +84,9 @@ pub trait EventValueType: fmt::Debug + Clone + PartialOrd + Send + Unpin + 'stat
     type AggTimeWeightOutputAvg: AggTimeWeightOutputAvg;
     type IterTy1<'a>: fmt::Debug + Clone + PartialOrdEvtA<Self> + Into<Self>;
     const SERDE_ID: u32;
-    const BYTE_ESTIMATE_V00: u32;
     fn to_f32_for_binning_v01(&self) -> f32;
     fn scalar_type_name_string() -> String;
+    fn byte_estimate(&self) -> u32;
 }
 
 impl<EVT> Container<EVT> for VecDeque<EVT>
@@ -134,6 +136,10 @@ where
     fn into_user_facing_fields_json(self) -> Vec<(String, Box<dyn erased_serde::Serialize>)> {
         vec![("values".into(), Box::new(self))]
     }
+
+    fn byte_estimate(&self) -> u32 {
+        self.iter().fold(0, |a, x| a + x.byte_estimate())
+    }
 }
 
 impl Container<String> for VecDeque<String> {
@@ -179,6 +185,10 @@ impl Container<String> for VecDeque<String> {
     fn into_user_facing_fields_json(self) -> Vec<(String, Box<dyn erased_serde::Serialize>)> {
         vec![("values".into(), Box::new(self))]
     }
+
+    fn byte_estimate(&self) -> u32 {
+        self.iter().fold(0, |a, x| a + x.bytes().len() as u32)
+    }
 }
 
 macro_rules! impl_event_value_type {
@@ -189,15 +199,16 @@ macro_rules! impl_event_value_type {
             type AggTimeWeightOutputAvg = f64;
             type IterTy1<'a> = $evt;
             const SERDE_ID: u32 = <$evt as SubFrId>::SUB as _;
-            const BYTE_ESTIMATE_V00: u32 = core::mem::size_of::<$evt>() as u32;
             fn to_f32_for_binning_v01(&self) -> f32 {
                 *self as _
             }
             fn scalar_type_name_string() -> String {
                 $sctname.to_string()
             }
+            fn byte_estimate(&self) -> u32 {
+                std::mem::size_of::<$evt>() as u32
+            }
         }
-
         impl PartialOrdEvtA<$evt> for $evt {
             fn cmp_a(&self, other: &$evt) -> Option<std::cmp::Ordering> {
                 self.partial_cmp(other)
@@ -247,12 +258,14 @@ impl EventValueType for f32 {
     type AggTimeWeightOutputAvg = f32;
     type IterTy1<'a> = f32;
     const SERDE_ID: u32 = <f32 as SubFrId>::SUB as _;
-    const BYTE_ESTIMATE_V00: u32 = core::mem::size_of::<Self>() as u32;
     fn to_f32_for_binning_v01(&self) -> f32 {
         *self as _
     }
     fn scalar_type_name_string() -> String {
         "f32".to_string()
+    }
+    fn byte_estimate(&self) -> u32 {
+        std::mem::size_of::<Self>() as u32
     }
 }
 
@@ -262,12 +275,14 @@ impl EventValueType for f64 {
     type AggTimeWeightOutputAvg = f64;
     type IterTy1<'a> = f64;
     const SERDE_ID: u32 = <f64 as SubFrId>::SUB as _;
-    const BYTE_ESTIMATE_V00: u32 = core::mem::size_of::<Self>() as u32;
     fn to_f32_for_binning_v01(&self) -> f32 {
         *self as _
     }
     fn scalar_type_name_string() -> String {
         "f64".to_string()
+    }
+    fn byte_estimate(&self) -> u32 {
+        std::mem::size_of::<Self>() as u32
     }
 }
 
@@ -277,12 +292,14 @@ impl EventValueType for bool {
     type AggTimeWeightOutputAvg = f64;
     type IterTy1<'a> = bool;
     const SERDE_ID: u32 = <bool as SubFrId>::SUB as _;
-    const BYTE_ESTIMATE_V00: u32 = core::mem::size_of::<Self>() as u32;
     fn to_f32_for_binning_v01(&self) -> f32 {
         f32::from(*self)
     }
     fn scalar_type_name_string() -> String {
         "bool".to_string()
+    }
+    fn byte_estimate(&self) -> u32 {
+        std::mem::size_of::<Self>() as u32
     }
 }
 
@@ -292,12 +309,14 @@ impl EventValueType for String {
     type AggTimeWeightOutputAvg = f64;
     type IterTy1<'a> = &'a str;
     const SERDE_ID: u32 = <String as SubFrId>::SUB as _;
-    const BYTE_ESTIMATE_V00: u32 = 400;
     fn to_f32_for_binning_v01(&self) -> f32 {
         self.len() as _
     }
     fn scalar_type_name_string() -> String {
         "string".to_string()
+    }
+    fn byte_estimate(&self) -> u32 {
+        self.bytes().len() as u32
     }
 }
 
@@ -310,12 +329,15 @@ macro_rules! impl_event_value_type_vec {
             type IterTy1<'a> = Vec<$evt>;
             const SERDE_ID: u32 = <Vec<$evt> as SubFrId>::SUB as _;
             // TODO must use a more precise number dependent on actual elements
-            const BYTE_ESTIMATE_V00: u32 = 1200 * core::mem::size_of::<Self>() as u32;
             fn to_f32_for_binning_v01(&self) -> f32 {
                 self.iter().fold(0., |a, x| a + *x as f32)
             }
             fn scalar_type_name_string() -> String {
                 $sctname.to_string()
+            }
+            fn byte_estimate(&self) -> u32 {
+                self.iter()
+                    .fold(0, |a, x| a + EventValueType::byte_estimate(x))
             }
         }
 
@@ -346,13 +368,14 @@ impl EventValueType for Vec<bool> {
     type AggTimeWeightOutputAvg = f32;
     type IterTy1<'a> = Vec<bool>;
     const SERDE_ID: u32 = <Vec<bool> as SubFrId>::SUB as _;
-    // TODO must use a more precise number dependent on actual elements
-    const BYTE_ESTIMATE_V00: u32 = 1200 * core::mem::size_of::<Self>() as u32;
     fn to_f32_for_binning_v01(&self) -> f32 {
         self.iter().fold(0., |a, x| a + f32::from(*x))
     }
     fn scalar_type_name_string() -> String {
         "bool".to_string()
+    }
+    fn byte_estimate(&self) -> u32 {
+        self.len() as u32 * std::mem::size_of::<Self>() as u32
     }
 }
 
@@ -368,13 +391,15 @@ impl EventValueType for Vec<String> {
     type AggTimeWeightOutputAvg = f32;
     type IterTy1<'a> = Vec<String>;
     const SERDE_ID: u32 = <Vec<String> as SubFrId>::SUB as _;
-    // TODO must use a more precise number dependent on actual elements
-    const BYTE_ESTIMATE_V00: u32 = 1200 * core::mem::size_of::<Self>() as u32;
     fn to_f32_for_binning_v01(&self) -> f32 {
         self.iter().fold(0., |a, x| a + x.len() as f32)
     }
     fn scalar_type_name_string() -> String {
         "string".to_string()
+    }
+    fn byte_estimate(&self) -> u32 {
+        self.iter()
+            .fold(0, |a, x| a + EventValueType::byte_estimate(x))
     }
 }
 
@@ -390,13 +415,15 @@ impl EventValueType for Vec<EnumVariant> {
     type AggTimeWeightOutputAvg = f32;
     type IterTy1<'a> = Vec<EnumVariant>;
     const SERDE_ID: u32 = <Vec<EnumVariant> as SubFrId>::SUB as _;
-    // TODO must use a more precise number dependent on actual elements
-    const BYTE_ESTIMATE_V00: u32 = 1200 * core::mem::size_of::<Self>() as u32;
     fn to_f32_for_binning_v01(&self) -> f32 {
         self.iter().fold(0., |a, x| a + x.ix() as f32)
     }
     fn scalar_type_name_string() -> String {
         "enum".to_string()
+    }
+    fn byte_estimate(&self) -> u32 {
+        self.iter()
+            .fold(0, |a, x| a + EventValueType::byte_estimate(x))
     }
 }
 
@@ -484,7 +511,7 @@ mod serde_pulsed_val {
     where
         EVT: EventValueType,
     {
-        fn deserialize<D>(de: D) -> Result<Self, D::Error>
+        fn deserialize<D>(_de: D) -> Result<Self, D::Error>
         where
             D: Deserializer<'de>,
         {
@@ -586,6 +613,10 @@ where
             ("values".into(), Box::new(self.vals)),
         ]
     }
+
+    fn byte_estimate(&self) -> u32 {
+        self.len() as u32 * 8 + self.vals.byte_estimate()
+    }
 }
 
 impl<EVT> PartialOrdEvtA<PulsedVal<EVT>> for PulsedVal<EVT>
@@ -606,12 +637,14 @@ where
     type AggTimeWeightOutputAvg = EVT::AggTimeWeightOutputAvg;
     type IterTy1<'a> = PulsedValIterTy<'a, EVT>;
     const SERDE_ID: u32 = items_0::subfr::pulsed_subfr(<EVT as SubFrId>::SUB) as _;
-    const BYTE_ESTIMATE_V00: u32 = core::mem::size_of::<EVT>() as u32;
     fn to_f32_for_binning_v01(&self) -> f32 {
         self.1.to_f32_for_binning_v01()
     }
     fn scalar_type_name_string() -> String {
         EVT::scalar_type_name_string()
+    }
+    fn byte_estimate(&self) -> u32 {
+        8 + self.1.byte_estimate()
     }
 }
 
@@ -663,7 +696,7 @@ where
 {
     tss: VecDeque<TsNano>,
     vals: <EVT as EventValueType>::Container,
-    byte_estimate: u64,
+    byte_estimate: RefCell<Option<u32>>,
 }
 
 mod container_events_serde {
@@ -677,10 +710,11 @@ mod container_events_serde {
     use serde::Deserializer;
     use serde::Serialize;
     use serde::Serializer;
+    use std::cell::RefCell;
     use std::fmt;
     use std::marker::PhantomData;
 
-    macro_rules! trace_serde { ($($arg:tt)*) => ( if true { eprintln!($($arg)*); }) }
+    macro_rules! trace_serde { ($($arg:expr),*) => ( if false { eprintln!($($arg),*); }) }
 
     impl<EVT> Serialize for ContainerEvents<EVT>
     where
@@ -726,8 +760,7 @@ mod container_events_serde {
             let ret = Self::Value {
                 tss,
                 vals,
-                // TODO make container recompute byte_estimate
-                byte_estimate: 0,
+                byte_estimate: RefCell::new(None),
             };
             Ok(ret)
         }
@@ -756,7 +789,7 @@ mod container_events_serde {
             let ret = Self::Value {
                 tss: tss.unwrap(),
                 vals: vals.unwrap(),
-                byte_estimate: 0,
+                byte_estimate: RefCell::new(None),
             };
             Ok(ret)
         }
@@ -787,7 +820,7 @@ where
         Self {
             tss,
             vals,
-            byte_estimate: 0,
+            byte_estimate: RefCell::new(None),
         }
     }
 
@@ -799,7 +832,7 @@ where
         Self {
             tss: VecDeque::new(),
             vals: Container::new(),
-            byte_estimate: 0,
+            byte_estimate: RefCell::new(None),
         }
     }
 
@@ -822,6 +855,7 @@ where
     pub fn push_back(&mut self, ts: TsNano, val: EVT) {
         self.tss.push_back(ts);
         self.vals.push_back(val);
+        self.byte_estimate = RefCell::new(None);
     }
 
     pub fn iter_zip<'a>(&'a self) -> impl Iterator<Item = (TsNano, EVT::IterTy1<'a>)> {
@@ -835,7 +869,7 @@ where
     pub fn clear(&mut self) {
         self.tss.clear();
         self.vals.clear();
-        self.byte_estimate = 0;
+        *self.byte_estimate.borrow_mut() = Some(0);
     }
 
     pub fn truncate_front(&mut self, len: usize) {
@@ -843,6 +877,16 @@ where
             let n = self.len() - len;
             self.tss.drain(0..n);
             self.vals.truncate_front(len);
+        }
+    }
+
+    fn byte_estimate_mut(&self) -> u32 {
+        if let Some(x) = self.byte_estimate.borrow().clone() {
+            x
+        } else {
+            let byte_est = 8 * self.len() as u32 + self.vals.byte_estimate();
+            *self.byte_estimate.borrow_mut() = Some(byte_est);
+            byte_est
         }
     }
 }
@@ -890,15 +934,6 @@ where
     }
 }
 
-impl<EVT> ByteEstimate for ContainerEvents<EVT>
-where
-    EVT: EventValueType,
-{
-    fn byte_estimate(&self) -> u64 {
-        self.byte_estimate
-    }
-}
-
 impl<EVT> Empty for ContainerEvents<EVT>
 where
     EVT: EventValueType,
@@ -914,6 +949,15 @@ where
 {
     fn push(&mut self, ts: TsNano, value: EVT) {
         self.push_back(ts, value);
+    }
+}
+
+impl<EVT> ByteEstimate for ContainerEvents<EVT>
+where
+    EVT: EventValueType,
+{
+    fn byte_estimate(&self) -> u32 {
+        self.byte_estimate_mut()
     }
 }
 
@@ -1169,8 +1213,8 @@ impl<EVT> ByteEstimate for ContainerEventsCollector<EVT>
 where
     EVT: EventValueType,
 {
-    fn byte_estimate(&self) -> u64 {
-        EVT::BYTE_ESTIMATE_V00 as _
+    fn byte_estimate(&self) -> u32 {
+        self.evs.byte_estimate()
     }
 }
 

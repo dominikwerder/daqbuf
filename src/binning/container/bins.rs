@@ -96,7 +96,7 @@ impl AggBinValTw<f32> for AggBinValTwF32 {
         Self { sum: 0. }
     }
 
-    fn ingest(&mut self, dt: DtNano, bl: DtNano, cnt: u64, val: f32) {
+    fn ingest(&mut self, dt: DtNano, bl: DtNano, _cnt: u64, val: f32) {
         let f = dt.ns() as f32 / bl.ns() as f32;
         self.sum += f * val;
     }
@@ -122,7 +122,7 @@ impl AggBinValTw<f64> for AggBinValTwF64 {
         Self { sum: 0. }
     }
 
-    fn ingest(&mut self, dt: DtNano, bl: DtNano, cnt: u64, val: f64) {
+    fn ingest(&mut self, dt: DtNano, bl: DtNano, _cnt: u64, val: f64) {
         let f = dt.ns() as f32 / bl.ns() as f32;
         self.sum += f as f64 * val;
     }

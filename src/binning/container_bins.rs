@@ -6,6 +6,10 @@ use crate::binning::container::bins::BinAggedContainer;
 use crate::log::*;
 use core::fmt;
 use daqbuf_err as err;
+use items_0::AsAnyMut;
+use items_0::AsAnyRef;
+use items_0::TypeName;
+use items_0::WithLen;
 use items_0::apitypes::ToUserFacingApiType;
 use items_0::collect_s::CollectableDyn;
 use items_0::collect_s::CollectedDyn;
@@ -16,17 +20,11 @@ use items_0::merge::MergeableTy;
 use items_0::timebin::BinningggContainerBinsDyn;
 use items_0::timebin::BinsBoxed;
 use items_0::vecpreview::VecPreview;
-use items_0::AsAnyMut;
-use items_0::AsAnyRef;
-use items_0::TypeName;
-use items_0::WithLen;
-use netpod::f32_close;
 use netpod::TsNano;
+use netpod::f32_close;
 use std::any;
 use std::collections::VecDeque;
 use std::mem;
-
-macro_rules! trace_init { ($($arg:tt)*) => ( if true { trace!($($arg)*); }) }
 
 autoerr::create_error_v1!(
     name(ContainerBinsError, "ContainerBins"),
@@ -121,7 +119,7 @@ mod container_bins_serde {
         EVT: EventValueType,
         BVT: BinAggedType,
     {
-        fn serialize<S>(&self, ser: S) -> Result<S::Ok, S::Error>
+        fn serialize<S>(&self, _ser: S) -> Result<S::Ok, S::Error>
         where
             S: Serializer,
         {
@@ -134,7 +132,7 @@ mod container_bins_serde {
         EVT: EventValueType,
         BVT: BinAggedType,
     {
-        fn deserialize<D>(de: D) -> Result<Self, D::Error>
+        fn deserialize<D>(_de: D) -> Result<Self, D::Error>
         where
             D: Deserializer<'de>,
         {
@@ -340,6 +338,17 @@ where
     }
 }
 
+impl<EVT, BVT> ByteEstimate for ContainerBins<EVT, BVT>
+where
+    EVT: EventValueType,
+    BVT: BinAggedType,
+{
+    fn byte_estimate(&self) -> u32 {
+        // TODO
+        self.len() as u32 * 800
+    }
+}
+
 pub fn compare_boxed_f32(lhs: &ContainerBins<f32, f32>, rhs: &ContainerBins<f32, f32>) -> bool {
     if let Some(lhs) = lhs.as_any_ref().downcast_ref::<ContainerBins<f32, f32>>() {
         if let Some(rhs) = rhs.as_any_ref().downcast_ref::<ContainerBins<f32, f32>>() {
@@ -457,17 +466,6 @@ where
     }
 }
 
-impl<EVT, BVT> ByteEstimate for ContainerBins<EVT, BVT>
-where
-    EVT: EventValueType,
-    BVT: BinAggedType,
-{
-    fn byte_estimate(&self) -> u64 {
-        // TODO ByteEstimate for ContainerBins
-        128 * self.len() as u64
-    }
-}
-
 #[derive(Debug)]
 pub struct ContainerBinsCollectorOutput<EVT, BVT>
 where
@@ -580,9 +578,9 @@ where
     EVT: EventValueType,
     BVT: BinAggedType,
 {
-    fn byte_estimate(&self) -> u64 {
+    fn byte_estimate(&self) -> u32 {
         // TODO need better estimate
-        self.bins.len() as u64 * 200
+        self.bins.len() as u32 * 400
     }
 }
 
@@ -720,29 +718,17 @@ where
 
     fn find_lowest_index_gt(&self, ts: TsNano) -> Option<usize> {
         let x = self.ts1s.partition_point(|&x| x <= ts);
-        if x >= self.ts1s.len() {
-            None
-        } else {
-            Some(x)
-        }
+        if x >= self.ts1s.len() { None } else { Some(x) }
     }
 
     fn find_lowest_index_ge(&self, ts: TsNano) -> Option<usize> {
         let x = self.ts1s.partition_point(|&x| x < ts);
-        if x >= self.ts1s.len() {
-            None
-        } else {
-            Some(x)
-        }
+        if x >= self.ts1s.len() { None } else { Some(x) }
     }
 
     fn find_highest_index_lt(&self, ts: TsNano) -> Option<usize> {
         let x = self.ts1s.partition_point(|&x| x < ts);
-        if x == 0 {
-            None
-        } else {
-            Some(x - 1)
-        }
+        if x == 0 { None } else { Some(x - 1) }
     }
 
     fn tss_for_testing(&self) -> VecDeque<TsNano> {

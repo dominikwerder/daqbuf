@@ -1,14 +1,6 @@
 use crate::binning::container_events::ContainerEvents;
-use netpod::range::evrange::NanoRange;
 use netpod::TsNano;
-use std::pin::Pin;
-
-fn boxed_conts<S>(inp: S) -> Pin<Box<dyn Iterator<Item = <S as Iterator>::Item> + Send>>
-where
-    S: Iterator + Send + 'static,
-{
-    Box::pin(inp)
-}
+use netpod::range::evrange::NanoRange;
 
 pub fn new_events_gen_dim0_f32_v00(range: NanoRange) -> impl Iterator<Item = ContainerEvents<f32>> {
     let dt = 1000 * 1000 * 10;

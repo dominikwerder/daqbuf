@@ -4,6 +4,12 @@ use crate::framable::FrameType;
 use crate::log::*;
 use core::ops::Range;
 use daqbuf_err as err;
+use items_0::AsAnyMut;
+use items_0::AsAnyRef;
+use items_0::Empty;
+use items_0::Extendable;
+use items_0::TypeName;
+use items_0::WithLen;
 use items_0::apitypes::ToUserFacingApiType;
 use items_0::apitypes::UserApiType;
 use items_0::collect_s::CollectableDyn;
@@ -18,12 +24,6 @@ use items_0::merge::DrainIntoNewResult;
 use items_0::merge::MergeableTy;
 use items_0::streamitem::ITEMS_2_CHANNEL_EVENTS_FRAME_TYPE_ID;
 use items_0::timebin::BinningggContainerEventsDyn;
-use items_0::AsAnyMut;
-use items_0::AsAnyRef;
-use items_0::Empty;
-use items_0::Extendable;
-use items_0::TypeName;
-use items_0::WithLen;
 use netpod::TsNano;
 use serde::Deserialize;
 use serde::Serialize;
@@ -70,7 +70,7 @@ impl ConnStatusEvent {
 }
 
 impl ByteEstimate for ConnStatusEvent {
-    fn byte_estimate(&self) -> u64 {
+    fn byte_estimate(&self) -> u32 {
         // TODO magic number, but maybe good enough
         32
     }
@@ -147,7 +147,7 @@ impl ChannelStatusEvent {
 }
 
 impl ByteEstimate for ChannelStatusEvent {
-    fn byte_estimate(&self) -> u64 {
+    fn byte_estimate(&self) -> u32 {
         // TODO magic number, but maybe good enough
         32
     }
@@ -221,26 +221,26 @@ mod serde_channel_events {
     use crate::binning::container_events::PulsedVal;
     use crate::channelevents::ConnStatusEvent;
     use crate::log::*;
+    use items_0::subfr::SubFrId;
     use items_0::subfr::is_container_events;
     use items_0::subfr::is_pulsed_subfr;
     use items_0::subfr::is_vec_subfr;
     use items_0::subfr::subfr_scalar_type;
-    use items_0::subfr::SubFrId;
     use items_0::timebin::BinningggContainerEventsDyn;
     use netpod::EnumVariant;
+    use serde::Deserialize;
+    use serde::Deserializer;
+    use serde::Serialize;
+    use serde::Serializer;
     use serde::de;
     use serde::de::EnumAccess;
     use serde::de::VariantAccess;
     use serde::de::Visitor;
     use serde::ser::SerializeSeq;
-    use serde::Deserialize;
-    use serde::Deserializer;
-    use serde::Serialize;
-    use serde::Serializer;
     use std::cell::RefCell;
     use std::fmt;
 
-    macro_rules! trace_serde { ($($arg:expr),*) => ( if true { trace!($($arg),*); }) }
+    macro_rules! trace_serde { ($($arg:expr),*) => ( if false { trace!($($arg),*); }) }
 
     type C01<T> = ContainerEvents<T>;
     type C02<T> = ContainerEvents<Vec<T>>;
@@ -440,7 +440,7 @@ mod serde_channel_events {
             ret
         }
 
-        fn visit_map<A>(self, map: A) -> Result<Self::Value, A::Error>
+        fn visit_map<A>(self, _map: A) -> Result<Self::Value, A::Error>
         where
             A: de::MapAccess<'de>,
         {
@@ -595,19 +595,19 @@ mod test_channel_events_serde {
     use crate::framable::Framable;
     use crate::inmem::InMemoryFrame;
     use crate::log::*;
+    use bincode::DefaultOptions;
     use bincode::config::FixintEncoding;
     use bincode::config::LittleEndian;
     use bincode::config::RejectTrailing;
     use bincode::config::WithOtherEndian;
     use bincode::config::WithOtherIntEncoding;
     use bincode::config::WithOtherTrailing;
-    use bincode::DefaultOptions;
-    use items_0::bincode;
-    use items_0::streamitem::sitem_data;
-    use items_0::streamitem::Sitemty;
-    use items_0::timebin::BinningggContainerEventsDyn;
     use items_0::Appendable;
     use items_0::Empty;
+    use items_0::bincode;
+    use items_0::streamitem::Sitemty;
+    use items_0::streamitem::sitem_data;
+    use items_0::timebin::BinningggContainerEventsDyn;
     use netpod::TsNano;
     use netpod::UnsupEvt;
     use serde::Deserialize;
@@ -758,7 +758,7 @@ impl WithLen for ChannelEvents {
 }
 
 impl ByteEstimate for ChannelEvents {
-    fn byte_estimate(&self) -> u64 {
+    fn byte_estimate(&self) -> u32 {
         match self {
             ChannelEvents::Events(k) => k.byte_estimate(),
             ChannelEvents::Status(k) => match k {
@@ -838,11 +838,7 @@ impl MergeableTy for ChannelEvents {
             ChannelEvents::Events(k) => k.find_lowest_index_gt(ts),
             ChannelEvents::Status(k) => {
                 if let Some(k) = k {
-                    if k.ts > ts {
-                        Some(0)
-                    } else {
-                        None
-                    }
+                    if k.ts > ts { Some(0) } else { None }
                 } else {
                     None
                 }
@@ -855,11 +851,7 @@ impl MergeableTy for ChannelEvents {
             ChannelEvents::Events(k) => k.find_lowest_index_ge(ts),
             ChannelEvents::Status(k) => {
                 if let Some(k) = k {
-                    if k.ts >= ts {
-                        Some(0)
-                    } else {
-                        None
-                    }
+                    if k.ts >= ts { Some(0) } else { None }
                 } else {
                     None
                 }
@@ -872,11 +864,7 @@ impl MergeableTy for ChannelEvents {
             ChannelEvents::Events(k) => k.find_highest_index_lt(ts),
             ChannelEvents::Status(k) => {
                 if let Some(k) = k {
-                    if k.ts < ts {
-                        Some(0)
-                    } else {
-                        None
-                    }
+                    if k.ts < ts { Some(0) } else { None }
                 } else {
                     None
                 }
@@ -981,7 +969,7 @@ impl WithLen for ChannelEventsCollector {
 }
 
 impl ByteEstimate for ChannelEventsCollector {
-    fn byte_estimate(&self) -> u64 {
+    fn byte_estimate(&self) -> u32 {
         self.coll.as_ref().map_or(0, |x| x.byte_estimate())
     }
 }
@@ -1044,7 +1032,10 @@ impl ToUserFacingApiType for ChannelEvents {
     fn into_user_facing_api_type(self) -> Box<dyn UserApiType> {
         match self {
             ChannelEvents::Events(x) => x.into_user_facing_api_type_box(),
-            ChannelEvents::Status(x) => Box::new(items_0::apitypes::EmptyStruct::new()),
+            ChannelEvents::Status(_) => {
+                // TODO
+                Box::new(items_0::apitypes::EmptyStruct::new())
+            }
         }
     }
 

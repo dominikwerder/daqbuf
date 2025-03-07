@@ -5,25 +5,26 @@ use crate::framable::INMEM_FRAME_HEAD;
 use crate::framable::INMEM_FRAME_MAGIC;
 use crate::inmem::InMemoryFrame;
 use crate::log::*;
+use bincode::DefaultOptions;
 use bincode::config::FixintEncoding;
 use bincode::config::LittleEndian;
 use bincode::config::RejectTrailing;
 use bincode::config::WithOtherEndian;
 use bincode::config::WithOtherIntEncoding;
 use bincode::config::WithOtherTrailing;
-use bincode::DefaultOptions;
 use bytes::BufMut;
 use bytes::BytesMut;
 use core::fmt;
 use daqbuf_err as err;
 use items_0::bincode;
-use items_0::streamitem::LogItem;
-use items_0::streamitem::StatsItem;
 use items_0::streamitem::ERROR_FRAME_TYPE_ID;
 use items_0::streamitem::LOG_FRAME_TYPE_ID;
+use items_0::streamitem::LogItem;
 use items_0::streamitem::RANGE_COMPLETE_FRAME_TYPE_ID;
 use items_0::streamitem::STATS_FRAME_TYPE_ID;
+use items_0::streamitem::StatsItem;
 use items_0::streamitem::TERM_FRAME_TYPE_ID;
+use netpod::log;
 use serde::Serialize;
 use std::any;
 use std::io;
@@ -115,6 +116,7 @@ where
     rmp_serde::to_vec_named(&item).map_err(Error::from)
 }
 
+#[allow(unused)]
 fn msgpack_erased_to_vec<T>(item: T) -> Result<Vec<u8>, Error>
 where
     T: erased_serde::Serialize,
@@ -149,6 +151,7 @@ where
         })
 }
 
+#[allow(unused)]
 fn postcard_erased_to_vec<T>(item: T) -> Result<Vec<u8>, Error>
 where
     T: erased_serde::Serialize + fmt::Debug,
@@ -210,6 +213,7 @@ where
     })
 }
 
+#[allow(unused)]
 fn json_erased_to_vec<T>(item: T) -> Result<Vec<u8>, Error>
 where
     T: erased_serde::Serialize + fmt::Debug,
@@ -260,7 +264,9 @@ where
     }
 }
 
-pub fn encode_erased_to_vec<T>(item: T) -> Result<Vec<u8>, Error>
+// TODO check if better option
+#[allow(unused)]
+fn encode_erased_to_vec_old<T>(item: T) -> Result<Vec<u8>, Error>
 where
     T: erased_serde::Serialize + fmt::Debug,
 {
@@ -295,6 +301,9 @@ where
     let enc = encode_to_vec(item)?;
     if enc.len() > u32::MAX as usize {
         return Err(Error::TooLongPayload(enc.len()));
+    }
+    if enc.len() > 1024 * 1024 * 20 {
+        log::debug!("make_frame_2  over weight  {} kB", enc.len() / 1024);
     }
     let mut h = crc32fast::Hasher::new();
     h.update(&enc);
