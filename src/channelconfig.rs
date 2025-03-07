@@ -2,13 +2,10 @@ use daqbuf_err as err;
 use err::*;
 use netpod::log::*;
 use netpod::range::evrange::NanoRange;
-use netpod::timeunits::DAY;
 use netpod::timeunits::MS;
 use netpod::ByteOrder;
 use netpod::DtNano;
-use netpod::NodeConfigCached;
 use netpod::ScalarType;
-use netpod::SfDbChannel;
 use netpod::Shape;
 use netpod::TsNano;
 use nom::bytes::complete::take;
@@ -21,21 +18,20 @@ use nom::Needed;
 use serde::Deserialize;
 use serde::Serialize;
 use std::fmt;
-use std::path::PathBuf;
 use std::time::Duration;
 use std::time::SystemTime;
 
-#[derive(Debug, ThisError)]
-#[cstm(name = "ConfigParse")]
-pub enum ConfigParseError {
-    NotSupportedOnNode,
-    FileNotFound,
-    #[error("PermissionDenied({0:?})")]
-    PermissionDenied(PathBuf),
-    IO,
-    ParseError(String),
-    NotSupported,
-}
+autoerr::create_error_v1!(
+    name(ConfigParseError, "ConfigParse"),
+    enum variants {
+        NotSupportedOnNode,
+        FileNotFound,
+        PermissionDenied(String),
+        IO,
+        ParseError(String),
+        NotSupported,
+    },
+);
 
 impl<T: fmt::Debug> From<nom::Err<T>> for ConfigParseError {
     fn from(k: nom::Err<T>) -> Self {
@@ -239,24 +235,24 @@ pub fn parse_entry(inp: &[u8]) -> NRes<Option<ConfigEntry>> {
             pulse,
             ks,
             bs,
-            split_count: split_count,
+            split_count,
             status,
             bb,
             modulo,
             offset,
             precision,
             scalar_type,
-            is_compressed: is_compressed,
-            is_array: is_array,
-            is_shaped: is_shaped,
+            is_compressed,
+            is_array,
+            is_shaped,
             byte_order,
-            compression_method: compression_method,
+            compression_method,
             shape,
-            source_name: source_name,
+            source_name,
             unit,
             description,
-            optional_fields: optional_fields,
-            value_converter: value_converter,
+            optional_fields,
+            value_converter,
         }),
     ))
 }
