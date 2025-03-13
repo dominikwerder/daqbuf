@@ -4523,7 +4523,11 @@ pub fn req_uri_to_url(uri: &Uri) -> Result<Url, UriError> {
     }
 }
 
-pub unsafe fn extltref<'a, 'b, T>(t: &'a T) -> &'b T {
+pub unsafe fn extltref<'a, 'b, T>(x: &'a T) -> &'b T {
+    &*(x as *const T)
+}
+
+pub unsafe fn extltref2<'a, 'b, T>(t: &'a T) -> &'b T {
     core::mem::transmute(t)
 }
 

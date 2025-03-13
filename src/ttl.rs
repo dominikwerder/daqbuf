@@ -74,6 +74,15 @@ impl RetentionTime {
             RetentionTime::Long => 12,
         }
     }
+
+    pub fn from_str(x: &str) -> Result<Self, Error> {
+        match x {
+            "short" => Ok(Self::Short),
+            "medium" => Ok(Self::Medium),
+            "long" => Ok(Self::Long),
+            _ => Err(Error::Parse),
+        }
+    }
 }
 
 impl fmt::Display for RetentionTime {

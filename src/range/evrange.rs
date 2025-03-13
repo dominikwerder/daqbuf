@@ -198,6 +198,13 @@ impl SeriesRange {
             SeriesRange::PulseRange(x) => x.end - x.beg,
         }
     }
+
+    pub fn to_time(&self) -> Option<NanoRange> {
+        match self {
+            SeriesRange::TimeRange(x) => Some(x.clone()),
+            SeriesRange::PulseRange(_) => None,
+        }
+    }
 }
 
 impl fmt::Debug for SeriesRange {
