@@ -7,8 +7,12 @@ autoerr::create_error_v1!(
     enum variants {
         PrebinnedPartitioningInvalid,
         BadDv1(u32),
+        BadPbp(u32),
     },
 );
+
+#[derive(Debug, Clone)]
+pub struct MspU32(pub u32);
 
 #[derive(Debug, Clone)]
 pub enum PrebinnedPartitioning {
@@ -112,6 +116,19 @@ impl PrebinnedPartitioning {
             Min10 => 4,
             Hour1 => 5,
             Day1 => 6,
+        }
+    }
+
+    pub fn from_db_ix(x: u32) -> Result<Self, Error> {
+        use PrebinnedPartitioning::*;
+        match x {
+            1 => Ok(Sec1),
+            2 => Ok(Sec10),
+            3 => Ok(Min1),
+            4 => Ok(Min10),
+            5 => Ok(Hour1),
+            6 => Ok(Day1),
+            _ => Err(Error::BadPbp(x)),
         }
     }
 }
