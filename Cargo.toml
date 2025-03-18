@@ -14,3 +14,4 @@ humantime = "2.1.0"
 humantime-serde = "1.1.1"
 autoerr = "0.0.3"
 netpod = { path = "../daqbuf-netpod", package = "daqbuf-netpod" }
+series = { path = "../daqbuf-series", package = "daqbuf-series" }
