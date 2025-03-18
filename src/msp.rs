@@ -1,5 +1,7 @@
 use netpod::DtMs;
 use netpod::TsMs;
+use serde::Deserialize;
+use serde::Serialize;
 use std::fmt;
 
 autoerr::create_error_v1!(
@@ -14,7 +16,7 @@ autoerr::create_error_v1!(
 #[derive(Debug, Clone)]
 pub struct MspU32(pub u32);
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum PrebinnedPartitioning {
     Sec1,
     Sec10,
