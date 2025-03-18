@@ -67,11 +67,20 @@ impl RetentionTime {
         self.ttl_events_d0()
     }
 
-    pub fn index_db_i32(&self) -> i32 {
+    pub fn to_index_db_i32(&self) -> i32 {
         match self {
             RetentionTime::Short => 2,
             RetentionTime::Medium => 4,
             RetentionTime::Long => 12,
+        }
+    }
+
+    pub fn from_index_db_u16(x: u16) -> Result<Self, Error> {
+        match x {
+            2 => Ok(Self::Short),
+            4 => Ok(Self::Medium),
+            12 => Ok(Self::Long),
+            _ => Err(Error::Parse),
         }
     }
 
