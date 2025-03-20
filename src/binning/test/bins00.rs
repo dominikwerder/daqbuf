@@ -10,19 +10,20 @@ use crate::binning::timeweight::timeweight_bins_stream::BinnedBinsTimeweightStre
 use crate::binning::timeweight::timeweight_events::BinnedEventsTimeweight;
 use futures_util::StreamExt;
 use items_0::timebin::BinningggContainerBinsDyn;
-use netpod::log::*;
-use netpod::range::evrange::NanoRange;
 use netpod::BinnedRange;
 use netpod::DtMs;
 use netpod::TsNano;
+use netpod::log::*;
+use netpod::range::evrange::NanoRange;
 
-#[derive(Debug, thiserror::Error)]
-#[cstm(name = "Error")]
-enum Error {
-    Timeweight(#[from] crate::binning::timeweight::timeweight_events::Error),
-    AssertMsg(String),
-    Compare(#[from] super::compare::Error),
-}
+autoerr::create_error_v1!(
+    name(Error, "Error"),
+    enum variants {
+        Timeweight(#[from] crate::binning::timeweight::timeweight_events::Error),
+        AssertMsg(String),
+        Compare(#[from] super::compare::Error),
+    },
+);
 
 #[test]
 fn test_bin_events_f32_simple_01() -> Result<(), Error> {

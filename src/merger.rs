@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod test;
 
-use crate::log::*;
+use crate::log;
 use futures_util::Stream;
 use futures_util::StreamExt;
 use items_0::merge::DrainIntoDstResult;
@@ -26,13 +26,19 @@ use std::task::Poll;
 const OUT_MAX_BYTES: u32 = 1024 * 1024 * 20;
 const DO_DETECT_NON_MONO: bool = true;
 
-macro_rules! trace2 { ($($arg:expr),*) => ( if false { trace!($($arg),*); } ) }
+macro_rules! trace2 { ($($arg:expr),*) => ( if true { log::trace!($($arg),*); } ) }
 
-macro_rules! trace3 { ($($arg:expr),*) => ( if false { trace!($($arg),*); } ) }
+macro_rules! trace3 { ($($arg:expr),*) => ( if true { log::trace!($($arg),*); } ) }
 
-macro_rules! trace4 { ($($arg:expr),*) => ( if false { trace!($($arg),*); } ) }
+macro_rules! trace4 { ($($arg:expr),*) => ( if true { log::trace!($($arg),*); } ) }
 
-macro_rules! trace_emit { ($($arg:expr),*) => ( if false { trace!($($arg),*); } ) }
+macro_rules! trace_emit { ($($arg:expr),*) => ( if true { log::trace!($($arg),*); } ) }
+
+macro_rules! trace_inp_special { ($($arg:expr),*) => ( if true { log::trace!($($arg),*); } ) }
+
+macro_rules! trace_emit_special { ($($arg:expr),*) => ( if true { log::trace!($($arg),*); } ) }
+
+macro_rules! debug_inp { ($($arg:expr),*) => ( if true { log::trace!($($arg),*); } ) }
 
 autoerr::create_error_v1!(
     name(Error, "MergerError"),
@@ -42,42 +48,39 @@ autoerr::create_error_v1!(
         ShouldFindTsMin,
         ItemShouldHaveTsMax,
         PartialPathDrainedAllItems,
+        InputNotStrictMonotonic,
+        Logic,
     },
 );
 
 type MergeInp<T> = Pin<Box<dyn Stream<Item = Sitemty<T>> + Send>>;
 
+struct Inps<T>(Vec<Option<MergeInp<T>>>);
+
+impl<T> fmt::Debug for Inps<T> {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        fmt.debug_tuple("Vec<Inp>").finish()
+    }
+}
+
+#[derive(Debug)]
 pub struct Merger<T> {
-    inps: Vec<Option<MergeInp<T>>>,
+    inps: Inps<T>,
     items: Vec<Option<T>>,
     out: Option<T>,
     do_clear_out: bool,
     out_max_len: usize,
     range_complete: Vec<bool>,
-    out_of_band_queue: VecDeque<Sitemty<T>>,
+    outbuf: VecDeque<Sitemty<T>>,
     log_queue: VecDeque<LogItem>,
     dim0ix_max: TsNano,
     done_inp: bool,
     done_range_complete: bool,
     complete: bool,
-}
-
-impl<T> fmt::Debug for Merger<T>
-where
-    T: MergeableTy,
-{
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        let inps: Vec<_> = self.inps.iter().map(|x| x.is_some()).collect();
-        fmt.debug_struct(std::any::type_name::<Self>())
-            .field("inps", &inps)
-            .field("items", &self.items)
-            .field("out_max_len", &self.out_max_len)
-            .field("range_complete", &self.range_complete)
-            .field("out_of_band_queue", &self.out_of_band_queue.len())
-            .field("done_data", &self.done_inp)
-            .field("done_range_complete", &self.done_range_complete)
-            .finish()
-    }
+    stats_process_item_empty: u32,
+    take_item_single_inp_cnt: u32,
+    take_item_full_cnt: u32,
+    take_item_partial_cnt: u32,
 }
 
 impl<T> Merger<T>
@@ -87,18 +90,22 @@ where
     pub fn new(inps: Vec<MergeInp<T>>, out_max_len: Option<u32>) -> Self {
         let n = inps.len();
         Self {
-            inps: inps.into_iter().map(|x| Some(x)).collect(),
+            inps: Inps(inps.into_iter().map(|x| Some(x)).collect()),
             items: (0..n).into_iter().map(|_| None).collect(),
             out: None,
             do_clear_out: false,
             out_max_len: out_max_len.unwrap_or(1000) as usize,
             range_complete: vec![false; n],
-            out_of_band_queue: VecDeque::new(),
+            outbuf: VecDeque::new(),
             log_queue: VecDeque::new(),
             dim0ix_max: TsNano::from_ns(0),
             done_inp: false,
             done_range_complete: false,
             complete: false,
+            stats_process_item_empty: 0,
+            take_item_single_inp_cnt: 0,
+            take_item_full_cnt: 0,
+            take_item_partial_cnt: 0,
         }
     }
 
@@ -149,12 +156,17 @@ where
         self.take_into_output_upto(src, TsNano::from_ns(u64::MAX))
     }
 
-    fn process(mut self: Pin<&mut Self>, _cx: &mut Context) -> Result<ControlFlow<()>, Error> {
-        use ControlFlow::*;
+    fn take_outbuf_filtered(&mut self) -> Option<T> {
+        // TODO currently nothing done here
+        self.out.take()
+    }
+
+    fn process(mut self: Pin<&mut Self>, _cx: &mut Context) -> Result<(), Error> {
         trace4!("process");
         let mut log_items = Vec::new();
+        let self2 = self.as_mut().get_mut();
         let mut tslows = [None, None];
-        for (i1, itemopt) in self.items.iter_mut().enumerate() {
+        for (i1, itemopt) in self2.items.iter_mut().enumerate() {
             if let Some(item) = itemopt {
                 if let Some(t1) = item.ts_min() {
                     if let Some((_, a)) = tslows[0] {
@@ -176,11 +188,9 @@ where
                         tslows[0] = Some((i1, t1));
                     }
                 } else {
-                    // the item seems empty.
-                    // TODO count for stats.
-                    trace2!("empty item, something to do here?");
+                    self2.stats_process_item_empty += 1;
                     *itemopt = None;
-                    return Ok(Continue(()));
+                    return Ok(());
                 }
             }
         }
@@ -190,7 +200,7 @@ where
                     self.dim0ix_max = *t1;
                     let item = LogItem {
                         node_ix: *i1 as _,
-                        level: Level::INFO,
+                        level: log::Level::INFO,
                         msg: format!(
                             "dim0ix_max  {} vs {}   diff {}",
                             self.dim0ix_max,
@@ -203,35 +213,43 @@ where
             }
         }
         trace4!("tslows {:?}", tslows);
-        if let Some((il0, _tl0)) = tslows[0] {
+        let ret = if let Some((il0, _tl0)) = tslows[0] {
             if let Some((_il1, tl1)) = tslows[1] {
                 // There is a second input, take only up to the second highest timestamp
                 let item = self.items[il0].as_mut().unwrap();
                 if let Some(th0) = item.ts_max() {
                     if th0 <= tl1 {
                         // Can take the whole item
-                        // TODO gather stats about this case. Should be never for databuffer, and often for scylla.
+                        self.take_item_full_cnt += 1;
                         let mut item = self.items[il0].take().unwrap();
                         trace3!("Take all from item {:?}", item);
                         match self.take_into_output_all(&mut item) {
-                            DrainIntoDstResult::Done => Ok(Break(())),
+                            DrainIntoDstResult::Done => {
+                                // TODO can we eliminate the unwraps?
+                                self.dim0ix_max = self.out.as_ref().unwrap().ts_max().unwrap();
+                                Ok(())
+                            }
                             DrainIntoDstResult::Partial => {
                                 // TODO count for stats
                                 trace3!("Put item back");
                                 self.items[il0] = Some(item);
                                 self.do_clear_out = true;
-                                Ok(Break(()))
+                                // TODO can we eliminate the unwraps?
+                                self.dim0ix_max = self.out.as_ref().unwrap().ts_max().unwrap();
+                                Ok(())
                             }
                             DrainIntoDstResult::NotCompatible => {
                                 // TODO count for stats
                                 trace3!("Put item back");
                                 self.items[il0] = Some(item);
                                 self.do_clear_out = true;
-                                Ok(Break(()))
+                                // TODO we assume that nothing got drained.
+                                Ok(())
                             }
                         }
                     } else {
-                        // Take only up to the lowest ts of the second-lowest input
+                        // Take only up to including the lowest ts of the second-lowest input
+                        self.take_item_partial_cnt += 1;
                         let mut item = self.items[il0].take().unwrap();
                         trace3!("Take up to {} from item {:?}", tl1, item);
                         match self.take_into_output_upto(&mut item, tl1) {
@@ -241,7 +259,9 @@ where
                                     Err(Error::PartialPathDrainedAllItems)
                                 } else {
                                     self.items[il0] = Some(item);
-                                    Ok(Break(()))
+                                    // TODO can we eliminate the unwraps?
+                                    self.dim0ix_max = self.out.as_ref().unwrap().ts_max().unwrap();
+                                    Ok(())
                                 }
                             }
                             DrainIntoDstResult::Partial => {
@@ -249,14 +269,17 @@ where
                                 trace3!("Put item back because Partial");
                                 self.items[il0] = Some(item);
                                 self.do_clear_out = true;
-                                Ok(Break(()))
+                                // TODO can we eliminate the unwraps?
+                                self.dim0ix_max = self.out.as_ref().unwrap().ts_max().unwrap();
+                                Ok(())
                             }
                             DrainIntoDstResult::NotCompatible => {
                                 // TODO count for stats
                                 trace3!("Put item back because NotCompatible");
                                 self.items[il0] = Some(item);
                                 self.do_clear_out = true;
-                                Ok(Break(()))
+                                // TODO we assume that nothing got drained.
+                                Ok(())
                             }
                         }
                     }
@@ -265,69 +288,102 @@ where
                 }
             } else {
                 // No other input, take the whole item
+                self.take_item_single_inp_cnt += 1;
                 let mut item = self.items[il0].take().unwrap();
                 trace3!("Take all from item (no other input) {:?}", item);
                 match self.take_into_output_all(&mut item) {
-                    DrainIntoDstResult::Done => Ok(Break(())),
+                    DrainIntoDstResult::Done => {
+                        // TODO can we eliminate the unwraps?
+                        self.dim0ix_max = self.out.as_ref().unwrap().ts_max().unwrap();
+                        Ok(())
+                    }
                     DrainIntoDstResult::Partial => {
                         // TODO count for stats
                         trace3!("Put item back");
                         self.items[il0] = Some(item);
                         self.do_clear_out = true;
-                        Ok(Break(()))
+                        // TODO can we eliminate the unwraps?
+                        self.dim0ix_max = self.out.as_ref().unwrap().ts_max().unwrap();
+                        Ok(())
                     }
                     DrainIntoDstResult::NotCompatible => {
                         // TODO count for stats
                         trace3!("Put item back");
                         self.items[il0] = Some(item);
                         self.do_clear_out = true;
-                        Ok(Break(()))
+                        // TODO we assume that nothing got drained.
+                        Ok(())
                     }
                 }
             }
         } else {
             Err(Error::ShouldFindTsMin)
+        };
+        let dim0ix_max = self.dim0ix_max;
+        if let Some((_, tl1)) = tslows[1] {
+            if tl1 <= dim0ix_max {
+                for item in self.items.iter_mut().filter_map(|x| x.as_mut()) {
+                    loop {
+                        break if let Some(ts_min) = item.ts_min() {
+                            if ts_min <= dim0ix_max {
+                                // TODO add plain discard function to avoid the loop
+                                match Self::drain_into_new_upto(item, dim0ix_max) {
+                                    DrainIntoNewResult::Done(_) => {}
+                                    DrainIntoNewResult::Partial(_) => continue,
+                                    DrainIntoNewResult::NotCompatible => {
+                                        // TODO drain into new result must not have this variant
+                                        return Err(Error::Logic);
+                                    }
+                                }
+                            }
+                        };
+                    }
+                }
+            }
         }
+        ret
     }
 
     fn refill(mut self: Pin<&mut Self>, cx: &mut Context) -> Result<Poll<()>, Error> {
         trace4!("refill");
         use Poll::*;
         let mut has_pending = false;
-        for i in 0..self.inps.len() {
+        for i in 0..self.inps.0.len() {
             if self.items[i].is_none() {
-                while let Some(inp) = self.inps[i].as_mut() {
+                while let Some(inp) = self.inps.0[i].as_mut() {
                     match inp.poll_next_unpin(cx) {
                         Ready(Some(Ok(k))) => match k {
                             StreamItem::DataItem(k) => match k {
                                 RangeCompletableItem::Data(k) => {
+                                    if k.is_strict_monotonic() == false {
+                                        return Err(Error::InputNotStrictMonotonic);
+                                    }
                                     self.items[i] = Some(k);
                                     trace4!("refilled {}", i);
                                 }
                                 RangeCompletableItem::RangeComplete => {
                                     self.range_complete[i] = true;
-                                    trace!("range_complete {:?}", self.range_complete);
+                                    trace_inp_special!("range_complete {:?}", self.range_complete);
                                     continue;
                                 }
                             },
                             StreamItem::Log(item) => {
                                 // TODO limit queue length
-                                self.out_of_band_queue.push_back(Ok(StreamItem::Log(item)));
+                                self.outbuf.push_back(Ok(StreamItem::Log(item)));
                                 continue;
                             }
                             StreamItem::Stats(item) => {
                                 // TODO limit queue length
-                                self.out_of_band_queue
-                                    .push_back(Ok(StreamItem::Stats(item)));
+                                self.outbuf.push_back(Ok(StreamItem::Stats(item)));
                                 continue;
                             }
                         },
                         Ready(Some(Err(e))) => {
-                            self.inps[i] = None;
+                            self.inps.0[i] = None;
                             return Err(Error::Input(e));
                         }
                         Ready(None) => {
-                            self.inps[i] = None;
+                            self.inps.0[i] = None;
                         }
                         Pending => {
                             has_pending = true;
@@ -349,10 +405,11 @@ where
         use Poll::*;
         trace4!("poll3");
         #[allow(unused)]
-        let ninps = self.inps.iter().filter(|a| a.is_some()).count();
+        let ninps = self.inps.0.iter().filter(|a| a.is_some()).count();
         let nitems = self.items.iter().filter(|a| a.is_some()).count();
         let nitemsmissing = self
             .inps
+            .0
             .iter()
             .zip(self.items.iter())
             .filter(|(a, b)| a.is_some() && b.is_none())
@@ -369,35 +426,36 @@ where
         }
         let last_emit = nitems == 0;
         if nitems != 0 {
-            match Self::process(Pin::new(&mut self), cx) {
-                Ok(Break(())) => {}
-                Ok(Continue(())) => {}
+            match Self::process(self.as_mut(), cx) {
+                Ok(()) => {}
                 Err(e) => return Break(Ready(Some(e))),
             }
         }
-        if let Some(o) = self.out.as_ref() {
-            if o.len() >= self.out_max_len
-                || o.byte_estimate() >= OUT_MAX_BYTES
+        if let Some(out) = self.out.as_ref() {
+            if out.len() >= self.out_max_len
+                || out.byte_estimate() >= OUT_MAX_BYTES
                 || self.do_clear_out
                 || last_emit
             {
-                if o.len() > 2 * self.out_max_len {
-                    debug!("over length item  {} vs {}", o.len(), self.out_max_len);
+                if out.len() > 2 * self.out_max_len {
+                    debug_inp!("over length item  {} vs {}", out.len(), self.out_max_len);
                 }
-                if o.byte_estimate() > 2 * OUT_MAX_BYTES {
-                    debug!(
+                if out.byte_estimate() > 2 * OUT_MAX_BYTES {
+                    debug_inp!(
                         "over weight item  {} vs {}",
-                        o.byte_estimate(),
+                        out.byte_estimate(),
                         OUT_MAX_BYTES
                     );
                 }
                 trace3!("decide to output");
                 self.do_clear_out = false;
-                let item = sitem_data(self.out.take().unwrap());
-                self.out_of_band_queue.push_back(item);
+                if let Some(out) = self.take_outbuf_filtered() {
+                    let item = sitem_data(out);
+                    self.outbuf.push_back(item);
+                }
                 Continue(())
             } else {
-                trace4!("not enough output yet");
+                trace4!("not enough output yet  {}", out.len());
                 Continue(())
             }
         } else {
@@ -429,8 +487,8 @@ where
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         use Poll::*;
-        // let span1 = span!(Level::INFO, "Merger", pc = self.poll_count);
-        let span1 = span!(Level::INFO, "Merger");
+        // let span1 = log::span!(log::Level::INFO, "Merger", pc = self.poll_count);
+        let span1 = log::span!(log::Level::INFO, "Merger");
         let _spg = span1.enter();
         loop {
             trace3!("poll");
@@ -441,7 +499,7 @@ where
                 Ready(None)
             } else if let Some(item) = self.log_queue.pop_front() {
                 Ready(Some(Ok(StreamItem::Log(item))))
-            } else if let Some(item) = self.out_of_band_queue.pop_front() {
+            } else if let Some(item) = self.outbuf.pop_front() {
                 trace_emit!("emit item");
                 let item = on_sitemty_data!(item, |k: T| {
                     trace_emit!("emit item len {}", k.len());
@@ -458,9 +516,9 @@ where
                         }
                         Ready(None) => {
                             self.done_inp = true;
-                            if let Some(out) = self.out.take() {
-                                trace!("done_data emit buffered  len {}", out.len());
-                                self.out_of_band_queue.push_back(sitem_data(out));
+                            if let Some(out) = self.take_outbuf_filtered() {
+                                trace_emit_special!("done_data emit buffered  len {}", out.len());
+                                self.outbuf.push_back(sitem_data(out));
                             }
                             continue;
                         }
@@ -470,9 +528,9 @@ where
             } else {
                 self.done_range_complete = true;
                 if self.range_complete.iter().all(|x| *x) {
-                    trace!("emit RangeComplete");
+                    trace_emit_special!("emit RangeComplete");
                     let item = Ok(StreamItem::DataItem(RangeCompletableItem::RangeComplete));
-                    self.out_of_band_queue.push_back(item);
+                    self.outbuf.push_back(item);
                 }
                 continue;
             };

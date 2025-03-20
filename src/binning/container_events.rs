@@ -9,6 +9,12 @@ use crate::log::*;
 use crate::offsets::pulse_offs_from_abs;
 use core::fmt;
 use core::ops::Range;
+use items_0::Appendable;
+use items_0::AsAnyMut;
+use items_0::AsAnyRef;
+use items_0::Empty;
+use items_0::TypeName;
+use items_0::WithLen;
 use items_0::apitypes::ToUserFacingApiType;
 use items_0::apitypes::UserApiType;
 use items_0::collect_s::CollectableDyn;
@@ -25,12 +31,6 @@ use items_0::subfr::SubFrId;
 use items_0::timebin::BinningggContainerEventsDyn;
 use items_0::vecpreview::PreviewRange;
 use items_0::vecpreview::VecPreview;
-use items_0::Appendable;
-use items_0::AsAnyMut;
-use items_0::AsAnyRef;
-use items_0::Empty;
-use items_0::TypeName;
-use items_0::WithLen;
 use netpod::BinnedRange;
 use netpod::EnumVariant;
 use netpod::TsNano;
@@ -702,14 +702,14 @@ where
 mod container_events_serde {
     use super::ContainerEvents;
     use super::EventValueType;
-    use serde::de::MapAccess;
-    use serde::de::SeqAccess;
-    use serde::de::Visitor;
-    use serde::ser::SerializeStruct;
     use serde::Deserialize;
     use serde::Deserializer;
     use serde::Serialize;
     use serde::Serializer;
+    use serde::de::MapAccess;
+    use serde::de::SeqAccess;
+    use serde::de::Visitor;
+    use serde::ser::SerializeStruct;
     use std::cell::RefCell;
     use std::fmt;
     use std::marker::PhantomData;
@@ -1043,29 +1043,17 @@ where
 
     fn find_lowest_index_gt(&self, ts: TsNano) -> Option<usize> {
         let x = self.tss.partition_point(|&x| x <= ts);
-        if x >= self.tss.len() {
-            None
-        } else {
-            Some(x)
-        }
+        if x >= self.tss.len() { None } else { Some(x) }
     }
 
     fn find_lowest_index_ge(&self, ts: TsNano) -> Option<usize> {
         let x = self.tss.partition_point(|&x| x < ts);
-        if x >= self.tss.len() {
-            None
-        } else {
-            Some(x)
-        }
+        if x >= self.tss.len() { None } else { Some(x) }
     }
 
     fn find_highest_index_lt(&self, ts: TsNano) -> Option<usize> {
         let x = self.tss.partition_point(|&x| x < ts);
-        if x == 0 {
-            None
-        } else {
-            Some(x - 1)
-        }
+        if x == 0 { None } else { Some(x - 1) }
     }
 
     fn tss_for_testing(&self) -> VecDeque<TsNano> {
@@ -1084,16 +1072,22 @@ where
         DrainIntoNewResult::Done(dst)
     }
 
-    fn is_consistent(&self) -> bool {
-        let mut good = true;
+    fn is_strict_monotonic(&self) -> bool {
+        let mut mono = true;
         let n = self.tss.len();
         for (&ts1, &ts2) in self.tss.iter().zip(self.tss.range(n.min(1)..n)) {
-            if ts1 > ts2 {
-                good = false;
-                error!("unordered event data  ts1 {}  ts2 {}", ts1, ts2);
+            if ts1 >= ts2 {
+                mono = false;
+                error!("non-monotonic event data  ts1 {}  ts2 {}", ts1, ts2);
                 break;
             }
         }
+        mono
+    }
+
+    fn is_consistent(&self) -> bool {
+        let mut good = true;
+        good &= MergeableTy::is_strict_monotonic(self);
         good
     }
 }
@@ -1144,6 +1138,10 @@ where
             DrainIntoNewResult::Partial(x) => DrainIntoNewDynResult::Partial(Box::new(x)),
             DrainIntoNewResult::NotCompatible => DrainIntoNewDynResult::NotCompatible,
         }
+    }
+
+    fn is_strict_monotonic(&self) -> bool {
+        MergeableTy::is_strict_monotonic(self)
     }
 
     fn is_consistent(&self) -> bool {
@@ -1369,6 +1367,28 @@ where
     }
 }
 
+impl ContainerEvents<f32> {
+    pub fn testing_cmp(lhs: &Self, rhs: &Self) -> Result<(), String> {
+        use fmt::Write;
+        let mut log = String::new();
+        for (j, k) in lhs.iter_zip().zip(rhs.iter_zip()) {
+            if j.0 != k.0 {
+                write!(&mut log, "ts mismatch {:?} {:?}", j, k).unwrap();
+                log.push('\n');
+            }
+            if j.1 != k.1 {
+                write!(&mut log, "value mismatch {:?} {:?}", j, k).unwrap();
+                log.push('\n');
+            }
+        }
+        if lhs.len() != rhs.len() {
+            write!(&mut log, "len mismatch {:?} {:?}", lhs.len(), rhs.len()).unwrap();
+            log.push('\n');
+        }
+        if log.len() != 0 { Err(log) } else { Ok(()) }
+    }
+}
+
 #[cfg(test)]
 mod test_frame {
     use super::*;
@@ -1377,10 +1397,10 @@ mod test_frame {
     use crate::frame::decode_frame;
     use crate::inmem::InMemoryFrame;
     use crate::inmem::ParseResult;
-    use items_0::streamitem::sitem_data;
     use items_0::streamitem::RangeCompletableItem;
     use items_0::streamitem::Sitemty;
     use items_0::streamitem::StreamItem;
+    use items_0::streamitem::sitem_data;
 
     #[test]
     fn events_serialize() {

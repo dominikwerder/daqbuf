@@ -760,14 +760,30 @@ where
         DrainIntoNewResult::Done(dst)
     }
 
+    fn is_strict_monotonic(&self) -> bool {
+        let mut mono = true;
+        let n = self.ts1s.len();
+        for (&ts_a, &ts_b) in self.ts1s.iter().zip(self.ts1s.range(n.min(1)..)) {
+            if ts_a >= ts_b {
+                mono = false;
+                error!("non-monotonic event data  ts1 {}  ts2 {}", ts_a, ts_b);
+                break;
+            }
+        }
+        mono
+    }
+
     fn is_consistent(&self) -> bool {
+        let mut good = true;
+        good &= self.is_strict_monotonic();
         let n = self.ts1s.len();
         let mut same_len = true;
         same_len &= n == self.ts2s.len();
         same_len &= n == self.cnts.len();
         same_len &= n == self.mins.len();
         same_len &= n == self.ts2s.len();
-        same_len
+        good &= same_len;
+        good
     }
 }
 

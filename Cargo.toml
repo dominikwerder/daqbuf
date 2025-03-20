@@ -32,3 +32,6 @@ heavy = []
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt"] }
+
+[patch.crates-io]
+thiserror = { git = "https://github.com/dominikwerder/thiserror.git", branch = "cstm" }

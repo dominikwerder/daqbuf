@@ -882,6 +882,13 @@ impl MergeableTy for ChannelEvents {
         }
     }
 
+    fn is_strict_monotonic(&self) -> bool {
+        match self {
+            ChannelEvents::Events(x) => x.is_strict_monotonic(),
+            ChannelEvents::Status(_) => true,
+        }
+    }
+
     fn is_consistent(&self) -> bool {
         match self {
             ChannelEvents::Events(x) => x.is_consistent(),

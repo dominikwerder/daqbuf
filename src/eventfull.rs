@@ -2,21 +2,21 @@ use crate::framable::FrameType;
 use bytes::BytesMut;
 use core::ops::Range;
 use daqbuf_err as err;
-use err::thiserror;
 use err::ThisError;
+use err::thiserror;
+use items_0::Empty;
+use items_0::WithLen;
 use items_0::container::ByteEstimate;
 use items_0::framable::FrameTypeInnerStatic;
 use items_0::merge::DrainIntoDstResult;
 use items_0::merge::DrainIntoNewResult;
 use items_0::merge::MergeableTy;
 use items_0::streamitem::EVENT_FULL_FRAME_TYPE_ID;
-use items_0::Empty;
-use items_0::WithLen;
-#[allow(unused)]
-use netpod::log::*;
 use netpod::ScalarType;
 use netpod::Shape;
 use netpod::TsNano;
+#[allow(unused)]
+use netpod::log::*;
 use parse::channelconfig::CompressionMethod;
 use serde::Deserialize;
 use serde::Deserializer;
@@ -255,8 +255,23 @@ impl MergeableTy for EventFull {
         self.tss.iter().map(|&x| TsNano::from_ns(x)).collect()
     }
 
+    fn is_strict_monotonic(&self) -> bool {
+        let mut mono = true;
+        let n = self.tss.len();
+        for (&ts_a, &ts_b) in self.tss.iter().zip(self.tss.range(n.min(1)..n)) {
+            if ts_a >= ts_b {
+                mono = false;
+                error!("non-monotonic event data  ts1 {}  ts2 {}", ts_a, ts_b);
+                break;
+            }
+        }
+        mono
+    }
+
     fn is_consistent(&self) -> bool {
-        true
+        let mut good = true;
+        good &= MergeableTy::is_strict_monotonic(self);
+        good
     }
 }
 
