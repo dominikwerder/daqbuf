@@ -371,9 +371,10 @@ fn take_collector_result_cbor(
 ) -> Option<CborBytes> {
     match coll.result() {
         Ok(collres) => {
+            trace!("take_collector_result_cbor  len {}", collres.len());
             let x = collres.into_user_facing_api_type_box();
             let val = x.into_serializable_normal();
-            let mut buf = Vec::with_capacity(64);
+            let mut buf = Vec::with_capacity(1024);
             ciborium::into_writer(&val, &mut buf).expect("cbor serialize");
             let bytes = Bytes::from(buf);
             let item = CborBytes::new(bytes);
@@ -386,7 +387,7 @@ fn take_collector_result_cbor(
                 "ERROR" => true,
             })
             .unwrap();
-            let mut buf = Vec::with_capacity(64);
+            let mut buf = Vec::with_capacity(1024);
             ciborium::into_writer(&val, &mut buf).expect("cbor serialize");
             let bytes = Bytes::from(buf);
             let item = CborBytes::new(bytes);

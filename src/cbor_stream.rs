@@ -75,7 +75,7 @@ where
                 RangeCompletableItem::Data(evs) => {
                     let val = evs.into_user_facing_api_type();
                     let val = val.into_serializable_normal();
-                    let mut buf = Vec::with_capacity(64);
+                    let mut buf = Vec::with_capacity(1024);
                     ciborium::into_writer(&val, &mut buf).map_err(|e| Error::Msg(e.to_string()))?;
                     let bytes = Bytes::from(buf);
                     let item = CborBytes::new(bytes);
@@ -87,7 +87,7 @@ where
                         "rangeFinal" => true,
                     })
                     .map_err(|e| Error::Msg(e.to_string()))?;
-                    let mut buf = Vec::with_capacity(64);
+                    let mut buf = Vec::with_capacity(1024);
                     ciborium::into_writer(&val, &mut buf).map_err(|e| Error::Msg(e.to_string()))?;
                     let bytes = Bytes::from(buf);
                     let item = CborBytes::new(bytes);
@@ -127,7 +127,7 @@ where
                 "error" => e.to_string(),
             })
             .map_err(|e| Error::Msg(e.to_string()))?;
-            let mut buf = Vec::with_capacity(64);
+            let mut buf = Vec::with_capacity(1024);
             ciborium::into_writer(&item, &mut buf).map_err(|e| Error::Msg(e.to_string()))?;
             let bytes = Bytes::from(buf);
             let item = CborBytes::new(bytes);
@@ -142,7 +142,7 @@ fn make_keepalive() -> Result<CborBytes, Error> {
         "type" => "keepalive",
     })
     .map_err(ErrMsg)?;
-    let mut buf = Vec::with_capacity(64);
+    let mut buf = Vec::with_capacity(128);
     ciborium::into_writer(&item, &mut buf).map_err(ErrMsg)?;
     let bytes = Bytes::from(buf);
     let item = Ok(CborBytes::new(bytes));

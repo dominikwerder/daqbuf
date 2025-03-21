@@ -7,6 +7,12 @@ use futures_util::stream;
 use futures_util::Stream;
 use futures_util::StreamExt;
 
+fn pad_to_8(buf: &mut Vec<u8>) {
+    let npadded = (7 + buf.len()) & (!0x7);
+    let npad = npadded - buf.len();
+    buf.extend_from_slice(&[0, 0, 0, 0, 0, 0, 0, 0][..npad]);
+}
+
 pub fn bytes_chunks_to_framed<S, T, E>(stream: S) -> impl Stream<Item = Result<Bytes, E>>
 where
     S: Stream<Item = Result<T, E>>,
@@ -18,14 +24,20 @@ where
         .flat_map(|x| match x {
             Ok(y) => {
                 let buf = y.into();
-                let adv = (buf.len() + 7) / 8 * 8;
-                let pad = adv - buf.len();
-                let mut b2 = BytesMut::with_capacity(16);
-                b2.put_u32_le(buf.len() as u32);
-                b2.put_slice(&[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
-                let mut b3 = BytesMut::with_capacity(16);
-                b3.put_slice(&[0, 0, 0, 0, 0, 0, 0, 0][..pad]);
-                stream::iter([Ok(b2.freeze()), Ok(buf), Ok(b3.freeze())])
+                let n = buf.len();
+                if n == 0 {
+                    info!("skip framing of zero sized chunk");
+                    stream::iter([Ok(Bytes::new()), Ok(Bytes::new()), Ok(Bytes::new())])
+                } else {
+                    let adv = (n + 7) & (!0x7);
+                    let pad = adv - n;
+                    let mut b2 = BytesMut::with_capacity(16);
+                    b2.put_u32_le(n as u32);
+                    b2.put_slice(&[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+                    let mut b3 = BytesMut::with_capacity(16);
+                    b3.put_slice(&[0, 0, 0, 0, 0, 0, 0, 0][..pad]);
+                    stream::iter([Ok(b2.freeze()), Ok(buf), Ok(b3.freeze())])
+                }
             }
             Err(e) => {
                 error!("{}", e);

@@ -12,12 +12,13 @@ use netpod::ReqCtx;
 use query::api4::events::PlainEventsQuery;
 use std::pin::Pin;
 
-#[derive(Debug, thiserror::Error)]
-#[cstm(name = "PlainEventsStream")]
-pub enum Error {
-    Netpod(#[from] netpod::Error),
-    TcpRawClient(#[from] crate::tcprawclient::Error),
-}
+autoerr::create_error_v1!(
+    name(Error, "PlainEventsStream"),
+    enum variants {
+        Netpod(#[from] netpod::Error),
+        TcpRawClient(#[from] crate::tcprawclient::Error),
+    },
+);
 
 pub type ChannelEventsStream = Pin<Box<dyn Stream<Item = Sitemty<ChannelEvents>> + Send>>;
 
