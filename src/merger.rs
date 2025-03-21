@@ -26,13 +26,13 @@ use std::task::Poll;
 const OUT_MAX_BYTES: u32 = 1024 * 1024 * 20;
 const DO_DETECT_NON_MONO: bool = true;
 
-macro_rules! trace2 { ($($arg:expr),*) => ( if true { log::trace!($($arg),*); } ) }
+macro_rules! trace2 { ($($arg:expr),*) => ( if false { log::trace!($($arg),*); } ) }
 
-macro_rules! trace3 { ($($arg:expr),*) => ( if true { log::trace!($($arg),*); } ) }
+macro_rules! trace3 { ($($arg:expr),*) => ( if false { log::trace!($($arg),*); } ) }
 
-macro_rules! trace4 { ($($arg:expr),*) => ( if true { log::trace!($($arg),*); } ) }
+macro_rules! trace4 { ($($arg:expr),*) => ( if false { log::trace!($($arg),*); } ) }
 
-macro_rules! trace_emit { ($($arg:expr),*) => ( if true { log::trace!($($arg),*); } ) }
+macro_rules! trace_emit { ($($arg:expr),*) => ( if false { log::trace!($($arg),*); } ) }
 
 macro_rules! trace_inp_special { ($($arg:expr),*) => ( if true { log::trace!($($arg),*); } ) }
 
