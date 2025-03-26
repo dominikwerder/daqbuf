@@ -1,3 +1,5 @@
+use crate::SeriesId;
+
 pub fn dbg_chn(chn: &str) -> bool {
     if true {
         let chns = [
@@ -8,8 +10,21 @@ pub fn dbg_chn(chn: &str) -> bool {
             "SSL2-LENC-MF05:H_SCALE",
             "SINEG01:QE-B1-OP",
             "STSRD01-TCWL-STX02:AMP1CURR",
+            "SATMA01-DBPM150:EST-Q1-SUM",
         ];
         chns.contains(&chn)
+    } else {
+        false
+    }
+}
+
+pub fn dbg_series(series: SeriesId) -> bool {
+    if true {
+        let seriess = [
+            // SATMA01-DBPM150:EST-Q1-SUM
+            2968634857399905951,
+        ];
+        seriess.contains(&series.id())
     } else {
         false
     }
