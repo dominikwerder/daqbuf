@@ -204,11 +204,6 @@ pub const DATETIME_FMT_9MS: &str = "%Y-%m-%dT%H:%M:%S.%9fZ";
 
 const TEST_BACKEND: &str = "testbackend-00";
 
-pub const TRACE_SERIES_ID: [u64; 1] = [
-    //
-    4985969403507503043,
-];
-
 pub struct OnDrop<F>
 where
     F: FnOnce() -> (),
@@ -1883,7 +1878,7 @@ mod dt_nano_serde {
     }
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, PartialOrd, Eq, Ord)]
+#[derive(Debug, Copy, Clone, PartialEq, PartialOrd, Eq, Ord, Serialize)]
 pub struct DtMs(u64);
 
 impl DtMs {
@@ -3056,7 +3051,7 @@ impl<Tz: TimeZone> ToNanos for DateTime<Tz> {
     }
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, PartialOrd, Eq, Ord)]
+#[derive(Debug, Copy, Clone, PartialEq, PartialOrd, Eq, Ord, Serialize)]
 pub struct TsMs(pub u64);
 
 impl TsMs {
