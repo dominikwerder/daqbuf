@@ -11,6 +11,7 @@ use items_0::timebin::IngestReport;
 use netpod::BinnedRange;
 use netpod::DtNano;
 use netpod::TsNano;
+use serde::Serialize;
 use std::fmt;
 use std::mem;
 
@@ -408,14 +409,18 @@ where
     }
 }
 
+#[derive(Serialize)]
 pub struct BinnedEventsTimeweight<EVT>
 where
     EVT: EventValueType,
 {
     range: BinnedRange<TsNano>,
     produce_cnt_zero: bool,
+    #[serde(skip)]
     lst: Option<EventSingle<EVT>>,
+    #[serde(skip)]
     inner_a: InnerA<EVT>,
+    #[serde(skip)]
     out: ContainerBins<EVT, EVT::AggTimeWeightOutputAvg>,
 }
 

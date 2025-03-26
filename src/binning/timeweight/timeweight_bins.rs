@@ -9,11 +9,12 @@ use items_0::timebin::BinningggError;
 use items_0::timebin::BinsBoxed;
 use netpod::BinnedRange;
 use netpod::TsNano;
+use serde::Serialize;
 use std::any;
 
-macro_rules! trace_init { ($($arg:tt)*) => ( if true { trace!($($arg)*); }) }
+macro_rules! trace_init { ($($arg:expr),*) => ( if true { trace!($($arg),*); }) }
 
-macro_rules! trace_ingest_bin { ($($arg:tt)*) => ( if false { trace!($($arg)*); }) }
+macro_rules! trace_ingest_bin { ($($arg:expr),*) => ( if false { trace!($($arg),*); }) }
 
 autoerr::create_error_v1!(
     name(Error, "BinBinsTimeweight"),
@@ -22,7 +23,7 @@ autoerr::create_error_v1!(
     },
 );
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct BinnedBinsTimeweight<EVT, BVT>
 where
     EVT: EventValueType,
@@ -35,6 +36,8 @@ where
     min: Option<EVT>,
     max: Option<EVT>,
     lst: Option<EVT>,
+    // TODO
+    #[serde(skip)]
     agg: <BVT as BinAggedType>::AggregatorTw,
     non_fnl: bool,
     out: ContainerBins<EVT, BVT>,
