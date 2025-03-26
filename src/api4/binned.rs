@@ -1,5 +1,6 @@
 use crate::transform::TransformQuery;
 use netpod::get_url_query_pairs;
+use netpod::log;
 use netpod::log::*;
 use netpod::query::CacheUsage;
 use netpod::range::evrange::SeriesRange;
@@ -70,6 +71,14 @@ mod serde_option_vec_duration {
     }
 }
 
+fn vec_is_empty<T>(x: &Vec<T>) -> bool {
+    x.len() == 0
+}
+
+fn string_is_empty(x: &String) -> bool {
+    x.len() == 0
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BinnedQuery {
     channel: SfDbChannel,
@@ -112,8 +121,12 @@ pub struct BinnedQuery {
     scylla_read_queue_len: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     test_do_wasm: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "string_is_empty")]
     log_level: String,
+    #[serde(default, skip_serializing_if = "string_is_empty")]
+    log_items: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    stats_items: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     use_rt: Option<RetentionTime>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -124,6 +137,12 @@ pub struct BinnedQuery {
     allow_rebin: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     datahub_bin_as_waveform: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pbd_enable: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pbd_rts_pbp_block: Option<Vec<Vec<u8>>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pbd_evs: Option<bool>,
 }
 
 impl BinnedQuery {
@@ -143,11 +162,16 @@ impl BinnedQuery {
             scylla_read_queue_len: None,
             test_do_wasm: None,
             log_level: String::new(),
+            log_items: String::new(),
+            stats_items: None,
             use_rt: None,
             allow_from_events: None,
             allow_from_prebinned: None,
             allow_rebin: None,
             datahub_bin_as_waveform: None,
+            pbd_enable: None,
+            pbd_rts_pbp_block: None,
+            pbd_evs: None,
         }
     }
 
@@ -247,6 +271,14 @@ impl BinnedQuery {
         &self.log_level
     }
 
+    pub fn log_items(&self) -> &str {
+        &self.log_items
+    }
+
+    pub fn stats_items(&self) -> Option<u32> {
+        self.stats_items
+    }
+
     pub fn use_rt(&self) -> Option<RetentionTime> {
         self.use_rt.clone()
     }
@@ -290,6 +322,18 @@ impl BinnedQuery {
             SeriesRange::PulseRange(_) => todo!(),
         }
     }
+
+    pub fn pbd_enable(&self) -> Option<bool> {
+        self.pbd_enable.clone()
+    }
+
+    pub fn pbd_rts_pbp_block(&self) -> Option<Vec<Vec<u8>>> {
+        self.pbd_rts_pbp_block.clone()
+    }
+
+    pub fn pbd_evs(&self) -> Option<bool> {
+        self.pbd_evs.clone()
+    }
 }
 
 impl HasBackend for BinnedQuery {
@@ -330,11 +374,6 @@ impl FromUrl for BinnedQuery {
                 .map(|k| k.parse().ok())
                 .unwrap_or(None)
                 .map(ByteSize::from_kb),
-            /*report_error: pairs
-            .get("reportError")
-            .map_or("false", |k| k)
-            .parse()
-            .map_err(|e| Error::with_msg(format!("can not parse reportError {:?}", e)))?,*/
             timeout_content: pairs
                 .get("contentTimeout")
                 .and_then(|x| humantime::parse_duration(x).ok()),
@@ -351,6 +390,8 @@ impl FromUrl for BinnedQuery {
                 .map_or(Ok(None), |k| k.parse().map(|k| Some(k)))?,
             test_do_wasm: pairs.get("testDoWasm").map(|x| String::from(x)),
             log_level: pairs.get("log_level").map_or(String::new(), String::from),
+            log_items: pairs.get("log_items").map_or(String::new(), String::from),
+            stats_items: pairs.get("stats_items").and_then(|x| x.parse().ok()),
             use_rt: pairs.get("useRt").map_or(Ok(None), |k| {
                 k.parse().map(Some).map_err(|_| Error::BadUseRt)
             })?,
@@ -366,6 +407,11 @@ impl FromUrl for BinnedQuery {
             datahub_bin_as_waveform: pairs
                 .get("private_datahub_bin_as_waveform")
                 .and_then(|x| x.parse::<bool>().ok()),
+            pbd_enable: pairs.get("pbd_enable").and_then(|x| x.parse().ok()),
+            pbd_rts_pbp_block: pairs
+                .get("pbd_rts_pbp_block")
+                .and_then(|x| serde_json::from_str(x).ok()),
+            pbd_evs: pairs.get("pbd_evs").and_then(|x| x.parse().ok()),
         };
         debug!("BinnedQuery::from_url  {:?}", ret);
         Ok(ret)
@@ -433,6 +479,9 @@ impl AppendToUrl for BinnedQuery {
         }
         if self.log_level.len() != 0 {
             g.append_pair("log_level", &self.log_level);
+        }
+        if self.log_items.len() != 0 {
+            g.append_pair("log_items", &self.log_items);
         }
         if let Some(x) = self.use_rt.as_ref() {
             g.append_pair("useRt", &x.to_string());
