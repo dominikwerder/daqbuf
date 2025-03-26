@@ -43,6 +43,7 @@ pub enum StatsItem {
     RangeFilterStats(RangeFilterStats),
     DiskStats(DiskStats),
     Warnings(),
+    Binning,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
