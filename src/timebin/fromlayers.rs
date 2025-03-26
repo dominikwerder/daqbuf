@@ -7,7 +7,10 @@ use crate::timebin::gapfill::GapFill;
 use crate::timebin::grid::find_next_finer_bin_len;
 use futures_util::Stream;
 use futures_util::StreamExt;
+use items_0::streamitem::LogItem;
 use items_0::streamitem::Sitemty;
+use items_0::streamitem::StatsItem;
+use items_0::streamitem::StreamItem;
 use items_0::timebin::BinsBoxed;
 use items_2::binning::timeweight::timeweight_bins_stream::BinnedBinsTimeweightStream;
 use netpod::query::CacheUsage;
@@ -21,10 +24,13 @@ use query::api4::events::EventsSubQuery;
 use query::api4::events::EventsSubQuerySelect;
 use query::api4::events::EventsSubQuerySettings;
 use query::transform::TransformQuery;
+use std::collections::VecDeque;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::Context;
 use std::task::Poll;
+
+macro_rules! info_init { ($($arg:expr),*) => ( if true { log::info!($($arg),*); } ) }
 
 macro_rules! trace_init { ($($arg:expr),*) => ( if true { log::trace!($($arg),*); } ) }
 
@@ -41,6 +47,7 @@ type BoxedInput = Pin<Box<dyn Stream<Item = Sitemty<BinsBoxed>> + Send>>;
 
 pub struct TimeBinnedFromLayers {
     inp: BoxedInput,
+    outbuf: VecDeque<<Self as Stream>::Item>,
 }
 
 impl TimeBinnedFromLayers {
@@ -71,7 +78,30 @@ impl TimeBinnedFromLayers {
             binning_opts
         );
         let bin_len = DtMs::from_ms_u64(range.bin_len.ms());
-        if cache_usage.is_cache_read() && bin_len_layers.contains(&bin_len) {
+        if binning_opts.pbd_enable() {
+            let inp = futures_util::stream::iter([]);
+            let mut ret = Self {
+                inp: Box::pin(inp),
+                outbuf: VecDeque::new(),
+            };
+            info_init!("pbd_enable");
+            let item = LogItem::from_node(0, log::Level::TRACE, "test-log-item-trace".into());
+            let item = StreamItem::Log(item);
+            ret.outbuf.push_back(Ok(item));
+            let item = LogItem::from_node(0, log::Level::DEBUG, "test-log-item-debug".into());
+            let item = StreamItem::Log(item);
+            ret.outbuf.push_back(Ok(item));
+            let item = LogItem::from_node(0, log::Level::INFO, "test-log-item-info".into());
+            let item = StreamItem::Log(item);
+            ret.outbuf.push_back(Ok(item));
+            let item = LogItem::from_node(0, log::Level::WARN, "test-log-item-warn".into());
+            let item = StreamItem::Log(item);
+            ret.outbuf.push_back(Ok(item));
+            let item = StatsItem::Binning;
+            let item = StreamItem::Stats(item);
+            ret.outbuf.push_back(Ok(item));
+            Ok(ret)
+        } else if cache_usage.is_cache_read() && bin_len_layers.contains(&bin_len) {
             trace_init!("{}::new  bin_len in layers  {:?}", Self::type_name(), range);
             let inp = GapFill::new(
                 "FromLayers-ongrid".into(),
@@ -87,7 +117,10 @@ impl TimeBinnedFromLayers {
                 cache_read_provider,
                 events_read_provider.clone(),
             )?;
-            let ret = Self { inp: Box::pin(inp) };
+            let ret = Self {
+                inp: Box::pin(inp),
+                outbuf: VecDeque::new(),
+            };
             Ok(ret)
         } else {
             trace_init!(
@@ -127,7 +160,10 @@ impl TimeBinnedFromLayers {
                         events_read_provider.clone(),
                     )?;
                     let inp = BinnedBinsTimeweightStream::new(range, Box::pin(inp));
-                    let ret = Self { inp: Box::pin(inp) };
+                    let ret = Self {
+                        inp: Box::pin(inp),
+                        outbuf: VecDeque::new(),
+                    };
                     Ok(ret)
                 }
                 None => {
@@ -153,12 +189,18 @@ impl TimeBinnedFromLayers {
                             do_time_weight,
                             events_read_provider,
                         )?;
-                        let ret = Self { inp: Box::pin(inp) };
+                        let ret = Self {
+                            inp: Box::pin(inp),
+                            outbuf: VecDeque::new(),
+                        };
                         trace_init!("{}::new  setup from events", Self::type_name());
                         Ok(ret)
                     } else {
                         let inp = futures_util::stream::iter([]);
-                        let ret = Self { inp: Box::pin(inp) };
+                        let ret = Self {
+                            inp: Box::pin(inp),
+                            outbuf: VecDeque::new(),
+                        };
                         trace_init!("{}::new  setup nothing", Self::type_name());
                         trace_init!("bin from events disabled on user request");
                         Ok(ret)
@@ -174,10 +216,14 @@ impl Stream for TimeBinnedFromLayers {
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         use Poll::*;
-        match self.inp.poll_next_unpin(cx) {
-            Ready(Some(x)) => Ready(Some(x)),
-            Ready(None) => Ready(None),
-            Pending => Pending,
+        if let Some(x) = self.outbuf.pop_front() {
+            Ready(Some(x))
+        } else {
+            match self.inp.poll_next_unpin(cx) {
+                Ready(Some(x)) => Ready(Some(x)),
+                Ready(None) => Ready(None),
+                Pending => Pending,
+            }
         }
     }
 }

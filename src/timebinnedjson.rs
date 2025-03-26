@@ -24,6 +24,7 @@ use items_2::channelevents::ChannelEvents;
 use items_2::jsonbytes::CborBytes;
 use items_2::jsonbytes::JsonBytes;
 use items_2::merger::Merger;
+use netpod::log;
 use netpod::log::*;
 use netpod::range::evrange::NanoRange;
 use netpod::BinnedRangeEnum;
@@ -523,6 +524,17 @@ pub async fn timebinned_cbor_framed(
     let timeout_content_2 = timeout_content_base * 2 / 3;
     let mut coll = None;
     let mut last_emit = Instant::now();
+    let log_items_level = match query.log_items() {
+        "trace" => log::Level::TRACE,
+        "debug" => log::Level::DEBUG,
+        "info" => log::Level::INFO,
+        "warn" => log::Level::WARN,
+        _ => log::Level::ERROR,
+    };
+    let stats_items = match query.stats_items() {
+        Some(x) => true,
+        None => false,
+    };
     let stream = stream
         .map(|x| Some(x))
         .chain(futures_util::stream::iter([None]));
@@ -547,14 +559,26 @@ pub async fn timebinned_cbor_framed(
                             RangeCompletableItem::RangeComplete => None,
                         },
                         StreamItem::Log(x) => {
-                            debug!("{x:?}");
-                            // Some(serde_json::Value::String(format!("{x:?}")))
-                            None
+                            if x.level <= log_items_level {
+                                let mut buf = Vec::with_capacity(1024);
+                                ciborium::into_writer(&x, &mut buf).expect("cbor serialize");
+                                let bytes = Bytes::from(buf);
+                                let item = CborBytes::new(bytes);
+                                Some(Ok(item))
+                            } else {
+                                None
+                            }
                         }
                         StreamItem::Stats(x) => {
-                            debug!("{x:?}");
-                            // Some(serde_json::Value::String(format!("{x:?}")))
-                            None
+                            if stats_items {
+                                let mut buf = Vec::with_capacity(1024);
+                                ciborium::into_writer(&x, &mut buf).expect("cbor serialize");
+                                let bytes = Bytes::from(buf);
+                                let item = CborBytes::new(bytes);
+                                Some(Ok(item))
+                            } else {
+                                None
+                            }
                         }
                     },
                     Err(e) => Some(Err(e)),
