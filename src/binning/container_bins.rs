@@ -119,11 +119,12 @@ mod container_bins_serde {
         EVT: EventValueType,
         BVT: BinAggedType,
     {
-        fn serialize<S>(&self, _ser: S) -> Result<S::Ok, S::Error>
+        fn serialize<S>(&self, ser: S) -> Result<S::Ok, S::Error>
         where
             S: Serializer,
         {
-            todo!()
+            let selfname = std::any::type_name::<Self>();
+            ser.serialize_str(&format!("TODO({})", selfname))
         }
     }
 
