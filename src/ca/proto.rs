@@ -3,6 +3,7 @@ use futures_util::AsyncWrite;
 use futures_util::Stream;
 use netpod::log::*;
 use netpod::timeunits::*;
+use serde::Serialize;
 use slidebuf::SlideBuf;
 use std::collections::VecDeque;
 use std::fmt;
@@ -207,7 +208,7 @@ pub struct EventCancelRes {
 }
 
 // TODO Clone is only used for testing purposes and should get removed later.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct EventAddRes {
     pub data_type: u16,
     pub data_count: u32,
@@ -319,7 +320,7 @@ impl CaDbrType {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub enum CaDataScalarValue {
     I8(i8),
     I16(i16),
@@ -347,7 +348,7 @@ impl CaDataScalarValue {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub enum CaDataArrayValue {
     I8(Vec<i8>),
     I16(Vec<i16>),
@@ -371,7 +372,7 @@ impl CaDataArrayValue {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub enum CaDataValue {
     Scalar(CaDataScalarValue),
     Array(CaDataArrayValue),
@@ -386,7 +387,7 @@ impl CaDataValue {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct CaEventValue {
     pub data: CaDataValue,
     pub meta: CaMetaValue,
@@ -434,13 +435,13 @@ impl CaEventValue {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub enum CaMetaValue {
     CaMetaTime(CaMetaTime),
     CaMetaVariants(CaMetaVariants),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct CaMetaTime {
     pub status: u16,
     pub severity: u16,
@@ -448,7 +449,7 @@ pub struct CaMetaTime {
     pub ca_nanos: u32,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct CaMetaVariants {
     pub status: u16,
     pub severity: u16,
