@@ -3,6 +3,7 @@ use quote::quote;
 // use syn::Ident;
 use syn::parse::ParseStream;
 use syn::parse_macro_input;
+use syn::spanned::Spanned;
 
 type PunctExpr = syn::punctuated::Punctuated<syn::Expr, syn::token::Comma>;
 
@@ -203,11 +204,15 @@ struct StatsTreeDef {
 
 impl syn::parse::Parse for StatsTreeDef {
     fn parse(inp: ParseStream) -> syn::Result<Self> {
-        let k = inp.parse::<syn::ExprTuple>()?;
+        let expr = inp.parse::<syn::Expr>()?;
+        let tuple = match expr {
+            syn::Expr::Tuple(tuple) => tuple,
+            _ => return Err(syn::Error::new(expr.span(), "Expected a tuple expression")),
+        };
         let mut a = Vec::new();
         let mut agg_defs = Vec::new();
         let mut diff_defs = Vec::new();
-        for k in k.elems {
+        for k in tuple.elems {
             let fa = FuncCallWithArgs::from_expr(k)?;
             if fa.name == "stats_struct" {
                 let stats_struct_def = StatsStructDef::from_args(fa.args)?;
