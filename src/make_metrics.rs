@@ -47,41 +47,384 @@ impl syn::parse::Parse for MetricsStructNameItem {
     }
 }
 
-struct MetricsModItem {}
+#[derive(Debug)]
+struct AggregationModItem {
+    struct_name: String,
+    input: String,
+}
+
+impl syn::parse::Parse for AggregationModItem {
+    fn parse(inp: ParseStream) -> syn::Result<Self> {
+        let mut struct_name = None;
+        let mut input = None;
+        log(&format!("AggregationModItem inp 1  {:?}", inp));
+        let item = inp.parse::<syn::ItemMod>()?;
+        log(&format!("AggregationModItem inp 2 {:?}", inp));
+        if let Some(c) = item.content {
+            for item in c.1 {
+                match item {
+                    syn::Item::Type(item) => {
+                        if item.ident.to_string() == "StructName" {
+                            match item.ty.as_ref() {
+                                syn::Type::Path(tp) => {
+                                    struct_name = Some(tp.path.get_ident().unwrap().to_string());
+                                }
+                                _ => {
+                                    let e = inp.error(format!("expect a path type"));
+                                    return Err(e);
+                                }
+                            }
+                        } else if item.ident.to_string() == "Input" {
+                            match item.ty.as_ref() {
+                                syn::Type::Path(tp) => {
+                                    input = Some(tp.path.get_ident().unwrap().to_string());
+                                }
+                                _ => {
+                                    let e = inp.error(format!("expect a path type"));
+                                    return Err(e);
+                                }
+                            }
+                        } else {
+                            let e = inp.error(format!("expect a type `StructName`"));
+                            return Err(e);
+                        }
+                    }
+                    _ => {
+                        let e = inp.error(format!("expect a type"));
+                        return Err(e);
+                    }
+                }
+            }
+        }
+        let ret = Self {
+            struct_name: struct_name.unwrap(),
+            input: input.unwrap(),
+        };
+        Ok(ret)
+    }
+}
+
+#[derive(Debug)]
+struct ComposeModItem {
+    input: String,
+    name: String,
+}
+
+impl syn::parse::Parse for ComposeModItem {
+    fn parse(inp: ParseStream) -> syn::Result<Self> {
+        let mut input = None;
+        let mut name = None;
+        log(&format!("ComposeModItem inp 1  {:?}", inp));
+        let item = inp.parse::<syn::ItemMod>()?;
+        log(&format!("ComposeModItem inp 2 {:?}", inp));
+        if let Some(c) = item.content {
+            for item in c.1 {
+                match item {
+                    syn::Item::Type(item) => {
+                        if item.ident.to_string() == "Input" {
+                            match item.ty.as_ref() {
+                                syn::Type::Path(tp) => {
+                                    input = Some(tp.path.get_ident().unwrap().to_string());
+                                }
+                                _ => {
+                                    let e = inp.error(format!("expect a path type"));
+                                    return Err(e);
+                                }
+                            }
+                        } else if item.ident.to_string() == "Name" {
+                            match item.ty.as_ref() {
+                                syn::Type::Path(tp) => {
+                                    name = Some(tp.path.get_ident().unwrap().to_string());
+                                }
+                                _ => {
+                                    let e = inp.error(format!("expect a path type"));
+                                    return Err(e);
+                                }
+                            }
+                        } else {
+                            let e = inp.error(format!("expect a type `StructName`"));
+                            return Err(e);
+                        }
+                    }
+                    _ => {
+                        let e = inp.error(format!("expect a type"));
+                        return Err(e);
+                    }
+                }
+            }
+        }
+        let ret = Self {
+            input: input.unwrap(),
+            name: name.unwrap(),
+        };
+        Ok(ret)
+    }
+}
+
+#[derive(Debug)]
+struct MetricsModItem {
+    struct_name: String,
+    value_names: Vec<String>,
+    counter_names: Vec<String>,
+    compose_mods: Vec<ComposeModItem>,
+}
 
 impl syn::parse::Parse for MetricsModItem {
     fn parse(inp: ParseStream) -> syn::Result<Self> {
+        let mut struct_name = None;
+        let mut value_names = Vec::new();
+        let mut counter_names = Vec::new();
+        let mut compose_mods = Vec::new();
         log(&format!("MetricsModItem inp 1  {:?}", inp));
         let item = inp.parse::<syn::ItemMod>()?;
         log(&format!("MetricsModItem inp 2 {:?}", inp));
         if let Some(c) = item.content {
             for item in c.1 {
                 match item {
-                    syn::Item::Type(item) => {}
-                    syn::Item::Mod(item) => {}
-                    syn::Item::Enum(item) => {}
-                    _ => todo!(),
+                    syn::Item::Type(item) => {
+                        if item.ident.to_string() == "StructName" {
+                            match item.ty.as_ref() {
+                                syn::Type::Path(tp) => {
+                                    struct_name = Some(tp.path.get_ident().unwrap().to_string());
+                                }
+                                _ => {
+                                    let e = inp.error(format!("expect a path type"));
+                                    return Err(e);
+                                }
+                            }
+                        } else {
+                            let e = inp.error(format!("expect a type `StructName`"));
+                            return Err(e);
+                        }
+                    }
+                    syn::Item::Mod(item) => {
+                        let idn = item.ident.to_string();
+                        if idn == "Compose" {
+                            let item = syn::Item::Mod(item);
+                            let ts3 = quote::quote! { #item };
+                            let x = syn::parse::Parser::parse(
+                                |inp: ParseStream| inp.parse(),
+                                ts3.into(),
+                            )?;
+                            log("==============   DONE  ComposeModItem");
+                            compose_mods.push(x);
+                        } else {
+                            let e = inp.error(format!("expect mod `Compose`"));
+                            return Err(e);
+                        }
+                    }
+                    syn::Item::Enum(item) => {
+                        let idn = item.ident.to_string();
+                        let vars = item.variants;
+                        if idn == "values" {
+                            for var in vars {
+                                let s = var.ident.to_string();
+                                value_names.push(s);
+                            }
+                        } else if idn == "counters" {
+                            for var in vars {
+                                let s = var.ident.to_string();
+                                counter_names.push(s);
+                            }
+                        } else {
+                            let e = inp.error(format!("expect enum `values` or `counters`"));
+                            return Err(e);
+                        }
+                    }
+                    _ => {
+                        let e = inp.error(format!("expect a type, mod or enum"));
+                        return Err(e);
+                    }
                 }
             }
         }
-        let ret = MetricsModItem {};
+        let ret = Self {
+            struct_name: struct_name.unwrap(),
+            value_names,
+            counter_names,
+            compose_mods,
+        };
         Ok(ret)
     }
 }
 
 #[derive(Debug)]
 struct MetricsDecl {
-    struct_name: String,
-    value_names: Vec<String>,
-    counter_names: Vec<String>,
+    metrics_mods: Vec<MetricsModItem>,
+    agg_mods: Vec<AggregationModItem>,
+}
+
+impl MetricsDecl {
+    fn to_inspect(&self) -> String {
+        format!("{:?}", self)
+    }
+
+    fn agg_token_stream(&self, agg: &AggregationModItem) -> syn::Result<TokenStream> {
+        // TODO find the input decl
+        self.metrics_mods
+            .iter()
+            .filter(|&x| x.struct_name == agg.input)
+            .map(|inp| {
+                let struct_name = syn::Ident::new(&agg.struct_name, Span::call_site());
+                let inp_struct_name = syn::Ident::new(&inp.struct_name, Span::call_site());
+                let fields_decl = inp
+                    .counter_names
+                    .iter()
+                    .map(|x| syn::Ident::new(x, Span::call_site()))
+                    .map(|x| quote::quote! { #x: CounterU32, });
+                let fields_init = inp
+                    .counter_names
+                    .iter()
+                    .map(|x| syn::Ident::new(x, Span::call_site()))
+                    .map(|x| quote::quote! { #x: CounterU32::new(), });
+                let ingest_counters = inp
+                    .counter_names
+                    .iter()
+                    .map(|x| syn::Ident::new(x, Span::call_site()))
+                    .map(|x| quote::quote! { self.#x.ingest(inp.#x); });
+                quote::quote! {
+                    #[derive(Debug)]
+                    pub struct #struct_name {
+                        #(#fields_decl)*
+                    }
+
+                    impl #struct_name {
+                        pub fn new() -> Self {
+                            Self {
+                                #(#fields_init)*
+                            }
+                        }
+
+                        pub fn ingest(&mut self, inp: #inp_struct_name) {
+                            #(#ingest_counters)*
+                        }
+                    }
+                }
+            })
+            .next()
+            .ok_or_else(|| syn::Error::new(Span::call_site(), "can not find input to aggregation"))
+    }
+
+    fn agg_all_token_stream(&self) -> syn::Result<TokenStream> {
+        let mut tsv1 = Vec::new();
+        for m in self.agg_mods.iter() {
+            // TODO preserve span information instead of Span::call_site
+            tsv1.push(self.agg_token_stream(&m)?);
+        }
+        let ret = quote::quote! {
+            #(#tsv1)*
+        };
+        Ok(ret)
+    }
+
+    fn metrics_token_stream(&self, metrics: &MetricsModItem) -> syn::Result<TokenStream> {
+        let mut tsv1 = Vec::new();
+        {
+            // struct type declaration
+            // TODO preserve span information instead of Span::call_site
+            let struct_name = syn::Ident::new(&metrics.struct_name, Span::call_site());
+            let field_decl_counters = metrics
+                .counter_names
+                .iter()
+                .map(|x| syn::Ident::new(x, Span::call_site()))
+                .map(|x| quote::quote! { #x: CounterU32, });
+            let field_decl_composes = metrics.compose_mods.iter().map(|m| {
+                let n = syn::Ident::new(&m.name, Span::call_site());
+                let ct = syn::Ident::new(&m.input, Span::call_site());
+                quote::quote! { #n: #ct, }
+            });
+            let q1 = quote::quote! {
+                #[derive(Debug)]
+                struct #struct_name {
+                    #(#field_decl_counters)*
+                    #(#field_decl_composes)*
+                }
+            };
+            tsv1.push(q1);
+            let field_init_counters = metrics
+                .counter_names
+                .iter()
+                .map(|x| syn::Ident::new(x, Span::call_site()))
+                .map(|x| quote::quote! { #x: CounterU32::new(), });
+            let field_incs_counters = metrics
+                .counter_names
+                .iter()
+                .map(|x| syn::Ident::new(x, Span::call_site()))
+                .map(|x| {
+                    quote::quote! {
+                        #[inline(always)]
+                        pub fn #x(&mut self) -> &mut CounterU32 {
+                            &mut self.#x
+                        }
+                    }
+                });
+            let field_init_composes = metrics.compose_mods.iter().map(|m| {
+                let n = syn::Ident::new(&m.name, Span::call_site());
+                let ct = syn::Ident::new(&m.input, Span::call_site());
+                quote::quote! { #n: #ct::new(), }
+            });
+            let field_composes_get_mut = metrics.compose_mods.iter().map(|m| {
+                let n = syn::Ident::new(&m.name, Span::call_site());
+                let ct = syn::Ident::new(&m.input, Span::call_site());
+                quote::quote! {
+                    pub fn #n(&mut self) -> &mut #ct {
+                        &mut self.#n
+                    }
+                }
+            });
+            let impl_1 = quote::quote! {
+                impl #struct_name {
+                    fn new() -> Self {
+                        Self {
+                            #(#field_init_counters)*
+                            #(#field_init_composes)*
+                        }
+                    }
+                    #(#field_incs_counters)*
+                    #(#field_composes_get_mut)*
+                }
+            };
+            tsv1.push(impl_1);
+        }
+        let ret = quote::quote! {
+            #(#tsv1)*
+        };
+        Ok(ret)
+    }
+
+    fn metrics_all_token_stream(&self) -> syn::Result<TokenStream> {
+        let mut tsv1 = Vec::new();
+        for m in self.metrics_mods.iter() {
+            // TODO preserve span information instead of Span::call_site
+            tsv1.push(self.metrics_token_stream(&m)?);
+        }
+        let ret = quote::quote! {
+            #(#tsv1)*
+        };
+        Ok(ret)
+    }
+
+    fn to_code(&self) -> syn::Result<TokenStream> {
+        let mods1 = self.metrics_all_token_stream()?;
+        let aggs = self.agg_all_token_stream()?;
+        let ret = quote::quote! {
+            #mods1
+            #aggs
+            mod abc {
+                fn yo() -> u32 {
+                    123 + 45
+                }
+            }
+        };
+        Ok(ret)
+    }
 }
 
 impl syn::parse::Parse for MetricsDecl {
     fn parse(inp: ParseStream) -> syn::Result<Self> {
         log(&format!("INP IN PARSE {:?}", inp));
-        let mut struct_name = Some(String::new());
-        let mut value_names = Vec::new();
-        let mut counter_names = Vec::new();
+        let mut metrics_mods = Vec::new();
+        let mut aggs_mods = Vec::new();
         let mut i = 0;
         loop {
             i += 1;
@@ -107,12 +450,12 @@ impl syn::parse::Parse for MetricsDecl {
                 if s1 == "values" {
                     for var in vars {
                         let s = var.ident.to_string();
-                        value_names.push(s);
+                        // value_names.push(s);
                     }
                 } else if s1 == "counters" {
                     for var in vars {
                         let s = var.ident.to_string();
-                        counter_names.push(s);
+                        // counter_names.push(s);
                     }
                 } else {
                     let e = inp.error("unexpected enum kind");
@@ -128,7 +471,7 @@ impl syn::parse::Parse for MetricsDecl {
                         let s2 = tp.path.get_ident().unwrap().to_string();
                         if s1 == "StructName" {
                             log(&format!("have {:?} {:?}", s1, s2));
-                            struct_name = Some(s2);
+                            // struct_name = Some(s2);
                         } else {
                             let e = inp.error("unexpected type decl");
                             return Err(e);
@@ -159,12 +502,24 @@ impl syn::parse::Parse for MetricsDecl {
                         return Err(e);
                     }
                 }
-                // let ty: syn::ItemType = inp.parse()?;
             } else if la1.peek(syn::token::Mod) {
                 log("Lookahead was token Mod");
-                inp.parse::<MetricsModItem>()?;
-                // discard_rest(inp);
-                log("==============   DONE  MetricsModItem");
+                let inp2 = inp.fork();
+                let x = inp2.parse::<syn::token::Mod>()?;
+                let x = inp2.parse::<syn::Ident>()?;
+                let s1 = x.to_string();
+                if s1 == "Metrics" {
+                    let x = inp.parse::<MetricsModItem>()?;
+                    log("==============   DONE  MetricsModItem");
+                    metrics_mods.push(x);
+                } else if s1 == "Aggregation" {
+                    let x = inp.parse::<AggregationModItem>()?;
+                    log("==============   DONE  AggregationModItem");
+                    aggs_mods.push(x);
+                } else {
+                    let e = inp.error("expect mod `Metrics` or `Aggregation`");
+                    return Err(e);
+                }
             } else if la1.peek(syn::Ident::peek_any) {
                 log("Lookahead was Any Ident");
                 let inp2 = inp.fork();
@@ -208,11 +563,9 @@ impl syn::parse::Parse for MetricsDecl {
                 }
             }
         }
-        let struct_name = struct_name.ok_or_else(|| inp.error("could not find StructName"))?;
-        let ret = MetricsDecl {
-            struct_name,
-            value_names,
-            counter_names,
+        let ret = Self {
+            metrics_mods,
+            agg_mods: aggs_mods,
         };
         Ok(ret)
     }
@@ -237,6 +590,21 @@ pub(super) fn make_metrics(ts: proc_macro::TokenStream) -> proc_macro::TokenStre
     log(&format!("call_site {:?}", Span::call_site()));
     log(&manifest_dir);
     let ts5 = proc_macro::TokenStream::from(ts4);
-    let _decl_file = syn::parse_macro_input!(ts5 as MetricsDecl);
-    quote::quote! {}.into()
+    let decls_file = syn::parse_macro_input!(ts5 as MetricsDecl);
+    let s1 = decls_file.to_inspect();
+    let ts_out = decls_file.to_code().unwrap();
+    let fmtd = prettyplease::unparse(&syn::parse2::<syn::File>(ts_out.clone()).unwrap());
+    let s2 = fmtd;
+    quote::quote! {
+        fn tmp_metrics_s1() -> String {
+            let ret = #s1;
+            ret.into()
+        }
+        fn tmp_metrics_s2() -> String {
+            let ret = #s2;
+            ret.into()
+        }
+        #ts_out
+    }
+    .into()
 }

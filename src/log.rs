@@ -1,12 +1,22 @@
+use std::fs::File;
 use std::io::Write;
+use std::sync::Mutex;
+
+static FILE: Mutex<Option<File>> = Mutex::new(None);
 
 pub fn log(s: &str) {
-    let mut fout = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open("tmp-log-out.txt")
-        .unwrap();
+    let mut mg = FILE.lock().unwrap();
+    let mut fout = if let Some(x) = mg.take() {
+        x
+    } else {
+        std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open("tmp-log-out.txt")
+            .unwrap()
+    };
     let mut buf = s.as_bytes().to_vec();
     buf.extend_from_slice(b"\n");
     fout.write(&buf).unwrap();
+    *mg = Some(fout);
 }
