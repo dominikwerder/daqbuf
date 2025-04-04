@@ -1,7 +1,8 @@
+use super::AggregationModItem;
+use super::MetricsDecl;
+use super::MetricsModItem;
 use crate::log::log;
-use crate::make_metrics::AggregationModItem;
-use crate::make_metrics::MetricsDecl;
-use crate::make_metrics::MetricsModItem;
+use crate::log::log_ts;
 use proc_macro2::Span;
 use proc_macro2::TokenStream;
 
@@ -32,38 +33,81 @@ impl MetricsDecl {
             (fields_decl, fields_init, ingest_counters)
         };
 
-        let _ = {
+        let (fields_compose_decl, fields_compose_init, ingest_compose) = {
+            let mut fields_decl = Vec::new();
+            let mut fields_init = Vec::new();
+            let mut ingest = Vec::new();
             for cm1 in inp.compose_mods.iter() {
                 log(&format!(
                     "agg_from_metrics_token_stream  mod Compose  cm {:?}",
                     cm1
                 ));
+                let mut found = false;
                 for cm2 in agg.compose_agg_mods.iter() {
                     if cm2.input == cm1.name {
+                        if found {
+                            let e = syn::Error::new(
+                                Span::call_site(),
+                                format!(
+                                    "found composition method for input Compose again  {:?}  {:?}",
+                                    cm1, cm2
+                                ),
+                            );
+                            return Err(e);
+                        }
                         log(&format!(
                             "agg_from_metrics_token_stream  found pair  cm1 {:?}  cm2 {:?}",
                             cm1, cm2
                         ));
+                        // TODO difference?
+                        let _name1 = quote::format_ident!("{}", cm1.name);
+                        let name1 = syn::Ident::new(&cm1.name, Span::call_site());
+                        let name2 = syn::Ident::new(&cm2.name, Span::call_site());
+                        let aggtor = syn::Ident::new(&cm2.aggtor, Span::call_site());
+                        let ts = quote::quote! { #name2: #aggtor, };
+                        fields_decl.push(ts);
+                        let ts = quote::quote! { #name2: <#aggtor>::new(), };
+                        fields_init.push(ts);
+                        let ts = quote::quote! {
+                            // let _ = &inp.#name1;
+                            self.#name2.ingest(inp.#name1);
+                        };
+                        ingest.push(ts);
+                        found = true;
                     }
                 }
+                if found == false {
+                    let e = syn::Error::new(
+                        Span::call_site(),
+                        format!(
+                            "did not find composition method for input Compose  {:?}",
+                            cm1
+                        ),
+                    );
+                    return Err(e);
+                }
             }
+            (fields_decl, fields_init, ingest)
         };
 
         let ret = quote::quote! {
             #[derive(Debug)]
             pub struct #struct_name {
                 #(#fields_counters_decl)*
+                #(#fields_compose_decl)*
             }
 
             impl #struct_name {
                 pub fn new() -> Self {
                     Self {
                         #(#fields_counters_init)*
+                        #(#fields_compose_init)*
                     }
                 }
 
                 pub fn ingest(&mut self, inp: #inp_struct_name) {
                     #(#ingest_counters)*
+                    #(#ingest_compose)*
                 }
             }
         };
@@ -104,8 +148,7 @@ impl MetricsDecl {
     }
 
     fn agg_token_stream(&self, agg: &AggregationModItem) -> syn::Result<TokenStream> {
-        // Input can be a Metrics or a Aggregation type.
-        if let Some(inp) = self
+        let ts1 = if let Some(inp) = self
             .metrics_mods
             .iter()
             .filter(|&x| x.struct_name == agg.input)
@@ -128,7 +171,13 @@ impl MetricsDecl {
                 ),
             );
             Err(e)
-        }
+        };
+        let ts1 = ts1?;
+        let ret = quote::quote! {
+            #ts1
+        };
+        log_ts(&ret);
+        Ok(ret)
     }
 
     fn agg_all_token_stream(&self) -> syn::Result<TokenStream> {
@@ -178,7 +227,7 @@ impl MetricsDecl {
                 .map(|x| syn::Ident::new(x, Span::call_site()))
                 .map(|x| {
                     quote::quote! {
-                        #[inline(always)]
+                        // #[inline(always)]
                         pub fn #x(&mut self) -> &mut CounterU32 {
                             &mut self.#x
                         }
@@ -193,6 +242,7 @@ impl MetricsDecl {
                 let n = syn::Ident::new(&m.name, Span::call_site());
                 let ct = syn::Ident::new(&m.input, Span::call_site());
                 quote::quote! {
+                    // #[inline(always)]
                     pub fn #n(&mut self) -> &mut #ct {
                         &mut self.#n
                     }

@@ -1,4 +1,5 @@
 mod codegen;
+mod resolve;
 
 use crate::log::log;
 use proc_macro2::Span;
@@ -248,6 +249,8 @@ struct MetricsModItem {
     counter_names: Vec<String>,
     compose_mods: Vec<ComposeModItem>,
 }
+
+impl MetricsModItem {}
 
 impl syn::parse::Parse for MetricsModItem {
     fn parse(inp: ParseStream) -> syn::Result<Self> {
@@ -510,7 +513,9 @@ pub(super) fn make_metrics(ts: proc_macro::TokenStream) -> proc_macro::TokenStre
     log(&format!("call_site {:?}", Span::call_site()));
     log(&manifest_dir);
     let ts5 = proc_macro::TokenStream::from(ts4);
-    let decls_file = syn::parse_macro_input!(ts5 as MetricsDecl);
+    let mut decls_file = syn::parse_macro_input!(ts5 as MetricsDecl);
+    decls_file.resolve();
+    let decls_file = decls_file;
     let s1 = decls_file.to_inspect();
     let ts_out = decls_file.to_code().unwrap();
     let fmtd = prettyplease::unparse(&syn::parse2::<syn::File>(ts_out.clone()).unwrap());

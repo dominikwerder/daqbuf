@@ -1,3 +1,4 @@
+use proc_macro2::TokenStream;
 use std::fs::File;
 use std::io::Write;
 use std::sync::Mutex;
@@ -19,4 +20,9 @@ pub fn log(s: &str) {
     buf.extend_from_slice(b"\n");
     fout.write(&buf).unwrap();
     *mg = Some(fout);
+}
+
+pub fn log_ts(ts: &TokenStream) {
+    let fmtd = prettyplease::unparse(&syn::parse2::<syn::File>(ts.clone()).unwrap());
+    log(&fmtd);
 }
