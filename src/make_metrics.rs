@@ -1,3 +1,5 @@
+mod codegen;
+
 use crate::log::log;
 use proc_macro2::Span;
 use proc_macro2::TokenStream;
@@ -48,15 +50,85 @@ impl syn::parse::Parse for MetricsStructNameItem {
 }
 
 #[derive(Debug)]
+struct ComposeAggModItem {
+    input: String,
+    aggtor: String,
+    name: String,
+}
+
+impl syn::parse::Parse for ComposeAggModItem {
+    fn parse(inp: ParseStream) -> syn::Result<Self> {
+        let mut input = None;
+        let mut aggtor = None;
+        let mut name = None;
+        let item = inp.parse::<syn::ItemMod>()?;
+        if let Some(c) = item.content {
+            for item in c.1 {
+                match item {
+                    syn::Item::Type(item) => {
+                        if item.ident.to_string() == "Input" {
+                            match item.ty.as_ref() {
+                                syn::Type::Path(tp) => {
+                                    input = Some(tp.path.get_ident().unwrap().to_string());
+                                }
+                                _ => {
+                                    let e = inp.error(format!("expect a path type"));
+                                    return Err(e);
+                                }
+                            }
+                        } else if item.ident.to_string() == "Aggtor" {
+                            match item.ty.as_ref() {
+                                syn::Type::Path(tp) => {
+                                    aggtor = Some(tp.path.get_ident().unwrap().to_string());
+                                }
+                                _ => {
+                                    let e = inp.error(format!("expect a path type"));
+                                    return Err(e);
+                                }
+                            }
+                        } else if item.ident.to_string() == "Name" {
+                            match item.ty.as_ref() {
+                                syn::Type::Path(tp) => {
+                                    name = Some(tp.path.get_ident().unwrap().to_string());
+                                }
+                                _ => {
+                                    let e = inp.error(format!("expect a path type"));
+                                    return Err(e);
+                                }
+                            }
+                        } else {
+                            let e = inp.error(format!("expect a type `Input`, `Aggtor` or `Name`"));
+                            return Err(e);
+                        }
+                    }
+                    _ => {
+                        let e = inp.error(format!("expect a type"));
+                        return Err(e);
+                    }
+                }
+            }
+        }
+        let ret = Self {
+            input: input.unwrap(),
+            aggtor: aggtor.unwrap(),
+            name: name.unwrap(),
+        };
+        Ok(ret)
+    }
+}
+
+#[derive(Debug)]
 struct AggregationModItem {
     struct_name: String,
     input: String,
+    compose_agg_mods: Vec<ComposeAggModItem>,
 }
 
 impl syn::parse::Parse for AggregationModItem {
     fn parse(inp: ParseStream) -> syn::Result<Self> {
         let mut struct_name = None;
         let mut input = None;
+        let mut compose_agg_mods = Vec::new();
         log(&format!("AggregationModItem inp 1  {:?}", inp));
         let item = inp.parse::<syn::ItemMod>()?;
         log(&format!("AggregationModItem inp 2 {:?}", inp));
@@ -89,6 +161,13 @@ impl syn::parse::Parse for AggregationModItem {
                             return Err(e);
                         }
                     }
+                    syn::Item::Mod(im) => {
+                        let x = syn::Item::Mod(im);
+                        let ts3 = quote::quote! { #x };
+                        let x =
+                            syn::parse::Parser::parse(|inp: ParseStream| inp.parse(), ts3.into())?;
+                        compose_agg_mods.push(x);
+                    }
                     _ => {
                         let e = inp.error(format!("expect a type"));
                         return Err(e);
@@ -99,6 +178,7 @@ impl syn::parse::Parse for AggregationModItem {
         let ret = Self {
             struct_name: struct_name.unwrap(),
             input: input.unwrap(),
+            compose_agg_mods,
         };
         Ok(ret)
     }
@@ -249,7 +329,7 @@ impl syn::parse::Parse for MetricsModItem {
 }
 
 #[derive(Debug)]
-struct MetricsDecl {
+pub(crate) struct MetricsDecl {
     metrics_mods: Vec<MetricsModItem>,
     agg_mods: Vec<AggregationModItem>,
 }
@@ -257,166 +337,6 @@ struct MetricsDecl {
 impl MetricsDecl {
     fn to_inspect(&self) -> String {
         format!("{:?}", self)
-    }
-
-    fn agg_token_stream(&self, agg: &AggregationModItem) -> syn::Result<TokenStream> {
-        // TODO find the input decl
-        self.metrics_mods
-            .iter()
-            .filter(|&x| x.struct_name == agg.input)
-            .map(|inp| {
-                let struct_name = syn::Ident::new(&agg.struct_name, Span::call_site());
-                let inp_struct_name = syn::Ident::new(&inp.struct_name, Span::call_site());
-                let fields_decl = inp
-                    .counter_names
-                    .iter()
-                    .map(|x| syn::Ident::new(x, Span::call_site()))
-                    .map(|x| quote::quote! { #x: CounterU32, });
-                let fields_init = inp
-                    .counter_names
-                    .iter()
-                    .map(|x| syn::Ident::new(x, Span::call_site()))
-                    .map(|x| quote::quote! { #x: CounterU32::new(), });
-                let ingest_counters = inp
-                    .counter_names
-                    .iter()
-                    .map(|x| syn::Ident::new(x, Span::call_site()))
-                    .map(|x| quote::quote! { self.#x.ingest(inp.#x); });
-                quote::quote! {
-                    #[derive(Debug)]
-                    pub struct #struct_name {
-                        #(#fields_decl)*
-                    }
-
-                    impl #struct_name {
-                        pub fn new() -> Self {
-                            Self {
-                                #(#fields_init)*
-                            }
-                        }
-
-                        pub fn ingest(&mut self, inp: #inp_struct_name) {
-                            #(#ingest_counters)*
-                        }
-                    }
-                }
-            })
-            .next()
-            .ok_or_else(|| syn::Error::new(Span::call_site(), "can not find input to aggregation"))
-    }
-
-    fn agg_all_token_stream(&self) -> syn::Result<TokenStream> {
-        let mut tsv1 = Vec::new();
-        for m in self.agg_mods.iter() {
-            // TODO preserve span information instead of Span::call_site
-            tsv1.push(self.agg_token_stream(&m)?);
-        }
-        let ret = quote::quote! {
-            #(#tsv1)*
-        };
-        Ok(ret)
-    }
-
-    fn metrics_token_stream(&self, metrics: &MetricsModItem) -> syn::Result<TokenStream> {
-        let mut tsv1 = Vec::new();
-        {
-            // struct type declaration
-            // TODO preserve span information instead of Span::call_site
-            let struct_name = syn::Ident::new(&metrics.struct_name, Span::call_site());
-            let field_decl_counters = metrics
-                .counter_names
-                .iter()
-                .map(|x| syn::Ident::new(x, Span::call_site()))
-                .map(|x| quote::quote! { #x: CounterU32, });
-            let field_decl_composes = metrics.compose_mods.iter().map(|m| {
-                let n = syn::Ident::new(&m.name, Span::call_site());
-                let ct = syn::Ident::new(&m.input, Span::call_site());
-                quote::quote! { #n: #ct, }
-            });
-            let q1 = quote::quote! {
-                #[derive(Debug)]
-                struct #struct_name {
-                    #(#field_decl_counters)*
-                    #(#field_decl_composes)*
-                }
-            };
-            tsv1.push(q1);
-            let field_init_counters = metrics
-                .counter_names
-                .iter()
-                .map(|x| syn::Ident::new(x, Span::call_site()))
-                .map(|x| quote::quote! { #x: CounterU32::new(), });
-            let field_incs_counters = metrics
-                .counter_names
-                .iter()
-                .map(|x| syn::Ident::new(x, Span::call_site()))
-                .map(|x| {
-                    quote::quote! {
-                        #[inline(always)]
-                        pub fn #x(&mut self) -> &mut CounterU32 {
-                            &mut self.#x
-                        }
-                    }
-                });
-            let field_init_composes = metrics.compose_mods.iter().map(|m| {
-                let n = syn::Ident::new(&m.name, Span::call_site());
-                let ct = syn::Ident::new(&m.input, Span::call_site());
-                quote::quote! { #n: #ct::new(), }
-            });
-            let field_composes_get_mut = metrics.compose_mods.iter().map(|m| {
-                let n = syn::Ident::new(&m.name, Span::call_site());
-                let ct = syn::Ident::new(&m.input, Span::call_site());
-                quote::quote! {
-                    pub fn #n(&mut self) -> &mut #ct {
-                        &mut self.#n
-                    }
-                }
-            });
-            let impl_1 = quote::quote! {
-                impl #struct_name {
-                    fn new() -> Self {
-                        Self {
-                            #(#field_init_counters)*
-                            #(#field_init_composes)*
-                        }
-                    }
-                    #(#field_incs_counters)*
-                    #(#field_composes_get_mut)*
-                }
-            };
-            tsv1.push(impl_1);
-        }
-        let ret = quote::quote! {
-            #(#tsv1)*
-        };
-        Ok(ret)
-    }
-
-    fn metrics_all_token_stream(&self) -> syn::Result<TokenStream> {
-        let mut tsv1 = Vec::new();
-        for m in self.metrics_mods.iter() {
-            // TODO preserve span information instead of Span::call_site
-            tsv1.push(self.metrics_token_stream(&m)?);
-        }
-        let ret = quote::quote! {
-            #(#tsv1)*
-        };
-        Ok(ret)
-    }
-
-    fn to_code(&self) -> syn::Result<TokenStream> {
-        let mods1 = self.metrics_all_token_stream()?;
-        let aggs = self.agg_all_token_stream()?;
-        let ret = quote::quote! {
-            #mods1
-            #aggs
-            mod abc {
-                fn yo() -> u32 {
-                    123 + 45
-                }
-            }
-        };
-        Ok(ret)
     }
 }
 
