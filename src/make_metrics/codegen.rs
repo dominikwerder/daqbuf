@@ -256,6 +256,9 @@ impl MetricsDecl {
                             #(#field_init_composes)*
                         }
                     }
+                    pub fn take_and_reset(&mut self) -> Self {
+                        std::mem::replace(self, Self::new())
+                    }
                     #(#field_incs_counters)*
                     #(#field_composes_get_mut)*
                 }
