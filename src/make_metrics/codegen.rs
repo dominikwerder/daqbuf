@@ -91,7 +91,7 @@ impl MetricsDecl {
         };
 
         let ret = quote::quote! {
-            #[derive(Debug)]
+            #[derive(Debug, serde::Serialize)]
             pub struct #struct_name {
                 #(#fields_counters_decl)*
                 #(#fields_compose_decl)*
@@ -209,7 +209,7 @@ impl MetricsDecl {
                 quote::quote! { #n: #ct, }
             });
             let q1 = quote::quote! {
-                #[derive(Debug)]
+                #[derive(Debug, serde::Serialize)]
                 pub struct #struct_name {
                     #(#field_decl_counters)*
                     #(#field_decl_composes)*
