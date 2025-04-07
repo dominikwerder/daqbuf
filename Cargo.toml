@@ -1,10 +1,10 @@
 [package]
 name = "mettrics"
-version = "0.0.2"
+version = "0.0.3"
 description = "Makes publishing meaningful metrics from applications easier."
 authors = ["Dominik Werder <dominik.werder@gmail.com>"]
 license = "GPL-3.0-only"
 edition = "2024"
 
 [dependencies]
-mettrics-macros = { version = "0.0.1", path = "../mettrics-macros" }
+mettrics-macros = { version = "0.0.3", path = "../mettrics-macros" }

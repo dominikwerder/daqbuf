@@ -15,6 +15,11 @@ impl CounterU32 {
     }
 
     #[inline(always)]
+    pub fn add(&mut self, v: u32) {
+        self.v += v
+    }
+
+    #[inline(always)]
     pub fn ingest(&mut self, rhs: Self) {
         self.v += rhs.v
     }
