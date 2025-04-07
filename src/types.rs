@@ -1,4 +1,6 @@
-#[derive(Debug)]
+use crate::rexport::serde;
+
+#[derive(Debug, serde::Serialize)]
 pub struct CounterU32 {
     v: u32,
 }
