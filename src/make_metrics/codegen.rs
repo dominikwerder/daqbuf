@@ -210,7 +210,7 @@ impl MetricsDecl {
             });
             let q1 = quote::quote! {
                 #[derive(Debug)]
-                struct #struct_name {
+                pub struct #struct_name {
                     #(#field_decl_counters)*
                     #(#field_decl_composes)*
                 }
@@ -227,7 +227,7 @@ impl MetricsDecl {
                 .map(|x| syn::Ident::new(x, Span::call_site()))
                 .map(|x| {
                     quote::quote! {
-                        // #[inline(always)]
+                        #[inline(always)]
                         pub fn #x(&mut self) -> &mut CounterU32 {
                             &mut self.#x
                         }
@@ -242,7 +242,7 @@ impl MetricsDecl {
                 let n = syn::Ident::new(&m.name, Span::call_site());
                 let ct = syn::Ident::new(&m.input, Span::call_site());
                 quote::quote! {
-                    // #[inline(always)]
+                    #[inline(always)]
                     pub fn #n(&mut self) -> &mut #ct {
                         &mut self.#n
                     }
@@ -250,7 +250,7 @@ impl MetricsDecl {
             });
             let impl_1 = quote::quote! {
                 impl #struct_name {
-                    fn new() -> Self {
+                    pub fn new() -> Self {
                         Self {
                             #(#field_init_counters)*
                             #(#field_init_composes)*

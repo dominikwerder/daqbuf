@@ -245,7 +245,6 @@ impl syn::parse::Parse for ComposeModItem {
 #[derive(Debug)]
 struct MetricsModItem {
     struct_name: String,
-    value_names: Vec<String>,
     counter_names: Vec<String>,
     compose_mods: Vec<ComposeModItem>,
 }
@@ -255,7 +254,6 @@ impl MetricsModItem {}
 impl syn::parse::Parse for MetricsModItem {
     fn parse(inp: ParseStream) -> syn::Result<Self> {
         let mut struct_name = None;
-        let mut value_names = Vec::new();
         let mut counter_names = Vec::new();
         let mut compose_mods = Vec::new();
         log(&format!("MetricsModItem inp 1  {:?}", inp));
@@ -299,12 +297,7 @@ impl syn::parse::Parse for MetricsModItem {
                     syn::Item::Enum(item) => {
                         let idn = item.ident.to_string();
                         let vars = item.variants;
-                        if idn == "values" {
-                            for var in vars {
-                                let s = var.ident.to_string();
-                                value_names.push(s);
-                            }
-                        } else if idn == "counters" {
+                        if idn == "counters" {
                             for var in vars {
                                 let s = var.ident.to_string();
                                 counter_names.push(s);
@@ -323,7 +316,6 @@ impl syn::parse::Parse for MetricsModItem {
         }
         let ret = Self {
             struct_name: struct_name.unwrap(),
-            value_names,
             counter_names,
             compose_mods,
         };
@@ -370,14 +362,9 @@ impl syn::parse::Parse for MetricsDecl {
                     let s = var.ident.to_string();
                     log(&format!("have {:?} {:?}", s1, s));
                 }
-                if s1 == "values" {
+                if s1 == "counters" {
                     for var in vars {
-                        let s = var.ident.to_string();
-                        // value_names.push(s);
-                    }
-                } else if s1 == "counters" {
-                    for var in vars {
-                        let s = var.ident.to_string();
+                        let _s = var.ident.to_string();
                         // counter_names.push(s);
                     }
                 } else {
@@ -428,7 +415,7 @@ impl syn::parse::Parse for MetricsDecl {
             } else if la1.peek(syn::token::Mod) {
                 log("Lookahead was token Mod");
                 let inp2 = inp.fork();
-                let x = inp2.parse::<syn::token::Mod>()?;
+                let _ = inp2.parse::<syn::token::Mod>()?;
                 let x = inp2.parse::<syn::Ident>()?;
                 let s1 = x.to_string();
                 if s1 == "Metrics" {
@@ -521,11 +508,11 @@ pub(super) fn make_metrics(ts: proc_macro::TokenStream) -> proc_macro::TokenStre
     let fmtd = prettyplease::unparse(&syn::parse2::<syn::File>(ts_out.clone()).unwrap());
     let s2 = fmtd;
     quote::quote! {
-        fn tmp_metrics_s1() -> String {
+        pub fn tmp_metrics_s1() -> String {
             let ret = #s1;
             ret.into()
         }
-        fn tmp_metrics_s2() -> String {
+        pub fn tmp_metrics_s2() -> String {
             let ret = #s2;
             ret.into()
         }

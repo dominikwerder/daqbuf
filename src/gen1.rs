@@ -75,6 +75,7 @@ impl FuncCallWithArgs {
     }
 }
 
+#[allow(unused)]
 #[derive(Clone, Debug)]
 struct StatsStructDef {
     name: syn::Ident,
@@ -166,6 +167,7 @@ impl AggStructDef {
     }
 }
 
+#[allow(unused)]
 #[derive(Debug)]
 struct DiffStructDef {
     name: syn::Ident,
@@ -237,14 +239,19 @@ impl syn::parse::Parse for StatsTreeDef {
 }
 
 fn stats_struct_decl_impl(st: &StatsStructDef) -> String {
+    let _ = st;
     todo!()
 }
 
 fn agg_decl_impl(st: &StatsStructDef, ag: &AggStructDef) -> String {
+    let _ = ag;
+    let _ = st;
     todo!()
 }
 
 fn diff_decl_impl(st: &DiffStructDef, inp: &StatsStructDef) -> String {
+    let _ = inp;
+    let _ = st;
     todo!()
 }
 

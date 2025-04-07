@@ -6,6 +6,9 @@ use std::sync::Mutex;
 static FILE: Mutex<Option<File>> = Mutex::new(None);
 
 pub fn log(s: &str) {
+    if true {
+        return;
+    }
     let mut mg = FILE.lock().unwrap();
     let mut fout = if let Some(x) = mg.take() {
         x
