@@ -25,4 +25,8 @@ impl CounterU32 {
     pub fn ingest(&mut self, rhs: Self) {
         self.v += rhs.v
     }
+
+    pub fn to_u32(&self) -> u32 {
+        self.v
+    }
 }
