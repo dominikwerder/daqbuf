@@ -7,7 +7,8 @@ use proc_macro2::Span;
 use proc_macro2::TokenStream;
 
 impl MetricsDecl {
-    fn agg_from_metrics_token_stream(
+    #[allow(unused)]
+    fn agg_from_metrics_token_stream__OLD(
         &self,
         agg: &AggregationModItem,
         inp: &MetricsModItem,
@@ -114,11 +115,59 @@ impl MetricsDecl {
         Ok(ret)
     }
 
-    fn agg_from_agg_token_stream(
+    fn agg_from_counter_names(
         &self,
         agg: &AggregationModItem,
-        inp: &AggregationModItem,
+        inp_struct_name: &str,
+        counter_names: Vec<String>,
     ) -> syn::Result<TokenStream> {
+        let struct_name = syn::Ident::new(&agg.struct_name, Span::call_site());
+        let inp_struct_name = syn::Ident::new(inp_struct_name, Span::call_site());
+        let (fields_counters_decl, fields_counters_init, ingest_counters) = {
+            let fields_decl = counter_names
+                .iter()
+                .map(|x| syn::Ident::new(x, Span::call_site()))
+                .map(|x| quote::quote! { #x: CounterU32, });
+            let fields_init = counter_names
+                .iter()
+                .map(|x| syn::Ident::new(x, Span::call_site()))
+                .map(|x| quote::quote! { #x: CounterU32::new(), });
+            let ingest_counters = counter_names
+                .iter()
+                .map(|x| syn::Ident::new(x, Span::call_site()))
+                .map(|x| quote::quote! { self.#x.ingest(inp.#x); });
+            (fields_decl, fields_init, ingest_counters)
+        };
+        let ts = quote::quote! {
+            #[derive(Debug, serde::Serialize)]
+            pub struct #struct_name {
+                #(#fields_counters_decl)*
+                // #(#fields_compose_decl)*
+            }
+
+            impl #struct_name {
+                pub fn new() -> Self {
+                    Self {
+                        #(#fields_counters_init)*
+                        // #(#fields_compose_init)*
+                    }
+                }
+
+                pub fn ingest(&mut self, inp: #inp_struct_name) {
+                    #(#ingest_counters)*
+                    // #(#ingest_compose)*
+                }
+            }
+        };
+        Ok(ts)
+    }
+
+    fn agg_find_counters_in_input_metrics(&self, inp: &MetricsModItem) -> syn::Result<Vec<String>> {
+        let ret = inp.counter_names.iter().map(|x| x.into()).collect();
+        Ok(ret)
+    }
+
+    fn agg_find_counters_in_input(&self, inp: &AggregationModItem) -> syn::Result<Vec<String>> {
         // recursion
         // input can be a Metrics or a Aggregation type.
         if let Some(inp) = self
@@ -127,24 +176,40 @@ impl MetricsDecl {
             .filter(|&x| x.struct_name == inp.input)
             .next()
         {
-            self.agg_from_metrics_token_stream(agg, inp)
+            self.agg_find_counters_in_input_metrics(inp)
         } else if let Some(inp) = self
             .agg_mods
             .iter()
             .filter(|&x| x.struct_name == inp.input)
             .next()
         {
-            self.agg_from_agg_token_stream(agg, inp)
+            self.agg_find_counters_in_input(inp)
         } else {
-            let e = syn::Error::new(
-                Span::call_site(),
-                format!(
-                    "can not find input decl to aggregation: {}",
-                    agg.input.to_string()
-                ),
-            );
+            let e = syn::Error::new(Span::call_site(), format!("can not find input counters"));
             Err(e)
         }
+    }
+
+    fn agg_from_agg_token_stream(
+        &self,
+        agg: &AggregationModItem,
+        inp: &AggregationModItem,
+    ) -> syn::Result<TokenStream> {
+        let inp_struct_name = &inp.struct_name;
+        let counter_names = self.agg_find_counters_in_input(inp)?;
+        let ts = self.agg_from_counter_names(agg, inp_struct_name, counter_names)?;
+        Ok(ts)
+    }
+
+    fn agg_from_metrics_token_stream(
+        &self,
+        agg: &AggregationModItem,
+        inp: &MetricsModItem,
+    ) -> syn::Result<TokenStream> {
+        let inp_struct_name = &inp.struct_name;
+        let counter_names = self.agg_find_counters_in_input_metrics(inp)?;
+        let ts = self.agg_from_counter_names(agg, inp_struct_name, counter_names)?;
+        Ok(ts)
     }
 
     fn agg_token_stream(&self, agg: &AggregationModItem) -> syn::Result<TokenStream> {
@@ -233,6 +298,22 @@ impl MetricsDecl {
                         }
                     }
                 });
+            let fields_counters_ingest = metrics
+                .counter_names
+                .iter()
+                .map(|x| syn::Ident::new(x, Span::call_site()))
+                .map(|x| {
+                    quote::quote! { self.#x.ingest(inp.#x); }
+                });
+            let flatten_prom_counters = metrics
+                .counter_names
+                .iter()
+                .map(|x| (syn::Ident::new(x, Span::call_site()), x))
+                .map(|(x, y)| {
+                    quote::quote! {
+                        ret.push((stringify!(#x).into(), self.#x.to_u32() as u64));
+                    }
+                });
             let field_init_composes = metrics.compose_mods.iter().map(|m| {
                 let n = syn::Ident::new(&m.name, Span::call_site());
                 let ct = syn::Ident::new(&m.input, Span::call_site());
@@ -248,6 +329,23 @@ impl MetricsDecl {
                     }
                 }
             });
+            let fields_composes_ingest = metrics.compose_mods.iter().map(|m| {
+                let n = syn::Ident::new(&m.name, Span::call_site());
+                let _ct = syn::Ident::new(&m.input, Span::call_site());
+                quote::quote! {
+                    self.#n.ingest(inp.#n);
+                }
+            });
+            let flatten_prom_composes = metrics.compose_mods.iter().map(|m| {
+                let n = syn::Ident::new(&m.name, Span::call_site());
+                quote::quote! {
+                    let v = self.#n.to_flatten_prometheus();
+                    for e in v {
+                        ret.push((format!("{}_{}", stringify!(#n), e.0), e.1));
+                    };
+
+                }
+            });
             let impl_1 = quote::quote! {
                 impl #struct_name {
                     pub fn new() -> Self {
@@ -258,6 +356,17 @@ impl MetricsDecl {
                     }
                     pub fn take_and_reset(&mut self) -> Self {
                         std::mem::replace(self, Self::new())
+                    }
+                    pub fn ingest(&mut self, inp: #struct_name) {
+                        #(#fields_counters_ingest)*
+                        #(#fields_composes_ingest)*
+                    }
+                    pub fn to_flatten_prometheus(&self) -> Vec<(String, u64)> {
+                        let mut ret = Vec::new();
+                        #(#flatten_prom_composes)*
+                        #(#flatten_prom_counters)*
+                        ret
+
                     }
                     #(#field_incs_counters)*
                     #(#field_composes_get_mut)*
