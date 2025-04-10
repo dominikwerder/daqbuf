@@ -4,8 +4,56 @@ mod resolve;
 use crate::log::log;
 use proc_macro2::Span;
 use proc_macro2::TokenStream;
+use std::fmt;
 use syn::ext::IdentExt;
 use syn::parse::ParseStream;
+
+#[allow(unused)]
+#[derive(Debug)]
+pub enum Error {
+    Deser,
+}
+
+impl fmt::Display for Error {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        fmt::Debug::fmt(self, fmt)
+    }
+}
+
+#[allow(non_snake_case)]
+mod serde_syn_Path {
+    use std::fmt;
+
+    pub fn serialize<S>(val: &syn::Path, ser: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let s = quote::quote! { #val }.to_string();
+        ser.serialize_str(&s)
+    }
+
+    struct Vis;
+
+    impl<'a> serde::de::Visitor<'a> for Vis {
+        type Value = syn::Path;
+
+        fn expecting(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+            write!(fmt, "expect a path")
+        }
+
+        fn visit_str<E>(self, inp: &str) -> Result<Self::Value, E> {
+            let val = syn::parse_str::<syn::Path>(inp).expect("a syn parseable path");
+            Ok(val)
+        }
+    }
+
+    pub fn deserialize<'a, D>(de: D) -> Result<syn::Path, D::Error>
+    where
+        D: serde::Deserializer<'a>,
+    {
+        de.deserialize_str(Vis)
+    }
+}
 
 #[allow(unused)]
 fn discard_rest(inp: ParseStream) {
@@ -50,7 +98,7 @@ impl syn::parse::Parse for MetricsStructNameItem {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 struct ComposeAggModItem {
     input: String,
     aggtor: String,
@@ -70,7 +118,8 @@ impl syn::parse::Parse for ComposeAggModItem {
                         if item.ident.to_string() == "Input" {
                             match item.ty.as_ref() {
                                 syn::Type::Path(tp) => {
-                                    input = Some(tp.path.get_ident().unwrap().to_string());
+                                    input =
+                                        Some(tp.path.get_ident().expect("path-ident").to_string());
                                 }
                                 _ => {
                                     let e = inp.error(format!("expect a path type"));
@@ -80,7 +129,8 @@ impl syn::parse::Parse for ComposeAggModItem {
                         } else if item.ident.to_string() == "Aggtor" {
                             match item.ty.as_ref() {
                                 syn::Type::Path(tp) => {
-                                    aggtor = Some(tp.path.get_ident().unwrap().to_string());
+                                    aggtor =
+                                        Some(tp.path.get_ident().expect("path-ident").to_string());
                                 }
                                 _ => {
                                     let e = inp.error(format!("expect a path type"));
@@ -90,7 +140,8 @@ impl syn::parse::Parse for ComposeAggModItem {
                         } else if item.ident.to_string() == "Name" {
                             match item.ty.as_ref() {
                                 syn::Type::Path(tp) => {
-                                    name = Some(tp.path.get_ident().unwrap().to_string());
+                                    name =
+                                        Some(tp.path.get_ident().expect("path-ident").to_string());
                                 }
                                 _ => {
                                     let e = inp.error(format!("expect a path type"));
@@ -110,15 +161,15 @@ impl syn::parse::Parse for ComposeAggModItem {
             }
         }
         let ret = Self {
-            input: input.unwrap(),
-            aggtor: aggtor.unwrap(),
-            name: name.unwrap(),
+            input: input.expect("type Input"),
+            aggtor: aggtor.expect("type Aggtor"),
+            name: name.expect("type Name"),
         };
         Ok(ret)
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 struct AggregationModItem {
     struct_name: String,
     input: String,
@@ -140,7 +191,8 @@ impl syn::parse::Parse for AggregationModItem {
                         if item.ident.to_string() == "StructName" {
                             match item.ty.as_ref() {
                                 syn::Type::Path(tp) => {
-                                    struct_name = Some(tp.path.get_ident().unwrap().to_string());
+                                    struct_name =
+                                        Some(tp.path.get_ident().expect("path-ident").to_string());
                                 }
                                 _ => {
                                     let e = inp.error(format!("expect a path type"));
@@ -150,7 +202,8 @@ impl syn::parse::Parse for AggregationModItem {
                         } else if item.ident.to_string() == "Input" {
                             match item.ty.as_ref() {
                                 syn::Type::Path(tp) => {
-                                    input = Some(tp.path.get_ident().unwrap().to_string());
+                                    input =
+                                        Some(tp.path.get_ident().expect("path-ident").to_string());
                                 }
                                 _ => {
                                     let e = inp.error(format!("expect a path type"));
@@ -177,18 +230,30 @@ impl syn::parse::Parse for AggregationModItem {
             }
         }
         let ret = Self {
-            struct_name: struct_name.unwrap(),
-            input: input.unwrap(),
+            struct_name: struct_name.expect("type StructName"),
+            input: input.expect("type Input"),
             compose_agg_mods,
         };
         Ok(ret)
     }
 }
 
-#[derive(Debug)]
+#[derive(serde::Serialize, serde::Deserialize)]
 struct ComposeModItem {
-    input: String,
+    #[serde(with = "serde_syn_Path")]
+    input: syn::Path,
     name: String,
+}
+
+impl fmt::Debug for ComposeModItem {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        let input = &self.input;
+        let input = quote::quote! { #input }.to_string();
+        fmt.debug_struct("ComposeModItem")
+            .field("input", &input)
+            .field("name", &self.name)
+            .finish()
+    }
 }
 
 impl syn::parse::Parse for ComposeModItem {
@@ -205,7 +270,7 @@ impl syn::parse::Parse for ComposeModItem {
                         if item.ident.to_string() == "Input" {
                             match item.ty.as_ref() {
                                 syn::Type::Path(tp) => {
-                                    input = Some(tp.path.get_ident().unwrap().to_string());
+                                    input = Some(tp.path.clone());
                                 }
                                 _ => {
                                     let e = inp.error(format!("expect a path type"));
@@ -215,7 +280,8 @@ impl syn::parse::Parse for ComposeModItem {
                         } else if item.ident.to_string() == "Name" {
                             match item.ty.as_ref() {
                                 syn::Type::Path(tp) => {
-                                    name = Some(tp.path.get_ident().unwrap().to_string());
+                                    name =
+                                        Some(tp.path.get_ident().expect("path-ident").to_string());
                                 }
                                 _ => {
                                     let e = inp.error(format!("expect a path type"));
@@ -235,17 +301,18 @@ impl syn::parse::Parse for ComposeModItem {
             }
         }
         let ret = Self {
-            input: input.unwrap(),
-            name: name.unwrap(),
+            input: input.expect("type Input"),
+            name: name.expect("type Name"),
         };
         Ok(ret)
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 struct MetricsModItem {
     struct_name: String,
     counter_names: Vec<String>,
+    histolog2_names: Vec<String>,
     compose_mods: Vec<ComposeModItem>,
 }
 
@@ -255,6 +322,7 @@ impl syn::parse::Parse for MetricsModItem {
     fn parse(inp: ParseStream) -> syn::Result<Self> {
         let mut struct_name = None;
         let mut counter_names = Vec::new();
+        let mut histolog2_names = Vec::new();
         let mut compose_mods = Vec::new();
         log(&format!("MetricsModItem inp 1  {:?}", inp));
         let item = inp.parse::<syn::ItemMod>()?;
@@ -266,7 +334,8 @@ impl syn::parse::Parse for MetricsModItem {
                         if item.ident.to_string() == "StructName" {
                             match item.ty.as_ref() {
                                 syn::Type::Path(tp) => {
-                                    struct_name = Some(tp.path.get_ident().unwrap().to_string());
+                                    struct_name =
+                                        Some(tp.path.get_ident().expect("path-ident").to_string());
                                 }
                                 _ => {
                                     let e = inp.error(format!("expect a path type"));
@@ -302,8 +371,13 @@ impl syn::parse::Parse for MetricsModItem {
                                 let s = var.ident.to_string();
                                 counter_names.push(s);
                             }
+                        } else if idn == "histolog2s" {
+                            for var in vars {
+                                let s = var.ident.to_string();
+                                histolog2_names.push(s);
+                            }
                         } else {
-                            let e = inp.error(format!("expect enum `values` or `counters`"));
+                            let e = inp.error(format!("expect enum `counters` or `histolog2s`"));
                             return Err(e);
                         }
                     }
@@ -315,15 +389,16 @@ impl syn::parse::Parse for MetricsModItem {
             }
         }
         let ret = Self {
-            struct_name: struct_name.unwrap(),
+            struct_name: struct_name.expect("type StructName"),
             counter_names,
+            histolog2_names,
             compose_mods,
         };
         Ok(ret)
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize)]
 pub(crate) struct MetricsDecl {
     metrics_mods: Vec<MetricsModItem>,
     agg_mods: Vec<AggregationModItem>,
@@ -378,7 +453,7 @@ impl syn::parse::Parse for MetricsDecl {
                 match item.ty.as_ref() {
                     syn::Type::Path(tp) => {
                         let s1 = item.ident.to_string();
-                        let s2 = tp.path.get_ident().unwrap().to_string();
+                        let s2 = tp.path.get_ident().expect("path-ident").to_string();
                         if s1 == "StructName" {
                             log(&format!("have {:?} {:?}", s1, s2));
                             // struct_name = Some(s2);

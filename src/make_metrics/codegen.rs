@@ -1,120 +1,11 @@
 use super::AggregationModItem;
 use super::MetricsDecl;
 use super::MetricsModItem;
-use crate::log::log;
 use crate::log::log_ts;
 use proc_macro2::Span;
 use proc_macro2::TokenStream;
 
 impl MetricsDecl {
-    #[allow(unused)]
-    fn agg_from_metrics_token_stream__OLD(
-        &self,
-        agg: &AggregationModItem,
-        inp: &MetricsModItem,
-    ) -> syn::Result<TokenStream> {
-        let struct_name = syn::Ident::new(&agg.struct_name, Span::call_site());
-        let inp_struct_name = syn::Ident::new(&inp.struct_name, Span::call_site());
-        let (fields_counters_decl, fields_counters_init, ingest_counters) = {
-            let fields_decl = inp
-                .counter_names
-                .iter()
-                .map(|x| syn::Ident::new(x, Span::call_site()))
-                .map(|x| quote::quote! { #x: CounterU32, });
-            let fields_init = inp
-                .counter_names
-                .iter()
-                .map(|x| syn::Ident::new(x, Span::call_site()))
-                .map(|x| quote::quote! { #x: CounterU32::new(), });
-            let ingest_counters = inp
-                .counter_names
-                .iter()
-                .map(|x| syn::Ident::new(x, Span::call_site()))
-                .map(|x| quote::quote! { self.#x.ingest(inp.#x); });
-            (fields_decl, fields_init, ingest_counters)
-        };
-
-        let (fields_compose_decl, fields_compose_init, ingest_compose) = {
-            let mut fields_decl = Vec::new();
-            let mut fields_init = Vec::new();
-            let mut ingest = Vec::new();
-            for cm1 in inp.compose_mods.iter() {
-                log(&format!(
-                    "agg_from_metrics_token_stream  mod Compose  cm {:?}",
-                    cm1
-                ));
-                let mut found = false;
-                for cm2 in agg.compose_agg_mods.iter() {
-                    if cm2.input == cm1.name {
-                        if found {
-                            let e = syn::Error::new(
-                                Span::call_site(),
-                                format!(
-                                    "found composition method for input Compose again  {:?}  {:?}",
-                                    cm1, cm2
-                                ),
-                            );
-                            return Err(e);
-                        }
-                        log(&format!(
-                            "agg_from_metrics_token_stream  found pair  cm1 {:?}  cm2 {:?}",
-                            cm1, cm2
-                        ));
-                        // TODO difference?
-                        let _name1 = quote::format_ident!("{}", cm1.name);
-                        let name1 = syn::Ident::new(&cm1.name, Span::call_site());
-                        let name2 = syn::Ident::new(&cm2.name, Span::call_site());
-                        let aggtor = syn::Ident::new(&cm2.aggtor, Span::call_site());
-                        let ts = quote::quote! { #name2: #aggtor, };
-                        fields_decl.push(ts);
-                        let ts = quote::quote! { #name2: <#aggtor>::new(), };
-                        fields_init.push(ts);
-                        let ts = quote::quote! {
-                            // let _ = &inp.#name1;
-                            self.#name2.ingest(inp.#name1);
-                        };
-                        ingest.push(ts);
-                        found = true;
-                    }
-                }
-                if found == false {
-                    let e = syn::Error::new(
-                        Span::call_site(),
-                        format!(
-                            "did not find composition method for input Compose  {:?}",
-                            cm1
-                        ),
-                    );
-                    return Err(e);
-                }
-            }
-            (fields_decl, fields_init, ingest)
-        };
-
-        let ret = quote::quote! {
-            #[derive(Debug, serde::Serialize)]
-            pub struct #struct_name {
-                #(#fields_counters_decl)*
-                #(#fields_compose_decl)*
-            }
-
-            impl #struct_name {
-                pub fn new() -> Self {
-                    Self {
-                        #(#fields_counters_init)*
-                        #(#fields_compose_init)*
-                    }
-                }
-
-                pub fn ingest(&mut self, inp: #inp_struct_name) {
-                    #(#ingest_counters)*
-                    #(#ingest_compose)*
-                }
-            }
-        };
-        Ok(ret)
-    }
-
     fn agg_from_counter_names(
         &self,
         agg: &AggregationModItem,
@@ -268,15 +159,23 @@ impl MetricsDecl {
                 .iter()
                 .map(|x| syn::Ident::new(x, Span::call_site()))
                 .map(|x| quote::quote! { #x: CounterU32, });
+            let field_decl_histolog2s = metrics
+                .histolog2_names
+                .iter()
+                .map(|x| syn::Ident::new(x, Span::call_site()))
+                .map(|x| quote::quote! { #x: HistoLog2, });
             let field_decl_composes = metrics.compose_mods.iter().map(|m| {
                 let n = syn::Ident::new(&m.name, Span::call_site());
-                let ct = syn::Ident::new(&m.input, Span::call_site());
+                // let ct = syn::Ident::new(&m.input, Span::call_site());
+                // let ct = syn::parse_str::<syn::Path>(&m.input).unwrap();
+                let ct = &m.input;
                 quote::quote! { #n: #ct, }
             });
             let q1 = quote::quote! {
                 #[derive(Debug, serde::Serialize)]
                 pub struct #struct_name {
                     #(#field_decl_counters)*
+                    #(#field_decl_histolog2s)*
                     #(#field_decl_composes)*
                 }
             };
@@ -286,6 +185,11 @@ impl MetricsDecl {
                 .iter()
                 .map(|x| syn::Ident::new(x, Span::call_site()))
                 .map(|x| quote::quote! { #x: CounterU32::new(), });
+            let field_init_histolog2s = metrics
+                .histolog2_names
+                .iter()
+                .map(|x| syn::Ident::new(x, Span::call_site()))
+                .map(|x| quote::quote! { #x: HistoLog2::new(16), });
             let field_incs_counters = metrics
                 .counter_names
                 .iter()
@@ -305,23 +209,48 @@ impl MetricsDecl {
                 .map(|x| {
                     quote::quote! { self.#x.ingest(inp.#x); }
                 });
-            let flatten_prom_counters = metrics
-                .counter_names
+            let fields_histlog2s_ingest = metrics
+                .histolog2_names
                 .iter()
-                .map(|x| (syn::Ident::new(x, Span::call_site()), x))
-                .map(|(x, y)| {
-                    quote::quote! {
-                        ret.push((stringify!(#x).into(), self.#x.to_u32() as u64));
-                    }
+                .map(|x| syn::Ident::new(x, Span::call_site()))
+                .map(|x| {
+                    quote::quote! { self.#x.ingest_upstream(inp.#x); }
                 });
+            let flatten_prom_counters = metrics.counter_names.iter().map(|n| {
+                let id = syn::Ident::new(&n, Span::call_site());
+                quote::quote! {
+                    let n = format!("{}_{}", name, #n);
+                    ret.push(format!("# TYPE {} counter", n));
+                    ret.push(format!("{} {}", n, self.#id.to_u32()));
+                }
+            });
+            let flatten_prom_histolog2s = metrics.histolog2_names.iter().map(|n| {
+                let id = syn::Ident::new(n, Span::call_site());
+                quote::quote! {
+                    let n = format!("{}_{}", name, #n);
+                    let v = self.#id.to_flatten_prometheus(&n);
+                    ret.extend(v);
+                }
+            });
             let field_init_composes = metrics.compose_mods.iter().map(|m| {
                 let n = syn::Ident::new(&m.name, Span::call_site());
-                let ct = syn::Ident::new(&m.input, Span::call_site());
+                // let ct = syn::Ident::new(&m.input, Span::call_site());
+                let ct = &m.input;
                 quote::quote! { #n: #ct::new(), }
+            });
+            let field_histlog2s_get_mut = metrics.histolog2_names.iter().map(|x| {
+                let n = syn::Ident::new(x, Span::call_site());
+                quote::quote! {
+                    #[inline(always)]
+                    pub fn #n(&mut self) -> &mut HistoLog2 {
+                        &mut self.#n
+                    }
+                }
             });
             let field_composes_get_mut = metrics.compose_mods.iter().map(|m| {
                 let n = syn::Ident::new(&m.name, Span::call_site());
-                let ct = syn::Ident::new(&m.input, Span::call_site());
+                // let ct = syn::Ident::new(&m.input, Span::call_site());
+                let ct = &m.input;
                 quote::quote! {
                     #[inline(always)]
                     pub fn #n(&mut self) -> &mut #ct {
@@ -331,18 +260,17 @@ impl MetricsDecl {
             });
             let fields_composes_ingest = metrics.compose_mods.iter().map(|m| {
                 let n = syn::Ident::new(&m.name, Span::call_site());
-                let _ct = syn::Ident::new(&m.input, Span::call_site());
                 quote::quote! {
                     self.#n.ingest(inp.#n);
                 }
             });
             let flatten_prom_composes = metrics.compose_mods.iter().map(|m| {
-                let n = syn::Ident::new(&m.name, Span::call_site());
+                let n = &m.name;
+                let id = syn::Ident::new(&n, Span::call_site());
                 quote::quote! {
-                    let v = self.#n.to_flatten_prometheus();
-                    for e in v {
-                        ret.push((format!("{}_{}", stringify!(#n), e.0), e.1));
-                    };
+                    let n = format!("{}_{}", name, #n);
+                    let v = self.#id.to_flatten_prometheus(&n);
+                    ret.extend(v);
 
                 }
             });
@@ -351,6 +279,7 @@ impl MetricsDecl {
                     pub fn new() -> Self {
                         Self {
                             #(#field_init_counters)*
+                            #(#field_init_histolog2s)*
                             #(#field_init_composes)*
                         }
                     }
@@ -359,16 +288,19 @@ impl MetricsDecl {
                     }
                     pub fn ingest(&mut self, inp: #struct_name) {
                         #(#fields_counters_ingest)*
+                        #(#fields_histlog2s_ingest)*
                         #(#fields_composes_ingest)*
                     }
-                    pub fn to_flatten_prometheus(&self) -> Vec<(String, u64)> {
+                    pub fn to_flatten_prometheus(&self, name: &str) -> Vec<String> {
                         let mut ret = Vec::new();
                         #(#flatten_prom_composes)*
                         #(#flatten_prom_counters)*
+                        #(#flatten_prom_histolog2s)*
                         ret
 
                     }
                     #(#field_incs_counters)*
+                    #(#field_histlog2s_get_mut)*
                     #(#field_composes_get_mut)*
                 }
             };
@@ -395,9 +327,13 @@ impl MetricsDecl {
     pub(super) fn to_code(&self) -> syn::Result<TokenStream> {
         let mods1 = self.metrics_all_token_stream()?;
         let aggs = self.agg_all_token_stream()?;
+        let decl_js = serde_json::to_string(self).unwrap();
         let ret = quote::quote! {
             #mods1
             #aggs
+            pub fn decl_json() -> String {
+                #decl_js.into()
+            }
         };
         Ok(ret)
     }
