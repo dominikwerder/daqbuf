@@ -1,3 +1,7 @@
+mod histolog2;
+
+pub use histolog2::HistoLog2;
+
 use crate::rexport::serde;
 
 #[derive(Debug, serde::Serialize)]
