@@ -13,35 +13,35 @@ use std::task::Context;
 use std::task::Poll;
 use std::time::Instant;
 
-#[derive(Debug, thiserror::Error)]
-#[cstm(name = "CaProto")]
-pub enum Error {
-    SlideBuf(#[from] slidebuf::Error),
-    #[error("BufferTooSmallForNeedMin({0}, {1})")]
-    BufferTooSmallForNeedMin(usize, usize),
-    IO(#[from] io::Error),
-    BadSlice,
-    BadCaDbrTypeId(u16),
-    BadCaScalarTypeId(u16),
-    GetValHelpInnerTypeMismatch,
-    GetValHelpTodoWaveform,
-    NotEnoughPayload,
-    TodoConversionArray,
-    CaProtoVersionMissing,
-    NotEnoughPayloadTimeMetadata(usize),
-    MismatchDbrTimeType,
-    BadCaCount,
-    CaCommandNotSupported(u16),
-    ParseAttemptInDoneState,
-    UnexpectedHeader,
-    ExtendedHeaderBadCount,
-    NoReadBufferSpace,
-    NeitherPendingNorProgress,
-    OutputBufferTooSmall,
-    LogicError,
-    BadPayload,
-    CaImageUnsupported,
-}
+autoerr::create_error_v1!(
+    name(Error, "CaProto"),
+    enum variants {
+        SlideBuf(#[from] slidebuf::Error),
+        BufferTooSmallForNeedMin(usize, usize),
+        IO(#[from] io::Error),
+        BadSlice,
+        BadCaDbrTypeId(u16),
+        BadCaScalarTypeId(u16),
+        GetValHelpInnerTypeMismatch,
+        GetValHelpTodoWaveform,
+        NotEnoughPayload,
+        TodoConversionArray,
+        CaProtoVersionMissing,
+        NotEnoughPayloadTimeMetadata(usize),
+        MismatchDbrTimeType,
+        BadCaCount,
+        CaCommandNotSupported(u16),
+        ParseAttemptInDoneState,
+        UnexpectedHeader,
+        ExtendedHeaderBadCount,
+        NoReadBufferSpace,
+        NeitherPendingNorProgress,
+        OutputBufferTooSmall,
+        LogicError,
+        BadPayload,
+        CaImageUnsupported,
+    },
+);
 
 const CA_PROTO_VERSION: u32 = 13;
 const EPICS_EPOCH_OFFSET: u64 = 631152000;
@@ -53,85 +53,6 @@ const TESTING_EVENT_ADD_RES_MAX: u32 = 3;
 
 const TESTING_PROTOCOL_ERROR_TODO_REMOVE: bool = false;
 const TESTING_PROTOCOL_ERROR_AFTER_BYTES: u32 = 400;
-
-pub trait StatsCounter {
-    fn inc(&mut self);
-}
-
-pub trait StatsCumulative {
-    fn add(&mut self, v: u64);
-}
-
-pub trait StatsHisto {
-    fn ingest(&mut self, v: u32);
-}
-
-impl StatsCounter for () {
-    fn inc(&mut self) {}
-}
-
-impl StatsCumulative for () {
-    fn add(&mut self, _v: u64) {}
-}
-
-impl StatsHisto for () {
-    fn ingest(&mut self, _v: u32) {}
-}
-
-pub trait CaProtoStatsRecv: Unpin {
-    fn out_msg_placed(&mut self) -> &mut dyn StatsCounter;
-    fn out_bytes(&mut self) -> &mut dyn StatsCumulative;
-    fn outbuf_len(&mut self) -> &mut dyn StatsHisto;
-    fn tcp_recv_count(&mut self) -> &mut dyn StatsCounter;
-    fn tcp_recv_bytes(&mut self) -> &mut dyn StatsCumulative;
-    fn payload_ext_very_large(&mut self) -> &mut dyn StatsCounter;
-    fn payload_ext_but_small(&mut self) -> &mut dyn StatsCounter;
-    fn payload_size(&mut self) -> &mut dyn StatsHisto;
-    fn protocol_issue(&mut self) -> &mut dyn StatsCounter;
-    fn data_count(&mut self) -> &mut dyn StatsHisto;
-}
-
-impl CaProtoStatsRecv for () {
-    fn out_msg_placed(&mut self) -> &mut dyn StatsCounter {
-        self
-    }
-
-    fn out_bytes(&mut self) -> &mut dyn StatsCumulative {
-        self
-    }
-
-    fn outbuf_len(&mut self) -> &mut dyn StatsHisto {
-        self
-    }
-
-    fn tcp_recv_count(&mut self) -> &mut dyn StatsCounter {
-        self
-    }
-
-    fn tcp_recv_bytes(&mut self) -> &mut dyn StatsCumulative {
-        self
-    }
-
-    fn payload_ext_very_large(&mut self) -> &mut dyn StatsCounter {
-        self
-    }
-
-    fn payload_ext_but_small(&mut self) -> &mut dyn StatsCounter {
-        self
-    }
-
-    fn payload_size(&mut self) -> &mut dyn StatsHisto {
-        self
-    }
-
-    fn protocol_issue(&mut self) -> &mut dyn StatsCounter {
-        self
-    }
-
-    fn data_count(&mut self) -> &mut dyn StatsHisto {
-        self
-    }
-}
 
 #[derive(Debug)]
 pub struct Search {

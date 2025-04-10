@@ -9,17 +9,14 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tracing = "0.1.37"
 async-channel = "2.3.1"
-bytes = "1.8"
+bytes = "1.10"
 byteorder = "1.5"
 futures-util = { version = "0.3.31", features = ["io"] }
 chrono = "0.4"
 humantime = "2.1.0"
 humantime-serde = "1.1.1"
 slidebuf = "0.0.1"
-thiserror = "=0.0.1"
+autoerr = "0.0.3"
 series = { path = "../daqbuf-series", package = "daqbuf-series" }
 netpod = { path = "../daqbuf-netpod", package = "daqbuf-netpod" }
 mettrics = { version = "0.0.6", path = "../mettrics" }
-
-[patch.crates-io]
-thiserror = { git = "https://github.com/dominikwerder/thiserror.git", branch = "cstm" }
