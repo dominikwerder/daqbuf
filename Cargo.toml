@@ -19,6 +19,7 @@ slidebuf = "0.0.1"
 thiserror = "=0.0.1"
 series = { path = "../daqbuf-series", package = "daqbuf-series" }
 netpod = { path = "../daqbuf-netpod", package = "daqbuf-netpod" }
+mettrics = { version = "0.0.6", path = "../mettrics" }
 
 [patch.crates-io]
 thiserror = { git = "https://github.com/dominikwerder/thiserror.git", branch = "cstm" }
