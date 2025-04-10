@@ -532,7 +532,10 @@ pub async fn timebinned_cbor_framed(
         _ => log::Level::ERROR,
     };
     let stats_items = match query.stats_items() {
-        Some(x) => true,
+        Some(_) => {
+            // TODO ?
+            true
+        }
         None => false,
     };
     let stream = stream

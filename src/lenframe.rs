@@ -7,6 +7,7 @@ use futures_util::stream;
 use futures_util::Stream;
 use futures_util::StreamExt;
 
+#[allow(unused)]
 fn pad_to_8(buf: &mut Vec<u8>) {
     let npadded = (7 + buf.len()) & (!0x7);
     let npad = npadded - buf.len();
