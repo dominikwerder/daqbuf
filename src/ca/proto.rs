@@ -734,14 +734,36 @@ macro_rules! convert_wave_value {
 }
 
 #[derive(Debug)]
+pub struct CaMsgCommon {
+    ts: Instant,
+}
+
+impl CaMsgCommon {
+    pub fn new(ts: Instant) -> Self {
+        Self { ts }
+    }
+
+    pub fn ts(&self) -> Instant {
+        self.ts
+    }
+}
+
+#[derive(Debug)]
 pub struct CaMsg {
     pub ty: CaMsgTy,
-    pub ts: Instant,
+    common: CaMsgCommon,
 }
 
 impl CaMsg {
     pub fn from_ty_ts(ty: CaMsgTy, ts: Instant) -> Self {
-        Self { ty, ts }
+        Self {
+            ty,
+            common: CaMsgCommon::new(ts),
+        }
+    }
+
+    pub fn into_parts(self) -> (CaMsgCommon, CaMsgTy) {
+        (self.common, self.ty)
     }
 
     fn len(&self) -> usize {
@@ -1200,6 +1222,7 @@ impl<T> AsyncWriteRead for T where T: AsyncWrite + AsyncRead + Send + 'static {}
 
 pub struct CaProto {
     tcp: Pin<Box<dyn AsyncWriteRead>>,
+    raw_socket_fd: Option<i32>,
     tcp_eof: bool,
     remote_name: String,
     state: CaState,
@@ -1217,6 +1240,7 @@ impl fmt::Debug for CaProto {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         fmt.debug_struct("CaProto")
             // .field("tcp", &self.tcp)
+            .field("raw_socket_fd", &self.raw_socket_fd)
             .field("tcp_eof", &self.tcp_eof)
             .field("remote_name", &self.remote_name)
             .field("state", &self.state)
@@ -1232,9 +1256,15 @@ impl fmt::Debug for CaProto {
 }
 
 impl CaProto {
-    pub fn new<T: AsyncWriteRead>(tcp: T, remote_name: String, array_truncate: usize) -> Self {
+    pub fn new<T: AsyncWriteRead>(
+        tcp: T,
+        raw_socket_fd: Option<i32>,
+        remote_name: String,
+        array_truncate: usize,
+    ) -> Self {
         Self {
             tcp: Box::pin(tcp),
+            raw_socket_fd,
             tcp_eof: false,
             remote_name,
             state: CaState::StdHead,
@@ -1502,6 +1532,10 @@ impl CaProto {
             }
             CaState::Done => Err(Error::ParseAttemptInDoneState),
         }
+    }
+
+    pub fn get_raw_socket_fd(&self) -> Option<i32> {
+        self.raw_socket_fd.clone()
     }
 }
 

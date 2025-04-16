@@ -10,6 +10,8 @@ mod Metrics {
         payload_ext_very_large,
         out_msg_placed,
         out_bytes,
+        fionread_inc,
+        fionread_dec,
     }
     enum histolog2s {
         payload_size,
