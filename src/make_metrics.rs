@@ -312,6 +312,7 @@ impl syn::parse::Parse for ComposeModItem {
 struct MetricsModItem {
     struct_name: String,
     counter_names: Vec<String>,
+    value_names: Vec<String>,
     histolog2_names: Vec<String>,
     compose_mods: Vec<ComposeModItem>,
 }
@@ -322,6 +323,7 @@ impl syn::parse::Parse for MetricsModItem {
     fn parse(inp: ParseStream) -> syn::Result<Self> {
         let mut struct_name = None;
         let mut counter_names = Vec::new();
+        let mut value_names = Vec::new();
         let mut histolog2_names = Vec::new();
         let mut compose_mods = Vec::new();
         log(&format!("MetricsModItem inp 1  {:?}", inp));
@@ -371,13 +373,19 @@ impl syn::parse::Parse for MetricsModItem {
                                 let s = var.ident.to_string();
                                 counter_names.push(s);
                             }
+                        } else if idn == "values" {
+                            for var in vars {
+                                let s = var.ident.to_string();
+                                value_names.push(s);
+                            }
                         } else if idn == "histolog2s" {
                             for var in vars {
                                 let s = var.ident.to_string();
                                 histolog2_names.push(s);
                             }
                         } else {
-                            let e = inp.error(format!("expect enum `counters` or `histolog2s`"));
+                            let e = inp
+                                .error(format!("expect enum `counters`, `values` or `histolog2s`"));
                             return Err(e);
                         }
                     }
@@ -391,6 +399,7 @@ impl syn::parse::Parse for MetricsModItem {
         let ret = Self {
             struct_name: struct_name.expect("type StructName"),
             counter_names,
+            value_names,
             histolog2_names,
             compose_mods,
         };

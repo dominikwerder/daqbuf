@@ -1,6 +1,6 @@
 [package]
 name = "mettrics-macros"
-version = "0.0.6"
+version = "0.0.7"
 description = "Macros for mettrics crate."
 authors = ["Dominik Werder <dominik.werder@gmail.com>"]
 license = "GPL-3.0-only"

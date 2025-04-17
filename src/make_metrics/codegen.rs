@@ -33,20 +33,17 @@ impl MetricsDecl {
             #[derive(Debug, serde::Serialize)]
             pub struct #struct_name {
                 #(#fields_counters_decl)*
-                // #(#fields_compose_decl)*
             }
 
             impl #struct_name {
                 pub fn new() -> Self {
                     Self {
                         #(#fields_counters_init)*
-                        // #(#fields_compose_init)*
                     }
                 }
 
                 pub fn ingest(&mut self, inp: #inp_struct_name) {
                     #(#ingest_counters)*
-                    // #(#ingest_compose)*
                 }
             }
         };
@@ -159,6 +156,11 @@ impl MetricsDecl {
                 .iter()
                 .map(|x| syn::Ident::new(x, Span::call_site()))
                 .map(|x| quote::quote! { #x: CounterU32, });
+            let field_decl_values = metrics
+                .value_names
+                .iter()
+                .map(|x| syn::Ident::new(&x, Span::call_site()))
+                .map(|x| quote::quote! { #x: ValueU32, });
             let field_decl_histolog2s = metrics
                 .histolog2_names
                 .iter()
@@ -175,6 +177,7 @@ impl MetricsDecl {
                 #[derive(Debug, serde::Serialize)]
                 pub struct #struct_name {
                     #(#field_decl_counters)*
+                    #(#field_decl_values)*
                     #(#field_decl_histolog2s)*
                     #(#field_decl_composes)*
                 }
@@ -185,6 +188,11 @@ impl MetricsDecl {
                 .iter()
                 .map(|x| syn::Ident::new(x, Span::call_site()))
                 .map(|x| quote::quote! { #x: CounterU32::new(), });
+            let field_init_values = metrics
+                .value_names
+                .iter()
+                .map(|x| syn::Ident::new(&x, Span::call_site()))
+                .map(|x| quote::quote! { #x: ValueU32::new(), });
             let field_init_histolog2s = metrics
                 .histolog2_names
                 .iter()
@@ -209,6 +217,13 @@ impl MetricsDecl {
                 .map(|x| {
                     quote::quote! { self.#x.ingest(inp.#x); }
                 });
+            let ingest_values = metrics
+                .value_names
+                .iter()
+                .map(|x| syn::Ident::new(&x, Span::call_site()))
+                .map(|x| {
+                    quote::quote! { let _ = "NOTE HERE"; self.#x.ingest(inp.#x); }
+                });
             let fields_histlog2s_ingest = metrics
                 .histolog2_names
                 .iter()
@@ -232,6 +247,14 @@ impl MetricsDecl {
                     ret.extend(v);
                 }
             });
+            let flatten_prom_values = metrics.value_names.iter().map(|n| {
+                let id = syn::Ident::new(n, Span::call_site());
+                quote::quote! {
+                    let n = format!("{}_{}", name, #n);
+                    let v = self.#id.to_flatten_prometheus(&n);
+                    ret.extend(v);
+                }
+            });
             let field_init_composes = metrics.compose_mods.iter().map(|m| {
                 let n = syn::Ident::new(&m.name, Span::call_site());
                 // let ct = syn::Ident::new(&m.input, Span::call_site());
@@ -243,6 +266,15 @@ impl MetricsDecl {
                 quote::quote! {
                     #[inline(always)]
                     pub fn #n(&mut self) -> &mut HistoLog2 {
+                        &mut self.#n
+                    }
+                }
+            });
+            let field_values_get_mut = metrics.value_names.iter().map(|x| {
+                let n = syn::Ident::new(x, Span::call_site());
+                quote::quote! {
+                    #[inline(always)]
+                    pub fn #n(&mut self) -> &mut ValueU32 {
                         &mut self.#n
                     }
                 }
@@ -274,20 +306,51 @@ impl MetricsDecl {
 
                 }
             });
+            let take_from_counters = metrics.counter_names.iter().map(|x| {
+                let n = syn::Ident::new(x, Span::call_site());
+                quote::quote! {
+                    ret.#n.take_from(&mut self.#n);
+                }
+            });
+            let take_from_values = metrics.value_names.iter().map(|x| {
+                let n = syn::Ident::new(x, Span::call_site());
+                quote::quote! {
+                    ret.#n.take_from(&mut self.#n);
+                }
+            });
+            let take_from_histolog2s = metrics.histolog2_names.iter().map(|x| {
+                let n = syn::Ident::new(x, Span::call_site());
+                quote::quote! {
+                    ret.#n.take_from(&mut self.#n);
+                }
+            });
+            let take_from_composes = metrics.compose_mods.iter().map(|m| {
+                let n = syn::Ident::new(&m.name, Span::call_site());
+                quote::quote! {
+                    ret.#n = self.#n.take_and_reset();
+                }
+            });
             let impl_1 = quote::quote! {
                 impl #struct_name {
                     pub fn new() -> Self {
                         Self {
                             #(#field_init_counters)*
+                            #(#field_init_values)*
                             #(#field_init_histolog2s)*
                             #(#field_init_composes)*
                         }
                     }
                     pub fn take_and_reset(&mut self) -> Self {
-                        std::mem::replace(self, Self::new())
+                        let mut ret = Self::new();
+                        #(#take_from_counters)*
+                        #(#take_from_values)*
+                        #(#take_from_histolog2s)*
+                        #(#take_from_composes)*
+                        ret
                     }
                     pub fn ingest(&mut self, inp: #struct_name) {
                         #(#fields_counters_ingest)*
+                        #(#ingest_values)*
                         #(#fields_histlog2s_ingest)*
                         #(#fields_composes_ingest)*
                     }
@@ -295,11 +358,13 @@ impl MetricsDecl {
                         let mut ret = Vec::new();
                         #(#flatten_prom_composes)*
                         #(#flatten_prom_counters)*
+                        #(#flatten_prom_values)*
                         #(#flatten_prom_histolog2s)*
                         ret
 
                     }
                     #(#field_incs_counters)*
+                    #(#field_values_get_mut)*
                     #(#field_histlog2s_get_mut)*
                     #(#field_composes_get_mut)*
                 }
