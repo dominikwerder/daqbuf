@@ -68,6 +68,15 @@ impl HistoLog2 {
         }
     }
 
+    pub fn take_from(&mut self, from: &mut Self) {
+        self.sum = self.sum.wrapping_add(from.sum);
+        from.sum = 0;
+        for (x, y) in from.histo.iter_mut().zip(self.histo.iter_mut()) {
+            *y = y.wrapping_add(*x);
+            *x = 0;
+        }
+    }
+
     pub fn to_flatten_prometheus(&self, name: &str) -> Vec<String> {
         // https://prometheus.io/docs/instrumenting/exposition_formats/
         let mut ret = String::with_capacity(2048);

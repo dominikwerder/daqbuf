@@ -1,6 +1,6 @@
 [package]
 name = "mettrics"
-version = "0.0.6"
+version = "0.0.7"
 description = "Makes publishing meaningful metrics from applications easier."
 authors = ["Dominik Werder <dominik.werder@gmail.com>"]
 license = "GPL-3.0-only"
@@ -9,4 +9,4 @@ edition = "2024"
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-mettrics-macros = { version = "0.0.6", path = "../mettrics-macros" }
+mettrics-macros = { version = "0.0.7", path = "../mettrics-macros" }
