@@ -2,7 +2,7 @@
 name = "daqbuf-ca-proto"
 version = "0.0.4"
 authors = ["Dominik Werder <dominik.werder@gmail.com>"]
-edition = "2021"
+edition = "2024"
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
@@ -19,4 +19,4 @@ slidebuf = "0.0.1"
 autoerr = "0.0.3"
 series = { path = "../daqbuf-series", package = "daqbuf-series" }
 netpod = { path = "../daqbuf-netpod", package = "daqbuf-netpod" }
-mettrics = { version = "0.0.6", path = "../mettrics" }
+mettrics = { version = "0.0.7", path = "../mettrics" }

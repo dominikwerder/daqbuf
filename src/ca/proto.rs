@@ -70,9 +70,11 @@ pub struct SearchRes {
 
 #[derive(Debug)]
 pub struct ErrorCmd {
-    pub cid: u32,
-    pub eid: u32,
-    pub msg: String,
+    #[allow(unused)]
+    cid: u32,
+    #[allow(unused)]
+    eid: u32,
+    msg: String,
 }
 
 #[derive(Debug)]
@@ -107,10 +109,21 @@ pub struct AccessRightsRes {
 
 #[derive(Debug)]
 pub struct EventAdd {
-    pub data_type: u16,
-    pub data_count: u32,
-    pub sid: u32,
-    pub subid: u32,
+    data_type: u16,
+    data_count: u32,
+    sid: u32,
+    subid: u32,
+}
+
+impl EventAdd {
+    pub fn new(data_type: u16, data_count: u32, sid: u32, subid: u32) -> Self {
+        Self {
+            data_type,
+            data_count,
+            sid,
+            subid,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -798,8 +811,8 @@ impl CaMsg {
             buf[15] = t[3];
             self.ty.place_payload_into(&mut buf[16..]);
         } else {
-            let pls = self.ty.payload_len();
-            let cnt = self.ty.data_count();
+            let pls = self.ty.payload_len() as u32;
+            let cnt = self.ty.data_count() as u32;
             let t = self.ty.cmdid().to_be_bytes();
             buf[0] = t[0];
             buf[1] = t[1];
@@ -890,16 +903,21 @@ impl CaMsg {
         let msg = match hi.cmdid {
             0x00 => CaMsg::from_ty_ts(CaMsgTy::VersionRes(hi.data_count() as u16), tsnow),
             0x0b => {
-                let mut s = String::new();
-                s.extend(format!("{:?}", &payload[..payload.len().min(16)]).chars());
+                // TODO check the channel access specs, do I extract the message from the remote
+                // correctly?
+                let mut msg = String::new();
+                let s = &mut msg;
+                use std::fmt::Write;
+                write!(s, "{:?}", &payload[..payload.len().min(16)]).unwrap();
                 if payload.len() >= 17 {
-                    s.extend("  msg: ".chars());
-                    s.extend(String::from_utf8_lossy(&payload[17..payload.len() - 1]).chars());
+                    s.push_str("  msg: ");
+                    let decoded = String::from_utf8_lossy(&payload[17..payload.len() - 1]);
+                    s.push_str(&decoded);
                 }
                 let e = ErrorCmd {
                     cid: hi.param1,
                     eid: hi.param2,
-                    msg: s,
+                    msg,
                 };
                 CaMsg::from_ty_ts(CaMsgTy::Error(e), tsnow)
             }
