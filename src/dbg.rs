@@ -11,6 +11,8 @@ pub fn dbg_chn(chn: &str) -> bool {
             "SINEG01:QE-B1-OP",
             "STSRD01-TCWL-STX02:AMP1CURR",
             "SATMA01-DBPM150:EST-Q1-SUM",
+            "TEST:SLOWPAUSE:SCALAR:F32:000000",
+            "TEST:SLOWPAUSE:SCALAR:F32:000001",
         ];
         chns.contains(&chn)
     } else {

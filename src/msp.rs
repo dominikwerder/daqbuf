@@ -16,6 +16,37 @@ autoerr::create_error_v1!(
 #[derive(Debug, Clone)]
 pub struct MspU32(pub u32);
 
+impl MspU32 {
+    pub fn to_db_i32(&self) -> i32 {
+        self.0 as i32
+    }
+
+    pub fn from_db_i32(x: i32) -> Self {
+        MspU32(x as u32)
+    }
+
+    pub fn to_u64(&self) -> u64 {
+        self.0 as u64
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct LspU32(pub u32);
+
+impl LspU32 {
+    pub fn to_db_i32(&self) -> i32 {
+        self.0 as i32
+    }
+
+    pub fn from_db_i32(x: i32) -> Self {
+        LspU32(x as u32)
+    }
+
+    pub fn to_u32(&self) -> u32 {
+        self.0
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum PrebinnedPartitioning {
     Sec1,
