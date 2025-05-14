@@ -77,7 +77,7 @@ pub mod log_macros_branch {
     pub use branch_info as info;
     pub use branch_trace as trace;
     pub use branch_warn as warn;
-    pub use tracing::{self, event, span, Level};
+    pub use tracing::{self, Level, event, span};
 }
 
 pub mod log_macros {
@@ -134,13 +134,13 @@ pub mod log_macros {
 }
 
 pub mod log {
-    pub use tracing::{self, event, span, Level};
+    pub use tracing::{self, Level, event, span};
     pub use tracing::{debug, error, info, trace, warn};
 }
 
 pub mod log_direct {
     pub use crate::{debug, error, info, trace, warn};
-    pub use tracing::{self, event, span, Level};
+    pub use tracing::{self, Level, event, span};
 }
 
 use bytes::Bytes;
@@ -165,12 +165,12 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::str::FromStr;
-use std::sync::atomic;
-use std::sync::atomic::AtomicPtr;
 use std::sync::LazyLock;
 use std::sync::Once;
 use std::sync::RwLock;
 use std::sync::RwLockWriteGuard;
+use std::sync::atomic;
+use std::sync::atomic::AtomicPtr;
 use std::task::Context;
 use std::task::Poll;
 use std::time::Duration;
@@ -258,6 +258,7 @@ autoerr::create_error_v1!(
         UnknownSeriesKind(i64),
         BadInt(#[from] std::num::ParseIntError),
         ChronoParse(#[from] chrono::ParseError),
+        TimeParse(#[from] time::error::Parse),
         HumantimeDurationParse(#[from] humantime::DurationError),
         MissingQueryParameters,
         MissingSeries,
@@ -720,9 +721,9 @@ impl<const N: usize> From<StringFix<N>> for String {
 
 mod string_fix_impl_serde {
     use crate::StringFix;
-    use serde::de::Visitor;
     use serde::Deserialize;
     use serde::Serialize;
+    use serde::de::Visitor;
     use std::fmt;
 
     impl<const N: usize> Serialize for StringFix<N> {
@@ -1021,11 +1022,7 @@ pub struct Cluster {
 
 impl Cluster {
     pub fn decompress_default(&self) -> bool {
-        if self.is_central_storage {
-            false
-        } else {
-            true
-        }
+        if self.is_central_storage { false } else { true }
     }
 
     pub fn scylla_st(&self) -> Option<&ScyllaConfig> {
@@ -1436,19 +1433,11 @@ impl ByteOrder {
     }
 
     pub fn is_le(&self) -> bool {
-        if let Self::Little = self {
-            true
-        } else {
-            false
-        }
+        if let Self::Little = self { true } else { false }
     }
 
     pub fn is_be(&self) -> bool {
-        if let Self::Big = self {
-            true
-        } else {
-            false
-        }
+        if let Self::Big = self { true } else { false }
     }
 }
 
@@ -1837,9 +1826,9 @@ impl fmt::Display for DtNano {
 mod dt_nano_serde {
     use super::DtNano;
     use de::Visitor;
-    use serde::de;
     use serde::Deserialize;
     use serde::Serialize;
+    use serde::de;
     use std::fmt;
 
     impl Serialize for DtNano {
@@ -1927,9 +1916,9 @@ mod ts_nano_ser {
     use chrono::TimeZone;
     use chrono::Utc;
     use de::Visitor;
-    use serde::de;
     use serde::Deserialize;
     use serde::Serialize;
+    use serde::de;
     use std::fmt;
 
     impl Serialize for TsNano {
@@ -2676,11 +2665,7 @@ impl BinnedRange<TsNano> {
                 } else {
                     let f1 = (bin_len_req.ms() - v1.ms()) / bin_len_req.ms();
                     let f2 = (v2.ms() - bin_len_req.ms()) / bin_len_req.ms();
-                    if f1 < f2 {
-                        v1
-                    } else {
-                        v2
-                    }
+                    if f1 < f2 { v1 } else { v2 }
                 }
             } else {
                 DtMs::from_ms_u64(v1.ms())
@@ -3101,6 +3086,10 @@ impl TsMs {
 
     pub fn bump_epsilon(&self) -> TsMs {
         Self(self.0 + 1)
+    }
+
+    pub fn add_dt_ms(&self, dt: DtMs) -> Self {
+        Self(self.0 + dt.0)
     }
 
     pub fn fmt(&self) -> TsMsFmt {

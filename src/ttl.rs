@@ -68,6 +68,10 @@ impl RetentionTime {
     }
 
     pub fn to_index_db_i32(&self) -> i32 {
+        self.to_index_db_u16() as i32
+    }
+
+    pub fn to_index_db_u16(&self) -> u16 {
         match self {
             RetentionTime::Short => 2,
             RetentionTime::Medium => 4,

@@ -1,12 +1,12 @@
-use crate::query::PulseRangeQuery;
-use crate::query::TimeRangeQuery;
-use crate::timeunits::SEC;
 use crate::AppendToUrl;
 use crate::Dim0Kind;
 use crate::Error;
 use crate::FromUrl;
-use crate::TsNano;
 use crate::MS;
+use crate::TsNano;
+use crate::query::PulseRangeQuery;
+use crate::query::TimeRangeQuery;
+use crate::timeunits::SEC;
 use chrono::DateTime;
 use chrono::TimeZone;
 use chrono::Utc;
@@ -90,6 +90,15 @@ impl NanoRange {
             beg: beg.timestamp_nanos_opt().unwrap_or(0) as u64,
             end: end.timestamp_nanos_opt().unwrap_or(0) as u64,
         }
+    }
+
+    pub fn from_strings(beg: &str, end: &str) -> Result<Self, Error> {
+        // let format = time::format_description!("[year]-[month]-[day]T[hour]:[minute]:[second]Z");
+        // let beg = time::UtcDateTime::parse(beg, &format)?;
+        // let beg = beg.into();
+        let beg = beg.parse::<DateTime<Utc>>()?;
+        let end = end.parse::<DateTime<Utc>>()?;
+        Ok(Self::from_date_time(beg, end))
     }
 
     pub fn from_ms_u64(beg: u64, end: u64) -> Self {
