@@ -508,9 +508,7 @@ pub struct BinWriteIndexQuery {
     #[serde(default)]
     log_level: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    rt1: Option<u16>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    rt2: Option<u16>,
+    rt: Option<RetentionTime>,
     pbp: PrebinnedPartitioning,
 }
 
@@ -523,18 +521,8 @@ impl BinWriteIndexQuery {
         &self.channel
     }
 
-    pub fn retention_time_1(&self) -> RetentionTime {
-        match self.rt1 {
-            Some(x) => RetentionTime::from_index_db_u16(x).unwrap_or(RetentionTime::Short),
-            None => RetentionTime::Short,
-        }
-    }
-
-    pub fn retention_time_2(&self) -> RetentionTime {
-        match self.rt2 {
-            Some(x) => RetentionTime::from_index_db_u16(x).unwrap_or(RetentionTime::Short),
-            None => RetentionTime::Short,
-        }
+    pub fn retention_time(&self) -> RetentionTime {
+        self.rt.clone().unwrap_or(RetentionTime::Short)
     }
 
     pub fn prebinned_partitioning(&self) -> PrebinnedPartitioning {
@@ -565,11 +553,12 @@ impl FromUrl for BinWriteIndexQuery {
             channel: SfDbChannel::from_pairs(&pairs)?,
             range: SeriesRange::from_pairs(pairs)?,
             log_level: pairs.get("log_level").map_or(String::new(), String::from),
-            rt1: pairs.get("rt1").map_or(Ok(None), |k| {
-                k.parse().map(Some).map_err(|_| Error::BadUseRt)
-            })?,
-            rt2: pairs.get("rt2").map_or(Ok(None), |k| {
-                k.parse().map(Some).map_err(|_| Error::BadUseRt)
+            rt: pairs.get("rt").map_or(Ok(None), |k| {
+                k.parse::<u16>()
+                    .map(RetentionTime::from_index_db_u16)
+                    .map_err(|_| Error::BadUseRt)?
+                    .map(Some)
+                    .map_err(|_| Error::BadUseRt)
             })?,
             pbp: pairs
                 .get("pbp")
@@ -591,11 +580,9 @@ impl AppendToUrl for BinWriteIndexQuery {
         if self.log_level.len() != 0 {
             g.append_pair("log_level", &self.log_level);
         }
-        if let Some(x) = self.rt1.as_ref() {
-            g.append_pair("rt1", &x.to_string());
+        if let Some(x) = self.rt.as_ref() {
+            g.append_pair("rt", &x.to_index_db_u16().to_string());
         }
-        if let Some(x) = self.rt2.as_ref() {
-            g.append_pair("rt2", &x.to_string());
-        }
+        g.append_pair("pbp", &self.pbp.db_ix().to_string());
     }
 }
