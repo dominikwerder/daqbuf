@@ -1,6 +1,6 @@
 [package]
 name = "daqbuf-streams"
-version = "0.0.3"
+version = "0.0.4"
 authors = ["Dominik Werder <dominik.werder@gmail.com>"]
 edition = "2021"
 
