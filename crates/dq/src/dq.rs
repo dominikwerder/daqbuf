@@ -4,12 +4,12 @@ use daqbuf_err as err;
 use disk::eventchunker::EventChunker;
 use disk::eventchunker::EventChunkerConf;
 use err::Error;
-#[allow(unused)]
-use netpod::log::*;
-use netpod::range::evrange::NanoRange;
 use netpod::ByteOrder;
 use netpod::ByteSize;
 use netpod::SfChFetchInfo;
+#[allow(unused)]
+use netpod::log::*;
+use netpod::range::evrange::NanoRange;
 use std::path::PathBuf;
 use tokio::fs::File;
 use tokio::io::AsyncReadExt;

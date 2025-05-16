@@ -1,6 +1,6 @@
 [package]
-name = "daqbuffer"
-version = "0.5.5-aa.12"
+name = "daqretrieve"
+version = "0.5.5-aa.13"
 authors = ["Dominik Werder <dominik.werder@gmail.com>"]
 edition = "2024"
 

@@ -3,9 +3,9 @@ use chrono::Duration;
 use chrono::Utc;
 use clap::Parser;
 use daqbuf_err::Error;
-use daqbuffer::cli::ClientType;
-use daqbuffer::cli::Opts;
-use daqbuffer::cli::SubCmd;
+use daqretrieve::cli::ClientType;
+use daqretrieve::cli::Opts;
+use daqretrieve::cli::SubCmd;
 use netpod::NodeConfig;
 use netpod::NodeConfigCached;
 use netpod::ProxyConfig;
@@ -129,7 +129,7 @@ async fn go() -> Result<(), Error> {
                 .await?;
             }
             ClientType::CborEvents(opts) => {
-                daqbuffer::fetch::fetch_cbor(
+                daqretrieve::fetch::fetch_cbor(
                     &opts.url,
                     ScalarType::from_variant_str(&opts.scalar_type).unwrap(),
                     Shape::from_dims_str(&opts.shape).unwrap(),

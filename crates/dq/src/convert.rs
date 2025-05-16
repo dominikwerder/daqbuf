@@ -1,4 +1,5 @@
-use clap::{ArgAction, Parser};
+use clap::ArgAction;
+use clap::Parser;
 use daqbuf_err as err;
 use err::Error;
 use netpod::timeunits::*;
@@ -65,16 +66,4 @@ impl FromStr for TimeBinSize {
             Err(Error::with_msg_no_trace("Malformed time-bin size"))
         }
     }
-}
-
-pub fn main() -> Result<(), Error> {
-    taskrun::run(async {
-        let opts = Opts::parse();
-        match opts.subcmd {
-            SubCmd::ConvertArchiverApplianceChannel(_) => {
-                eprintln!("error: archapp not built");
-                Ok(())
-            }
-        }
-    })
 }

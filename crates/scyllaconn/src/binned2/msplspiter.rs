@@ -45,7 +45,7 @@ fn test_iter_00() {
     let range = NanoRange::from_strings("2024-06-07T09:17:31Z", "2024-06-07T09:17:31Z").unwrap();
     let pbp = PrebinnedPartitioning::Sec1;
     let mut it = MspLspIter::new(range, pbp);
-    taskrun;
+    // taskrun;
     for x in it {
         eprintln!("{:?}", x);
     }
