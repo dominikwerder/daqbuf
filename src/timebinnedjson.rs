@@ -48,6 +48,7 @@ autoerr::create_error_v1!(
         Collect(#[from] crate::collect::Error),
         Json(#[from] serde_json::Error),
         Msg(String),
+        BadRange,
     },
 );
 
@@ -286,7 +287,9 @@ async fn timebinned_stream(
         EventsSubQuerySettings::from(&query),
         query.log_level().into(),
         Arc::new(ctx.clone()),
-        binned_range.binned_range_time(),
+        binned_range
+            .binned_range_time()
+            .ok_or_else(|| Error::BadRange)?,
         do_time_weight,
         bin_len_layers,
         cache_read_provider,
