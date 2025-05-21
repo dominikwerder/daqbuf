@@ -53,6 +53,16 @@ pub enum StreamItem<T> {
     Stats(StatsItem),
 }
 
+impl<T> StreamItem<T> {
+    pub fn into_data(self) -> Result<T, Self> {
+        if let StreamItem::DataItem(x) = self {
+            Ok(x)
+        } else {
+            Err(self)
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct LogItem {
     pub node_ix: u32,
@@ -69,6 +79,14 @@ impl LogItem {
             msg,
         }
     }
+
+    pub fn info(msg: String) -> Self {
+        Self {
+            node_ix: 0,
+            level: Level::INFO,
+            msg,
+        }
+    }
 }
 
 pub type SitemErrTy = err::Error;
@@ -76,6 +94,8 @@ pub type SitemErrTy = err::Error;
 pub type Sitemty<T> = Result<StreamItem<RangeCompletableItem<T>>, SitemErrTy>;
 
 pub type Sitemty2<T, E> = Result<StreamItem<RangeCompletableItem<T>>, E>;
+
+pub type Sitemty3<T, E> = Result<StreamItem<T>, E>;
 
 #[macro_export]
 macro_rules! on_sitemty_range_complete {
@@ -148,6 +168,10 @@ macro_rules! try_map_sitemty_data {
 
 pub fn sitem_data<X>(x: X) -> Sitemty<X> {
     Ok(StreamItem::DataItem(RangeCompletableItem::Data(x)))
+}
+
+pub fn sitem3_data<T, E>(x: T) -> Sitemty3<T, E> {
+    Ok(StreamItem::DataItem(x))
 }
 
 pub fn sitem_err_from_string<T, D>(x: T) -> Sitemty<D>
