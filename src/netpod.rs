@@ -2856,10 +2856,10 @@ impl BinnedRangeEnum {
         }
     }
 
-    pub fn binned_range_time(&self) -> BinnedRange<TsNano> {
+    pub fn binned_range_time(&self) -> Option<BinnedRange<TsNano>> {
         match self {
-            BinnedRangeEnum::Time(x) => x.clone(),
-            BinnedRangeEnum::Pulse(_) => panic!(),
+            BinnedRangeEnum::Time(x) => Some(x.clone()),
+            BinnedRangeEnum::Pulse(_) => None,
         }
     }
 
