@@ -2,16 +2,20 @@ pub mod bwxcmb;
 pub mod read_all_coarse;
 
 use crate::worker::ScyllaQueue;
+use daqbuf_series::SeriesId;
 use daqbuf_series::msp::MspU32;
 use daqbuf_series::msp::PrebinnedPartitioning;
-use daqbuf_series::SeriesId;
 use futures_util::Future;
 use futures_util::FutureExt;
 use futures_util::Stream;
+use items_0::streamitem::LogItem;
+use items_0::streamitem::Sitemty3;
+use items_0::streamitem::StreamItem;
+use items_0::streamitem::sitem3_data;
+use netpod::DtMs;
 use netpod::log;
 use netpod::range::evrange::NanoRange;
 use netpod::ttl::RetentionTime;
-use netpod::DtMs;
 use std::collections::VecDeque;
 use std::fmt;
 use std::pin::Pin;
@@ -62,6 +66,7 @@ pub struct BinWriteIndexRtStream {
     msp_end: u32,
     lsp_end: u32,
     fut1: Option<Fut1>,
+    logbuf: VecDeque<LogItem>,
 }
 
 impl BinWriteIndexRtStream {
@@ -95,6 +100,7 @@ impl BinWriteIndexRtStream {
             msp_end,
             lsp_end,
             fut1: None,
+            logbuf: Default::default(),
         }
     }
 
@@ -115,12 +121,17 @@ impl BinWriteIndexRtStream {
     }
 
     fn make_next_query_fut(mut self: Pin<&mut Self>, _cx: &mut Context) -> Option<Fut1> {
+        let msg = format!(
+            "make_next_query_fut  msp {}  msp_end {}  lsp_min {}  lsp_end {}",
+            self.msp, self.msp_end, self.lsp_min, self.lsp_end
+        );
+        self.logbuf.push_back(LogItem::info(msg));
         if self.msp <= self.msp_end {
             let msp = self.msp;
-            let lsp_min = self.lsp_min;
             self.msp += 1;
+            let lsp_min = self.lsp_min;
             self.lsp_min = 0;
-            let lsp_max = if self.msp == self.msp_end {
+            let lsp_max = if self.msp > self.msp_end {
                 self.lsp_end
             } else {
                 self.pbp.patch_len()
@@ -144,12 +155,14 @@ impl BinWriteIndexRtStream {
 }
 
 impl Stream for BinWriteIndexRtStream {
-    type Item = Result<BinWriteIndexSet, Error>;
+    type Item = Sitemty3<BinWriteIndexSet, Error>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         use Poll::*;
         loop {
-            break if let Some(fut) = self.fut1.as_mut() {
+            break if let Some(x) = self.logbuf.pop_front() {
+                Ready(Some(Ok(StreamItem::Log(x))))
+            } else if let Some(fut) = self.fut1.as_mut() {
                 match fut.0.poll_unpin(cx) {
                     Ready(Ok(x)) => {
                         self.fut1 = None;
@@ -157,7 +170,7 @@ impl Stream for BinWriteIndexRtStream {
                             msp: MspU32(x.0),
                             entries: x.3,
                         };
-                        Ready(Some(Ok(item)))
+                        Ready(Some(sitem3_data(item)))
                     }
                     Ready(Err(e)) => {
                         self.fut1 = None;

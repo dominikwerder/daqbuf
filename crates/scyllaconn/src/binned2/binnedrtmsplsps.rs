@@ -74,7 +74,7 @@ impl BinnedRtMspLsps {
         let msp = self.msp.to_u64();
         let offs = self.lsps.0.to_u32()..self.lsps.1.to_u32();
         // SAFETY we only use scyqueue while we self are alive.
-        let scyqueue = unsafe { &mut *(&mut self.scyqueue as *mut ScyllaQueue) };
+        let scyqueue = unsafe { &*(&self.scyqueue as *const ScyllaQueue) };
         let fut = scyqueue.read_prebinned_f32(rt, series, binlen, msp, offs);
         let fut = Box::pin(fut);
         Some(fut)

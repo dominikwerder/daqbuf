@@ -27,6 +27,7 @@ use netpod::log;
 use netpod::req_uri_to_url;
 use netpod::timeunits::SEC;
 use netpod::ttl::RetentionTime;
+use netpod::BinnedRange;
 use netpod::ChannelTypeConfigGen;
 use netpod::FromUrl;
 use netpod::NodeConfigCached;
@@ -72,6 +73,9 @@ autoerr::create_error_v1!(
         BinnedStream(err::Error),
         TimebinnedJson(#[from] streams::timebinnedjson::Error),
         ReadAllCoarse(#[from] scyllaconn::binwriteindex::read_all_coarse::Error),
+        Binned2FromBinned(#[from] scyllaconn::binned2::frombinned::Error),
+        BinnedQuery(#[from] query::api4::binned::Error),
+        BadRange,
     },
 );
 
@@ -237,24 +241,53 @@ fn make_read_provider(
     (events_read_provider, cache_read_provider)
 }
 
+fn to_debug<T: std::fmt::Debug>(x: T) -> String {
+    format!("{:?}", x)
+}
+
 async fn binned_json_framed(
     res2: HandleRes2<'_>,
     ctx: &ReqCtx,
     _ncc: &NodeConfigCached,
 ) -> Result<StreamResponse, Error> {
+    use futures_util::Stream;
     let series = SeriesId::new(res2.ch_conf.series().unwrap());
     let range = res2.query.range().to_time().unwrap();
     let scyqueue = res2.scyqueue.as_ref().unwrap();
-    let res = scyllaconn::binwriteindex::read_all_coarse::read_all_coarse(series, range, scyqueue).await?;
-    let mut strings = Vec::new();
-    for e in res {
-        strings.push(format!("{:?}", e));
-    }
+    let stream = if res2.url.as_str().contains("testpart=read_all_coarse") {
+        let stream = scyllaconn::binwriteindex::read_all_coarse::ReadAllCoarse::new(series, range, scyqueue.clone());
+        let stream = stream.map_ok(to_debug).map_err(Error::from);
+        let msg = format!("{}", res2.url.as_str());
+        let stream = futures_util::stream::iter([Ok(msg)]).chain(stream);
+        Box::pin(stream) as Pin<Box<dyn Stream<Item = _> + Send>>
+    } else if res2.url.as_str().contains("testpart=frombinned") {
+        let binrange = res2
+            .query
+            .covering_range()?
+            .binned_range_time()
+            .ok_or_else(|| Error::BadRange)?;
+        let stream = scyllaconn::binned2::frombinned::FromBinned::new(series, binrange, scyqueue);
+        let stream = stream.map_err(Error::from);
+        let msg = format!("{}", res2.url.as_str());
+        let stream = futures_util::stream::iter([Ok(msg)]).chain(stream);
+        Box::pin(stream) as Pin<Box<dyn Stream<Item = _> + Send>>
+    } else {
+        let msg = format!("UNKNOWN  {}", res2.url.as_str());
+        let stream = futures_util::stream::iter([Ok(msg)]);
+        Box::pin(stream)
+    };
+    let stream = streams::lenframe::bytes_chunks_to_len_framed_str(stream);
+    let stream = streams::instrument::InstrumentStream::new(stream, res2.logspan);
     let ret = response(StatusCode::OK)
-        .header(CONTENT_TYPE, APP_JSON)
+        .header(CONTENT_TYPE, APP_JSON_FRAMED)
         .header(HEADER_NAME_REQUEST_ID, ctx.reqid())
-        .body(ToJsonBody::from(&strings).into_body())?;
+        .body(body_stream(stream))?;
     Ok(ret)
+    // let ret = response(StatusCode::OK)
+    //     .header(CONTENT_TYPE, APP_JSON)
+    //     .header(HEADER_NAME_REQUEST_ID, ctx.reqid())
+    //     .body(ToJsonBody::from(&strings).into_body())?;
+    // Ok(ret)
 }
 
 struct HandleRes2<'a> {
