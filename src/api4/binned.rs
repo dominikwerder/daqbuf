@@ -498,6 +498,9 @@ impl AppendToUrl for BinnedQuery {
         if let Some(x) = self.datahub_bin_as_waveform.as_ref() {
             g.append_pair("private_datahub_bin_as_waveform", &x.to_string());
         }
+        if let Some(x) = self.pbd_enable.as_ref() {
+            g.append_pair("pbd_enable", &x.to_string());
+        }
     }
 }
 
