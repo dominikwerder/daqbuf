@@ -329,7 +329,7 @@ async fn binned_cbor_framed(
     Ok(ret)
 }
 
-struct HandleRes2<'a> {
+pub struct HandleRes2<'a> {
     logspan: Span,
     query: BinnedQuery,
     ch_conf: ChannelTypeConfigGen,

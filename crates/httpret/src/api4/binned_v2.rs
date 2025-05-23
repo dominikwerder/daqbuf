@@ -45,11 +45,14 @@ use series::msp::PrebinnedPartitioning;
 use series::SeriesId;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::time::Duration;
 use streams::eventsplainreader::DummyCacheReadProvider;
 use streams::eventsplainreader::SfDatabufferEventReadProvider;
 use streams::streamtimeout::StreamTimeout2;
+use streams::streamtimeout::TimeoutableStream;
 use streams::timebin::cached::reader::EventsReadProvider;
 use streams::timebin::CacheReadProvider;
+use streams::timebinnedjson::timeoutable_collectable_stream_to_json_bytes;
 use tracing::Instrument;
 use tracing::Span;
 use url::Url;
@@ -251,30 +254,67 @@ async fn binned_json_framed(
     _ncc: &NodeConfigCached,
 ) -> Result<StreamResponse, Error> {
     use futures_util::Stream;
+    info!("binned_json_framed  V2 prebinned");
     let series = SeriesId::new(res2.ch_conf.series().unwrap());
     let range = res2.query.range().to_time().unwrap();
     let scyqueue = res2.scyqueue.as_ref().unwrap();
     let stream = if res2.url.as_str().contains("testpart=read_all_coarse") {
-        let stream = scyllaconn::binwriteindex::read_all_coarse::ReadAllCoarse::new(series, range, scyqueue.clone());
-        let stream = stream.map_ok(to_debug).map_err(Error::from);
-        let msg = format!("{}", res2.url.as_str());
-        let stream = futures_util::stream::iter([Ok(msg)]).chain(stream);
-        Box::pin(stream) as Pin<Box<dyn Stream<Item = _> + Send>>
+        // let stream = scyllaconn::binwriteindex::read_all_coarse::ReadAllCoarse::new(series, range, scyqueue.clone());
+        // let stream = stream.map_ok(to_debug).map_err(Error::from);
+        // let msg = format!("{}", res2.url.as_str());
+        // let stream = futures_util::stream::iter([Ok(msg)]).chain(stream);
+        // Box::pin(stream) as Pin<Box<dyn Stream<Item = _> + Send>>
+        todo!()
     } else if res2.url.as_str().contains("testpart=frombinned") {
         let binrange = res2
             .query
             .covering_range()?
             .binned_range_time()
             .ok_or_else(|| Error::BadRange)?;
-        let stream = scyllaconn::binned2::frombinned::FromBinned::new(series, binrange, scyqueue);
+        let stream =
+            scyllaconn::binned2::frombinned::FromBinned::new(series, binrange, scyqueue, res2.cache_read_provider);
         let stream = stream.map_err(Error::from);
-        let msg = format!("{}", res2.url.as_str());
-        let stream = futures_util::stream::iter([Ok(msg)]).chain(stream);
-        Box::pin(stream) as Pin<Box<dyn Stream<Item = _> + Send>>
+        // let msg = format!("{}", res2.url.as_str());
+        // let stream = futures_util::stream::iter([Ok(msg)]).chain(stream);
+        let stream = stream.map(|x| {
+            //
+            x
+        });
+        let stream = stream.map(|item| {
+            use items_0::streamitem::RangeCompletableItem;
+            use items_0::streamitem::StreamItem;
+            use items_0::timebin::BinsBoxed;
+            match item {
+                Ok(StreamItem::DataItem(mut x)) => {
+                    x.fix_numerics();
+                    let ret = x.boxed_into_collectable_box();
+                    Ok(StreamItem::DataItem(RangeCompletableItem::Data(ret)))
+                }
+                Ok(StreamItem::Log(x)) => Ok(StreamItem::Log(x)),
+                Ok(StreamItem::Stats(x)) => Ok(StreamItem::Stats(x)),
+                Err(e) => Err(e),
+            }
+        });
+        let stream = stream.map_err(|e| daqbuf_err::Error::from_string(e));
+        let timeout_content_base = res2
+            .query
+            .timeout_content()
+            .unwrap_or(Duration::from_millis(2000))
+            .min(Duration::from_millis(8000))
+            .max(Duration::from_millis(334));
+        let timeout_content_2 = timeout_content_base * 2 / 3;
+        let stream = stream.map(|x| Some(x)).chain(futures_util::stream::iter([None]));
+        let stream = TimeoutableStream::new(timeout_content_base, res2.timeout_provider, stream);
+        let stream = Box::pin(stream);
+        let stream = timeoutable_collectable_stream_to_json_bytes(stream, timeout_content_2);
+        // let stream = stream.map(|x| Ok(format!("dummy82749827348932")));
+        // Box::pin(stream) as Pin<Box<dyn Stream<Item = _> + Send>>
+        stream
     } else {
-        let msg = format!("UNKNOWN  {}", res2.url.as_str());
-        let stream = futures_util::stream::iter([Ok(msg)]);
-        Box::pin(stream)
+        // let msg = format!("UNKNOWN  {}", res2.url.as_str());
+        // let stream = futures_util::stream::iter([Ok(msg)]);
+        // Box::pin(stream)
+        todo!()
     };
     let stream = streams::lenframe::bytes_chunks_to_len_framed_str(stream);
     let stream = streams::instrument::InstrumentStream::new(stream, res2.logspan);

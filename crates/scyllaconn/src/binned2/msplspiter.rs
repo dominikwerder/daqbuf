@@ -1,7 +1,7 @@
 use daqbuf_series::msp::LspU32;
 use daqbuf_series::msp::MspU32;
 use daqbuf_series::msp::PrebinnedPartitioning;
-use netpod::TsMs;
+use netpod::DtMs;
 use netpod::range::evrange::NanoRange;
 
 #[derive(Debug, Clone)]
@@ -12,15 +12,37 @@ pub struct MspLspItem {
 
 #[derive(Debug)]
 pub struct MspLspIter {
+    #[allow(unused)]
     range: NanoRange,
     pbp: PrebinnedPartitioning,
-    ts: TsMs,
+    #[allow(unused)]
+    mins: (u32, u32),
+    maxs: (u32, u32),
+    curs: (u32, u32),
 }
 
 impl MspLspIter {
-    pub fn new(range: NanoRange, pbp: PrebinnedPartitioning) -> Self {
-        let ts = range.beg_ts().to_ts_ms();
-        Self { range, pbp, ts }
+    pub fn new_covering(range: NanoRange, pbp: PrebinnedPartitioning) -> Self {
+        let mins = pbp.msp_lsp(range.beg_ts().to_ts_ms());
+        let end1 = range.end_ts().to_ts_ms();
+        let g = DtMs::from_ms_u64(pbp.bin_len().ms() - 1);
+        let end2 = end1.add_dt_ms(g);
+        let maxs = pbp.msp_lsp(end2);
+        Self {
+            range,
+            pbp,
+            mins,
+            maxs,
+            curs: mins,
+        }
+    }
+
+    pub fn mins(&self) -> (MspU32, LspU32) {
+        (MspU32(self.mins.0), LspU32(self.mins.1))
+    }
+
+    pub fn maxs(&self) -> (MspU32, LspU32) {
+        (MspU32(self.maxs.0), LspU32(self.maxs.1))
     }
 }
 
@@ -28,13 +50,16 @@ impl Iterator for MspLspIter {
     type Item = (MspU32, LspU32);
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.ts >= self.range.end_ts().to_ts_ms() {
+        if self.curs.0 >= self.maxs.0 && self.curs.1 >= self.maxs.1 {
             None
         } else {
-            let x = self.pbp.msp_lsp(self.ts);
-            let msp = MspU32(x.0);
-            let lsp = LspU32(x.1);
-            self.ts = self.ts.add_dt_ms(self.pbp.bin_len());
+            let msp = MspU32(self.curs.0);
+            let lsp = LspU32(self.curs.1);
+            self.curs.1 += 1;
+            if self.curs.1 >= self.pbp.patch_len() {
+                self.curs.1 = 0;
+                self.curs.0 += 1;
+            }
             Some((msp, lsp))
         }
     }
@@ -45,7 +70,7 @@ fn test_iter_00() {
     let range = NanoRange::from_strings("2024-06-07T09:17:31Z", "2024-06-07T09:17:31Z").unwrap();
     let pbp = PrebinnedPartitioning::Sec1;
     assert_eq!(pbp.patch_len(), 1200);
-    let it = MspLspIter::new(range, pbp);
+    let it = MspLspIter::new_covering(range, pbp);
     let a: Vec<_> = it.collect();
     assert_eq!(a.len(), 0);
 }
@@ -54,12 +79,15 @@ fn test_iter_00() {
 fn test_iter_01() {
     let range = NanoRange::from_strings("2024-06-07T09:17:31Z", "2024-06-07T09:17:32Z").unwrap();
     let pbp = PrebinnedPartitioning::Sec1;
-    assert_eq!(pbp.patch_len(), 1200);
-    let it = MspLspIter::new(range, pbp.clone());
+    let it = MspLspIter::new_covering(range, pbp.clone());
     let a: Vec<_> = it.collect();
     assert_eq!(a.len(), 1);
-    assert_eq!(a[0].0.0, 1431459);
-    assert_eq!(a[0].1.0, 1051);
+    let e = a.first().unwrap();
+    assert_eq!(e.0.0, 1431459);
+    assert_eq!(e.1.0, 1051);
+    // let e = a.last().unwrap();
+    // assert_eq!(e.0.0, 1431459);
+    // assert_eq!(e.1.0, 1051);
     let ts_sec = pbp.patch_len() as u64 * a[0].0.0 as u64 + a[0].1.0 as u64;
     // time::UtcDateTime::new(time::Date::with, time)
     let ts1 = time::UtcDateTime::from_unix_timestamp(ts_sec as i64).unwrap();
@@ -72,7 +100,7 @@ fn test_iter_01() {
 fn test_iter_02() {
     let range = NanoRange::from_strings("2024-06-07T09:17:31Z", "2024-06-07T09:22:00Z").unwrap();
     let pbp = PrebinnedPartitioning::Sec1;
-    let it = MspLspIter::new(range, pbp.clone());
+    let it = MspLspIter::new_covering(range, pbp.clone());
     let a: Vec<_> = it.collect();
     assert_eq!(a.len(), 240 + 29);
     let e = &a[a.len() - 1];
@@ -85,7 +113,7 @@ fn test_iter_03() {
     // Check clamped covering in correct direction
     let range = NanoRange::from_strings("2024-06-07T09:17:31.1Z", "2024-06-07T09:21:59.8Z").unwrap();
     let pbp = PrebinnedPartitioning::Sec1;
-    let it = MspLspIter::new(range, pbp.clone());
+    let it = MspLspIter::new_covering(range, pbp.clone());
     let a: Vec<_> = it.collect();
     assert_eq!(a.len(), 240 + 29);
     let e = &a[0];
@@ -94,4 +122,31 @@ fn test_iter_03() {
     let e = &a[a.len() - 1];
     assert_eq!(e.0.0, 1431460);
     assert_eq!(e.1.0, 119);
+}
+
+#[test]
+fn test_iter_04() {
+    // Check clamped covering in correct direction
+    let range = NanoRange::from_strings("2024-06-07T09:17:31.9Z", "2024-06-07T09:21:59.1Z").unwrap();
+    let pbp = PrebinnedPartitioning::Sec1;
+    let it = MspLspIter::new_covering(range, pbp.clone());
+    let a: Vec<_> = it.collect();
+    assert_eq!(a.len(), 240 + 29);
+    let e = &a[0];
+    assert_eq!(e.0.0, 1431459);
+    assert_eq!(e.1.0, 1051);
+    let e = &a[a.len() - 1];
+    assert_eq!(e.0.0, 1431460);
+    assert_eq!(e.1.0, 119);
+}
+
+#[test]
+fn test_iter_05() {
+    let range = NanoRange::from_strings("2025-05-05T12:00:00Z", "2025-05-08T00:00:00Z").unwrap();
+    let pbp = PrebinnedPartitioning::Day1;
+    let it = MspLspIter::new_covering(range, pbp.clone());
+    let a: Vec<_> = it.collect();
+    assert_eq!(a.len(), 3);
+    let e = &a[0];
+    let e = &a[a.len() - 1];
 }

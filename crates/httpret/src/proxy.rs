@@ -219,6 +219,8 @@ async fn proxy_http_service_inner(
         Ok(proxy_backend_query::<MapPulseQuery>(req, ctx, proxy_config).await?)
     } else if path == "/api/4/binned" {
         Ok(proxy_backend_query::<BinnedQuery>(req, ctx, proxy_config).await?)
+    } else if path == "/api/4/private/binnedv2" {
+        Ok(proxy_backend_query::<BinnedQuery>(req, ctx, proxy_config).await?)
     } else if path == "/api/4/channel/config" {
         Ok(proxy_backend_query::<ChannelConfigQuery>(req, ctx, proxy_config).await?)
     } else if path.starts_with("/api/4/test/http/204") {
