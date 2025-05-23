@@ -10,10 +10,11 @@ autoerr::create_error_v1!(
         PrebinnedPartitioningInvalid,
         BadDv1(u32),
         BadPbp(u32),
+        BadBinLen(DtMs),
     },
 );
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct MspU32(pub u32);
 
 impl MspU32 {
@@ -30,7 +31,7 @@ impl MspU32 {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct LspU32(pub u32);
 
 impl LspU32 {
@@ -75,6 +76,26 @@ impl PrebinnedPartitioning {
             0x107 => Ok(Day1),
             _ => Err(Error::BadDv1(dv1)),
         }
+    }
+
+    pub fn from_binlen(binlen: DtMs) -> Result<Self, Error> {
+        use PrebinnedPartitioning::*;
+        let ret = if binlen == DtMs::from_ms_u64(1000 * 1) {
+            Some(Sec1)
+        } else if binlen == DtMs::from_ms_u64(1000 * 10) {
+            Some(Sec10)
+        } else if binlen == DtMs::from_ms_u64(1000 * 60 * 1) {
+            Some(Min1)
+        } else if binlen == DtMs::from_ms_u64(1000 * 60 * 10) {
+            Some(Min10)
+        } else if binlen == DtMs::from_ms_u64(1000 * 60 * 60 * 1) {
+            Some(Hour1)
+        } else if binlen == DtMs::from_ms_u64(1000 * 60 * 60 * 24) {
+            Some(Day1)
+        } else {
+            None
+        };
+        ret.ok_or(Error::BadBinLen(binlen))
     }
 
     pub fn bin_len(&self) -> DtMs {
@@ -163,6 +184,12 @@ impl PrebinnedPartitioning {
             6 => Ok(Day1),
             _ => Err(Error::BadPbp(x)),
         }
+    }
+
+    pub fn msp_lsp_to_ts(&self, msp: MspU32, lsp: LspU32) -> TsMs {
+        let n = self.patch_len() as u64 * msp.to_u64() + lsp.to_u32() as u64;
+        let dt = self.bin_len().mul(n);
+        TsMs::from_ms_u64(dt.ms())
     }
 }
 
