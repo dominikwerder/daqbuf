@@ -174,6 +174,11 @@ pub fn sitem3_data<T, E>(x: T) -> Sitemty3<T, E> {
     Ok(StreamItem::DataItem(x))
 }
 
+pub fn sitem3_log_info<T, E>(msg: String) -> Sitemty3<T, E> {
+    let item = LogItem::info(msg);
+    Ok(StreamItem::Log(item))
+}
+
 pub fn sitem_err_from_string<T, D>(x: T) -> Sitemty<D>
 where
     T: ToString,
