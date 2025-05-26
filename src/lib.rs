@@ -12,10 +12,6 @@ macro_rules! err_dbg_dis {
 }
 
 pub use anyhow;
-pub use thiserror;
-pub use thiserror::Error as ThisError;
-// pub use thiserror::UserErrorClass;
-// pub use thiserror::UserErrorContent;
 
 pub mod bt {
     pub use backtrace::Backtrace;
@@ -34,19 +30,20 @@ use std::sync::PoisonError;
 
 pub type Res2<T> = anyhow::Result<T>;
 
-#[derive(Debug, ThisError)]
-pub enum ErrA {
-    #[error("bad-A")]
-    Bad,
-}
+autoerr::create_error_v1!(
+    name(ErrA, "ErrA"),
+    enum variants {
+        Bad,
+    },
+);
 
-#[derive(Debug, ThisError)]
-pub enum ErrB {
-    #[error("worse-B")]
-    Worse,
-    #[error("FromArrA")]
-    ErrA(#[from] ErrA),
-}
+autoerr::create_error_v1!(
+    name(ErrB, "ErrB"),
+    enum variants {
+        Worse,
+        ErrA(#[from] ErrA),
+    },
+);
 
 fn f_a() -> Result<u32, ErrA> {
     Err(ErrA::Bad)

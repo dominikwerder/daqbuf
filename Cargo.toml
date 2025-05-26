@@ -1,8 +1,8 @@
 [package]
 name = "daqbuf-err"
-version = "0.0.6"
+version = "0.0.7"
 authors = ["Dominik Werder <dominik.werder@gmail.com>"]
-edition = "2021"
+edition = "2024"
 
 [lib]
 doctest = false
@@ -18,8 +18,5 @@ chrono = { version = "0.4.26", features = ["serde"] }
 url = { version = "2.5.3", default-features = false }
 regex = "1.9.1"
 http = "1.0.0"
-thiserror = "=0.0.1"
 anyhow = "1.0"
-
-[patch.crates-io]
-thiserror = { git = "https://github.com/dominikwerder/thiserror.git", branch = "cstm" }
+autoerr = "0.0.3"
