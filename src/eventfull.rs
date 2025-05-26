@@ -1,9 +1,6 @@
 use crate::framable::FrameType;
 use bytes::BytesMut;
 use core::ops::Range;
-use daqbuf_err as err;
-use err::ThisError;
-use err::thiserror;
 use items_0::Empty;
 use items_0::WithLen;
 use items_0::container::ByteEstimate;
@@ -26,7 +23,7 @@ use std::borrow::Cow;
 use std::collections::VecDeque;
 use std::time::Instant;
 
-macro_rules! trace2 { ($($arg:tt)*) => ( trace!($($arg)*); ) }
+macro_rules! trace2 { ($($arg:expr),*) => ( trace!($($arg),*); ) }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct EventFull {
@@ -275,16 +272,17 @@ impl MergeableTy for EventFull {
     }
 }
 
-#[derive(Debug, ThisError, Serialize, Deserialize)]
-#[cstm(name = "Decompress")]
-pub enum DecompError {
-    TooLittleInput,
-    BadCompresionBlockSize,
-    UnusedBytes,
-    BitshuffleError,
-    ShapeMakesNoSense,
-    UnexpectedCompressedScalarValue,
-}
+autoerr::create_error_v1!(
+    name(DecompError, "Decompress"),
+    enum variants {
+        TooLittleInput,
+        BadCompresionBlockSize,
+        UnusedBytes,
+        BitshuffleError,
+        ShapeMakesNoSense,
+        UnexpectedCompressedScalarValue,
+    },
+);
 
 fn decompress(databuf: &[u8], type_size: u32) -> Result<Vec<u8>, DecompError> {
     // TODO collect decompression stats
