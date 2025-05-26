@@ -26,13 +26,14 @@ use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
 
-#[derive(Debug, thiserror::Error)]
-#[cstm(name = "Generator")]
-pub enum Error {
-    UnsupportedIsEventBlobs,
-    Items2(#[from] items_2::Error),
-    BadChannelName,
-}
+autoerr::create_error_v1!(
+    name(Error, "Generator"),
+    enum variants {
+        UnsupportedIsEventBlobs,
+        Items2(#[from] items_2::Error),
+        BadChannelName,
+    },
+);
 
 fn make_sleep_fut() -> Pin<Box<dyn Future<Output = ()> + Send>> {
     todo!()
@@ -45,7 +46,7 @@ pub fn make_test_channel_events_bytes_stream(
 ) -> Result<BoxedBytesStream, Error> {
     if subq.is_event_blobs() {
         let e = Error::UnsupportedIsEventBlobs;
-        error!("{e}");
+        error!("{}", e);
         Err(e)
     } else {
         let stream = make_test_channel_events_stream_data(subq, node_count, node_ix)?;

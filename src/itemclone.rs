@@ -6,9 +6,12 @@ use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
 
-#[derive(Debug, thiserror::Error)]
-#[cstm(name = "ItemClone")]
-pub enum Error {}
+autoerr::create_error_v1!(
+    name(Error, "ItemClone"),
+    enum variants {
+        Dummy,
+    },
+);
 
 #[pin_project::pin_project]
 pub struct Itemclone<'a, T, INP>

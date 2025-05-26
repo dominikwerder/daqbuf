@@ -23,7 +23,6 @@ humantime = "2.1.0"
 http = "1"
 http-body = "1"
 http-body-util = "0.1.0"
-thiserror = "=0.0.1"
 autoerr = "0.0.3"
 chrono = { version = "0.4.38", features = ["serde"] }
 wasmer = { version = "5.0.1", default-features = false, features = ["sys", "cranelift"], optional = true }
@@ -41,6 +40,3 @@ tokio = { version = "1", features = ["rt"] }
 wasm_transform = ["wasmer"]
 indev = []
 tests-runtime = []
-
-[patch.crates-io]
-thiserror = { git = "https://github.com/dominikwerder/thiserror.git", branch = "cstm" }

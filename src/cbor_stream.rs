@@ -28,14 +28,15 @@ use std::time::Duration;
 const FRAME_HEAD_LEN: usize = 16;
 const FRAME_PAYLOAD_MAX: u32 = 1024 * 1024 * 80;
 
-#[derive(Debug, thiserror::Error)]
-#[cstm(name = "CborStream")]
-pub enum Error {
-    FromSlice(#[from] std::array::TryFromSliceError),
-    Msg(String),
-    Ciborium(#[from] ciborium::de::Error<std::io::Error>),
-    CiboriumValue(#[from] ciborium::value::Error),
-}
+autoerr::create_error_v1!(
+    name(Error, "CborStream"),
+    enum variants {
+        FromSlice(#[from] std::array::TryFromSliceError),
+        Msg(String),
+        Ciborium(#[from] ciborium::de::Error<std::io::Error>),
+        CiboriumValue(#[from] ciborium::value::Error),
+    },
+);
 
 struct ErrMsg<E>(E)
 where
@@ -176,7 +177,7 @@ impl<S> FramedBytesToChannelEventsStream<S> {
         let n = u32::from_le_bytes(self.buf[..4].try_into()?);
         if n > FRAME_PAYLOAD_MAX {
             let e = ErrMsg(format!("frame too large {n}")).into();
-            error!("{e}");
+            error!("{}", e);
             return Err(e);
         }
         let frame_len = FRAME_HEAD_LEN + n as usize;

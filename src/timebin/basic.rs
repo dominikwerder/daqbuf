@@ -16,20 +16,21 @@ use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
 
-macro_rules! debug_first { ($($arg:tt)*) => ( if false { debug!($($arg)*); } ) }
+macro_rules! debug_first { ($($arg:expr),*) => ( if false { debug!($($arg),*); } ) }
 
-macro_rules! trace2 { ($($arg:tt)*) => ( if false { trace!($($arg)*); } ) }
+macro_rules! trace2 { ($($arg:expr),*) => ( if false { trace!($($arg),*); } ) }
 
-macro_rules! trace3 { ($($arg:tt)*) => ( if false { trace!($($arg)*); } ) }
+macro_rules! trace3 { ($($arg:expr),*) => ( if false { trace!($($arg),*); } ) }
 
-#[derive(Debug, thiserror::Error)]
-#[cstm(name = "TimeBinnedStream")]
-pub enum Error {
-    MissingBinnerAfterProcessItem,
-    CreateEmpty,
-    NoBinnerAfterInputDone,
-    Msg(String),
-}
+autoerr::create_error_v1!(
+    name(Error, "TimeBinnedStream"),
+    enum variants {
+        MissingBinnerAfterProcessItem,
+        CreateEmpty,
+        NoBinnerAfterInputDone,
+        Msg(String),
+    },
+);
 
 type SitemtyStream<T> = Pin<Box<dyn Stream<Item = Sitemty<T>> + Send>>;
 
@@ -134,7 +135,7 @@ where
                         Ok(Break(Ready(sitem_data(bins))))
                     } else {
                         let e = Error::CreateEmpty;
-                        error!("{e}");
+                        error!("{}", e);
                         Err(e)
                     }
                 }

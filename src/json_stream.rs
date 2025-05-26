@@ -12,12 +12,13 @@ use netpod::log::*;
 use std::pin::Pin;
 use std::time::Duration;
 
-#[derive(Debug, thiserror::Error)]
-#[cstm(name = "JsonStream")]
-pub enum Error {
-    Json(#[from] serde_json::Error),
-    Msg(String),
-}
+autoerr::create_error_v1!(
+    name(Error, "JsonStream"),
+    enum variants {
+        Json(#[from] serde_json::Error),
+        Msg(String),
+    },
+);
 
 pub struct ErrMsg<E>(pub E)
 where

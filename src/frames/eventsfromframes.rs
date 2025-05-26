@@ -14,10 +14,6 @@ use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
 
-#[derive(Debug, thiserror::Error)]
-#[cstm(name = "FromFrames")]
-pub enum Error {}
-
 pub struct EventsFromFrames<O, INP> {
     inp: INP,
     dbgdesc: String,

@@ -7,9 +7,12 @@ use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
 
-#[derive(Debug, thiserror::Error)]
-#[cstm(name = "NeedMinBuffer")]
-pub enum Error {}
+autoerr::create_error_v1!(
+    name(Error, "NeedMinBuffer"),
+    enum variants {
+        Dummy,
+    },
+);
 
 pub struct NeedMinBuffer {
     inp: Pin<Box<dyn Stream<Item = Result<FileChunkRead, items_0::streamitem::SitemErrTy>> + Send>>,

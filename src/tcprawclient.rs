@@ -36,18 +36,32 @@ use std::sync::Arc;
 
 pub const TEST_BACKEND: &str = "testbackend-00";
 
-#[derive(Debug, thiserror::Error)]
-#[cstm(name = "TcpRawClient")]
-pub enum Error {
-    IO(#[from] std::io::Error),
-    Msg(String),
-    Frame(#[from] items_2::frame::Error),
-    Framable(#[from] items_2::framable::Error),
-    Json(#[from] serde_json::Error),
-    Http(#[from] http::Error),
-    #[error("ServerError({0:?}, {1})")]
-    ServerError(http::response::Parts, String),
-    HttpBody(Box<dyn std::error::Error + Send>),
+autoerr::create_error_v1!(
+    name(Error, "TcpRawClient"),
+    enum variants {
+        IO(#[from] std::io::Error),
+        Msg(String),
+        Frame(#[from] items_2::frame::Error),
+        Framable(#[from] items_2::framable::Error),
+        Json(#[from] serde_json::Error),
+        Http(#[from] http::Error),
+        ServerError(DisplayDebug<http::response::Parts>, String),
+        // ServerError(http::response::Parts, String),
+        HttpBody(Box<dyn std::error::Error + Send>),
+    },
+);
+
+struct DisplayDebug<T: fmt::Debug>(T);
+
+impl<T: fmt::Debug> fmt::Debug for DisplayDebug<T> {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        fmt::Debug::fmt(&self.0, fmt)
+    }
+}
+impl<T: fmt::Debug> fmt::Display for DisplayDebug<T> {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        fmt::Debug::fmt(&self.0, fmt)
+    }
 }
 
 struct ErrMsg<E>(E)
@@ -86,11 +100,12 @@ pub fn make_node_command_frame(query: EventsSubQuery) -> Result<EventQueryJsonSt
     Ok(EventQueryJsonStringFrame(ret))
 }
 
-#[derive(Debug, thiserror::Error)]
-pub enum ErrorBody {
-    #[error("{0}")]
-    Msg(String),
-}
+autoerr::create_error_v1!(
+    name(ErrorBody, "BodyError"),
+    enum variants {
+        Msg(String),
+    },
+);
 
 pub trait HttpSimplePost: Send {
     fn http_simple_post(
@@ -157,7 +172,7 @@ pub async fn x_processed_event_blobs_stream_from_node_http(
         error!("server error  {:?}", head);
         let buf = read_body_bytes(body).await?;
         let s = String::from_utf8_lossy(&buf);
-        return Err(Error::ServerError(head, s.to_string()));
+        return Err(Error::ServerError(DisplayDebug(head), s.to_string()));
     }
     let (_head, body) = res.into_parts();
     let inp = body;
