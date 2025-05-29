@@ -73,7 +73,7 @@ where
     }
 
     fn maybe_emit_active(&mut self) {
-        if self.cnt != 0 || self.produce_cnt_zero {
+        if self.cnt != 0 || self.produce_cnt_zero && self.min.is_some() {
             let ts1 = self.active_beg;
             let ts2 = self.active_end;
             let cnt = self.cnt;
