@@ -1,7 +1,9 @@
 use crate::SeriesId;
 
 pub fn dbg_chn(chn: &str) -> bool {
-    if true {
+    if chn.contains("daqbuftest") {
+        true
+    } else if true {
         let chns = [
             // "SATUN21-MQUA080:I-SET",
             // "SATUN21-MQUA080:I-SET-ARCH",
@@ -21,7 +23,10 @@ pub fn dbg_chn(chn: &str) -> bool {
 }
 
 pub fn dbg_series(series: SeriesId) -> bool {
-    if true {
+    if series.id() < 100 {
+        // unit test series
+        true
+    } else if true {
         let seriess = [
             // SATMA01-DBPM150:EST-Q1-SUM
             // 2968634857399905951,
