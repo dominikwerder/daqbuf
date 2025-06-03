@@ -16,7 +16,7 @@ ciborium = "0.2.1"
 bincode = "1.3.3"
 bytes = "1.10.0"
 futures-util = "0.3.24"
-autoerr = "0.0.3"
+autoerr = "0.0"
 chrono = { version = "0.4.19", features = ["serde"] }
 netpod = { path = "../daqbuf-netpod", package = "daqbuf-netpod" }
 daqbuf-err = { path = "../daqbuf-err" }
