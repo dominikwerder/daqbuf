@@ -16,7 +16,7 @@ chrono = "0.4"
 humantime = "2.1.0"
 humantime-serde = "1.1.1"
 slidebuf = "0.0.1"
-autoerr = "0.0.3"
+autoerr = "0.0"
 series = { path = "../daqbuf-series", package = "daqbuf-series" }
 netpod = { path = "../daqbuf-netpod", package = "daqbuf-netpod" }
 mettrics = { version = "0.0.7", path = "../mettrics" }
