@@ -21,13 +21,14 @@ use std::time::SystemTime;
 use streams::tcprawclient::TEST_BACKEND;
 use taskrun::tokio;
 
-#[derive(Debug, ThisError)]
-#[cstm(name = "ChannelConfig")]
-pub enum ConfigError {
-    ParseError(ConfigParseError),
-    NotFound,
-    Error,
-}
+autoerr::create_error_v1!(
+    name(ConfigError, "ChannelConfig"),
+    enum variants {
+        ParseError(ConfigParseError),
+        NotFound,
+        Error,
+    },
+);
 
 impl From<ConfigParseError> for ConfigError {
     fn from(value: ConfigParseError) -> Self {

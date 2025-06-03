@@ -5,23 +5,21 @@ use crate::events2::onebeforeandbulk;
 use crate::range::ScyllaSeriesRange;
 use crate::worker::ScyllaQueue;
 use daqbuf_err as err;
-use err::thiserror;
-use err::ThisError;
 use futures_util::Future;
 use futures_util::FutureExt;
 use futures_util::Stream;
 use futures_util::StreamExt;
+use items_0::WithLen;
 use items_0::merge::DrainIntoNewResult;
 use items_0::merge::MergeableTy;
-use items_0::WithLen;
 use items_2::channelevents::ChannelEvents;
+use netpod::ChConf;
+use netpod::TsNano;
 use netpod::log::*;
 use netpod::range::evrange::NanoRange;
 use netpod::range::evrange::SeriesRange;
 use netpod::stream_impl_tracer::StreamImplTracer;
 use netpod::ttl::RetentionTime;
-use netpod::ChConf;
-use netpod::TsNano;
 use std::collections::VecDeque;
 use std::pin::Pin;
 use std::task::Context;
@@ -51,17 +49,18 @@ macro_rules! tracer_loop_enter {
     };
 }
 
-#[derive(Debug, ThisError)]
-#[cstm(name = "EventsMergeRt")]
-pub enum Error {
-    Input(#[from] crate::events2::onebeforeandbulk::Error),
-    Events(#[from] crate::events2::events::Error),
-    Logic,
-    OrderMin,
-    OrderMax,
-    LimitPoll,
-    LimitLoop,
-}
+autoerr::create_error_v1!(
+    name(Error, "EventsMergeRt"),
+    enum variants {
+        Input(#[from] crate::events2::onebeforeandbulk::Error),
+        Events(#[from] crate::events2::events::Error),
+        Logic,
+        OrderMin,
+        OrderMax,
+        LimitPoll,
+        LimitLoop,
+    },
+);
 
 #[allow(unused)]
 enum Resolvable<F>
@@ -339,7 +338,7 @@ impl MergeRtsChained {
 
     fn push_out_one_before(&mut self) {
         if let Some(buf) = self.buf_before.take() {
-            trace_fetch!("push_out_one_before  len {len:?}", len = buf.len());
+            trace_fetch!("push_out_one_before  len {:?}", buf.len());
             if buf.len() != 0 {
                 self.out.push_back(buf);
             }

@@ -1,9 +1,7 @@
 use bytes::Buf;
 use bytes::BytesMut;
 use daqbuf_err as err;
-use err::thiserror;
 use err::Error;
-use err::ThisError;
 use futures_util::Stream;
 use futures_util::StreamExt;
 use items_0::streamitem::LogItem;
@@ -23,8 +21,6 @@ use netpod::ScalarType;
 use netpod::SfChFetchInfo;
 use netpod::Shape;
 use parse::channelconfig::CompressionMethod;
-use serde::Deserialize;
-use serde::Serialize;
 use std::collections::VecDeque;
 use std::io::Cursor;
 use std::path::PathBuf;
@@ -38,26 +34,26 @@ use streams::needminbuffer::NeedMinBuffer;
 #[allow(unused)]
 macro_rules! trace_parse_buf { ($($arg:tt)*) => ( if false { trace!($($arg)*); }) }
 
-#[derive(Debug, ThisError, Serialize, Deserialize)]
-#[cstm(name = "DatabufferDataParse")]
-pub enum DataParseError {
-    DataFrameLengthMismatch,
-    FileHeaderTooShort,
-    BadVersionTag,
-    HeaderTooLarge,
-    Utf8Error,
-    EventTooShort,
-    #[error("EventTooLong({0}, {1})")]
-    EventTooLong(Shape, u32),
-    TooManyBeforeRange,
-    EventWithOptional,
-    BadTypeIndex,
-    WaveShapeWithoutEventArray,
-    ShapedWithoutDims,
-    TooManyDims,
-    UnknownCompression,
-    BadCompresionBlockSize,
-}
+autoerr::create_error_v1!(
+    name(DataParseError, "DatabufferDataParse"),
+    enum variants {
+        DataFrameLengthMismatch,
+        FileHeaderTooShort,
+        BadVersionTag,
+        HeaderTooLarge,
+        Utf8Error,
+        EventTooShort,
+        EventTooLong(Shape, u32),
+        TooManyBeforeRange,
+        EventWithOptional,
+        BadTypeIndex,
+        WaveShapeWithoutEventArray,
+        ShapedWithoutDims,
+        TooManyDims,
+        UnknownCompression,
+        BadCompresionBlockSize,
+    },
+);
 
 pub struct EventChunker {
     inp: NeedMinBuffer,

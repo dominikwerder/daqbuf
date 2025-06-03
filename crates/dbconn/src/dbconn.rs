@@ -5,24 +5,22 @@ pub mod search;
 pub mod worker;
 
 pub mod pg {
-    pub use tokio_postgres::types::Type;
     pub use tokio_postgres::Client;
     pub use tokio_postgres::Error;
     pub use tokio_postgres::NoTls;
     pub use tokio_postgres::Statement;
+    pub use tokio_postgres::types::Type;
 }
 
 use daqbuf_err as err;
-use err::anyhow;
-use err::thiserror;
 use err::Error;
 use err::Res2;
-use err::ThisError;
-use netpod::log::*;
+use err::anyhow;
 use netpod::Database;
 use netpod::NodeConfigCached;
 use netpod::SfDbChannel;
 use netpod::TableSizes;
+use netpod::log::*;
 use pg::Client as PgClient;
 use pg::NoTls;
 use serde::Serialize;
@@ -195,12 +193,13 @@ pub async fn find_series_sf_databuffer(channel: &SfDbChannel, pgclient: Arc<PgCl
     Ok(series)
 }
 
-#[derive(Debug, ThisError, Serialize)]
-#[cstm(name = "FindChannel")]
-pub enum FindChannelError {
-    UnknownBackend,
-    BadSeriesId,
-    NoFound,
-    MultipleFound,
-    Database(String),
-}
+autoerr::create_error_v1!(
+    name(FindChannelError, "FindChannel"),
+    enum variants {
+        UnknownBackend,
+        BadSeriesId,
+        NoFound,
+        MultipleFound,
+        Database(String),
+    },
+);

@@ -136,7 +136,7 @@ pub async fn get_binned(
         "get_cached_0 DONE  total download {} MB   throughput {:5} kB/s  bin_count {}",
         ntot / 1024 / 1024,
         throughput,
-        bin_count,
+        bin_count
     );
     Ok(())
 }

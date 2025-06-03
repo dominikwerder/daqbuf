@@ -623,7 +623,7 @@ impl DataApiPython3DataStream {
                     b.be[i1],
                     b.scalar_types[i1],
                     b.shapes[i1],
-                    b.comps[i1],
+                    b.comps[i1]
                 );
             }
             // TODO emit warning when we use a different setting compared to channel config.

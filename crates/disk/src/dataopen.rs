@@ -91,7 +91,10 @@ async fn position_file(
                     let gg = match gg {
                         Ok(x) => x,
                         Err(e) => {
-                            error!("can not position file for  range {range:?}  expand_right {expand_right:?}  buflen {buflen}", buflen = buf.len());
+                            error!(
+                                "can not position file for  range {range:?}  expand_right {expand_right:?}  buflen {}",
+                                buf.len()
+                            );
                             return Err(e);
                         }
                     };

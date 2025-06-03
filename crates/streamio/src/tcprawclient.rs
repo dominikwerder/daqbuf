@@ -42,7 +42,7 @@ pub async fn x_processed_event_blobs_stream_from_node_tcp(
     node: Node,
 ) -> Result<Pin<Box<dyn Stream<Item = Sitemty<EventFull>> + Send>>, Error> {
     let addr = format!("{}:{}", node.host, node.port_raw);
-    debug!("x_processed_event_blobs_stream_from_node  to: {addr}",);
+    debug!("x_processed_event_blobs_stream_from_node  to: {addr}");
     let frame1 = make_node_command_frame(subq.clone())?;
     let net = TcpStream::connect(addr.clone()).await?;
     let (netin, mut netout) = net.into_split();

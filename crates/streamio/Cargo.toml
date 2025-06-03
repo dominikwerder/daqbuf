@@ -18,9 +18,8 @@ bytes = "1.10"
 arrayref = "0.3.9"
 crc32fast = "1.4.2"
 byteorder = "1.5.0"
-async-channel = "1.9.0"
 rand_xoshiro = "0.7.0"
-autoerr = "0.0.3"
+autoerr = "0.0"
 chrono = { version = "0.4.39", features = ["serde"] }
 netpod = { path = "../../../daqbuf-netpod", package = "daqbuf-netpod" }
 query = { path = "../../../daqbuf-query", package = "daqbuf-query" }

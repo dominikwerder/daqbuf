@@ -3,9 +3,7 @@ use async_channel::Receiver;
 use async_channel::Sender;
 use bytes::Bytes;
 use daqbuf_err as err;
-use err::thiserror;
 use err::PublicError;
-use err::ThisError;
 use err::ToPublicError;
 use futures_util::Stream;
 use futures_util::StreamExt;
@@ -30,18 +28,17 @@ use std::task::Context;
 use std::task::Poll;
 use taskrun::tokio;
 
-#[derive(Debug, ThisError)]
-#[cstm(name = "ChannelFindActive")]
-pub enum FindActiveError {
-    HttpBadAccept,
-    HttpBadUrl,
-    #[error("Error({0})")]
-    Error(Box<dyn ToPublicError>),
-    #[error("UrlError({0})")]
-    UrlError(#[from] url::ParseError),
-    InternalError,
-    IO(#[from] std::io::Error),
-}
+autoerr::create_error_v1!(
+    name(FindActiveError, "ChannelFindActive"),
+    enum variants {
+        HttpBadAccept,
+        HttpBadUrl,
+        Error(Box<dyn ToPublicError>),
+        UrlError(#[from] url::ParseError),
+        InternalError,
+        IO(#[from] std::io::Error),
+    },
+);
 
 impl ToPublicError for FindActiveError {
     fn to_public_error(&self) -> PublicError {

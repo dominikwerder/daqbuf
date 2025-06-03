@@ -4,10 +4,7 @@ use crate::requests::accepts_json_framed;
 use crate::requests::accepts_json_or_all;
 use crate::response;
 use crate::ServiceSharedResources;
-use daqbuf_err as err;
 use dbconn::worker::PgQueue;
-use err::thiserror;
-use err::ThisError;
 use http::header::CONTENT_TYPE;
 use http::Method;
 use http::StatusCode;
@@ -44,16 +41,17 @@ use streams::streamtimeout::StreamTimeout2;
 use tracing::Instrument;
 use tracing::Span;
 
-#[derive(Debug, ThisError)]
-#[cstm(name = "Api4Events")]
-pub enum Error {
-    ChannelNotFound,
-    HttpLib(#[from] http::Error),
-    ChannelConfig(crate::channelconfig::Error),
-    Retrieval(#[from] crate::RetrievalError),
-    EventsCbor(#[from] streams::plaineventscbor::Error),
-    EventsJson(#[from] streams::plaineventsjson::Error),
-}
+autoerr::create_error_v1!(
+    name(Error, "Api4Events"),
+    enum variants {
+        ChannelNotFound,
+        HttpLib(#[from] http::Error),
+        ChannelConfig(crate::channelconfig::Error),
+        Retrieval(#[from] crate::RetrievalError),
+        EventsCbor(#[from] streams::plaineventscbor::Error),
+        EventsJson(#[from] streams::plaineventsjson::Error),
+    },
+);
 
 impl Error {
     pub fn user_message(&self) -> String {

@@ -2,9 +2,7 @@ use crate::response;
 use crate::ReqCtx;
 use crate::ServiceSharedResources;
 use daqbuf_err as err;
-use err::thiserror;
 use err::PublicError;
-use err::ThisError;
 use err::ToPublicError;
 use http::Method;
 use http::StatusCode;
@@ -19,13 +17,14 @@ use netpod::NodeConfigCached;
 use std::sync::Arc;
 use streams::instrument::InstrumentStream;
 
-#[derive(Debug, ThisError)]
-#[cstm(name = "EventData")]
-pub enum EventDataError {
-    QueryParse,
-    Error(Box<dyn ToPublicError>),
-    InternalError,
-}
+autoerr::create_error_v1!(
+    name(EventDataError, "EventData"),
+    enum variants {
+        QueryParse,
+        Error(Box<dyn ToPublicError>),
+        InternalError,
+    },
+);
 
 impl ToPublicError for EventDataError {
     fn to_public_error(&self) -> PublicError {

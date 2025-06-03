@@ -1,7 +1,4 @@
-use daqbuf_err as err;
 use dbconn::worker::PgQueue;
-use err::thiserror;
-use err::ThisError;
 use httpclient::url::Url;
 use netpod::log::*;
 use netpod::range::evrange::NanoRange;
@@ -22,24 +19,25 @@ use netpod::Shape;
 use netpod::APP_JSON;
 use serde::Serialize;
 
-#[derive(Debug, ThisError)]
-#[cstm(name = "ChannelConfigNode")]
-pub enum Error {
-    NotFoundChannel(SfDbChannel),
-    ChannelConfig(dbconn::channelconfig::Error),
-    DbWorker(#[from] dbconn::worker::Error),
-    DiskConfig(#[from] disk::channelconfig::ConfigError),
-    BackendConfigError,
-    BadTestSetup,
-    HttpReqError,
-    HttpClient(#[from] httpclient::Error),
-    ConfigParse(#[from] disk::parse::channelconfig::ConfigParseError),
-    JsonParse(#[from] serde_json::Error),
-    SearchWithGivenSeries,
-    AsyncSend,
-    AsyncRecv,
-    Todo,
-}
+autoerr::create_error_v1!(
+    name(Error, "ChannelConfigNode"),
+    enum variants {
+        NotFoundChannel(SfDbChannel),
+        ChannelConfig(dbconn::channelconfig::Error),
+        DbWorker(#[from] dbconn::worker::Error),
+        DiskConfig(#[from] disk::channelconfig::ConfigError),
+        BackendConfigError,
+        BadTestSetup,
+        HttpReqError,
+        HttpClient(#[from] httpclient::Error),
+        ConfigParse(#[from] disk::parse::channelconfig::ConfigParseError),
+        JsonParse(#[from] serde_json::Error),
+        SearchWithGivenSeries,
+        AsyncSend,
+        AsyncRecv,
+        Todo,
+    },
+);
 
 impl From<async_channel::RecvError> for Error {
     fn from(_value: async_channel::RecvError) -> Self {

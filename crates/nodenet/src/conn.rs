@@ -1,8 +1,6 @@
 use crate::scylla::scylla_channel_event_stream;
 use bytes::Bytes;
 use daqbuf_err as err;
-use err::thiserror;
-use err::ThisError;
 use futures_util::Stream;
 use futures_util::StreamExt;
 use futures_util::TryStreamExt;
@@ -41,23 +39,24 @@ use tracing::Instrument;
 #[cfg(test)]
 mod test;
 
-#[derive(Debug, ThisError)]
-#[cstm(name = "NodenetConn")]
-pub enum Error {
-    BadQuery,
-    Scylla(#[from] crate::scylla::Error),
-    Error(#[from] err::Error),
-    Io(#[from] std::io::Error),
-    Items(#[from] items_2::Error),
-    NotAvailable,
-    DebugTest,
-    Generator(#[from] streams::generators::Error),
-    Framable(#[from] items_2::framable::Error),
-    Frame(#[from] items_2::frame::Error),
-    InMem(#[from] streams::frames::inmem::Error),
-    FramedStream(#[from] streams::frames::Error),
-    Netpod(#[from] netpod::Error),
-}
+autoerr::create_error_v1!(
+    name(Error, "NodenetConn"),
+    enum variants {
+        BadQuery,
+        Scylla(#[from] crate::scylla::Error),
+        Error(#[from] err::Error),
+        Io(#[from] std::io::Error),
+        Items(#[from] items_2::Error),
+        NotAvailable,
+        DebugTest,
+        Generator(#[from] streams::generators::Error),
+        Framable(#[from] items_2::framable::Error),
+        Frame(#[from] items_2::frame::Error),
+        InMem(#[from] streams::frames::inmem::Error),
+        FramedStream(#[from] streams::frames::Error),
+        Netpod(#[from] netpod::Error),
+    },
+);
 
 pub async fn events_service(ncc: NodeConfigCached) -> Result<(), Error> {
     let scyqueue = err::todoval();

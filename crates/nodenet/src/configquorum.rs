@@ -1,8 +1,5 @@
 use crate::channelconfig::http_get_channel_config;
-use daqbuf_err as err;
 use dbconn::worker::PgQueue;
-use err::thiserror;
-use err::ThisError;
 use netpod::log::*;
 use netpod::range::evrange::SeriesRange;
 use netpod::ChConf;
@@ -18,19 +15,20 @@ use std::collections::BTreeMap;
 use std::time::Duration;
 use taskrun::tokio;
 
-#[derive(Debug, ThisError)]
-#[cstm(name = "ConfigQuorum")]
-pub enum Error {
-    NotFound(SfDbChannel),
-    MissingTimeRange,
-    Timeout,
-    ChannelConfig(crate::channelconfig::Error),
-    ExpectSfDatabufferBackend,
-    UnsupportedBackend,
-    BadTimeRange,
-    DbWorker(#[from] dbconn::worker::Error),
-    FindChannel(#[from] dbconn::FindChannelError),
-}
+autoerr::create_error_v1!(
+    name(Error, "ConfigQuorum"),
+    enum variants {
+        NotFound(SfDbChannel),
+        MissingTimeRange,
+        Timeout,
+        ChannelConfig(crate::channelconfig::Error),
+        ExpectSfDatabufferBackend,
+        UnsupportedBackend,
+        BadTimeRange,
+        DbWorker(#[from] dbconn::worker::Error),
+        FindChannel(#[from] dbconn::FindChannelError),
+    },
+);
 
 impl From<crate::channelconfig::Error> for Error {
     fn from(value: crate::channelconfig::Error) -> Self {
