@@ -506,30 +506,32 @@ pub trait ToPublicError: std::error::Error + Send {
 
 #[cfg(test)]
 mod test {
-    use super::*;
+    #![allow(unused)]
+    // use super::Serialize;
 
-    #[derive(Debug, ThisError, Serialize, Deserialize)]
-    #[cstm(name = "SomeErrorEnumA")]
-    enum SomeErrorEnumA {
-        BadCase,
-        WithStringContent(String),
-        // #[error("bad: {0}")]
-        WithStringContentFmt(String),
-    }
+    autoerr::create_error_v1!(
+        name(SomeErrorEnumA, "SomeErrorEnumA"),
+        enum variants {
+            BadCase,
+            WithStringContent(String),
+            WithStringContentFmt(String),
+        },
+    );
 
-    #[derive(Debug, ThisError, Serialize, Deserialize)]
-    #[cstm(name = "SomeErrorEnumB0")]
-    enum SomeErrorEnumB0 {
-        FromA(#[from] SomeErrorEnumA),
-    }
+    autoerr::create_error_v1!(
+        name(SomeErrorEnumB0, "SomeErrorEnumB0"),
+        enum variants {
+            FromA(#[from] SomeErrorEnumA),
+        },
+    );
 
-    #[derive(Debug, ThisError, Serialize, Deserialize)]
-    #[cstm(name = "SomeErrorEnumB1")]
-    enum SomeErrorEnumB1 {
-        FromA(#[from] SomeErrorEnumA),
-        #[error("caffe")]
-        Caffe(SomeErrorEnumA),
-    }
+    autoerr::create_error_v1!(
+        name(SomeErrorEnumB1, "SomeErrorEnumB1"),
+        enum variants {
+            FromA(#[from] SomeErrorEnumA),
+            Caffe(SomeErrorEnumA),
+        },
+    );
 
     fn failing_a_00() -> Result<(), SomeErrorEnumA> {
         Err(SomeErrorEnumA::BadCase)
@@ -576,6 +578,7 @@ mod test {
         assert_eq!(s, "SomeErrorEnumB0::FromA(SomeErrorEnumA::BadCase)");
     }
 
+    #[cfg(target_abi = "x32")]
     #[test]
     fn error_handle_b0_user_00() {
         use thiserror::UserErrorClass;

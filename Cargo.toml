@@ -19,4 +19,4 @@ url = { version = "2.5.3", default-features = false }
 regex = "1.9.1"
 http = "1.0.0"
 anyhow = "1.0"
-autoerr = "0.0.3"
+autoerr = "0.0"
