@@ -16,26 +16,31 @@ pub fn is_log_direct() -> bool {
     *ONCE
 }
 
+pub mod log_tracing {
+    pub use tracing::{self, Level, event, span};
+    pub use tracing::{debug, error, info, trace, warn};
+}
+
 pub mod log_macros_branch {
     #[allow(unused)]
     #[macro_export]
     macro_rules! branch_trace {
-        ($($arg:tt)*) => {
+        ($($arg:expr),*) => {
             if $crate::is_log_direct() {
-                $crate::log_direct::trace!($($arg)*);
+                $crate::log_direct::trace!($($arg),*);
             } else {
-                $crate::log::trace!($($arg)*);
+                $crate::log_tracing::trace!($($arg),*);
             }
         };
     }
     #[allow(unused)]
     #[macro_export]
     macro_rules! branch_debug {
-        ($($arg:tt)*) => {
+        ($($arg:expr),*) => {
             if $crate::is_log_direct() {
-                $crate::log_direct::debug!($($arg)*);
+                $crate::log_direct::debug!($($arg),*);
             } else {
-                $crate::log::debug!($($arg)*);
+                $crate::log_tracing::debug!($($arg),*);
             }
         };
     }
@@ -46,7 +51,7 @@ pub mod log_macros_branch {
             if $crate::is_log_direct() {
                 $crate::log_direct::info!($($arg)*);
             } else {
-                $crate::log::info!($($arg)*);
+                $crate::log_tracing::info!($($arg)*);
             }
         };
     }
@@ -57,7 +62,7 @@ pub mod log_macros_branch {
             if $crate::is_log_direct() {
                 $crate::log_direct::warn!($($arg)*);
             } else {
-                $crate::log::warn!($($arg)*);
+                $crate::log_tracing::warn!($($arg)*);
             }
         };
     }
@@ -68,7 +73,7 @@ pub mod log_macros_branch {
             if $crate::is_log_direct() {
                 $crate::log_direct::error!($($arg)*);
             } else {
-                $crate::log::error!($($arg)*);
+                $crate::log_tracing::error!($($arg)*);
             }
         };
     }
@@ -80,69 +85,78 @@ pub mod log_macros_branch {
     pub use tracing::{self, Level, event, span};
 }
 
-pub mod log_macros {
+pub mod log_direct_macros {
     #[allow(unused)]
     #[macro_export]
-    macro_rules! trace {
+    macro_rules! log_direct_trace {
         ($fmt:expr) => {
-            eprintln!(concat!("TRACE ", $fmt));
+            eprintln!("TRACE {}", format_args!($fmt));
         };
-        ($fmt:expr, $($arg:tt)*) => {
-            eprintln!(concat!("TRACE ", $fmt), $($arg)*);
+        ($fmt:expr, $($arg:expr),*) => {
+            eprintln!("TRACE {}", format_args!($fmt, $($arg),*));
         };
     }
     #[allow(unused)]
     #[macro_export]
-    macro_rules! debug {
+    macro_rules! log_direct_debug {
         ($fmt:expr) => {
-            eprintln!(concat!("DEBUG ", $fmt));
+            eprintln!("DEBUG {}", format_args!($fmt));
         };
-        ($fmt:expr, $($arg:tt)*) => {
-            eprintln!(concat!("DEBUG ", $fmt), $($arg)*);
+        ($fmt:expr, $($arg:expr),*) => {
+            eprintln!("DEBUG {}", format_args!($fmt, $($arg),*));
         };
     }
     #[allow(unused)]
     #[macro_export]
-    macro_rules! info {
+    macro_rules! log_direct_info {
         ($fmt:expr) => {
-            eprintln!(concat!("INFO  ", $fmt));
+            eprintln!("INFO  {}", format_args!($fmt));
         };
-        ($fmt:expr, $($arg:tt)*) => {
-            eprintln!(concat!("INFO  ", $fmt), $($arg)*);
+        ($fmt:expr, $($arg:expr),*) => {
+            eprintln!("INFO  {}", format_args!($fmt, $($arg),*));
         };
     }
     #[allow(unused)]
     #[macro_export]
-    macro_rules! warn {
+    macro_rules! log_direct_warn {
         ($fmt:expr) => {
-            eprintln!(concat!("WARN  ", $fmt));
+            eprintln!("WARN  {}", format_args!($fmt));
         };
-        ($fmt:expr, $($arg:tt)*) => {
-            eprintln!(concat!("WARN  ", $fmt), $($arg)*);
+        ($fmt:expr, $($arg:expr),*) => {
+            eprintln!("WARN  {}", format_args!($fmt, $($arg),*));
         };
     }
     #[allow(unused)]
     #[macro_export]
-    macro_rules! error {
+    macro_rules! log_direct_error {
         ($fmt:expr) => {
-            eprintln!(concat!("ERROR ", $fmt));
+            eprintln!("ERROR {}", format_args!($fmt));
         };
-        ($fmt:expr, $($arg:tt)*) => {
-            eprintln!(concat!("ERROR ", $fmt), $($arg)*);
+        ($fmt:expr, $($arg:expr),*) => {
+            eprintln!("ERROR {}", format_args!($fmt, $($arg),*));
         };
     }
 }
 
 pub mod log {
+    pub use crate::branch_debug as debug;
+    pub use crate::branch_error as error;
+    pub use crate::branch_info as info;
+    pub use crate::branch_trace as trace;
+    pub use crate::branch_warn as warn;
     pub use tracing::{self, Level, event, span};
-    pub use tracing::{debug, error, info, trace, warn};
 }
 
 pub mod log_direct {
-    pub use crate::{debug, error, info, trace, warn};
+    pub use crate::log_direct_debug as debug;
+    pub use crate::log_direct_error as error;
+    pub use crate::log_direct_info as info;
+    pub use crate::log_direct_trace as trace;
+    pub use crate::log_direct_warn as warn;
     pub use tracing::{self, Level, event, span};
 }
 
+use crate::log::*;
 use bytes::Bytes;
 use chrono::DateTime;
 use chrono::TimeZone;
@@ -4508,13 +4522,13 @@ pub fn req_uri_to_url(uri: &Uri) -> Result<Url, UriError> {
 }
 
 pub unsafe fn extltref<'a, 'b, T>(x: &'a T) -> &'b T {
-    &*(x as *const T)
+    unsafe { &*(x as *const T) }
 }
 
 pub unsafe fn extltref2<'a, 'b, T>(t: &'a T) -> &'b T {
-    core::mem::transmute(t)
+    unsafe { core::mem::transmute(t) }
 }
 
 pub unsafe fn extltmut<'a, 'b, T>(t: &'a mut T) -> &'b mut T {
-    core::mem::transmute(t)
+    unsafe { core::mem::transmute(t) }
 }
