@@ -23,7 +23,7 @@ humantime = "2.1.0"
 http = "1"
 http-body = "1"
 http-body-util = "0.1.0"
-autoerr = "0.0.3"
+autoerr = "0.0"
 chrono = { version = "0.4.38", features = ["serde"] }
 wasmer = { version = "5.0.1", default-features = false, features = ["sys", "cranelift"], optional = true }
 netpod = { path = "../daqbuf-netpod", package = "daqbuf-netpod" }

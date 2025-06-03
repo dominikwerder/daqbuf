@@ -14,9 +14,12 @@ use netpod::timeunits::SEC;
 use netpod::TsNano;
 use std::pin::Pin;
 
-#[derive(Debug, thiserror::Error)]
-#[cstm(name = "StreamsTest")]
-pub enum Error {}
+autoerr::create_error_v1!(
+    name(Error, "StreamsTest"),
+    enum variants {
+        Logic,
+    },
+);
 
 type BoxedEventStream = Pin<Box<dyn Stream<Item = Sitemty<ChannelEvents>> + Send>>;
 

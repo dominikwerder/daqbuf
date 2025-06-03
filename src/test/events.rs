@@ -23,12 +23,13 @@ use query::api4::events::PlainEventsQuery;
 use std::pin::Pin;
 use std::sync::Arc;
 
-#[derive(Debug, thiserror::Error)]
-#[cstm(name = "TestEvents")]
-pub enum Error {
-    InMem(#[from] crate::frames::inmem::Error),
-    Generator(#[from] crate::generators::Error),
-}
+autoerr::create_error_v1!(
+    name(Error, "TestEvents"),
+    enum variants {
+        InMem(#[from] crate::frames::inmem::Error),
+        Generator(#[from] crate::generators::Error),
+    },
+);
 
 #[test]
 fn merged_events_cbor() {

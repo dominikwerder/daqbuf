@@ -13,8 +13,12 @@ use netpod::DtNano;
 use netpod::TsNano;
 use std::collections::VecDeque;
 
-#[derive(Debug, thiserror::Error)]
-pub enum Error {}
+autoerr::create_error_v1!(
+    name(Error, "RangefilterTest"),
+    enum variants {
+        Logic,
+    },
+);
 
 fn pu(c: &mut ContainerEvents<f32>, ts: TsNano, v: f32) {
     c.push_back(ts, v);
