@@ -992,6 +992,9 @@ where
         let pp = pp.max(self.pos);
         assert!(pp <= tss.len(), "len_before  pp {}  len {}", pp, tss.len());
         assert!(pp >= self.pos);
+        if pp != 0 {
+            assert!(tss[pp - 1] < end);
+        }
         self.end = pp;
     }
 
@@ -1008,10 +1011,15 @@ where
     }
 
     pub fn ts_first(&self) -> Option<TsNano> {
-        self.evs.tss.get(self.pos).cloned()
+        if self.pos < self.end {
+            self.evs.tss.get(self.pos).cloned()
+        } else {
+            None
+        }
     }
 
     pub fn next(&mut self) -> Option<EventSingleRef<EVT>> {
+        eprintln!("ContainerEvents  pos {}  end {}", self.pos, self.end);
         let evs = &self.evs;
         if self.pos < self.end {
             if let (Some(&ts), Some(val)) =

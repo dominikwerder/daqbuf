@@ -58,6 +58,8 @@ fn cold() {}
 
 const DEBUG_CHECKS: bool = true;
 
+pub type RefStr = &'static str;
+
 autoerr::create_error_v1!(
     name(Error, "BinnedEventsTimeweight"),
     enum variants {
@@ -73,7 +75,7 @@ autoerr::create_error_v1!(
         ExpectEventWithinRange,
         IngestNoProgress(usize, usize),
         EventActiveRangeBefore,
-        EventActiveRangeAfter,
+        EventActiveRangeAfter(RefStr),
         EventActiveRangeLE,
     },
 );
@@ -168,7 +170,7 @@ where
         trace_ingest_event!("{}", selfname);
         // TODO if the event is exactly on the current bin first edge, then there is no contribution to the avg yet
         // and I must initialize the min/max with the current event.
-        InnerA::apply_min_max(&ev, minmax);
+        InnerA::apply_min_max_range_beg(&ev, minmax);
         InnerA::apply_lst_after_event_handled(ev, lst);
         Ok(())
     }
@@ -188,7 +190,7 @@ where
                     return Err(Error::EventActiveRangeLE);
                 }
                 if ev.ts >= self.active_end {
-                    return Err(Error::EventActiveRangeAfter);
+                    return Err(Error::EventActiveRangeAfter(selfname));
                 }
             }
             self.ingest_event_with_lst_gt_range_beg(ev.clone(), LstMut(lst.0), minmax)?;
@@ -238,9 +240,12 @@ where
         trace_ingest_event!("{}  len {}", selfname, evs.len());
         // TODO how to handle the min max? I don't take event data yet out of the container.
         if let Some(ts0) = evs.ts_first() {
-            trace_ingest_event!("EVENT TIMESTAMP FRONT  {:?}  {}", ts0, selfname);
+            trace_ingest_event!("{selfname}  EVENT TIMESTAMP FRONT  {:?}", ts0);
             if ts0 < self.active_beg {
                 Err(Error::EventActiveRangeBefore)
+            } else if ts0 >= self.active_end {
+                info!("ts0 >= self.active_end  {}  {}", ts0, self.active_end);
+                Err(Error::EventActiveRangeAfter(selfname))
             } else {
                 self.ingest_with_lst_ge_range_beg(evs, lst, minmax)
             }
@@ -279,13 +284,20 @@ where
 {
     fn apply_min_max(ev: &EventSingleRef<EVT>, minmax: &mut MinMax<EVT>) {
         if let Some(std::cmp::Ordering::Less) = ev.val.cmp_a(&minmax.0.val) {
-            trace_ingest_minmax!("apply_min_max  update min  {:?}", ev);
+            trace_ingest_minmax!("apply_min_max  update min  {ev:?}");
             minmax.0 = ev.into();
         }
         if let Some(std::cmp::Ordering::Greater) = ev.val.cmp_a(&minmax.1.val) {
-            trace_ingest_minmax!("apply_min_max  update max  {:?}", ev);
+            trace_ingest_minmax!("apply_min_max  update max  {ev:?}");
             minmax.1 = ev.into();
         }
+    }
+
+    fn apply_min_max_range_beg(ev: &EventSingleRef<EVT>, minmax: &mut MinMax<EVT>) {
+        let selfname = "apply_min_max_range_beg";
+        trace_ingest_minmax!("{selfname}  update min max  {ev:?}");
+        minmax.0 = ev.into();
+        minmax.1 = ev.into();
     }
 
     fn apply_lst_after_event_handled(ev: EventSingleRef<EVT>, lst: LstMut<EVT>) {
@@ -323,7 +335,7 @@ where
                 if ev.ts < beg {
                     return Err(Error::EventActiveRangeBefore);
                 } else if ev.ts >= end {
-                    return Err(Error::EventActiveRangeAfter);
+                    return Err(Error::EventActiveRangeAfter(selfname));
                 } else {
                     if ev.ts == beg {
                         self.init_minmax(&ev);
@@ -492,18 +504,18 @@ where
     fn ingest_event_without_lst(&mut self, ev: EventSingleRef<EVT>) -> Result<(), Error> {
         let selfname = "ingest_event_without_lst";
         let b = &self.inner_a.inner_b;
-        if ev.ts >= b.active_end {
-            Err(Error::EventActiveRangeAfter)
+        if ev.ts < b.active_beg {
+            Err(Error::EventActiveRangeBefore)
+        } else if ev.ts >= b.active_end {
+            Err(Error::EventActiveRangeAfter(selfname))
         } else {
             trace_ingest_init_lst!("{selfname}  set lst  {:?}", ev);
             self.lst = Some((&ev).into());
-            if ev.ts >= b.active_beg {
-                trace_ingest_minmax!("{selfname}  call init_minmax");
-                self.inner_a.init_minmax(&ev);
-                let b = &mut self.inner_a.inner_b;
-                b.cnt += 1;
-                b.filled_until = ev.ts;
-            }
+            trace_ingest_minmax!("{selfname}  call init_minmax");
+            self.inner_a.init_minmax(&ev);
+            let b = &mut self.inner_a.inner_b;
+            b.cnt += 1;
+            b.filled_until = ev.ts;
             Ok(())
         }
     }
@@ -519,7 +531,6 @@ where
             self.ingest_event_without_lst(ev)?;
             run_ingest_with_lst = true;
         } else {
-            return Ok(());
         }
         if run_ingest_with_lst {
             if let Some(lst) = self.lst.as_mut() {
@@ -657,13 +668,14 @@ where
         let mut evs = ContainerEventsTakeUpTo::new(evs);
 
         loop {
+            trace_ingest_container!("+++++++++++++++++++++++++++++++++++++++++++++++++++");
             trace_ingest_container!(
                 "main-ingest-loop  UNCONSTRAINED  len {}  pos {}",
                 evs.len(),
                 evs.pos()
             );
             break if let Some(ts) = evs.ts_first() {
-                trace_ingest_event!("EVENT TIMESTAMP FRONT  {:?}  ingest", ts);
+                trace_ingest_event!("ingest  EVENT TIMESTAMP FRONT  {:?}", ts);
                 let b = &mut self.inner_a.inner_b;
                 if ts >= self.range.nano_end() {
                     return Err(Error::EventAfterRange);
@@ -683,7 +695,7 @@ where
                 evs.constrain_up_to_ts(self.inner_a.inner_b.active_end);
                 {
                     trace_ingest_container!(
-                        "main-ingest-loop  len {}  pos {}",
+                        "main-ingest-loop    CONSTRAINED  len {}  pos {}",
                         evs.len(),
                         evs.pos()
                     );
