@@ -19,7 +19,7 @@ macro_rules! info { ($($arg:expr),*) => ( if true { log::info!($($arg),*); } ) }
 
 macro_rules! debug { ($($arg:expr),*) => ( if true { log::debug!($($arg),*); } ) }
 
-macro_rules! trace_ { ($($arg:expr),*) => ( if false { log::trace!($($arg),*); } ) }
+macro_rules! trace_ { ($($arg:expr),*) => ( if true { log::trace!($($arg),*); } ) }
 
 macro_rules! trace_init { ($($arg:expr),*) => ( if true { trace_!($($arg),*); } ) }
 
@@ -29,7 +29,7 @@ macro_rules! trace_cycle { ($($arg:expr),*) => ( if true { trace_!($($arg),*); }
 
 macro_rules! trace_event_next { ($fmt:expr, $($arg:expr),*) => (
     if false {
-        trace_!(concat!("\x1b[1mEVENT POP FRONT\x1b[0m  ", $fmt), $($arg),*);
+        trace_!("{}  {}", "\x1b[1mEVENT POP FRONT\x1b[0m  ", format_args!($fmt, $($arg),*));
     }
 ) }
 
@@ -72,6 +72,9 @@ autoerr::create_error_v1!(
         NoMinMaxAfterInit,
         ExpectEventWithinRange,
         IngestNoProgress(usize, usize),
+        EventActiveRangeBefore,
+        EventActiveRangeAfter,
+        EventActiveRangeLE,
     },
 );
 
@@ -110,10 +113,10 @@ where
         trace_ingest_event!("{}  {:?}", selfname, ev);
         if DEBUG_CHECKS {
             if ev.ts <= self.active_beg {
-                panic!("should never get here");
+                panic!("logic error");
             }
             if ev.ts >= self.active_end {
-                panic!("should never get here");
+                panic!("logic error");
             }
         }
         let dt = ev.ts.delta(self.filled_until);
@@ -180,11 +183,13 @@ where
         trace_ingest_event!("{}  len {}", selfname, evs.len());
         while let Some(ev) = evs.next() {
             trace_event_next!("{:?}  {:30}", ev, selfname);
-            if ev.ts <= self.active_beg {
-                panic!("should never get here");
-            }
-            if ev.ts >= self.active_end {
-                panic!("should never get here");
+            if DEBUG_CHECKS {
+                if ev.ts <= self.active_beg {
+                    return Err(Error::EventActiveRangeLE);
+                }
+                if ev.ts >= self.active_end {
+                    return Err(Error::EventActiveRangeAfter);
+                }
             }
             self.ingest_event_with_lst_gt_range_beg(ev.clone(), LstMut(lst.0), minmax)?;
             self.cnt += 1;
@@ -235,7 +240,7 @@ where
         if let Some(ts0) = evs.ts_first() {
             trace_ingest_event!("EVENT TIMESTAMP FRONT  {:?}  {}", ts0, selfname);
             if ts0 < self.active_beg {
-                panic!("should never get here");
+                Err(Error::EventActiveRangeBefore)
             } else {
                 self.ingest_with_lst_ge_range_beg(evs, lst, minmax)
             }
@@ -274,9 +279,11 @@ where
 {
     fn apply_min_max(ev: &EventSingleRef<EVT>, minmax: &mut MinMax<EVT>) {
         if let Some(std::cmp::Ordering::Less) = ev.val.cmp_a(&minmax.0.val) {
+            trace_ingest_minmax!("apply_min_max  update min  {:?}", ev);
             minmax.0 = ev.into();
         }
         if let Some(std::cmp::Ordering::Greater) = ev.val.cmp_a(&minmax.1.val) {
+            trace_ingest_minmax!("apply_min_max  update max  {:?}", ev);
             minmax.1 = ev.into();
         }
     }
@@ -314,9 +321,9 @@ where
                 let beg = b.active_beg;
                 let end = b.active_end;
                 if ev.ts < beg {
-                    panic!("should never get here");
+                    return Err(Error::EventActiveRangeBefore);
                 } else if ev.ts >= end {
-                    panic!("should never get here");
+                    return Err(Error::EventActiveRangeAfter);
                 } else {
                     if ev.ts == beg {
                         self.init_minmax(&ev);
@@ -328,11 +335,7 @@ where
                         self.init_minmax_with_lst(&ev, LstRef(lst.0));
                         let b = &mut self.inner_b;
                         {
-                            if ev.ts == beg {
-                                panic!("logic error, is handled before");
-                            } else {
-                                b.ingest_event_with_lst_gt_range_beg_2(ev, LstMut(lst.0))?;
-                            }
+                            b.ingest_event_with_lst_gt_range_beg_2(ev, LstMut(lst.0))?;
                             b.cnt += 1;
                             run_ingest_with_lst_minmax = true;
                         }
@@ -372,6 +375,7 @@ where
         b.filled_until = ts1;
         b.filled_width = DtNano::from_ns(0);
         b.cnt = 0;
+        trace_ingest_minmax!("reset_01  update min/max to lst  {:?}", lst.0);
         self.minmax = Some((lst.0.clone(), lst.0.clone()));
     }
 
@@ -389,11 +393,18 @@ where
         let b = &mut self.inner_b;
         let minmax = self.minmax.get_or_insert_with(|| {
             trace_cycle!("{}  minmax not yet set", selfname);
+            trace_ingest_minmax!("{}  setting min/max to lst {:?}", selfname, lst.0);
             (lst.0.clone(), lst.0.clone())
         });
         {
             let filled_width_fraction = b.filled_width.fraction_of(b.active_len);
             let res = b.agg.result_and_reset_for_new_bin(filled_width_fraction);
+            trace_ingest_minmax!(
+                "{}  push out  min {:?}  max {:?}",
+                selfname,
+                minmax.0,
+                minmax.1
+            );
             out.push_back(
                 b.active_beg,
                 b.active_end,
@@ -482,12 +493,12 @@ where
         let selfname = "ingest_event_without_lst";
         let b = &self.inner_a.inner_b;
         if ev.ts >= b.active_end {
-            panic!("{selfname}  should never get here");
+            Err(Error::EventActiveRangeAfter)
         } else {
-            trace_ingest_init_lst!("ingest_event_without_lst  set lst  {:?}", ev);
+            trace_ingest_init_lst!("{selfname}  set lst  {:?}", ev);
             self.lst = Some((&ev).into());
             if ev.ts >= b.active_beg {
-                trace_ingest_minmax!("ingest_event_without_lst");
+                trace_ingest_minmax!("{selfname}  call init_minmax");
                 self.inner_a.init_minmax(&ev);
                 let b = &mut self.inner_a.inner_b;
                 b.cnt += 1;
@@ -503,7 +514,7 @@ where
         let mut run_ingest_with_lst = false;
         let _ = run_ingest_with_lst;
         if let Some(ev) = evs.next() {
-            trace_event_next!("{:?}  {:30}", ev, selfname);
+            trace_event_next!("{selfname}  {:?}", ev);
             assert!(ev.ts < self.inner_a.inner_b.active_end);
             self.ingest_event_without_lst(ev)?;
             run_ingest_with_lst = true;
@@ -625,6 +636,7 @@ where
             self.inner_a.push_out_and_reset(lst, false, &mut self.out);
         } else {
             // there is nothing we can produce
+            // TODO count for stats
         }
     }
 
