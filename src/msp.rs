@@ -191,6 +191,17 @@ impl PrebinnedPartitioning {
         let dt = self.bin_len().mul(n);
         TsMs::from_ms_u64(dt.ms())
     }
+
+    pub fn lsp_inc(&self, msp: MspU32, lsp: LspU32) -> (MspU32, LspU32) {
+        let mut m2 = msp;
+        let mut l2 = lsp;
+        l2.0 += 1;
+        if l2.0 >= self.patch_len() {
+            l2.0 = 0;
+            m2.0 += 1;
+        }
+        (m2, l2)
+    }
 }
 
 impl TryFrom<DtMs> for PrebinnedPartitioning {
