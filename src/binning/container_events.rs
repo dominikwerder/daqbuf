@@ -1019,7 +1019,6 @@ where
     }
 
     pub fn next(&mut self) -> Option<EventSingleRef<EVT>> {
-        eprintln!("ContainerEvents  pos {}  end {}", self.pos, self.end);
         let evs = &self.evs;
         if self.pos < self.end {
             if let (Some(&ts), Some(val)) =

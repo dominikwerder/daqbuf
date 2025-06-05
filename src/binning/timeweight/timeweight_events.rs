@@ -15,35 +15,35 @@ use serde::Serialize;
 use std::fmt;
 use std::mem;
 
-macro_rules! info { ($($arg:expr),*) => ( if true { log::info!($($arg),*); } ) }
+macro_rules! info { ($($arg:tt)*) => ( if true { log::info!($($arg)*); } ) }
 
-macro_rules! debug { ($($arg:expr),*) => ( if true { log::debug!($($arg),*); } ) }
+macro_rules! debug { ($($arg:tt)*) => ( if true { log::debug!($($arg)*); } ) }
 
-macro_rules! trace_ { ($($arg:expr),*) => ( if true { log::trace!($($arg),*); } ) }
+macro_rules! trace_ { ($($arg:tt)*) => ( if false { log::trace!($($arg)*); } ) }
 
-macro_rules! trace_init { ($($arg:expr),*) => ( if true { trace_!($($arg),*); } ) }
+macro_rules! trace_init { ($($arg:tt)*) => ( if true { trace_!($($arg)*); } ) }
 
-macro_rules! trace_output { ($($arg:expr),*) => ( if true { trace_!($($arg),*); }) }
+macro_rules! trace_output { ($($arg:tt)*) => ( if true { trace_!($($arg)*); }) }
 
-macro_rules! trace_cycle { ($($arg:expr),*) => ( if true { trace_!($($arg),*); }) }
+macro_rules! trace_cycle { ($($arg:tt)*) => ( if true { trace_!($($arg)*); }) }
 
-macro_rules! trace_event_next { ($fmt:expr, $($arg:expr),*) => (
+macro_rules! trace_event_next { ($fmt:expr, $($arg:tt)*) => (
     if false {
-        trace_!("{}  {}", "\x1b[1mEVENT POP FRONT\x1b[0m  ", format_args!($fmt, $($arg),*));
+        trace_!("{}  {}", "\x1b[1mEVENT POP FRONT\x1b[0m  ", format_args!($fmt, $($arg)*));
     }
 ) }
 
-macro_rules! trace_ingest_init_lst { ($($arg:expr),*) => ( if true { trace_!($($arg),*); }) }
+macro_rules! trace_ingest_init_lst { ($($arg:tt)*) => ( if true { trace_!($($arg)*); }) }
 
-macro_rules! trace_ingest_minmax { ($($arg:expr),*) => ( if true { trace_!($($arg),*); }) }
+macro_rules! trace_ingest_minmax { ($($arg:tt)*) => ( if true { trace_!($($arg)*); }) }
 
-macro_rules! trace_ingest_event { ($($arg:expr),*) => ( if true { trace_!($($arg),*); }) }
+macro_rules! trace_ingest_event { ($($arg:tt)*) => ( if true { trace_!($($arg)*); }) }
 
-macro_rules! trace_ingest_container { ($($arg:expr),*) => ( if true { trace_!($($arg),*); }) }
+macro_rules! trace_ingest_container { ($($arg:tt)*) => ( if true { trace_!($($arg)*); }) }
 
-macro_rules! trace_ingest_container_2 { ($($arg:expr),*) => ( if true { trace_!($($arg),*); }) }
+macro_rules! trace_ingest_container_2 { ($($arg:tt)*) => ( if true { trace_!($($arg)*); }) }
 
-macro_rules! trace_fill_until { ($($arg:expr),*) => ( if true { trace_!($($arg),*); }) }
+macro_rules! trace_fill_until { ($($arg:tt)*) => ( if true { trace_!($($arg)*); }) }
 
 const COL1: &'static str = "\x1b[1m";
 const RST: &'static str = "\x1b[0m";
