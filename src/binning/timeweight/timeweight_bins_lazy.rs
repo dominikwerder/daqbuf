@@ -9,6 +9,7 @@ use netpod::TsNano;
 pub struct BinnedBinsTimeweightLazy {
     range: BinnedRange<TsNano>,
     binned: Option<Box<dyn BinnedBinsTimeweightTrait>>,
+    produce_cnt_zero: bool,
 }
 
 impl BinnedBinsTimeweightLazy {
@@ -16,12 +17,25 @@ impl BinnedBinsTimeweightLazy {
         Self {
             range,
             binned: None,
+            produce_cnt_zero: false,
         }
+    }
+
+    pub fn set_cnt_zero(self) -> Self {
+        let mut ret = self;
+        ret.produce_cnt_zero = true;
+        ret
     }
 
     pub fn ingest(&mut self, evs: &BinsBoxed) -> Result<(), BinningggError> {
         self.binned
-            .get_or_insert_with(|| evs.binned_bins_timeweight_traitobj(self.range.clone()))
+            .get_or_insert_with(|| {
+                let mut binner = evs.binned_bins_timeweight_traitobj(self.range.clone());
+                if self.produce_cnt_zero {
+                    binner.cnt_zero_enable();
+                }
+                binner
+            })
             .ingest(evs)
     }
 

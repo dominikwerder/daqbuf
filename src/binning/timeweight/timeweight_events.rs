@@ -58,8 +58,6 @@ fn cold() {}
 
 const DEBUG_CHECKS: bool = true;
 
-pub type RefStr = &'static str;
-
 autoerr::create_error_v1!(
     name(Error, "BinnedEventsTimeweight"),
     enum variants {
@@ -74,8 +72,8 @@ autoerr::create_error_v1!(
         NoMinMaxAfterInit,
         ExpectEventWithinRange,
         IngestNoProgress(usize, usize),
-        EventActiveRangeBefore,
-        EventActiveRangeAfter(RefStr),
+        EventActiveRangeBefore(String),
+        EventActiveRangeAfter(String),
         EventActiveRangeLE,
     },
 );
@@ -190,7 +188,7 @@ where
                     return Err(Error::EventActiveRangeLE);
                 }
                 if ev.ts >= self.active_end {
-                    return Err(Error::EventActiveRangeAfter(selfname));
+                    return Err(Error::EventActiveRangeAfter(selfname.into()));
                 }
             }
             self.ingest_event_with_lst_gt_range_beg(ev.clone(), LstMut(lst.0), minmax)?;
@@ -242,10 +240,10 @@ where
         if let Some(ts0) = evs.ts_first() {
             trace_ingest_event!("{selfname}  EVENT TIMESTAMP FRONT  {:?}", ts0);
             if ts0 < self.active_beg {
-                Err(Error::EventActiveRangeBefore)
+                Err(Error::EventActiveRangeBefore(selfname.into()))
             } else if ts0 >= self.active_end {
                 info!("ts0 >= self.active_end  {}  {}", ts0, self.active_end);
-                Err(Error::EventActiveRangeAfter(selfname))
+                Err(Error::EventActiveRangeAfter(selfname.into()))
             } else {
                 self.ingest_with_lst_ge_range_beg(evs, lst, minmax)
             }
@@ -333,9 +331,9 @@ where
                 let beg = b.active_beg;
                 let end = b.active_end;
                 if ev.ts < beg {
-                    return Err(Error::EventActiveRangeBefore);
+                    return Err(Error::EventActiveRangeBefore(selfname.into()));
                 } else if ev.ts >= end {
-                    return Err(Error::EventActiveRangeAfter(selfname));
+                    return Err(Error::EventActiveRangeAfter(selfname.into()));
                 } else {
                     if ev.ts == beg {
                         self.init_minmax(&ev);
@@ -505,9 +503,16 @@ where
         let selfname = "ingest_event_without_lst";
         let b = &self.inner_a.inner_b;
         if ev.ts < b.active_beg {
-            Err(Error::EventActiveRangeBefore)
+            if false {
+                return Err(Error::EventActiveRangeBefore(selfname.into()));
+            }
+            trace_ingest_init_lst!("{selfname}  set lst  {:?}", ev);
+            self.lst = Some((&ev).into());
+            trace_ingest_minmax!("{selfname}  call init_minmax");
+            self.inner_a.init_minmax(&ev);
+            Ok(())
         } else if ev.ts >= b.active_end {
-            Err(Error::EventActiveRangeAfter(selfname))
+            Err(Error::EventActiveRangeAfter(selfname.into()))
         } else {
             trace_ingest_init_lst!("{selfname}  set lst  {:?}", ev);
             self.lst = Some((&ev).into());

@@ -161,8 +161,8 @@ where
 
     fn ingest_bins(&mut self, bins: &ContainerBins<EVT, BVT>) -> Result<(), BinningggError> {
         trace_ingest_bin!(
-            "\n\n+++++++++++++\n\ningest_bins  active_beg {active_beg}",
-            active_beg = self.active_beg
+            "\n\n+++++++++++++\n\ningest_bins  active_beg {}",
+            self.active_beg
         );
         for (((((((&ts1, &ts2), &cnt), min), max), agg), lst), &fnl) in bins.zip_iter() {
             let grid = self.range.bin_len_dt_ns();
@@ -209,6 +209,10 @@ where
     EVT: EventValueType,
     BVT: BinAggedType,
 {
+    fn cnt_zero_enable(&mut self) {
+        self.cnt_zero_enable();
+    }
+
     fn ingest(&mut self, bins: &BinsBoxed) -> Result<(), BinningggError> {
         if let Some(bins) = bins.as_any_ref().downcast_ref::<ContainerBins<EVT, BVT>>() {
             self.ingest_bins(bins)
