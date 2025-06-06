@@ -1,11 +1,11 @@
-use crate::apitypes::ToUserFacingApiType;
-use crate::collect_s::CollectableDyn;
-use crate::container::ByteEstimate;
-use crate::merge::MergeableDyn;
 use crate::AsAnyMut;
 use crate::AsAnyRef;
 use crate::TypeName;
 use crate::WithLen;
+use crate::apitypes::ToUserFacingApiType;
+use crate::collect_s::CollectableDyn;
+use crate::container::ByteEstimate;
+use crate::merge::MergeableDyn;
 use netpod::BinnedRange;
 use netpod::BinnedRangeEnum;
 use netpod::TsNano;
@@ -158,6 +158,7 @@ pub trait BinnedEventsTimeweightTrait: fmt::Debug + Send {
 }
 
 pub trait BinnedBinsTimeweightTrait: fmt::Debug + Send {
+    fn cnt_zero_enable(&mut self);
     fn ingest(&mut self, bins: &BinsBoxed) -> Result<(), BinningggError>;
     fn input_done_range_final(&mut self) -> Result<(), BinningggError>;
     fn input_done_range_open(&mut self) -> Result<(), BinningggError>;
