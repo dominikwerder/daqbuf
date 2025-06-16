@@ -250,3 +250,33 @@ mod levelserde {
         de.deserialize_u32(VisitLevel)
     }
 }
+
+pub trait AsLogItem {
+    fn as_log_item(&self) -> Option<&LogItem>;
+}
+
+impl<T, E> AsLogItem for Sitemty3<T, E> {
+    fn as_log_item(&self) -> Option<&LogItem> {
+        todo!()
+    }
+}
+
+#[allow(unreachable_code, unused)]
+fn assert_impl_as_log_item<T, E>() {
+    let item: Sitemty<T> = todo!();
+    AsLogItem::as_log_item(&item);
+    let item: Sitemty2<T, E> = todo!();
+    AsLogItem::as_log_item(&item);
+    let item: Sitemty3<T, E> = todo!();
+    AsLogItem::as_log_item(&item);
+}
+
+pub trait FromLogItem {
+    fn from_log_item(item: LogItem) -> Self;
+}
+
+impl<T, E> FromLogItem for Result<StreamItem<T>, E> {
+    fn from_log_item(item: LogItem) -> Self {
+        Ok(StreamItem::Log(item))
+    }
+}
