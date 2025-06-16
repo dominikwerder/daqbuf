@@ -407,7 +407,7 @@ where
             (lst.0.clone(), lst.0.clone())
         });
         {
-            let filled_width_fraction = b.filled_width.fraction_of(b.active_len);
+            let filled_width_fraction = b.filled_width.fraction_f32_of(b.active_len);
             let res = b.agg.result_and_reset_for_new_bin(filled_width_fraction);
             trace_ingest_minmax!(
                 "{}  push out  min {:?}  max {:?}",

@@ -1,19 +1,23 @@
 use crate::binning::container_events::PartialOrdEvtA;
 use items_0::vecpreview::PreviewRange;
 use netpod::DtNano;
+use netpod::log;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::VecDeque;
 use std::fmt;
 use std::ops::Range;
 
+macro_rules! trace_ingest { ($($arg:tt)*) => ( if false { log::trace!($($arg)*); }) }
+macro_rules! trace_result { ($($arg:tt)*) => ( if false { log::trace!($($arg)*); }) }
+
 pub trait AggBinValTw<BVT>: fmt::Debug + Send
 where
     BVT: BinAggedType,
 {
-    fn new() -> Self;
-    fn ingest(&mut self, dt: DtNano, bl: DtNano, cnt: u64, val: BVT);
-    fn result(&mut self, filled_width_fraction: f32) -> BVT;
+    fn new(binlen: DtNano) -> Self;
+    fn ingest(&mut self, dt: DtNano, val: BVT);
+    fn result(&self) -> BVT;
     fn reset_for_new_bin(&mut self);
 }
 
@@ -88,52 +92,94 @@ impl BinAggedType for f64 {
 
 #[derive(Debug)]
 pub struct AggBinValTwF32 {
+    binlen: DtNano,
+    filled: DtNano,
     sum: f32,
 }
 
 impl AggBinValTw<f32> for AggBinValTwF32 {
-    fn new() -> Self {
-        Self { sum: 0. }
+    fn new(binlen: DtNano) -> Self {
+        Self {
+            binlen,
+            filled: DtNano::from_ns(0),
+            sum: 0.,
+        }
     }
 
-    fn ingest(&mut self, dt: DtNano, bl: DtNano, _cnt: u64, val: f32) {
-        let f = dt.ns() as f32 / bl.ns() as f32;
+    fn ingest(&mut self, dt: DtNano, val: f32) {
+        type FT = f32;
+        let f = dt.ns() as FT / self.binlen.ns() as FT;
+        trace_ingest!(
+            "ingest  dt {} s  val {:.4}  f {:.4}",
+            dt.ms_u64() / 1000,
+            val,
+            f
+        );
+        self.filled = self.filled.add(dt);
         self.sum += f * val;
     }
 
-    fn result(&mut self, filled_width_fraction: f32) -> f32 {
-        let ret = self.sum.clone() / filled_width_fraction;
-        <Self as AggBinValTw<f32>>::reset_for_new_bin(self);
+    fn result(&self) -> f32 {
+        type FT = f32;
+        let ret = if self.filled.ns() == 0 {
+            return FT::NAN;
+        } else {
+            let f = self.binlen.ms_u64() as FT / self.filled.ms_u64() as FT;
+            trace_result!("result  sum {:.4}  f {:.4}", self.sum, f);
+            self.sum.clone() * f
+        };
         ret
     }
 
     fn reset_for_new_bin(&mut self) {
+        self.filled = DtNano::from_ns(0);
         self.sum = 0.;
     }
 }
 
 #[derive(Debug)]
 pub struct AggBinValTwF64 {
+    binlen: DtNano,
+    filled: DtNano,
     sum: f64,
 }
 
 impl AggBinValTw<f64> for AggBinValTwF64 {
-    fn new() -> Self {
-        Self { sum: 0. }
+    fn new(binlen: DtNano) -> Self {
+        Self {
+            binlen,
+            filled: DtNano::from_ns(0),
+            sum: 0.,
+        }
     }
 
-    fn ingest(&mut self, dt: DtNano, bl: DtNano, _cnt: u64, val: f64) {
-        let f = dt.ns() as f32 / bl.ns() as f32;
-        self.sum += f as f64 * val;
+    fn ingest(&mut self, dt: DtNano, val: f64) {
+        type FT = f64;
+        let f = dt.ns() as FT / self.binlen.ns() as FT;
+        trace_ingest!(
+            "ingest  dt {} s  val {:.4}  f {:.4}",
+            dt.ms_u64() / 1000,
+            val,
+            f
+        );
+        self.filled = self.filled.add(dt);
+        self.sum += f * val;
     }
 
-    fn result(&mut self, filled_width_fraction: f32) -> f64 {
-        let ret = self.sum.clone() / filled_width_fraction as f64;
-        <Self as AggBinValTw<f64>>::reset_for_new_bin(self);
+    fn result(&self) -> f64 {
+        type FT = f64;
+        let ret = if self.filled.ns() == 0 {
+            return FT::NAN;
+        } else {
+            let f = self.binlen.ms_u64() as FT / self.filled.ms_u64() as FT;
+            trace_result!("result  sum {:.4}  f {:.4}", self.sum, f);
+            self.sum.clone() * f
+        };
         ret
     }
 
     fn reset_for_new_bin(&mut self) {
+        self.filled = DtNano::from_ns(0);
         self.sum = 0.;
     }
 }
