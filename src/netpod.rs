@@ -138,6 +138,23 @@ pub mod log_direct_macros {
     }
 }
 
+mod log_item_macros {
+    #[allow(unused)]
+    #[macro_export]
+    macro_rules! log_item_info {
+        ($fmt:expr) => {
+            let msg = format!("INFO  {:?}  {}", module_path!(), format_args!($fmt));
+            let item = items_0::streamitem::LogItem::info(msg);
+            streams::logqueue::push_log_item(item).unwrap();
+        };
+        ($fmt:expr, $($arg:tt)*) => {
+            let msg = format!("INFO  {:?}  {}", module_path!(), format_args!($fmt, $($arg)*));
+            let item = items_0::streamitem::LogItem::info(msg);
+            streams::logqueue::push_log_item(item).unwrap();
+        };
+    }
+}
+
 pub mod log {
     pub use crate::branch_debug as debug;
     pub use crate::branch_error as error;
@@ -1822,8 +1839,12 @@ impl DtNano {
         Self(self.0 + rhs.0)
     }
 
-    pub fn fraction_of(self, rhs: Self) -> f32 {
+    pub fn fraction_f32_of(self, rhs: Self) -> f32 {
         self.0 as f32 / rhs.0 as f32
+    }
+
+    pub fn fraction_f64_of(self, rhs: Self) -> f64 {
+        self.0 as f64 / rhs.0 as f64
     }
 }
 
