@@ -177,11 +177,7 @@ async fn events_conn_handler_with_reqid(
         }
     }
     {
-        let item = LogItem {
-            node_ix: ncc.ix as _,
-            level: Level::DEBUG,
-            msg: format!("buf_len_histo: {:?}", buf_len_histo),
-        };
+        let item = LogItem::level_msg(Level::DEBUG, format!("buf_len_histo: {:?}", buf_len_histo));
         let item: Sitemty<ChannelEvents> = Ok(StreamItem::Log(item));
         let buf = match item.make_frame_dyn() {
             Ok(k) => k,

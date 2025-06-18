@@ -344,7 +344,7 @@ impl EventChunker {
                                     self.dbg_path
                                 );
                                 warn!("{}", msg);
-                                let item = LogItem::from_node(self.node_ix, Level::INFO, msg);
+                                let item = LogItem::from_node(Level::INFO, msg);
                                 self.log_items.push_back(item);
                             }
                             if self.seen_before_range_count > 100 {
@@ -442,7 +442,7 @@ impl EventChunker {
                                 scalar_type,
                                 self.fetch_info.scalar_type(),
                             );
-                            let item = LogItem::from_node(self.node_ix, Level::WARN, msg);
+                            let item = LogItem::from_node(Level::WARN, msg);
                             log_items.push(item);
                         }
                         if false {
@@ -452,7 +452,7 @@ impl EventChunker {
                                 discard = true;
                                 self.discard_count_shape += 1;
                                 let msg = format!("shape mismatch  {:?}  {:?}", shape_this, self.fetch_info.shape(),);
-                                let item = LogItem::from_node(self.node_ix, Level::WARN, msg);
+                                let item = LogItem::from_node(Level::WARN, msg);
                                 log_items.push(item);
                             }
                         }
@@ -486,7 +486,7 @@ impl EventChunker {
                                             self.fetch_info.shape(),
                                             sh,
                                         );
-                                        let item = LogItem::from_node(self.node_ix, Level::WARN, msg);
+                                        let item = LogItem::from_node(Level::WARN, msg);
                                         log_items.push(item);
                                     }
                                 }
@@ -499,7 +499,7 @@ impl EventChunker {
                                         self.fetch_info.scalar_type(),
                                         self.fetch_info.shape(),
                                     );
-                                    let item = LogItem::from_node(self.node_ix, Level::WARN, msg);
+                                    let item = LogItem::from_node(Level::WARN, msg);
                                     log_items.push(item);
                                 }
                             }

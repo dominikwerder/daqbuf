@@ -16,11 +16,7 @@ impl Streamlog {
     }
 
     pub fn append(&mut self, level: Level, msg: String) {
-        let item = LogItem {
-            node_ix: self.node_ix,
-            level,
-            msg,
-        };
+        let item = LogItem::level_msg(level, msg);
         self.items.push_back(item);
     }
 
@@ -29,21 +25,21 @@ impl Streamlog {
     }
 
     pub fn emit(item: &LogItem) {
-        match item.level {
+        match item.level() {
             Level::ERROR => {
-                error!("StreamLog  Node {}  {}", item.node_ix, item.msg);
+                error!("StreamLog  {}", item.display_log_file());
             }
             Level::WARN => {
-                warn!("StreamLog  Node {}  {}", item.node_ix, item.msg);
+                warn!("StreamLog  {}", item.display_log_file());
             }
             Level::INFO => {
-                info!("StreamLog  Node {}  {}", item.node_ix, item.msg);
+                info!("StreamLog  {}", item.display_log_file());
             }
             Level::DEBUG => {
-                debug!("StreamLog  Node {}  {}", item.node_ix, item.msg);
+                debug!("StreamLog  {}", item.display_log_file());
             }
             Level::TRACE => {
-                trace!("StreamLog  Node {}  {}", item.node_ix, item.msg);
+                trace!("StreamLog  {}", item.display_log_file());
             }
         }
     }

@@ -280,10 +280,7 @@ async fn binned_json_framed(
         let stream = stream.map_err(Error::from);
         // let msg = format!("{}", res2.url.as_str());
         // let stream = futures_util::stream::iter([Ok(msg)]).chain(stream);
-        let stream = stream.map(|x| {
-            //
-            x
-        });
+        let stream = stream.map(|x| x);
 
         // use items_2::binning::timeweight::timeweight_bins::BinnedBinsTimeweight;
         use items_0::streamitem::StreamItem;
@@ -321,6 +318,7 @@ async fn binned_json_framed(
                 Err(e) => Err(e),
             }
         });
+        let stream = stream.map(|x| x);
         let stream = stream.map_err(|e| daqbuf_err::Error::from_string(e));
         let timeout_content_base = res2
             .query
@@ -328,11 +326,14 @@ async fn binned_json_framed(
             .unwrap_or(Duration::from_millis(2000))
             .min(Duration::from_millis(8000))
             .max(Duration::from_millis(334));
+        let stream = stream.map(|x| x);
+        let stream = streams::logqueue::LogItemMux::new(stream, ctx.reqid().into());
         let timeout_content_2 = timeout_content_base * 2 / 3;
         let stream = stream.map(|x| Some(x)).chain(futures_util::stream::iter([None]));
         let stream = TimeoutableStream::new(timeout_content_base, res2.timeout_provider, stream);
+        let stream = stream.map(|x| x);
         let stream = Box::pin(stream);
-        let stream = timeoutable_collectable_stream_to_json_bytes(stream, timeout_content_2);
+        let stream = timeoutable_collectable_stream_to_json_bytes(stream, timeout_content_2, true);
         // let stream = stream.map(|x| Ok(format!("dummy82749827348932")));
         // Box::pin(stream) as Pin<Box<dyn Stream<Item = _> + Send>>
         stream

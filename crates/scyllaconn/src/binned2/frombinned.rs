@@ -123,6 +123,10 @@ impl FromBinned {
     }
 
     fn build_day1_jobs(&mut self) {
+        {
+            let item = items_0::streamitem::LogItem::info("some log string".into());
+            streams::logqueue::push_log_item(item);
+        }
         let mut jobs = VecDeque::new();
         let pbp1 = PrebinnedPartitioning::Day1;
         self.push_string(format!("binrange {:?}", self.binrange));

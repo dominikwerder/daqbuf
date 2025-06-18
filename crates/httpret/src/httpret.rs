@@ -228,6 +228,19 @@ async fn the_service_fn(
     shared_res: Arc<ServiceSharedResources>,
 ) -> Result<StreamResponse, Error> {
     let ctx = ReqCtx::new_with_node(&req, &node_config);
+    let reqid = ctx.reqid().into();
+    let fut = the_service_fn_log_enabled(ctx, req, addr, node_config, service_version, shared_res);
+    streams::logqueue::LogQueueFutureWrap::new(reqid, fut).await
+}
+
+async fn the_service_fn_log_enabled(
+    ctx: ReqCtx,
+    req: Requ,
+    addr: SocketAddr,
+    node_config: NodeConfigCached,
+    service_version: ServiceVersion,
+    shared_res: Arc<ServiceSharedResources>,
+) -> Result<StreamResponse, Error> {
     let reqid_span = span!(Level::INFO, "req", reqid = ctx.reqid());
     let f = http_service(req, addr, ctx, node_config, service_version, shared_res);
     let f = Cont { f: Box::pin(f) };

@@ -136,11 +136,7 @@ impl Stream for EventChunkerMultifile {
                                     if min <= self.max_ts {
                                         let msg = format!("EventChunkerMultifile  repeated or unordered ts {}", min);
                                         error!("{}", msg);
-                                        let item = LogItem {
-                                            node_ix: self.node_ix as _,
-                                            level: Level::INFO,
-                                            msg,
-                                        };
+                                        let item = LogItem::info(msg);
                                         self.log_queue.push_back(item);
                                     }
                                     self.max_ts = max;
@@ -185,11 +181,11 @@ impl Stream for EventChunkerMultifile {
                         Ready(Some(k)) => match k {
                             Ok(ofs) => {
                                 let msg = format!("received files for timebin {:?}", ofs.timebin);
-                                let item = LogItem::from_node(self.node_ix, Level::INFO, msg);
+                                let item = LogItem::from_node(Level::INFO, msg);
                                 self.log_queue.push_back(item);
                                 for e in &ofs.files {
                                     let msg = format!("file {:?}", e);
-                                    let item = LogItem::from_node(self.node_ix, Level::INFO, msg);
+                                    let item = LogItem::from_node(Level::INFO, msg);
                                     self.log_queue.push_back(item);
                                 }
                                 self.files_count += ofs.files.len() as u32;
@@ -222,7 +218,7 @@ impl Stream for EventChunkerMultifile {
                                     continue;
                                 } else if ofs.files.len() == 0 {
                                     let msg = format!("use opened files {:?}  no files", ofs);
-                                    let item = LogItem::from_node(self.node_ix, Level::DEBUG, msg);
+                                    let item = LogItem::from_node(Level::DEBUG, msg);
                                     Ready(Some(Ok(StreamItem::Log(item))))
                                 } else {
                                     let mut chunkers = Vec::new();
@@ -249,7 +245,7 @@ impl Stream for EventChunkerMultifile {
                                     let filtered = RangeFilter2::new(merged, self.range.clone(), self.one_before);
                                     self.evs = Some(Box::pin(filtered));
                                     let msg = format!("LOCALLY MERGED");
-                                    let item = LogItem::from_node(self.node_ix, Level::DEBUG, msg);
+                                    let item = LogItem::from_node(Level::DEBUG, msg);
                                     Ready(Some(Ok(StreamItem::Log(item))))
                                 }
                             }
@@ -261,7 +257,6 @@ impl Stream for EventChunkerMultifile {
                         Ready(None) => {
                             self.done = true;
                             let item = LogItem::from_node(
-                                self.node_ix,
                                 Level::DEBUG,
                                 format!(
                                     "EventChunkerMultifile used {} datafiles  beg {}  end {}  node_ix {}",

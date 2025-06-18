@@ -12,8 +12,8 @@ use items_0::streamitem::LogItem;
 use items_0::streamitem::Sitemty3;
 use items_0::streamitem::StreamItem;
 use items_0::streamitem::sitem3_data;
+use log::log_item_emit as lg;
 use netpod::DtMs;
-use netpod::log;
 use netpod::range::evrange::NanoRange;
 use netpod::ttl::RetentionTime;
 use std::collections::VecDeque;
@@ -22,8 +22,8 @@ use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
 
-macro_rules! info { ($($arg:expr),*) => ( if true { log::info!($($arg),*); } ); }
-macro_rules! debug { ($($arg:expr),*) => ( if true { log::debug!($($arg),*); } ); }
+macro_rules! info { ($($arg:tt)*) => ( if true { log::info!($($arg)*); } ); }
+macro_rules! debug { ($($arg:tt)*) => ( if true { log::debug!($($arg)*); } ); }
 
 autoerr::create_error_v1!(
     name(Error, "BinWriteIndexRtStream"),
@@ -81,6 +81,11 @@ impl BinWriteIndexRtStream {
         range: NanoRange,
         scyqueue: ScyllaQueue,
     ) -> Self {
+        lg::info!("============================   log item emitted from binwriteindex.rs");
+        lg::info!(
+            "============================   log item emitted from binwriteindex.rs WITH PARAM {}",
+            42
+        );
         info!("{}::new  INFO/DEBUG test", Self::type_name());
         debug!("{}::new", Self::type_name());
         let (msp_beg, lsp_beg) = pbp.msp_lsp(range.beg_ts().to_ts_ms());

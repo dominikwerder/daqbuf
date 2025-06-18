@@ -35,7 +35,7 @@ impl<INP> EventFullShapeFilter<INP> {
                                 "EventFullShapeFilter  shape_derived mismatch  {:?}  {:?}",
                                 sh, self.shape_exp
                             );
-                            let item = LogItem::from_node(node_ix, Level::WARN, msg);
+                            let item = LogItem::from_node(Level::WARN, msg);
                             self.log_items.push_back(item);
                             false
                         } else {
@@ -47,7 +47,7 @@ impl<INP> EventFullShapeFilter<INP> {
                             "EventFullShapeFilter  shape_derived mismatch  {:?}  {:?}",
                             sh, self.shape_exp
                         );
-                        let item = LogItem::from_node(self.node_ix, Level::WARN, msg);
+                        let item = LogItem::from_node(Level::WARN, msg);
                         self.log_items.push_back(item);
                         false
                     }

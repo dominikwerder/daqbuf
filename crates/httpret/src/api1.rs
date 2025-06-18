@@ -732,19 +732,22 @@ impl DataApiPython3DataStream {
                     }
                 },
                 StreamItem::Log(k) => {
-                    let nodeix = k.node_ix;
-                    if k.level == Level::ERROR {
-                        tracing::event!(Level::ERROR, nodeix, message = k.msg);
-                    } else if k.level == Level::WARN {
-                        tracing::event!(Level::WARN, nodeix, message = k.msg);
-                    } else if k.level == Level::INFO {
-                        tracing::event!(Level::INFO, nodeix, message = k.msg);
-                    } else if k.level == Level::DEBUG {
-                        tracing::event!(Level::DEBUG, nodeix, message = k.msg);
-                    } else if k.level == Level::TRACE {
-                        tracing::event!(Level::TRACE, nodeix, message = k.msg);
-                    } else {
-                        tracing::event!(Level::TRACE, nodeix, message = k.msg);
+                    match k.level() {
+                        Level::ERROR => {
+                            error!("{}", k.display_log_file());
+                        }
+                        Level::WARN => {
+                            warn!("{}", k.display_log_file());
+                        }
+                        Level::INFO => {
+                            info!("{}", k.display_log_file());
+                        }
+                        Level::DEBUG => {
+                            debug!("{}", k.display_log_file());
+                        }
+                        Level::TRACE => {
+                            trace!("{}", k.display_log_file());
+                        }
                     }
                     Ok(BytesMut::new())
                 }
