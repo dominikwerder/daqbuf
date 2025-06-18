@@ -198,16 +198,12 @@ where
             if let Some((i1, t1)) = tslows[0].as_ref() {
                 if *t1 <= self.dim0ix_max {
                     self.dim0ix_max = *t1;
-                    let item = LogItem {
-                        node_ix: *i1 as _,
-                        level: log::Level::INFO,
-                        msg: format!(
-                            "dim0ix_max  {} vs {}   diff {}",
-                            self.dim0ix_max,
-                            t1,
-                            self.dim0ix_max.ns() - t1.ns()
-                        ),
-                    };
+                    let item = LogItem::info(format!(
+                        "dim0ix_max  {} vs {}   diff {}  i1 {i1}",
+                        self.dim0ix_max,
+                        t1,
+                        self.dim0ix_max.ns() - t1.ns()
+                    ));
                     log_items.push(item);
                 }
             }
