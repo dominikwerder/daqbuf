@@ -138,23 +138,6 @@ pub mod log_direct_macros {
     }
 }
 
-mod log_item_macros {
-    #[allow(unused)]
-    #[macro_export]
-    macro_rules! log_item_info {
-        ($fmt:expr) => {
-            let msg = format!("INFO  {:?}  {}", module_path!(), format_args!($fmt));
-            let item = items_0::streamitem::LogItem::info(msg);
-            streams::logqueue::push_log_item(item).unwrap();
-        };
-        ($fmt:expr, $($arg:tt)*) => {
-            let msg = format!("INFO  {:?}  {}", module_path!(), format_args!($fmt, $($arg)*));
-            let item = items_0::streamitem::LogItem::info(msg);
-            streams::logqueue::push_log_item(item).unwrap();
-        };
-    }
-}
-
 pub mod log {
     pub use crate::branch_debug as debug;
     pub use crate::branch_error as error;
