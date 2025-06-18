@@ -5,6 +5,7 @@ use netpod::EventDataReadStats;
 use netpod::RangeFilterStats;
 use serde::Deserialize;
 use serde::Serialize;
+use std::fmt;
 
 pub const TERM_FRAME_TYPE_ID: u32 = 0xaa0001;
 pub const ERROR_FRAME_TYPE_ID: u32 = 0xaa0002;
@@ -65,16 +66,37 @@ impl<T> StreamItem<T> {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct LogItem {
-    pub node_ix: u32,
+    #[serde(with = "timestamp")]
+    ts: time::UtcDateTime,
+    origin: String,
     #[serde(with = "levelserde")]
-    pub level: Level,
-    pub msg: String,
+    level: Level,
+    msg: String,
 }
 
 impl LogItem {
-    pub fn from_node(node_ix: usize, level: Level, msg: String) -> Self {
+    pub fn from_node(level: Level, msg: String) -> Self {
         Self {
-            node_ix: node_ix as _,
+            ts: time::UtcDateTime::now(),
+            level,
+            msg,
+            origin: String::new(),
+        }
+    }
+
+    pub fn level_msg(level: Level, msg: String) -> Self {
+        Self {
+            ts: time::UtcDateTime::now(),
+            level,
+            msg,
+            origin: String::new(),
+        }
+    }
+
+    pub fn origin_level_msg(origin: String, level: Level, msg: String) -> Self {
+        Self {
+            ts: time::UtcDateTime::now(),
+            origin,
             level,
             msg,
         }
@@ -82,10 +104,30 @@ impl LogItem {
 
     pub fn info(msg: String) -> Self {
         Self {
-            node_ix: 0,
+            ts: time::UtcDateTime::now(),
             level: Level::INFO,
             msg,
+            origin: String::new(),
         }
+    }
+
+    pub fn level(&self) -> Level {
+        self.level
+    }
+
+    pub fn display_log_file(&self) -> LogItemDisplayLogfile {
+        LogItemDisplayLogfile { item: self }
+    }
+}
+
+pub struct LogItemDisplayLogfile<'a> {
+    item: &'a LogItem,
+}
+
+impl<'a> fmt::Display for LogItemDisplayLogfile<'a> {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        let me = &self.item;
+        write!(fmt, "{}  {}  {}  {}", me.ts, me.level, me.origin, me.msg)
     }
 }
 
@@ -193,6 +235,56 @@ where
     err::Error::from_string(x)
 }
 
+mod timestamp {
+    use serde::Deserializer;
+    use serde::Serializer;
+    use serde::de;
+    use serde::de::Visitor;
+    use std::fmt;
+
+    pub fn serialize<S>(val: &time::UtcDateTime, se: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let g = val
+            .format(time::macros::format_description!(
+                "[year]-[month]-[day]T[hour]:[minute]:[second].[subsecond digits:6]"
+            ))
+            .unwrap();
+        se.serialize_str(&g)
+    }
+
+    struct Visit;
+
+    impl<'de> Visitor<'de> for Visit {
+        type Value = time::UtcDateTime;
+
+        fn expecting(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+            write!(fmt, "expect utc timestamp")
+        }
+
+        fn visit_str<E>(self, val: &str) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            let ret = time::UtcDateTime::parse(
+                val,
+                time::macros::format_description!(
+                    "[year]-[month]-[day]T[hour]:[minute]:[second].[subsecond digits:6]"
+                ),
+            );
+            ret.map_err(|e| E::custom(format!("{e}")))
+        }
+    }
+
+    pub fn deserialize<'de, D>(de: D) -> Result<time::UtcDateTime, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        de.deserialize_str(Visit)
+    }
+}
+
 mod levelserde {
     use super::Level;
     use serde::de::{self, Visitor};
@@ -204,29 +296,16 @@ mod levelserde {
         S: Serializer,
     {
         let g = match *t {
-            Level::ERROR => 1,
-            Level::WARN => 2,
-            Level::INFO => 3,
-            Level::DEBUG => 4,
-            Level::TRACE => 5,
+            Level::ERROR => "ERROR",
+            Level::WARN => "WARN",
+            Level::INFO => "INFO",
+            Level::DEBUG => "DEBUG",
+            Level::TRACE => "TRACE",
         };
-        se.serialize_u32(g)
+        se.serialize_str(g)
     }
 
     struct VisitLevel;
-
-    impl VisitLevel {
-        fn from_u32(x: u32) -> Level {
-            match x {
-                1 => Level::ERROR,
-                2 => Level::WARN,
-                3 => Level::INFO,
-                4 => Level::DEBUG,
-                5 => Level::TRACE,
-                _ => Level::TRACE,
-            }
-        }
-    }
 
     impl<'de> Visitor<'de> for VisitLevel {
         type Value = Level;
@@ -235,11 +314,19 @@ mod levelserde {
             write!(fmt, "expect Level code")
         }
 
-        fn visit_u64<E>(self, val: u64) -> Result<Self::Value, E>
+        fn visit_str<E>(self, val: &str) -> Result<Self::Value, E>
         where
             E: de::Error,
         {
-            Ok(VisitLevel::from_u32(val as _))
+            let level = match val {
+                "ERROR" => Level::ERROR,
+                "WARN" => Level::WARN,
+                "INFO" => Level::INFO,
+                "DEBUG" => Level::DEBUG,
+                "TRACE" => Level::TRACE,
+                _ => return Err(E::custom("unknown level value")),
+            };
+            Ok(level)
         }
     }
 
@@ -247,7 +334,17 @@ mod levelserde {
     where
         D: Deserializer<'de>,
     {
-        de.deserialize_u32(VisitLevel)
+        de.deserialize_str(VisitLevel)
+    }
+}
+
+#[test]
+fn serde_level() {
+    use Level::{DEBUG, ERROR, INFO, TRACE, WARN};
+    for v1 in [ERROR, WARN, INFO, DEBUG, TRACE] {
+        let s = serde_json::to_string(&v1).unwrap();
+        let v2 = serde_json::from_str(&s).unwrap();
+        assert_eq!(v1, v2);
     }
 }
 
