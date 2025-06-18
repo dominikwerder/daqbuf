@@ -85,16 +85,16 @@ impl TimeBinnedFromLayers {
                 outbuf: VecDeque::new(),
             };
             info_init!("pbd_enable");
-            let item = LogItem::from_node(0, log::Level::TRACE, "test-log-item-trace".into());
+            let item = LogItem::from_node(log::Level::TRACE, "test-log-item-trace".into());
             let item = StreamItem::Log(item);
             ret.outbuf.push_back(Ok(item));
-            let item = LogItem::from_node(0, log::Level::DEBUG, "test-log-item-debug".into());
+            let item = LogItem::from_node(log::Level::DEBUG, "test-log-item-debug".into());
             let item = StreamItem::Log(item);
             ret.outbuf.push_back(Ok(item));
-            let item = LogItem::from_node(0, log::Level::INFO, "test-log-item-info".into());
+            let item = LogItem::from_node(log::Level::INFO, "test-log-item-info".into());
             let item = StreamItem::Log(item);
             ret.outbuf.push_back(Ok(item));
-            let item = LogItem::from_node(0, log::Level::WARN, "test-log-item-warn".into());
+            let item = LogItem::from_node(log::Level::WARN, "test-log-item-warn".into());
             let item = StreamItem::Log(item);
             ret.outbuf.push_back(Ok(item));
             let item = StatsItem::Binning;

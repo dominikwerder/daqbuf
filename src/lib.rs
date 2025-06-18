@@ -15,6 +15,8 @@ pub mod itemclone;
 pub mod json_stream;
 pub mod lenframe;
 pub mod lenframed;
+pub mod logfilter;
+pub mod logqueue;
 pub mod needminbuffer;
 pub mod plaineventscbor;
 pub mod plaineventsjson;

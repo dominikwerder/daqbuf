@@ -17,6 +17,7 @@ use futures_util::StreamExt;
 use futures_util::TryStreamExt;
 use items_0::collect_s::CollectableDyn;
 use items_0::on_sitemty_data;
+use items_0::streamitem::sitem_err2_from_string;
 use items_0::streamitem::RangeCompletableItem;
 use items_0::streamitem::Sitemty;
 use items_0::streamitem::StreamItem;
@@ -403,6 +404,7 @@ fn take_collector_result_cbor(
 pub fn timeoutable_collectable_stream_to_json_bytes(
     stream: Pin<Box<dyn Stream<Item = Option<Option<Sitemty<Box<dyn CollectableDyn>>>>> + Send>>,
     timeout_content_2: Duration,
+    emit_log_items: bool,
 ) -> Pin<Box<dyn Stream<Item = Result<JsonBytes, crate::json_stream::Error>> + Send>> {
     let mut coll = None;
     let mut last_emit = Instant::now();
@@ -426,20 +428,32 @@ pub fn timeoutable_collectable_stream_to_json_bytes(
                             RangeCompletableItem::RangeComplete => None,
                         },
                         StreamItem::Log(x) => {
-                            if x.level == Level::ERROR {
-                                error!("{}", x.msg);
-                            } else if x.level == Level::WARN {
-                                warn!("{}", x.msg);
-                            } else if x.level == Level::INFO {
-                                info!("{}", x.msg);
-                            } else if x.level == Level::DEBUG {
-                                debug!("{}", x.msg);
-                            } else if x.level == Level::TRACE {
-                                trace!("{}", x.msg);
+                            if emit_log_items {
+                                let obj = serde_json::json!({"type": "log", "obj": x});
+                                match serde_json::to_string(&obj) {
+                                    Ok(json) => Some(Ok(JsonBytes::new(json))),
+                                    Err(e) => Some(Err(sitem_err2_from_string(e))),
+                                }
                             } else {
-                                trace!("{}", x.msg);
+                                match x.level() {
+                                    Level::ERROR => {
+                                        error!("{}", x.display_log_file());
+                                    }
+                                    Level::WARN => {
+                                        warn!("{}", x.display_log_file());
+                                    }
+                                    Level::INFO => {
+                                        info!("{}", x.display_log_file());
+                                    }
+                                    Level::DEBUG => {
+                                        debug!("{}", x.display_log_file());
+                                    }
+                                    Level::TRACE => {
+                                        trace!("{}", x.display_log_file());
+                                    }
+                                }
+                                None
                             }
-                            None
                         }
                         StreamItem::Stats(x) => {
                             debug!("{x:?}");
@@ -518,7 +532,7 @@ pub async fn timebinned_json_framed(
         .chain(futures_util::stream::iter([None]));
     let stream = TimeoutableStream::new(timeout_content_base, timeout_provider, stream);
     let stream = Box::pin(stream);
-    let stream = timeoutable_collectable_stream_to_json_bytes(stream, timeout_content_2);
+    let stream = timeoutable_collectable_stream_to_json_bytes(stream, timeout_content_2, false);
     Ok(stream)
 }
 
@@ -587,7 +601,7 @@ pub async fn timebinned_cbor_framed(
                             RangeCompletableItem::RangeComplete => None,
                         },
                         StreamItem::Log(x) => {
-                            if x.level <= log_items_level {
+                            if x.level() <= log_items_level {
                                 let mut buf = Vec::with_capacity(1024);
                                 ciborium::into_writer(&x, &mut buf).expect("cbor serialize");
                                 let bytes = Bytes::from(buf);

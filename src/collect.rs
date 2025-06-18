@@ -117,16 +117,22 @@ where
                     }
                 },
                 StreamItem::Log(item) => {
-                    if item.level == Level::ERROR {
-                        error!("node {}  msg {}", item.node_ix, item.msg);
-                    } else if item.level == Level::WARN {
-                        warn!("node {}  msg {}", item.node_ix, item.msg);
-                    } else if item.level == Level::INFO {
-                        info!("node {}  msg {}", item.node_ix, item.msg);
-                    } else if item.level == Level::DEBUG {
-                        debug!("node {}  msg {}", item.node_ix, item.msg);
-                    } else if item.level == Level::TRACE {
-                        trace!("node {}  msg {}", item.node_ix, item.msg);
+                    match item.level() {
+                        Level::ERROR => {
+                            error!("{}", item.display_log_file());
+                        }
+                        Level::WARN => {
+                            warn!("{}", item.display_log_file());
+                        }
+                        Level::INFO => {
+                            info!("{}", item.display_log_file());
+                        }
+                        Level::DEBUG => {
+                            debug!("{}", item.display_log_file());
+                        }
+                        Level::TRACE => {
+                            trace!("{}", item.display_log_file());
+                        }
                     }
                     Ok(())
                 }

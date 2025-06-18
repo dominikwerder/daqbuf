@@ -96,21 +96,21 @@ where
                 }
             },
             StreamItem::Log(item) => {
-                match item.level {
+                match item.level() {
                     Level::TRACE => {
-                        trace!("{:?}", item);
+                        trace!("{}", item.display_log_file());
                     }
                     Level::DEBUG => {
-                        debug!("{:?}", item);
+                        debug!("{}", item.display_log_file());
                     }
                     Level::INFO => {
-                        info!("{:?}", item);
+                        info!("{}", item.display_log_file());
                     }
                     Level::WARN => {
-                        warn!("{:?}", item);
+                        warn!("{}", item.display_log_file());
                     }
                     Level::ERROR => {
-                        error!("{:?}", item);
+                        error!("{}", item.display_log_file());
                     }
                 }
                 let item = CborBytes::new(Bytes::new());
@@ -240,7 +240,7 @@ impl<S> FramedBytesToChannelEventsStream<S> {
         if let Some(x) = item {
             Ok(Some(Ok(x)))
         } else {
-            let item = LogItem::from_node(0, Level::DEBUG, format!("decoded ciborium Value"));
+            let item = LogItem::from_node(Level::DEBUG, format!("decoded ciborium Value"));
             Ok(Some(Ok(StreamItem::Log(item))))
         }
     }
