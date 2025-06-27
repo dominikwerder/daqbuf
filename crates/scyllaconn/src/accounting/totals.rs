@@ -166,7 +166,8 @@ impl Stream for AccountingStreamScylla {
             }
             break match &mut self.state {
                 FrState::New => {
-                    let cql = concat!("select series, count, bytes from account_00 where part = ? and ts = ?");
+                    let cql =
+                        concat!("select series, count, bytes from account_00 where part = ? and ts = ? bypass cache");
                     let fut = prep(cql, self.scy.clone());
                     let fut: PrepFut = Box::pin(fut);
                     self.state = FrState::Prepare(fut);

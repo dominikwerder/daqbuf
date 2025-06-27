@@ -4,6 +4,7 @@ pub mod binned;
 pub mod binned_v2;
 pub mod binwriteindex;
 pub mod databuffer_tools;
+pub mod datasearch;
 pub mod docs;
 pub mod eventdata;
 pub mod events;

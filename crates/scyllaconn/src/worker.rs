@@ -5,27 +5,27 @@ use crate::events2::prepare::StmtsEvents;
 use crate::range::ScyllaSeriesRange;
 use async_channel::Receiver;
 use async_channel::Sender;
+use daqbuf_series::SeriesId;
 use daqbuf_series::msp::MspU32;
 use daqbuf_series::msp::PrebinnedPartitioning;
-use daqbuf_series::SeriesId;
 use futures_util::Future;
 use futures_util::StreamExt;
 use futures_util::TryStreamExt;
 use items_0::timebin::BinningggContainerEventsDyn;
 use items_2::binning::container_bins::ContainerBins;
-use netpod::log;
-use netpod::ttl::RetentionTime;
 use netpod::DtMs;
 use netpod::ScyllaConfig;
 use netpod::TsMs;
+use netpod::log;
+use netpod::ttl::RetentionTime;
 use scylla::client::session::Session;
 use std::collections::VecDeque;
 use std::fmt;
 use std::pin::Pin;
 use std::sync::Arc;
 
-macro_rules! info { ($($arg:expr),*) => ( if true { log::info!($($arg),*); } ); }
-macro_rules! debug { ($($arg:expr),*) => ( if true { log::debug!($($arg),*); } ); }
+macro_rules! info { ($($arg:tt)*) => ( if true { log::info!($($arg)*); } ); }
+macro_rules! debug { ($($arg:tt)*) => ( if true { log::debug!($($arg)*); } ); }
 
 const CONCURRENT_QUERIES_PER_WORKER: usize = 80;
 const SCYLLA_WORKER_QUEUE_LEN: usize = 200;
@@ -43,6 +43,7 @@ autoerr::create_error_v1!(
         Toplist(#[from] crate::accounting::toplist::Error),
         MissingKeyspaceConfig,
         CacheWriteF32(#[from] streams::timebin::cached::reader::Error),
+        ScyllaPrepare(#[from] scylla::errors::PrepareError),
         ScyllaType(#[from] scylla::deserialize::TypeCheckError),
         ScyllaNextRow(#[from] scylla::errors::NextRowError),
         ScyllaPagerExecution(#[from] scylla::errors::PagerExecutionError),
@@ -119,6 +120,28 @@ impl BinWriteIndexRead {
 }
 
 #[derive(Debug)]
+struct PrepareV1 {
+    cql: String,
+    tx: Sender<Result<scylla::statement::prepared::PreparedStatement, Error>>,
+}
+
+struct ExecuteV1 {
+    st: scylla::statement::prepared::PreparedStatement,
+    params: Box<dyn scylla::serialize::row::SerializeRow + Send>,
+    tx: Sender<Result<scylla::client::pager::QueryPager, Error>>,
+}
+
+impl fmt::Debug for ExecuteV1 {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        fmt.debug_struct("ExecuteV1")
+            .field("st", &self.st)
+            .field("params", &"...")
+            .field("tx", &"...")
+            .finish()
+    }
+}
+
+#[derive(Debug)]
 enum Job {
     FindTsMsp(
         RetentionTime,
@@ -141,6 +164,8 @@ enum Job {
     ),
     ReadPrebinnedF32(ReadPrebinnedF32),
     BinWriteIndexRead(BinWriteIndexRead),
+    PrepareV1(PrepareV1),
+    ExecuteV1(ExecuteV1),
 }
 
 struct ReadNextValues {
@@ -297,6 +322,38 @@ impl ScyllaQueue {
             .map_err(|_| streams::timebin::cached::reader::Error::ChannelRecv)??;
         Ok(res)
     }
+
+    pub async fn prepare(&self, cql: String) -> Result<scylla::statement::prepared::PreparedStatement, Error> {
+        let (tx, rx) = async_channel::bounded(1);
+        let job = Job::PrepareV1(PrepareV1 { cql, tx });
+        self.tx
+            .send(job)
+            .await
+            .map_err(|_| streams::timebin::cached::reader::Error::ChannelSend)?;
+        let res = rx
+            .recv()
+            .await
+            .map_err(|_| streams::timebin::cached::reader::Error::ChannelRecv)??;
+        Ok(res)
+    }
+
+    pub async fn execute(
+        &self,
+        st: scylla::statement::prepared::PreparedStatement,
+    ) -> Result<scylla::client::pager::QueryPager, Error> {
+        let (tx, rx) = async_channel::bounded(1);
+        let params = Box::new(());
+        let job = Job::ExecuteV1(ExecuteV1 { st, params, tx });
+        self.tx
+            .send(job)
+            .await
+            .map_err(|_| streams::timebin::cached::reader::Error::ChannelSend)?;
+        let res = rx
+            .recv()
+            .await
+            .map_err(|_| streams::timebin::cached::reader::Error::ChannelRecv)??;
+        Ok(res)
+    }
 }
 
 #[derive(Debug)]
@@ -333,7 +390,12 @@ impl ScyllaWorker {
             self.scyconf_lt.keyspace.as_str(),
         ];
         debug!("scylla worker  prepare start");
-        let stmts = StmtsEvents::new(kss.try_into().map_err(|_| Error::MissingKeyspaceConfig)?, &scy).await?;
+        let stmts = StmtsEvents::new(
+            kss.try_into().map_err(|_| Error::MissingKeyspaceConfig)?,
+            self.scyconf_st.bypass_cache,
+            &scy,
+        )
+        .await?;
         let stmts = Arc::new(stmts);
         // let stmts_cache = StmtsCache::new(kss[0], &scy).await?;
         // let stmts_cache = Arc::new(stmts_cache);
@@ -390,6 +452,16 @@ impl ScyllaWorker {
                         }
                     }
                     Job::BinWriteIndexRead(job) => job.execute(&stmts, &scy).await,
+                    Job::PrepareV1(job) => {
+                        let res = scy.prepare(job.cql).await.map_err(|e| e.into());
+                        // TODO log?
+                        let _ = job.tx.send(res).await;
+                    }
+                    Job::ExecuteV1(job) => {
+                        let res = scy.execute_iter(job.st, job.params).await.map_err(|e| e.into());
+                        // TODO log?
+                        let _ = job.tx.send(res).await;
+                    }
                 }
             })
             .buffer_unordered(CONCURRENT_QUERIES_PER_WORKER)

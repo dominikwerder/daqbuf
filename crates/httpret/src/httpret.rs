@@ -478,6 +478,8 @@ async fn http_service_inner(
         Ok(h.handle(req, &node_config).await?)
     } else if let Some(h) = api1::RequestStatusHandler::handler(&req) {
         Ok(h.handle(req, ctx, &node_config).await?)
+    } else if let Some(h) = api4::datasearch::DataSearch::handler(&req) {
+        Ok(h.handle(req, ctx, &shared_res, &node_config).await?)
     } else if let Some(h) = api4::docs::DocsHandler::handler(&req) {
         Ok(h.handle(req, ctx).await?)
     } else {

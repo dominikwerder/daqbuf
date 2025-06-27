@@ -1,5 +1,5 @@
 use netpod::ScyllaConfig;
-use netpod::log::*;
+use netpod::log;
 use scylla::client::execution_profile::ExecutionProfileBuilder;
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
@@ -24,13 +24,13 @@ pub async fn create_scy_session(scyconf: &ScyllaConfig) -> Result<Arc<Session>, 
 }
 
 pub async fn create_scy_session_no_ks(scyconf: &ScyllaConfig) -> Result<Session, Error> {
-    info!("creating scylla connection");
+    log::info!("creating scylla connection");
     let scy = SessionBuilder::new()
         .pool_size(scylla::client::PoolSize::PerHost(NonZero::new(4).unwrap()))
         .known_nodes(&scyconf.hosts)
         .default_execution_profile_handle(
             ExecutionProfileBuilder::default()
-                .consistency(Consistency::Quorum)
+                .consistency(Consistency::All)
                 .build()
                 .into_handle(),
         )

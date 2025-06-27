@@ -6,19 +6,23 @@ use futures_util::Future;
 use futures_util::FutureExt;
 use futures_util::Stream;
 use futures_util::TryStreamExt;
-use netpod::log;
-use netpod::ttl::RetentionTime;
 use netpod::TsMs;
 use netpod::TsMsVecFmt;
+use netpod::log;
+use netpod::ttl::RetentionTime;
 use scylla::client::session::Session;
 use std::collections::VecDeque;
 use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
 
-macro_rules! trace_emit { ($det:expr, $($arg:expr),*) => ( if $det { log::trace!($($arg),*); } ) }
+macro_rules! trace_emit { ($det:expr, $($arg:tt)*) => ( if $det { log::trace!($($arg)*); } ) }
 
-macro_rules! trace_msp { ($($arg:expr),*) => ( if true { log::trace!($($arg),*); } ) }
+macro_rules! trace_msp { ($($arg:tt)*) => ( if true { log::trace!($($arg)*); } ) }
+
+macro_rules! log_fetch_result {
+    ($($arg:tt)*) => { if false { log::trace!("fetch  {}", format_args!($($arg)*)); } };
+}
 
 autoerr::create_error_v1!(
     name(Error, "EventsMsp"),
@@ -28,6 +32,7 @@ autoerr::create_error_v1!(
         ScyllaRow(#[from] scylla::errors::NextRowError),
         ScyllaTypeCheck(#[from] scylla::deserialize::TypeCheckError),
         ScyllaPagerExecution(#[from] scylla::errors::PagerExecutionError),
+        TooManyRows,
     },
 );
 
@@ -60,11 +65,7 @@ where
     }
 
     fn is_taken(&self) -> bool {
-        if let Self::Taken = self {
-            true
-        } else {
-            false
-        }
+        if let Self::Taken = self { true } else { false }
     }
 }
 
@@ -313,7 +314,7 @@ pub async fn find_ts_msp(
         bck
     );
     if bck {
-        find_ts_msp_bck(rt, series, range, stmts, scy).await
+        find_ts_msp_bck_workaround(rt, series, range, stmts, scy).await
     } else {
         find_ts_msp_fwd(rt, series, range, stmts, scy).await
     }
@@ -326,15 +327,18 @@ async fn find_ts_msp_fwd(
     stmts: &StmtsEvents,
     scy: &Session,
 ) -> Result<VecDeque<TsMs>, Error> {
+    let selfname = "find_ts_msp_fwd";
     let mut ret = VecDeque::new();
     // TODO time range truncation can be handled better
     let params = (series as i64, range.beg().ms() as i64, 1 + range.end().ms() as i64);
+    log_fetch_result!("{selfname}  {:?}", params);
     let mut res = scy
         .execute_iter(stmts.rt(rt).ts_msp_fwd().clone(), params)
         .await?
         .rows_stream::<(i64,)>()?;
     while let Some(row) = res.try_next().await? {
         let ts = TsMs::from_ms_u64(row.0 as u64);
+        log_fetch_result!("{selfname}  {params:?}  {ts}");
         ret.push_back(ts);
     }
     Ok(ret)
@@ -347,15 +351,59 @@ async fn find_ts_msp_bck(
     stmts: &StmtsEvents,
     scy: &Session,
 ) -> Result<VecDeque<TsMs>, Error> {
+    let selfname = "find_ts_msp_bck";
     let mut ret = VecDeque::new();
     let params = (series as i64, range.beg().ms() as i64);
+    log_fetch_result!("{selfname}  {:?}", params);
     let mut res = scy
         .execute_iter(stmts.rt(rt).ts_msp_bck().clone(), params)
         .await?
         .rows_stream::<(i64,)>()?;
     while let Some(row) = res.try_next().await? {
         let ts = TsMs::from_ms_u64(row.0 as u64);
+        log_fetch_result!("{selfname}  {params:?}  {ts}");
         ret.push_front(ts);
     }
+    Ok(ret)
+}
+
+/*
+Workaround because scylla's order by desc is broken at the moment.
+*/
+async fn find_ts_msp_bck_workaround(
+    rt: &RetentionTime,
+    series: u64,
+    range: ScyllaSeriesRange,
+    stmts: &StmtsEvents,
+    scy: &Session,
+) -> Result<VecDeque<TsMs>, Error> {
+    let selfname = "find_ts_msp_bck_workaround";
+    let mut ret = VecDeque::new();
+    let params = (series as i64, 0 as i64, i64::MAX);
+    log_fetch_result!("{selfname}  {:?}", params);
+    let mut res = scy
+        .execute_iter(stmts.rt(rt).ts_msp_fwd().clone(), params)
+        .await?
+        .rows_stream::<(i64,)>()?;
+    while let Some(row) = res.try_next().await? {
+        let ts = TsMs::from_ms_u64(row.0 as u64);
+        log_fetch_result!("{selfname}  {params:?}  {ts}");
+        ret.push_back(ts);
+        if ret.len() > 1024 * 1024 {
+            return Err(Error::TooManyRows);
+        }
+    }
+    if ret.len() > 1024 * 2 {
+        log::info!("quite many ts_msp values in reverse lookup  len {}", ret.len());
+    }
+    if ret.len() > 1024 * 64 {
+        log::warn!("quite many ts_msp values in reverse lookup  len {}", ret.len());
+    }
+    let ret = if ret.len() > 2 {
+        let tmp: Vec<_> = ret.into_iter().rev().take(2).collect();
+        tmp.into_iter().rev().collect()
+    } else {
+        ret
+    };
     Ok(ret)
 }

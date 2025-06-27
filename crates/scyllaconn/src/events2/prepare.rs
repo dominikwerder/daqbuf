@@ -2,6 +2,10 @@ use netpod::ttl::RetentionTime;
 use scylla::client::session::Session;
 use scylla::statement::prepared::PreparedStatement;
 
+macro_rules! info_prepare {
+    ($($arg:tt)*) => { log::info!("prepare cql  {}", format_args!($($arg)*)); };
+}
+
 autoerr::create_error_v1!(
     name(Error, "ScyllaPrepare"),
     enum variants {
@@ -62,11 +66,7 @@ pub struct StmtsLspDir {
 
 impl StmtsLspDir {
     pub fn shape(&self, array: bool) -> &StmtsLspShape {
-        if array {
-            &self.array
-        } else {
-            &self.scalar
-        }
+        if array { &self.array } else { &self.scalar }
     }
 }
 
@@ -93,17 +93,9 @@ impl StmtsEventsRt {
 
     pub fn lsp(&self, bck: bool, val: bool) -> &StmtsLspDir {
         if bck {
-            if val {
-                &self.lsp_bck_val
-            } else {
-                &self.lsp_bck_ts
-            }
+            if val { &self.lsp_bck_val } else { &self.lsp_bck_ts }
         } else {
-            if val {
-                &self.lsp_fwd_val
-            } else {
-                &self.lsp_fwd_ts
-            }
+            if val { &self.lsp_fwd_val } else { &self.lsp_fwd_ts }
         }
     }
 
@@ -116,7 +108,13 @@ impl StmtsEventsRt {
     }
 }
 
-async fn make_msp_dir(ks: &str, rt: &RetentionTime, bck: bool, scy: &Session) -> Result<PreparedStatement, Error> {
+async fn make_msp_dir(
+    ks: &str,
+    rt: &RetentionTime,
+    bck: bool,
+    query_opts: &str,
+    scy: &Session,
+) -> Result<PreparedStatement, Error> {
     let table_name = "ts_msp";
     let select_cond = if bck {
         "ts_msp < ? order by ts_msp desc limit 2"
@@ -124,12 +122,14 @@ async fn make_msp_dir(ks: &str, rt: &RetentionTime, bck: bool, scy: &Session) ->
         "ts_msp >= ? and ts_msp < ? limit 20"
     };
     let cql = format!(
-        "select ts_msp from {}.{}{} where series = ? and {}",
+        "select ts_msp from {}.{}{} where series = ? and {} {}",
         ks,
         rt.table_prefix(),
         table_name,
-        select_cond
+        select_cond,
+        query_opts
     );
+    info_prepare!("{ks} {rt} {cql}");
     let qu = scy.prepare(cql).await?;
     Ok(qu)
 }
@@ -141,6 +141,7 @@ async fn make_lsp(
     stname: &str,
     values: &str,
     bck: bool,
+    query_opts: &str,
     scy: &Session,
 ) -> Result<PreparedStatement, Error> {
     let select_cond = if bck {
@@ -151,15 +152,17 @@ async fn make_lsp(
     let cql = format!(
         concat!(
             "select {} from {}.{}events_{}_{}",
-            " where series = ? and ts_msp = ? and {}"
+            " where series = ? and ts_msp = ? and {} {}"
         ),
         values,
         ks,
         rt.table_prefix(),
         shapepre,
         stname,
-        select_cond
+        select_cond,
+        query_opts
     );
+    info_prepare!("{ks} {rt} {cql}");
     let qu = scy.prepare(cql).await?;
     Ok(qu)
 }
@@ -170,6 +173,7 @@ async fn make_lsp_shape(
     shapepre: &str,
     values: &str,
     bck: bool,
+    query_opts: &str,
     scy: &Session,
 ) -> Result<StmtsLspShape, Error> {
     let values = if shapepre.contains("array") {
@@ -178,7 +182,7 @@ async fn make_lsp_shape(
         values.into()
     };
     let values = &values;
-    let maker = |stname| make_lsp(ks, rt, shapepre, stname, values, bck, scy);
+    let maker = |stname| make_lsp(ks, rt, shapepre, stname, values, bck, query_opts, scy);
     let ret = StmtsLspShape {
         u8: maker("u8").await?,
         u16: maker("u16").await?,
@@ -193,11 +197,28 @@ async fn make_lsp_shape(
         bool: maker("bool").await?,
         string: maker("string").await?,
         enumvals: if shapepre == "scalar" {
-            make_lsp(ks, rt, shapepre, "enum", "ts_lsp, value, valuestr", bck, scy).await?
+            make_lsp(
+                ks,
+                rt,
+                shapepre,
+                "enum",
+                "ts_lsp, value, valuestr",
+                bck,
+                query_opts,
+                scy,
+            )
+            .await?
         } else {
             // exists only for scalar, therefore produce some dummy here
             let table_name = "ts_msp";
-            let cql = format!("select ts_msp from {}.{}{} limit 1", ks, rt.table_prefix(), table_name);
+            let cql = format!(
+                "select ts_msp from {}.{}{} limit 1 {}",
+                ks,
+                rt.table_prefix(),
+                table_name,
+                query_opts
+            );
+            info_prepare!("{ks} {rt} {cql}");
             let qu = scy.prepare(cql).await?;
             qu
         },
@@ -210,54 +231,71 @@ async fn make_lsp_dir(
     rt: &RetentionTime,
     values: &str,
     bck: bool,
+    query_opts: &str,
     scy: &Session,
 ) -> Result<StmtsLspDir, Error> {
     let ret = StmtsLspDir {
-        scalar: make_lsp_shape(ks, rt, "scalar", values, bck, scy).await?,
-        array: make_lsp_shape(ks, rt, "array", values, bck, scy).await?,
+        scalar: make_lsp_shape(ks, rt, "scalar", values, bck, query_opts, scy).await?,
+        array: make_lsp_shape(ks, rt, "array", values, bck, query_opts, scy).await?,
     };
     Ok(ret)
 }
 
-async fn make_prebinned_f32(ks: &str, rt: &RetentionTime, scy: &Session) -> Result<PreparedStatement, Error> {
+async fn make_prebinned_f32(
+    ks: &str,
+    rt: &RetentionTime,
+    query_opts: &str,
+    scy: &Session,
+) -> Result<PreparedStatement, Error> {
     let cql = format!(
         concat!(
             "select off, cnt, min, max, avg, lst from {}.{}binned_scalar_f32_v02",
             " where series = ? and binlen = ? and msp = ?",
-            " and off >= ? and off < ?"
+            " and off >= ? and off < ?",
+            " {}"
         ),
         ks,
-        rt.table_prefix()
+        rt.table_prefix(),
+        query_opts
     );
+    info_prepare!("{ks} {rt} {cql}");
     let qu = scy.prepare(cql).await?;
     Ok(qu)
 }
 
-async fn make_bin_write_index_read(ks: &str, rt: &RetentionTime, scy: &Session) -> Result<PreparedStatement, Error> {
+async fn make_bin_write_index_read(
+    ks: &str,
+    rt: &RetentionTime,
+    query_opts: &str,
+    scy: &Session,
+) -> Result<PreparedStatement, Error> {
     let cql = format!(
         concat!(
             "select lsp, binlen",
             " from {}.{}bin_write_index_v04",
             " where series = ? and pbp = ? and msp = ?",
             " and lsp >= ? and lsp < ?",
+            " {}"
         ),
         ks,
-        rt.table_prefix()
+        rt.table_prefix(),
+        query_opts
     );
+    info_prepare!("{ks} {rt} {cql}");
     let qu = scy.prepare(cql).await?;
     Ok(qu)
 }
 
-async fn make_rt(ks: &str, rt: &RetentionTime, scy: &Session) -> Result<StmtsEventsRt, Error> {
+async fn make_rt(ks: &str, rt: &RetentionTime, query_opts: &str, scy: &Session) -> Result<StmtsEventsRt, Error> {
     let ret = StmtsEventsRt {
-        ts_msp_fwd: make_msp_dir(ks, rt, false, scy).await?,
-        ts_msp_bck: make_msp_dir(ks, rt, true, scy).await?,
-        lsp_fwd_val: make_lsp_dir(ks, rt, "ts_lsp, value", false, scy).await?,
-        lsp_bck_val: make_lsp_dir(ks, rt, "ts_lsp, value", true, scy).await?,
-        lsp_fwd_ts: make_lsp_dir(ks, rt, "ts_lsp", false, scy).await?,
-        lsp_bck_ts: make_lsp_dir(ks, rt, "ts_lsp", true, scy).await?,
-        prebinned_f32: make_prebinned_f32(ks, rt, scy).await?,
-        bin_write_index_read: make_bin_write_index_read(ks, rt, scy).await?,
+        ts_msp_fwd: make_msp_dir(ks, rt, false, query_opts, scy).await?,
+        ts_msp_bck: make_msp_dir(ks, rt, true, query_opts, scy).await?,
+        lsp_fwd_val: make_lsp_dir(ks, rt, "ts_lsp, value", false, query_opts, scy).await?,
+        lsp_bck_val: make_lsp_dir(ks, rt, "ts_lsp, value", true, query_opts, scy).await?,
+        lsp_fwd_ts: make_lsp_dir(ks, rt, "ts_lsp", false, query_opts, scy).await?,
+        lsp_bck_ts: make_lsp_dir(ks, rt, "ts_lsp", true, query_opts, scy).await?,
+        prebinned_f32: make_prebinned_f32(ks, rt, query_opts, scy).await?,
+        bin_write_index_read: make_bin_write_index_read(ks, rt, query_opts, scy).await?,
     };
     Ok(ret)
 }
@@ -270,11 +308,12 @@ pub struct StmtsEvents {
 }
 
 impl StmtsEvents {
-    pub async fn new(ks: [&str; 3], scy: &Session) -> Result<Self, Error> {
+    pub async fn new(ks: [&str; 3], bypass_cache: bool, scy: &Session) -> Result<Self, Error> {
+        let query_opts = if bypass_cache { "bypass cache" } else { "" };
         let ret = StmtsEvents {
-            st: make_rt(ks[0], &RetentionTime::Short, scy).await?,
-            mt: make_rt(ks[1], &RetentionTime::Medium, scy).await?,
-            lt: make_rt(ks[2], &RetentionTime::Long, scy).await?,
+            st: make_rt(ks[0], &RetentionTime::Short, query_opts, scy).await?,
+            mt: make_rt(ks[1], &RetentionTime::Medium, query_opts, scy).await?,
+            lt: make_rt(ks[2], &RetentionTime::Long, query_opts, scy).await?,
         };
         Ok(ret)
     }
@@ -285,55 +324,5 @@ impl StmtsEvents {
             RetentionTime::Medium => &self.mt,
             RetentionTime::Long => &&self.lt,
         }
-    }
-}
-
-#[derive(Debug)]
-pub struct StmtsCache {
-    st_write_f32: PreparedStatement,
-    st_read_f32: PreparedStatement,
-}
-
-impl StmtsCache {
-    pub async fn new(ks: &str, scy: &Session) -> Result<Self, Error> {
-        let rt = RetentionTime::Short;
-        let st_write_f32 = scy
-            .prepare(format!(
-                concat!(
-                    "insert into {}.{}binned_scalar_f32",
-                    " (series, bin_len_ms, ts_msp, off, count, min, max, avg, lst)",
-                    " values (?, ?, ?, ?, ?, ?, ?, ?, ?)"
-                ),
-                ks,
-                rt.table_prefix()
-            ))
-            .await?;
-        let st_read_f32 = scy
-            .prepare(format!(
-                concat!(
-                    "select off, count, min, max, avg, lst",
-                    " from {}.{}binned_scalar_f32",
-                    " where series = ?",
-                    " and bin_len_ms = ?",
-                    " and ts_msp = ?",
-                    " and off >= ? and off < ?"
-                ),
-                ks,
-                rt.table_prefix()
-            ))
-            .await?;
-        let ret = Self {
-            st_write_f32,
-            st_read_f32,
-        };
-        Ok(ret)
-    }
-
-    pub fn st_write_f32(&self) -> &PreparedStatement {
-        &self.st_write_f32
-    }
-
-    pub fn st_read_f32(&self) -> &PreparedStatement {
-        &self.st_read_f32
     }
 }

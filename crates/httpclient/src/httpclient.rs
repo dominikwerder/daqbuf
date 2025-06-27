@@ -191,6 +191,14 @@ impl From<Vec<u8>> for ToJsonBody {
     }
 }
 
+impl From<String> for ToJsonBody {
+    fn from(value: String) -> Self {
+        Self {
+            body: value.into_bytes(),
+        }
+    }
+}
+
 impl<S: Serialize> From<&S> for ToJsonBody {
     fn from(value: &S) -> Self {
         Self {

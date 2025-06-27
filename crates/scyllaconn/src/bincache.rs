@@ -1,14 +1,12 @@
-use crate::events2::prepare::StmtsCache;
 use crate::events2::prepare::StmtsEvents;
-use crate::log::*;
 use crate::worker::ScyllaQueue;
 use daqbuf_series::msp::PrebinnedPartitioning;
 use futures_util::TryStreamExt;
 use items_0::merge::MergeableTy;
 use items_2::binning::container_bins::ContainerBins;
-use netpod::ttl::RetentionTime;
 use netpod::DtMs;
 use netpod::TsNano;
+use netpod::ttl::RetentionTime;
 use std::ops::Range;
 use streams::timebin::cached::reader::BinsReadRes;
 
@@ -91,41 +89,6 @@ impl streams::timebin::CacheReadProvider for ScyllaPrebinnedReadProvider {
         let fut = scylla_read_prebinned_f32(series, bin_len, msp, offs, self.scyqueue.clone());
         streams::timebin::cached::reader::CacheReading::new(Box::pin(fut))
     }
-}
-
-pub async fn worker_write(
-    series: u64,
-    bins: ContainerBins<f32, f32>,
-    stmts_cache: &StmtsCache,
-    scy: &ScySession,
-) -> Result<(), streams::timebin::cached::reader::Error> {
-    if true {
-        error!("TODO retrieval should probably not write a cache at all");
-        return Err(streams::timebin::cached::reader::Error::TodoImpl);
-    }
-    for (((((((&ts1, &ts2), &cnt), min), max), avg), lst), _fnl) in bins.zip_iter() {
-        let bin_len = DtMs::from_ms_u64((ts2.ns() - ts1.ns()) / 1000000);
-        // let div = streams::timebin::cached::reader::part_len(bin_len).ns();
-        let div = 42424242424242;
-        let msp = ts1.ns() / div;
-        let off = (ts1.ns() - msp * div) / bin_len.ns();
-        let params = (
-            series as i64,
-            bin_len.ms() as i32,
-            msp as i64,
-            off as i32,
-            cnt as i64,
-            min,
-            max,
-            avg,
-            lst,
-        );
-        // trace!("cache write {:?}", params);
-        scy.execute_unpaged(stmts_cache.st_write_f32(), params)
-            .await
-            .map_err(|e| streams::timebin::cached::reader::Error::Scylla(e.to_string()))?;
-    }
-    Ok(())
 }
 
 pub async fn worker_read(

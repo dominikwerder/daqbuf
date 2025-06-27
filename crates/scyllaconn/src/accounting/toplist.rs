@@ -1,8 +1,8 @@
 use crate::log::*;
 use futures_util::TryStreamExt;
-use netpod::ttl::RetentionTime;
-use netpod::TsMs;
 use netpod::EMIT_ACCOUNTING_SNAP;
+use netpod::TsMs;
+use netpod::ttl::RetentionTime;
 use scylla::client::session::Session as ScySession;
 use scylla::statement::prepared::PreparedStatement;
 
@@ -107,12 +107,13 @@ async fn read_ts_inner(ks: &str, rt: RetentionTime, ts: TsMs, scy: &ScySession) 
         concat!(
             "select series, count, bytes",
             " from {}.{}account_00",
-            " where part = ? and ts = ?"
+            " where part = ? and ts = ?",
+            " bypass cache"
         ),
         ks,
         rt.table_prefix()
     );
-    let qu = prep(&cql, scy).await?;
+    let qu = scy.prepare(cql).await?;
     let ts_sec = ts.ms() as i64 / 1000;
     let mut ret = UsageData::new(ts);
     for part in 0..255_u32 {
@@ -131,8 +132,4 @@ async fn read_ts_inner(ks: &str, rt: RetentionTime, ts: TsMs, scy: &ScySession) 
     }
     ret.verify()?;
     Ok(ret)
-}
-
-async fn prep(cql: &str, scy: &ScySession) -> Result<PreparedStatement, Error> {
-    Ok(scy.prepare(cql).await?)
 }

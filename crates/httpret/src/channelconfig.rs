@@ -1,3 +1,4 @@
+use crate::requests::accepts_json_or_all;
 use crate::response;
 use crate::ServiceSharedResources;
 use dbconn::create_connection;
@@ -166,12 +167,7 @@ impl ChannelConfigHandler {
         node_config: &NodeConfigCached,
     ) -> Result<StreamResponse, Error> {
         if req.method() == Method::GET {
-            let accept_def = APP_JSON;
-            let accept = req
-                .headers()
-                .get(http::header::ACCEPT)
-                .map_or(accept_def, |k| k.to_str().unwrap_or(accept_def));
-            if accept.contains(APP_JSON) || accept.contains(ACCEPT_ALL) {
+            if accepts_json_or_all(req.headers()) {
                 match self.channel_config(req, pgqueue, &node_config).await {
                     Ok(k) => Ok(k),
                     Err(e) => {

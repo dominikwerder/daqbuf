@@ -54,9 +54,13 @@ macro_rules! trace_redo_fwd_read { ($($arg:expr),*) => ( if false { log::trace!(
 
 macro_rules! trace_emit { ($($arg:expr),*) => ( if false { log::trace!($($arg),*); } ) }
 
-macro_rules! trace_every_event { ($($arg:expr),*) => ( if false { log::trace!($($arg),*); } ) }
+macro_rules! trace_every_event { ($($arg:tt)*) => ( if false { log::trace!($($arg)*); } ) }
 
-macro_rules! warn_item { ($($arg:expr),*) => ( if true { log::debug!($($arg),*); } ) }
+macro_rules! warn_item { ($($arg:tt)*) => ( if true { log::debug!($($arg)*); } ) }
+
+macro_rules! log_fetch_result {
+    ($($arg:tt)*) => { if false { log::trace!("fetch  {}", format_args!($($arg)*)); } };
+}
 
 #[derive(Debug, Clone)]
 pub struct EventReadOpts {
@@ -908,6 +912,7 @@ where
         );
         trace_fetch!("FWD event search  params {:?}", params);
         jobtrace.add_event_now(ReadEventKind::CallExecuteIter);
+        log_fetch_result!("read_next_values_2  {params:?}");
         let res = scy.execute_iter(qu.clone(), params).await?;
         {
             let mut ret = <ST as ValTy>::Container::empty();
@@ -926,6 +931,7 @@ where
                     let mut it = res.rows_stream::<<ST as ValTy>::ScyRowTy>()?;
                     while let Some(row) = it.try_next().await? {
                         let (ts, value) = <ST as ValTy>::scy_row_to_ts_val(ts_msp, row);
+                        log_fetch_result!("read_next_values_2  {params:?}  {ts}");
                         // let ts = TsNano::from_ns(ts_msp.ns_u64() + row.0 as u64);
                         // let value = <ST as ValTy>::from_scyty(row.1);
                         ret.push(ts, value);
