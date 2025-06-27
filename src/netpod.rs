@@ -8,6 +8,10 @@ pub mod stream_impl_tracer;
 pub mod streamext;
 pub mod ttl;
 
+fn bool_true() -> bool {
+    true
+}
+
 #[allow(unused)]
 #[inline(always)]
 pub fn is_log_direct() -> bool {
@@ -1010,6 +1014,8 @@ pub struct Database {
 pub struct ScyllaConfig {
     pub hosts: Vec<String>,
     pub keyspace: String,
+    #[serde(default = "bool_true")]
+    pub bypass_cache: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
