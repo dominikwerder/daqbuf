@@ -74,6 +74,7 @@ impl StmtsLspDir {
 pub struct StmtsEventsRt {
     ts_msp_fwd: PreparedStatement,
     ts_msp_bck: PreparedStatement,
+    ts_msp_bck_workaround: PreparedStatement,
     lsp_fwd_val: StmtsLspDir,
     lsp_bck_val: StmtsLspDir,
     lsp_fwd_ts: StmtsLspDir,
@@ -89,6 +90,10 @@ impl StmtsEventsRt {
 
     pub fn ts_msp_bck(&self) -> &PreparedStatement {
         &self.ts_msp_bck
+    }
+
+    pub fn ts_msp_bck_workaround(&self) -> &PreparedStatement {
+        &self.ts_msp_bck_workaround
     }
 
     pub fn lsp(&self, bck: bool, val: bool) -> &StmtsLspDir {
@@ -121,6 +126,27 @@ async fn make_msp_dir(
     } else {
         "ts_msp >= ? and ts_msp < ? limit 20"
     };
+    let cql = format!(
+        "select ts_msp from {}.{}{} where series = ? and {} {}",
+        ks,
+        rt.table_prefix(),
+        table_name,
+        select_cond,
+        query_opts
+    );
+    info_prepare!("{ks} {rt} {cql}");
+    let qu = scy.prepare(cql).await?;
+    Ok(qu)
+}
+
+async fn make_msp_fwd_for_bck_workaround(
+    ks: &str,
+    rt: &RetentionTime,
+    query_opts: &str,
+    scy: &Session,
+) -> Result<PreparedStatement, Error> {
+    let table_name = "ts_msp";
+    let select_cond = "ts_msp >= ? and ts_msp < ?";
     let cql = format!(
         "select ts_msp from {}.{}{} where series = ? and {} {}",
         ks,
@@ -290,6 +316,7 @@ async fn make_rt(ks: &str, rt: &RetentionTime, query_opts: &str, scy: &Session) 
     let ret = StmtsEventsRt {
         ts_msp_fwd: make_msp_dir(ks, rt, false, query_opts, scy).await?,
         ts_msp_bck: make_msp_dir(ks, rt, true, query_opts, scy).await?,
+        ts_msp_bck_workaround: make_msp_fwd_for_bck_workaround(ks, rt, query_opts, scy).await?,
         lsp_fwd_val: make_lsp_dir(ks, rt, "ts_lsp, value", false, query_opts, scy).await?,
         lsp_bck_val: make_lsp_dir(ks, rt, "ts_lsp, value", true, query_opts, scy).await?,
         lsp_fwd_ts: make_lsp_dir(ks, rt, "ts_lsp", false, query_opts, scy).await?,

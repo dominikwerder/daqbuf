@@ -1,5 +1,6 @@
 use crate::binwriteindex::BinWriteIndexEntry;
 use crate::conn::create_scy_session_no_ks;
+use crate::events2::events::ReadEventsJobParams;
 use crate::events2::events::ReadJobTrace;
 use crate::events2::prepare::StmtsEvents;
 use crate::range::ScyllaSeriesRange;
@@ -166,6 +167,10 @@ enum Job {
     BinWriteIndexRead(BinWriteIndexRead),
     PrepareV1(PrepareV1),
     ExecuteV1(ExecuteV1),
+    ReadEvents02(
+        ReadEventsJobParams,
+        Sender<Result<(Box<dyn BinningggContainerEventsDyn>, ReadJobTrace), Error>>,
+    ),
 }
 
 struct ReadNextValues {
@@ -208,6 +213,7 @@ impl ScyllaQueue {
         Ok(res)
     }
 
+    // TODO remove
     pub async fn read_next_values<F>(
         &self,
         futgen: F,
@@ -229,6 +235,17 @@ impl ScyllaQueue {
             tx,
             jobtrace,
         });
+        self.tx.send(job).await.map_err(|_| Error::ChannelSend)?;
+        let res = rx.recv().await.map_err(|_| Error::ChannelRecv)??;
+        Ok(res)
+    }
+
+    pub async fn read_events_v02(
+        &self,
+        params: ReadEventsJobParams,
+    ) -> Result<(Box<dyn BinningggContainerEventsDyn>, ReadJobTrace), Error> {
+        let (tx, rx) = async_channel::bounded(1);
+        let job = Job::ReadEvents02(params, tx);
         self.tx.send(job).await.map_err(|_| Error::ChannelSend)?;
         let res = rx.recv().await.map_err(|_| Error::ChannelRecv)??;
         Ok(res)
@@ -461,6 +478,14 @@ impl ScyllaWorker {
                         let res = scy.execute_iter(job.st, job.params).await.map_err(|e| e.into());
                         // TODO log?
                         let _ = job.tx.send(res).await;
+                    }
+                    Job::ReadEvents02(params, tx) => {
+                        let res = crate::events2::events::read_events_v02(params, scy.clone(), stmts.clone())
+                            .await
+                            .map_err(From::from);
+                        if tx.send(res).await.is_err() {
+                            // TODO count for stats
+                        }
                     }
                 }
             })

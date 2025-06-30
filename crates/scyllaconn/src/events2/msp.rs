@@ -20,9 +20,7 @@ macro_rules! trace_emit { ($det:expr, $($arg:tt)*) => ( if $det { log::trace!($(
 
 macro_rules! trace_msp { ($($arg:tt)*) => ( if true { log::trace!($($arg)*); } ) }
 
-macro_rules! log_fetch_result {
-    ($($arg:tt)*) => { if false { log::trace!("fetch  {}", format_args!($($arg)*)); } };
-}
+macro_rules! log_fetch_result { ($($arg:tt)*) => { if true { log::trace!("fetch  {}", format_args!($($arg)*)); } }; }
 
 autoerr::create_error_v1!(
     name(Error, "EventsMsp"),
@@ -378,32 +376,39 @@ async fn find_ts_msp_bck_workaround(
     scy: &Session,
 ) -> Result<VecDeque<TsMs>, Error> {
     let selfname = "find_ts_msp_bck_workaround";
-    let mut ret = VecDeque::new();
+    let mut ret = Vec::new();
+    // let params = (series as i64, 0 as i64, range.beg().ms() as i64);
     let params = (series as i64, 0 as i64, i64::MAX);
     log_fetch_result!("{selfname}  {:?}", params);
     let mut res = scy
-        .execute_iter(stmts.rt(rt).ts_msp_fwd().clone(), params)
+        .execute_iter(stmts.rt(rt).ts_msp_bck_workaround().clone(), params)
         .await?
         .rows_stream::<(i64,)>()?;
+    let mut c = 0;
     while let Some(row) = res.try_next().await? {
+        c += 1;
         let ts = TsMs::from_ms_u64(row.0 as u64);
-        log_fetch_result!("{selfname}  {params:?}  {ts}");
-        ret.push_back(ts);
-        if ret.len() > 1024 * 1024 {
-            return Err(Error::TooManyRows);
+        if ts >= range.beg().to_ts_ms() {
+            log_fetch_result!("{selfname}  {params:?}  {ts}  DISCARD AFTER RANGE");
+        } else {
+            if ret.len() > 1024 * 1024 {
+                return Err(Error::TooManyRows);
+            } else {
+                log_fetch_result!("{selfname}  {params:?}  {ts}  USE");
+                ret.push(ts);
+            }
         }
     }
+    log_fetch_result!("{selfname}  {params:?}  considered msp {c}");
     if ret.len() > 1024 * 2 {
         log::info!("quite many ts_msp values in reverse lookup  len {}", ret.len());
     }
     if ret.len() > 1024 * 64 {
         log::warn!("quite many ts_msp values in reverse lookup  len {}", ret.len());
     }
-    let ret = if ret.len() > 2 {
-        let tmp: Vec<_> = ret.into_iter().rev().take(2).collect();
-        tmp.into_iter().rev().collect()
-    } else {
-        ret
-    };
+    let m = ret.len().max(2) - 2;
+    log_fetch_result!("{selfname}  {params:?}  {ret:?}  {m}");
+    let ret = ret.into_iter().skip(m).collect();
+    log_fetch_result!("{selfname}  {params:?}  {ret:?}");
     Ok(ret)
 }
