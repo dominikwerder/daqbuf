@@ -380,12 +380,17 @@ impl FromUrl for SeriesKind {
 impl AppendToUrl for SeriesKind {
     fn append_to_url(&self, url: &mut Url) {
         let s = match self {
-            SeriesKind::ChannelStatus => "channelStatus",
-            SeriesKind::ChannelData => "channelData",
-            SeriesKind::CaStatus => "caStatus",
+            SeriesKind::ChannelStatus => Some("channelStatus"),
+            SeriesKind::ChannelData => {
+                // Some("channelData")
+                None
+            }
+            SeriesKind::CaStatus => Some("caStatus"),
         };
-        let mut g = url.query_pairs_mut();
-        g.append_pair("seriesKind", &s);
+        if let Some(s) = s {
+            let mut g = url.query_pairs_mut();
+            g.append_pair("seriesKind", &s);
+        }
     }
 }
 
