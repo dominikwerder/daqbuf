@@ -9,7 +9,6 @@ use async_channel::Sender;
 use daqbuf_series::SeriesId;
 use daqbuf_series::msp::MspU32;
 use daqbuf_series::msp::PrebinnedPartitioning;
-use futures_util::Future;
 use futures_util::StreamExt;
 use futures_util::TryStreamExt;
 use items_0::timebin::BinningggContainerEventsDyn;
@@ -19,10 +18,8 @@ use netpod::ScyllaConfig;
 use netpod::TsMs;
 use netpod::log;
 use netpod::ttl::RetentionTime;
-use scylla::client::session::Session;
 use std::collections::VecDeque;
 use std::fmt;
-use std::pin::Pin;
 use std::sync::Arc;
 
 macro_rules! info { ($($arg:tt)*) => ( if true { log::info!($($arg)*); } ); }
@@ -152,7 +149,6 @@ enum Job {
         bool,
         Sender<Result<VecDeque<TsMs>, Error>>,
     ),
-    ReadNextValues(ReadNextValues),
     AccountingReadTs(
         RetentionTime,
         TsMs,
@@ -173,26 +169,6 @@ enum Job {
     ),
 }
 
-struct ReadNextValues {
-    futgen: Box<
-        dyn FnOnce(
-                Arc<Session>,
-                Arc<StmtsEvents>,
-                ReadJobTrace,
-            ) -> Pin<
-                Box<dyn Future<Output = Result<(Box<dyn BinningggContainerEventsDyn>, ReadJobTrace), Error>> + Send>,
-            > + Send,
-    >,
-    tx: Sender<Result<(Box<dyn BinningggContainerEventsDyn>, ReadJobTrace), Error>>,
-    jobtrace: ReadJobTrace,
-}
-
-impl fmt::Debug for ReadNextValues {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        write!(fmt, "ReadNextValues {{ .. }}")
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct ScyllaQueue {
     tx: Sender<Job>,
@@ -208,33 +184,6 @@ impl ScyllaQueue {
     ) -> Result<VecDeque<TsMs>, Error> {
         let (tx, rx) = async_channel::bounded(1);
         let job = Job::FindTsMsp(rt, series, range, bck, tx);
-        self.tx.send(job).await.map_err(|_| Error::ChannelSend)?;
-        let res = rx.recv().await.map_err(|_| Error::ChannelRecv)??;
-        Ok(res)
-    }
-
-    // TODO remove
-    pub async fn read_next_values<F>(
-        &self,
-        futgen: F,
-        jobtrace: ReadJobTrace,
-    ) -> Result<(Box<dyn BinningggContainerEventsDyn>, ReadJobTrace), Error>
-    where
-        F: FnOnce(
-                Arc<Session>,
-                Arc<StmtsEvents>,
-                ReadJobTrace,
-            ) -> Pin<
-                Box<dyn Future<Output = Result<(Box<dyn BinningggContainerEventsDyn>, ReadJobTrace), Error>> + Send>,
-            > + Send
-            + 'static,
-    {
-        let (tx, rx) = async_channel::bounded(1);
-        let job = Job::ReadNextValues(ReadNextValues {
-            futgen: Box::new(futgen),
-            tx,
-            jobtrace,
-        });
         self.tx.send(job).await.map_err(|_| Error::ChannelSend)?;
         let res = rx.recv().await.map_err(|_| Error::ChannelRecv)??;
         Ok(res)
@@ -423,13 +372,6 @@ impl ScyllaWorker {
                     Job::FindTsMsp(rt, series, range, bck, tx) => {
                         let res = crate::events2::msp::find_ts_msp(&rt, series, range, bck, &stmts, &scy).await;
                         if tx.send(res.map_err(Into::into)).await.is_err() {
-                            // TODO count for stats
-                        }
-                    }
-                    Job::ReadNextValues(job) => {
-                        let fut = (job.futgen)(scy.clone(), stmts.clone(), job.jobtrace);
-                        let res = fut.await;
-                        if job.tx.send(res.map_err(Into::into)).await.is_err() {
                             // TODO count for stats
                         }
                     }

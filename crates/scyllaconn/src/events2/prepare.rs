@@ -20,6 +20,57 @@ autoerr::create_error_v1!(
 );
 
 #[derive(Debug)]
+pub struct StmtsLspAllShape {
+    u8: PreparedStatement,
+    u16: PreparedStatement,
+    u32: PreparedStatement,
+    u64: PreparedStatement,
+    i8: PreparedStatement,
+    i16: PreparedStatement,
+    i32: PreparedStatement,
+    i64: PreparedStatement,
+    f32: PreparedStatement,
+    f64: PreparedStatement,
+    bool: PreparedStatement,
+    string: PreparedStatement,
+    enumvals: PreparedStatement,
+}
+
+impl StmtsLspAllShape {
+    pub fn st(&self, stname: &str) -> Result<&PreparedStatement, Error> {
+        let ret = match stname {
+            "u8" => &self.u8,
+            "u16" => &self.u16,
+            "u32" => &self.u32,
+            "u64" => &self.u64,
+            "i8" => &self.i8,
+            "i16" => &self.i16,
+            "i32" => &self.i32,
+            "i64" => &self.i64,
+            "f32" => &self.f32,
+            "f64" => &self.f64,
+            "bool" => &self.bool,
+            "string" => &self.string,
+            "enum" => &self.enumvals,
+            _ => return Err(Error::MissingQuery(format!("no query for stname {stname}"))),
+        };
+        Ok(ret)
+    }
+}
+
+#[derive(Debug)]
+pub struct StmtsLspAll {
+    scalar: StmtsLspAllShape,
+    array: StmtsLspAllShape,
+}
+
+impl StmtsLspAll {
+    pub fn shape(&self, array: bool) -> &StmtsLspAllShape {
+        if array { &self.array } else { &self.scalar }
+    }
+}
+
+#[derive(Debug)]
 pub struct StmtsLspShape {
     u8: PreparedStatement,
     u16: PreparedStatement,
@@ -75,6 +126,7 @@ pub struct StmtsEventsRt {
     ts_msp_fwd: PreparedStatement,
     ts_msp_bck: PreparedStatement,
     ts_msp_bck_workaround: PreparedStatement,
+    lsp_all: StmtsLspAll,
     lsp_fwd_val: StmtsLspDir,
     lsp_bck_val: StmtsLspDir,
     lsp_fwd_ts: StmtsLspDir,
@@ -94,6 +146,10 @@ impl StmtsEventsRt {
 
     pub fn ts_msp_bck_workaround(&self) -> &PreparedStatement {
         &self.ts_msp_bck_workaround
+    }
+
+    pub fn lsp_all(&self) -> &StmtsLspAll {
+        &self.lsp_all
     }
 
     pub fn lsp(&self, bck: bool, val: bool) -> &StmtsLspDir {
@@ -158,6 +214,79 @@ async fn make_msp_fwd_for_bck_workaround(
     info_prepare!("{ks} {rt} {cql}");
     let qu = scy.prepare(cql).await?;
     Ok(qu)
+}
+
+async fn make_lsp_all_shape_st(
+    ks: &str,
+    rt: &RetentionTime,
+    shapepre: &str,
+    stname: &str,
+    query_opts: &str,
+    scy: &Session,
+) -> Result<PreparedStatement, Error> {
+    let cql = format!(
+        concat!(
+            "select ts_lsp from {}.{}events_{}_{}",
+            " where series = ? and ts_msp = ? {}"
+        ),
+        ks,
+        rt.table_prefix(),
+        shapepre,
+        stname,
+        query_opts
+    );
+    info_prepare!("{ks} {rt} {cql}");
+    let qu = scy.prepare(cql).await?;
+    Ok(qu)
+}
+
+async fn make_lsp_all_shape(
+    ks: &str,
+    rt: &RetentionTime,
+    shapepre: &str,
+    query_opts: &str,
+    scy: &Session,
+) -> Result<StmtsLspAllShape, Error> {
+    let maker = |stname| make_lsp_all_shape_st(ks, rt, shapepre, stname, query_opts, scy);
+    let ret = StmtsLspAllShape {
+        u8: maker("u8").await?,
+        u16: maker("u16").await?,
+        u32: maker("u32").await?,
+        u64: maker("u64").await?,
+        i8: maker("i8").await?,
+        i16: maker("i16").await?,
+        i32: maker("i32").await?,
+        i64: maker("i64").await?,
+        f32: maker("f32").await?,
+        f64: maker("f64").await?,
+        bool: maker("bool").await?,
+        string: maker("string").await?,
+        enumvals: if shapepre == "scalar" {
+            make_lsp_all_shape_st(ks, rt, shapepre, "enum", query_opts, scy).await?
+        } else {
+            // exists only for scalar, therefore produce some dummy here
+            let table_name = "ts_msp";
+            let cql = format!(
+                "select ts_msp from {}.{}{} limit 1 {}",
+                ks,
+                rt.table_prefix(),
+                table_name,
+                query_opts
+            );
+            info_prepare!("{ks} {rt} {cql}");
+            let qu = scy.prepare(cql).await?;
+            qu
+        },
+    };
+    Ok(ret)
+}
+
+async fn make_lsp_all(ks: &str, rt: &RetentionTime, query_opts: &str, scy: &Session) -> Result<StmtsLspAll, Error> {
+    let ret = StmtsLspAll {
+        scalar: make_lsp_all_shape(ks, rt, "scalar", query_opts, scy).await?,
+        array: make_lsp_all_shape(ks, rt, "array", query_opts, scy).await?,
+    };
+    Ok(ret)
 }
 
 async fn make_lsp(
@@ -317,6 +446,7 @@ async fn make_rt(ks: &str, rt: &RetentionTime, query_opts: &str, scy: &Session) 
         ts_msp_fwd: make_msp_dir(ks, rt, false, query_opts, scy).await?,
         ts_msp_bck: make_msp_dir(ks, rt, true, query_opts, scy).await?,
         ts_msp_bck_workaround: make_msp_fwd_for_bck_workaround(ks, rt, query_opts, scy).await?,
+        lsp_all: make_lsp_all(ks, rt, query_opts, scy).await?,
         lsp_fwd_val: make_lsp_dir(ks, rt, "ts_lsp, value", false, query_opts, scy).await?,
         lsp_bck_val: make_lsp_dir(ks, rt, "ts_lsp, value", true, query_opts, scy).await?,
         lsp_fwd_ts: make_lsp_dir(ks, rt, "ts_lsp", false, query_opts, scy).await?,

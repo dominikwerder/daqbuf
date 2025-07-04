@@ -42,11 +42,11 @@ use std::time::Duration;
 use std::time::Instant;
 use taskrun::tracing;
 
-macro_rules! error { ($($arg:expr),*) => ( if true { log::error!($($arg),*); } ) }
+macro_rules! error { ($($arg:tt)*) => ( if true { log::error!($($arg)*); } ) }
 
-macro_rules! warn { ($($arg:expr),*) => ( if true { log::warn!($($arg),*); } ) }
+macro_rules! warn { ($($arg:tt)*) => ( if true { log::warn!($($arg)*); } ) }
 
-macro_rules! trace_init { ($($arg:expr),*) => ( if false { log::trace!($($arg),*); } ) }
+macro_rules! trace_init { ($($arg:tt)*) => ( if false { log::trace!($($arg)*); } ) }
 
 macro_rules! trace_fetch { ($($arg:tt)*) => ( if false { log::trace!($($arg)*); } ) }
 
@@ -260,6 +260,7 @@ pub enum ReadEventKind {
     ScyllaReadRowDone(u32),
     ReadNextValuesFutureDone,
     EventsStreamRtSees(u32),
+    ReadEventsLspAllDone,
 }
 
 #[derive(Debug)]
@@ -298,12 +299,26 @@ impl fmt::Display for ReadJobTrace {
 #[derive(Debug)]
 pub(super) struct ReadNextValuesOpts {
     rt: RetentionTime,
-    series: u64,
+    series: SeriesId,
     ts_msp: TsMs,
     range: ScyllaSeriesRange,
     fwd: bool,
     readopts: EventReadOpts,
     val_ty_dyn: Box<dyn ValTyDyn>,
+}
+
+impl Clone for ReadNextValuesOpts {
+    fn clone(&self) -> Self {
+        Self {
+            rt: self.rt.clone(),
+            series: self.series.clone(),
+            ts_msp: self.ts_msp.clone(),
+            range: self.range.clone(),
+            fwd: self.fwd.clone(),
+            readopts: self.readopts.clone(),
+            val_ty_dyn: self.val_ty_dyn.clone_boxed(),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -417,7 +432,6 @@ impl EventsStreamRt {
         ts_msp: TsMs,
         bck: bool,
         mfi: MakeFutInfo,
-        jobtrace: ReadJobTrace,
     ) -> Pin<Box<dyn Future<Output = Result<(Box<dyn BinningggContainerEventsDyn>, ReadJobTrace), Error>> + Send>> {
         let scyqueue = mfi.scyqueue.clone();
         let rt = mfi.rt.clone();
@@ -462,9 +476,8 @@ impl EventsStreamRt {
     fn setup_bck_read(&mut self) {
         if let Some(ts) = self.msp_buf_bck.pop_back() {
             trace_fetch!("setup_bck_read  {}", ts.fmt());
-            let jobtrace = ReadJobTrace::new();
             let mfi = MakeFutInfo::new(self);
-            let fut = Self::make_read_events_fut(ts, true, mfi, jobtrace);
+            let fut = Self::make_read_events_fut(ts, true, mfi);
             self.state = State::ReadingBck(ReadingBck {
                 reading_state: ReadingState::FetchEvents(FetchEvents::from_fut(fut)),
             });
@@ -494,9 +507,8 @@ impl EventsStreamRt {
         while qu.has_space() {
             if let Some(ts) = msp_buf.pop_front() {
                 trace_fetch!("{selfname}  {}  FILL A SLOT", ts.fmt());
-                let jobtrace = ReadJobTrace::new();
                 let mfi = st.make_fut_info.clone();
-                let fut = Self::make_read_events_fut(ts, false, mfi, jobtrace);
+                let fut = Self::make_read_events_fut(ts, false, mfi);
                 qu.push(fut);
             } else {
                 break;
@@ -880,7 +892,7 @@ async fn read_next_values_3_fwd(
         qu
     };
     let params = (
-        series as i64,
+        series.to_i64(),
         ts_msp.ms() as i64,
         ts_lsp_min.ns() as i64,
         ts_lsp_max.ns() as i64,
@@ -899,6 +911,33 @@ async fn read_next_values_3_fwd(
     Ok((ret,))
 }
 
+async fn read_lsp_all(
+    opts: ReadNextValuesOpts,
+    stmts: Arc<StmtsEvents>,
+    scy: Arc<Session>,
+    jobtrace: &mut ReadJobTrace,
+) -> Result<(Vec<DtNano>,), Error> {
+    let selfname = "read_lsp_all";
+    let mut qu = stmts
+        .rt(&opts.rt)
+        .lsp_all()
+        .shape(opts.val_ty_dyn.is_valueblob())
+        .st(opts.val_ty_dyn.st_name())?
+        .clone();
+    qu.set_page_size(1024 * 4);
+    let params = (opts.series.to_i64(), opts.ts_msp.ms() as i64);
+    trace_fetch!("{selfname}  event search  params {:?}", params);
+    jobtrace.add_event_now(ReadEventKind::CallExecuteIter);
+    let res = scy.execute_iter(qu.clone(), params).await?;
+    let mut ret = Vec::new();
+    let mut it = res.rows_stream::<(i64,)>()?;
+    while let Some(row) = it.try_next().await? {
+        let lsp = DtNano::from_ns(row.0 as u64);
+        ret.push(lsp);
+    }
+    Ok((ret,))
+}
+
 async fn read_next_values_3_bck(
     opts: ReadNextValuesOpts,
     stmts: Arc<StmtsEvents>,
@@ -906,49 +945,39 @@ async fn read_next_values_3_bck(
     jobtrace: &mut ReadJobTrace,
 ) -> Result<(Box<dyn BinningggContainerEventsDyn>,), Error> {
     let selfname = "read_next_values_3_bck";
-    let ret = opts.val_ty_dyn.empty_container_for_test();
-    if true {
+    if false {
+        let ret = opts.val_ty_dyn.empty_container_for_test();
         return Ok((ret,));
     }
+    let (mut lsp_all,) = read_lsp_all(opts.clone(), stmts.clone(), scy.clone(), jobtrace).await?;
+    {
+        let n = lsp_all.len();
+        if n > 1024 * 200 {
+            log::info!("{n} lsp in msp {msp}", msp = opts.ts_msp)
+            // TODO metrics
+        }
+    }
+    jobtrace.add_event_now(ReadEventKind::ReadEventsLspAllDone);
+    let lsp = if let Some(x) = lsp_all.pop() {
+        x
+    } else {
+        let ret = opts.val_ty_dyn.empty_container_for_test();
+        return Ok((ret,));
+    };
     let val_ty_dyn = &opts.val_ty_dyn;
     trace_fetch!("{selfname}  {:?}  st_name {}", opts, val_ty_dyn.st_name());
     let series = opts.series;
     let ts_msp = opts.ts_msp;
-    let range = opts.range;
     let table_name = val_ty_dyn.table_name();
     let with_values = opts.readopts.with_values();
-    if range.end() > TsNano::from_ns(i64::MAX as u64) {
-        return Err(Error::RangeEndOverflow);
-    }
-    let ts_lsp_max = if ts_msp.ns() < range.beg() {
-        range.beg().delta(ts_msp.ns())
-    } else {
-        DtNano::from_ns(0)
-    };
-    trace_fetch!(
-        "{selfname}  ts_msp {}  ts_lsp_max {}  {}",
-        ts_msp.fmt(),
-        ts_lsp_max,
-        table_name
-    );
+    trace_fetch!("{selfname}  ts_msp {}  lsp {}  {}", ts_msp.fmt(), lsp, table_name);
     let qu = stmts
         .rt(&opts.rt)
-        .lsp(!opts.fwd, with_values)
+        .lsp(false, with_values)
         // TODO
         .shape(val_ty_dyn.is_valueblob())
         .st(val_ty_dyn.st_name())?;
-    let qu = if false {
-        let mut qu = qu.clone();
-        if qu.is_token_aware() == false {
-            return Err(Error::NotTokenAware);
-        }
-        qu.set_page_size(10000);
-        // qu.disable_paging();
-        qu
-    } else {
-        qu.clone()
-    };
-    let params = (series as i64, ts_msp.ms() as i64, ts_lsp_max.ns() as i64);
+    let params = (series.to_i64(), ts_msp.ms() as i64, lsp.to_i64(), lsp.to_i64() + 1);
     trace_fetch!("{selfname}  event search  params {:?}", params);
     jobtrace.add_event_now(ReadEventKind::CallExecuteIter);
     let res = scy.execute_iter(qu.clone(), params).await?;
@@ -985,7 +1014,7 @@ pub async fn read_events_v02(
     let val_ty_dyn = new_val_ty_dyn_from_shape_scalar_type(params.shape.clone(), params.scalar_type.clone());
     let opts = ReadNextValuesOpts {
         rt: params.rt.clone(),
-        series: params.series.id(),
+        series: params.series,
         ts_msp: params.ts_msp,
         range: params.range,
         fwd: params.fwd,
@@ -1008,6 +1037,7 @@ trait ValTyDyn: fmt::Debug + Send {
         // jobtrace: &mut ReadJobTrace,
     ) -> Pin<Box<dyn Future<Output = Result<Box<dyn BinningggContainerEventsDyn>, Error>> + Send>>;
     fn empty_container_for_test(&self) -> Box<dyn BinningggContainerEventsDyn>;
+    fn clone_boxed(&self) -> Box<dyn ValTyDyn>;
 }
 
 async fn read_into_container_branch_00<ST>(
@@ -1065,7 +1095,7 @@ where
     Ok(ret)
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct ValTyDynTesting<ST>
 where
     ST: ValTy,
@@ -1172,6 +1202,11 @@ where
 
     fn empty_container_for_test(&self) -> Box<dyn BinningggContainerEventsDyn> {
         Box::new(<ST::Container as Empty>::empty())
+    }
+
+    fn clone_boxed(&self) -> Box<dyn ValTyDyn> {
+        let ret = Self { _t1: PhantomData };
+        Box::new(ret)
     }
 }
 

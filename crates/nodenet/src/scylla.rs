@@ -65,7 +65,9 @@ pub async fn scylla_channel_event_stream(
         .map(move |item| match item {
             Ok(k) => match k {
                 ChannelEvents::Events(mut k) => {
-                    if let SeriesKind::ChannelStatus = chconf.kind() {
+                    if true {
+                        Ok(ChannelEvents::Events(k))
+                    } else if let SeriesKind::ChannelStatus = chconf.kind() {
                         type C1 = ContainerEvents<u64>;
                         type C2 = ContainerEvents<String>;
                         if let Some(j) = k.as_any_mut().downcast_mut::<C1>() {
