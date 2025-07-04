@@ -365,9 +365,7 @@ async fn find_ts_msp_bck(
     Ok(ret)
 }
 
-/*
-Workaround because scylla's order by desc is broken at the moment.
-*/
+// Workaround because scylla's order by desc is broken at the moment.
 async fn find_ts_msp_bck_workaround(
     rt: &RetentionTime,
     series: u64,

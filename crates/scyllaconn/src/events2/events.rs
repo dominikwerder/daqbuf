@@ -918,6 +918,13 @@ async fn read_lsp_all(
     jobtrace: &mut ReadJobTrace,
 ) -> Result<(Vec<DtNano>,), Error> {
     let selfname = "read_lsp_all";
+    let lsp_max = if opts.ts_msp.ns() >= opts.range.beg() {
+        // TODO should not happen
+        // TODO metrics
+        return Ok((Vec::new(),));
+    } else {
+        opts.range.beg().delta(opts.ts_msp.ns())
+    };
     let mut qu = stmts
         .rt(&opts.rt)
         .lsp_all()
@@ -933,7 +940,9 @@ async fn read_lsp_all(
     let mut it = res.rows_stream::<(i64,)>()?;
     while let Some(row) = it.try_next().await? {
         let lsp = DtNano::from_ns(row.0 as u64);
-        ret.push(lsp);
+        if lsp < lsp_max {
+            ret.push(lsp);
+        }
     }
     Ok((ret,))
 }
