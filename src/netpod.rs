@@ -93,51 +93,36 @@ pub mod log_direct_macros {
     #[allow(unused)]
     #[macro_export]
     macro_rules! log_direct_trace {
-        ($fmt:expr) => {
-            eprintln!("TRACE {}", format_args!($fmt));
-        };
-        ($fmt:expr, $($arg:tt)*) => {
-            eprintln!("TRACE {}", format_args!($fmt, $($arg)*));
+        ($($arg:tt)*) => {
+            eprintln!("TRACE {}", format_args!($($arg)*));
         };
     }
     #[allow(unused)]
     #[macro_export]
     macro_rules! log_direct_debug {
-        ($fmt:expr) => {
-            eprintln!("DEBUG {}", format_args!($fmt));
-        };
-        ($fmt:expr, $($arg:tt)*) => {
-            eprintln!("DEBUG {}", format_args!($fmt, $($arg)*));
+        ($($arg:tt)*) => {
+            eprintln!("DEBUG {}", format_args!($($arg)*));
         };
     }
     #[allow(unused)]
     #[macro_export]
     macro_rules! log_direct_info {
-        ($fmt:expr) => {
-            eprintln!("INFO  {}", format_args!($fmt));
-        };
-        ($fmt:expr, $($arg:tt)*) => {
-            eprintln!("INFO  {}", format_args!($fmt, $($arg)*));
+        ($($arg:tt)*) => {
+            eprintln!("INFO  {}", format_args!($($arg)*));
         };
     }
     #[allow(unused)]
     #[macro_export]
     macro_rules! log_direct_warn {
-        ($fmt:expr) => {
-            eprintln!("WARN  {}", format_args!($fmt));
-        };
-        ($fmt:expr, $($arg:tt)*) => {
-            eprintln!("WARN  {}", format_args!($fmt, $($arg)*));
+        ($($arg:tt)*) => {
+            eprintln!("WARN  {}", format_args!($($arg)*));
         };
     }
     #[allow(unused)]
     #[macro_export]
     macro_rules! log_direct_error {
-        ($fmt:expr) => {
-            eprintln!("ERROR {}", format_args!($fmt));
-        };
-        ($fmt:expr, $($arg:tt)*) => {
-            eprintln!("ERROR {}", format_args!($fmt, $($arg)*));
+        ($($arg:tt)*) => {
+            eprintln!("ERROR {}", format_args!($($arg)*));
         };
     }
 }
