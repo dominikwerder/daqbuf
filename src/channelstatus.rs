@@ -35,6 +35,7 @@ pub enum ChannelStatus {
     MonitoringReadDiffValue,
     HaveStatusId,
     HaveAddress,
+    PollingReadTimeout,
 }
 
 impl ChannelStatus {
@@ -67,6 +68,7 @@ impl ChannelStatus {
             MonitoringReadResultUnexpected => 32,
             MonitoringReadDiffTime => 33,
             MonitoringReadDiffValue => 34,
+            PollingReadTimeout => 35,
         }
     }
 
@@ -97,6 +99,7 @@ impl ChannelStatus {
             32 => MonitoringReadResultUnexpected,
             33 => MonitoringReadDiffTime,
             34 => MonitoringReadDiffValue,
+            35 => PollingReadTimeout,
             _ => {
                 return Err(Error::UnknownStatus);
             }
@@ -124,6 +127,7 @@ impl ChannelStatus {
             MonitoringReadDiffValue => "MRDV",
             HaveStatusId => "HaveStatusId",
             HaveAddress => "HaveAddress",
+            PollingReadTimeout => "PollingReadTimeout",
         };
         ret.into()
     }
