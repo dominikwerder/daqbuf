@@ -394,9 +394,9 @@ impl BinnedEventsTimeweightStream {
                 Ready(Some(Ok(DataItem(Data(x)))))
             }
             None => {
-                debug!("no bins ready on eos");
                 self.state = StreamState::Done;
-                let item = LogItem::from_node(log::Level::INFO, format!("no bins ready on eos"));
+                debug!("no bins ready on eos");
+                let item = LogItem::from_node(log::Level::DEBUG, format!("no bins ready on eos"));
                 Ready(Some(Ok(Log(item))))
             }
         }

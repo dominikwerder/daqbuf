@@ -13,9 +13,11 @@ use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
 
-macro_rules! trace_input_container { ($($arg:expr),*) => ( if false { log::trace!($($arg),*); }) }
+macro_rules! debug { ($($arg:tt)*) => ( if false { log::debug!($($arg)*); }) }
 
-macro_rules! trace_emit { ($($arg:expr),*) => ( if false { log::trace!($($arg),*); }) }
+macro_rules! trace_input_container { ($($arg:tt)*) => ( if false { log::trace!($($arg)*); }) }
+
+macro_rules! trace_emit { ($($arg:tt)*) => ( if false { log::trace!($($arg)*); }) }
 
 autoerr::create_error_v1!(
     name(Error, "BinnedEventsTimeweightDyn"),
@@ -121,7 +123,8 @@ impl BinnedBinsTimeweightStream {
                 Ready(Some(Ok(DataItem(Data(x)))))
             }
             None => {
-                let item = LogItem::from_node(log::Level::INFO, format!("no bins ready on eos"));
+                debug!("no bins ready on eos");
+                let item = LogItem::from_node(log::Level::DEBUG, format!("no bins ready on eos"));
                 Ready(Some(Ok(Log(item))))
             }
         }
