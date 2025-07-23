@@ -25,7 +25,9 @@ pub enum ChannelStatus {
     AssignedToAddress,
     Opened,
     Closed(ChannelStatusClosedReason),
+    Ping,
     Pong,
+    PongTimeout,
     MonitoringSilenceReadStart,
     MonitoringSilenceReadTimeout,
     MonitoringSilenceReadUnchanged,
@@ -69,6 +71,8 @@ impl ChannelStatus {
             MonitoringReadDiffTime => 33,
             MonitoringReadDiffValue => 34,
             PollingReadTimeout => 35,
+            Ping => 36,
+            PongTimeout => 37,
         }
     }
 
@@ -100,6 +104,8 @@ impl ChannelStatus {
             33 => MonitoringReadDiffTime,
             34 => MonitoringReadDiffValue,
             35 => PollingReadTimeout,
+            36 => Ping,
+            37 => PongTimeout,
             _ => {
                 return Err(Error::UnknownStatus);
             }
@@ -117,7 +123,9 @@ impl ChannelStatus {
             AssignedToAddress => "Located",
             Opened => "Opened",
             Closed(_) => "Closed",
+            Ping => "Pingg",
             Pong => "Pongg",
+            PongTimeout => "PongTimeout",
             MonitoringSilenceReadStart => "MSRS",
             MonitoringSilenceReadTimeout => "MSRT",
             MonitoringSilenceReadUnchanged => "MSRU",

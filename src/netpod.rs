@@ -4532,3 +4532,32 @@ pub unsafe fn extltref2<'a, 'b, T>(t: &'a T) -> &'b T {
 pub unsafe fn extltmut<'a, 'b, T>(t: &'a mut T) -> &'b mut T {
     unsafe { core::mem::transmute(t) }
 }
+
+#[derive(Debug, Clone)]
+pub struct UseScylla6Workarounds(pub bool);
+
+impl Default for UseScylla6Workarounds {
+    fn default() -> Self {
+        Self(true)
+    }
+}
+
+impl std::ops::Deref for UseScylla6Workarounds {
+    type Target = bool;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl From<Option<u32>> for UseScylla6Workarounds {
+    fn from(value: Option<u32>) -> Self {
+        value.map_or(Default::default(), |x| {
+            if x == 0 {
+                UseScylla6Workarounds(false)
+            } else {
+                UseScylla6Workarounds(true)
+            }
+        })
+    }
+}
