@@ -3,6 +3,7 @@ use daqbuf_series::SeriesId;
 use daqbuf_series::msp::PrebinnedPartitioning;
 use netpod::BinnedRange;
 use netpod::TsNano;
+use netpod::UseScylla6Workarounds;
 use netpod::ttl::RetentionTime;
 
 /*
@@ -16,6 +17,7 @@ pub struct BinnedRtBinlenStream {
     rt: RetentionTime,
     pbp: PrebinnedPartitioning,
     range: BinnedRange<TsNano>,
+    use_scylla6_workarounds: UseScylla6Workarounds,
     scyqueue: ScyllaQueue,
 }
 
@@ -25,6 +27,7 @@ impl BinnedRtBinlenStream {
         rt: RetentionTime,
         pbp: PrebinnedPartitioning,
         range: BinnedRange<TsNano>,
+        use_scylla6_workarounds: UseScylla6Workarounds,
         scyqueue: ScyllaQueue,
     ) -> Self {
         Self {
@@ -32,6 +35,7 @@ impl BinnedRtBinlenStream {
             rt,
             pbp,
             range,
+            use_scylla6_workarounds,
             scyqueue,
         }
     }
@@ -42,6 +46,14 @@ impl BinnedRtBinlenStream {
         let msp = todo!();
         let binlen = todo!();
         let lsps = todo!();
-        super::binnedrtmsplsps::BinnedRtMspLsps::new(series, rt, msp, binlen, lsps, self.scyqueue.clone());
+        super::binnedrtmsplsps::BinnedRtMspLsps::new(
+            series,
+            rt,
+            msp,
+            binlen,
+            lsps,
+            self.use_scylla6_workarounds.clone(),
+            self.scyqueue.clone(),
+        );
     }
 }

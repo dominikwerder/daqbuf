@@ -12,12 +12,10 @@ use daqbuf_series::msp::LspU32;
 use daqbuf_series::msp::MspU32;
 use items_2::binning::container_bins::ContainerBins;
 use netpod::DtMs;
+use netpod::UseScylla6Workarounds;
 use netpod::ttl::RetentionTime;
 use std::fmt;
 use std::pin::Pin;
-
-macro_rules! info { ($($arg:expr),*) => ( if true { log::info!($($arg),*); } ); }
-macro_rules! debug { ($($arg:expr),*) => ( if true { log::debug!($($arg),*); } ); }
 
 autoerr::create_error_v1!(
     name(Error, "BinnedRtMsp"),
@@ -43,6 +41,7 @@ pub struct BinnedRtMspLsps {
     msp: MspU32,
     lsps: (LspU32, LspU32),
     binlen: DtMs,
+    use_scylla6_workarounds: UseScylla6Workarounds,
     scyqueue: ScyllaQueue,
     fut: Option<FutW>,
 }
@@ -54,6 +53,7 @@ impl BinnedRtMspLsps {
         msp: MspU32,
         binlen: DtMs,
         lsps: (LspU32, LspU32),
+        use_scylla6_workarounds: UseScylla6Workarounds,
         scyqueue: ScyllaQueue,
     ) -> Self {
         Self {
@@ -62,6 +62,7 @@ impl BinnedRtMspLsps {
             msp,
             lsps,
             binlen,
+            use_scylla6_workarounds,
             scyqueue,
             fut: None,
         }
@@ -75,7 +76,7 @@ impl BinnedRtMspLsps {
         let offs = self.lsps.0.to_u32()..self.lsps.1.to_u32();
         // SAFETY we only use scyqueue while we self are alive.
         let scyqueue = unsafe { &*(&self.scyqueue as *const ScyllaQueue) };
-        let fut = scyqueue.read_prebinned_f32(rt, series, binlen, msp, offs);
+        let fut = scyqueue.read_prebinned_f32(rt, series, binlen, msp, offs, self.use_scylla6_workarounds.clone());
         let fut = Box::pin(fut);
         Some(fut)
     }

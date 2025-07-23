@@ -12,10 +12,8 @@ pub struct MspLspItem {
 
 #[derive(Debug)]
 pub struct MspLspIter {
-    #[allow(unused)]
     range: NanoRange,
     pbp: PrebinnedPartitioning,
-    #[allow(unused)]
     mins: (u32, u32),
     maxs: (u32, u32),
     curs: (u32, u32),
@@ -35,6 +33,10 @@ impl MspLspIter {
             maxs,
             curs: mins,
         }
+    }
+
+    pub fn range(&self) -> NanoRange {
+        self.range.clone()
     }
 
     pub fn mins(&self) -> (MspU32, LspU32) {

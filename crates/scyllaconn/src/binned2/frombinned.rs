@@ -19,6 +19,7 @@ use netpod::BinnedRange;
 use netpod::DtMs;
 use netpod::TsMs;
 use netpod::TsNano;
+use netpod::UseScylla6Workarounds;
 use netpod::range::evrange::NanoRange;
 use netpod::ttl::RetentionTime;
 use serde::Serialize;
@@ -74,11 +75,17 @@ impl FromBinned {
     pub fn new(
         series: SeriesId,
         binrange: BinnedRange<TsNano>,
+        use_scylla6_workarounds: UseScylla6Workarounds,
         scyqueue: &ScyllaQueue,
         cache_read_provider: Arc<dyn CacheReadProvider>,
     ) -> Self {
         let state_a = StateA::ReadAllCoarse(
-            ReadAllCoarse::new(series, binrange.to_nano_range(), scyqueue.clone()),
+            ReadAllCoarse::new(
+                series,
+                binrange.to_nano_range(),
+                use_scylla6_workarounds,
+                scyqueue.clone(),
+            ),
             def(),
         );
         Self {

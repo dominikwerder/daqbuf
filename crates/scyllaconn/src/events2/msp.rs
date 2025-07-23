@@ -8,6 +8,7 @@ use futures_util::Stream;
 use futures_util::TryStreamExt;
 use netpod::TsMs;
 use netpod::TsMsVecFmt;
+use netpod::UseScylla6Workarounds;
 use netpod::log;
 use netpod::ttl::RetentionTime;
 use scylla::client::session::Session;
@@ -92,23 +93,40 @@ pub struct MspStreamRt {
     out: VecDeque<TsMs>,
     scyqueue: ScyllaQueue,
     do_trace_detail: bool,
+    use_scylla6_workarounds: UseScylla6Workarounds,
 }
 
 impl MspStreamRt {
-    pub fn new(rt: RetentionTime, series: SeriesId, range: ScyllaSeriesRange, scyqueue: ScyllaQueue) -> Self {
+    pub fn new(
+        rt: RetentionTime,
+        series: SeriesId,
+        range: ScyllaSeriesRange,
+        use_scylla6_workarounds: UseScylla6Workarounds,
+        scyqueue: ScyllaQueue,
+    ) -> Self {
         let fut_bck = {
             let scyqueue = scyqueue.clone();
             let rt = rt.clone();
             let series = series.clone();
             let range = range.clone();
-            async move { scyqueue.find_ts_msp(rt, series.id(), range, true).await }
+            let use_scylla6_workarounds = use_scylla6_workarounds.clone();
+            async move {
+                scyqueue
+                    .find_ts_msp(rt, series, range, true, use_scylla6_workarounds)
+                    .await
+            }
         };
         let fut_fwd = {
             let scyqueue = scyqueue.clone();
             let rt = rt.clone();
             let series = series.clone();
             let range = range.clone();
-            async move { scyqueue.find_ts_msp(rt, series.id(), range, false).await }
+            let use_scylla6_workarounds = use_scylla6_workarounds.clone();
+            async move {
+                scyqueue
+                    .find_ts_msp(rt, series, range, false, use_scylla6_workarounds)
+                    .await
+            }
         };
         let do_trace_detail = daqbuf_series::dbg::dbg_series(series.clone());
         trace_emit!(do_trace_detail, "-------------------------------------  TEST TRACE");
@@ -124,6 +142,7 @@ impl MspStreamRt {
             out: VecDeque::new(),
             scyqueue,
             do_trace_detail,
+            use_scylla6_workarounds,
         }
     }
 
@@ -144,7 +163,12 @@ impl MspStreamRt {
             let scyqueue = self.scyqueue.clone();
             let rt = self.rt.clone();
             let series = self.series.clone();
-            async move { scyqueue.find_ts_msp(rt, series.id(), range, false).await }
+            let use_scylla6_workarounds = self.use_scylla6_workarounds.clone();
+            async move {
+                scyqueue
+                    .find_ts_msp(rt, series, range, false, use_scylla6_workarounds)
+                    .await
+            }
         };
         Resolvable::Future(Box::pin(fut_fwd))
     }
@@ -301,6 +325,7 @@ pub async fn find_ts_msp(
     series: u64,
     range: ScyllaSeriesRange,
     bck: bool,
+    use_scylla6_workarounds: UseScylla6Workarounds,
     stmts: &StmtsEvents,
     scy: &Session,
 ) -> Result<VecDeque<TsMs>, Error> {
@@ -312,9 +337,13 @@ pub async fn find_ts_msp(
         bck
     );
     if bck {
-        find_ts_msp_bck_workaround(rt, series, range, stmts, scy).await
+        if *use_scylla6_workarounds {
+            find_ts_msp_bck_workaround(rt, series, range, stmts, scy).await
+        } else {
+            find_ts_msp_bck(rt, series, range, stmts, scy).await
+        }
     } else {
-        find_ts_msp_fwd(rt, series, range, stmts, scy).await
+        find_ts_msp_fwd(rt, series, range, use_scylla6_workarounds, stmts, scy).await
     }
 }
 
@@ -322,6 +351,7 @@ async fn find_ts_msp_fwd(
     rt: &RetentionTime,
     series: u64,
     range: ScyllaSeriesRange,
+    use_scylla6_workarounds: UseScylla6Workarounds,
     stmts: &StmtsEvents,
     scy: &Session,
 ) -> Result<VecDeque<TsMs>, Error> {
@@ -331,7 +361,10 @@ async fn find_ts_msp_fwd(
     let params = (series as i64, range.beg().ms() as i64, 1 + range.end().ms() as i64);
     log_fetch_result!("{selfname}  {:?}", params);
     let mut res = scy
-        .execute_iter(stmts.rt(rt).ts_msp_fwd().clone(), params)
+        .execute_iter(
+            stmts.cache_bypass(*use_scylla6_workarounds).rt(rt).ts_msp_fwd().clone(),
+            params,
+        )
         .await?
         .rows_stream::<(i64,)>()?;
     while let Some(row) = res.try_next().await? {
@@ -354,7 +387,7 @@ async fn find_ts_msp_bck(
     let params = (series as i64, range.beg().ms() as i64);
     log_fetch_result!("{selfname}  {:?}", params);
     let mut res = scy
-        .execute_iter(stmts.rt(rt).ts_msp_bck().clone(), params)
+        .execute_iter(stmts.cache_bypass(false).rt(rt).ts_msp_bck().clone(), params)
         .await?
         .rows_stream::<(i64,)>()?;
     while let Some(row) = res.try_next().await? {
@@ -379,7 +412,7 @@ async fn find_ts_msp_bck_workaround(
     let params = (series as i64, 0 as i64, i64::MAX);
     log_fetch_result!("{selfname}  {:?}", params);
     let mut res = scy
-        .execute_iter(stmts.rt(rt).ts_msp_bck_workaround().clone(), params)
+        .execute_iter(stmts.cache_bypass(true).rt(rt).ts_msp_bck_workaround().clone(), params)
         .await?
         .rows_stream::<(i64,)>()?;
     let mut c = 0;

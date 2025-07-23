@@ -43,6 +43,7 @@ pub async fn scylla_channel_event_stream(
         evq.need_one_before_range(),
         evq.need_value_data(),
         evq.settings().scylla_read_queue_len(),
+        evq.use_scylla6_workarounds().into(),
     );
     let stream: Pin<Box<dyn Stream<Item = _> + Send>> = if let Some(rt) = evq.use_rt() {
         trace!("=========    SOLO {rt:?}   =====================");

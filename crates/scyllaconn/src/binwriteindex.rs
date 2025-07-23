@@ -14,6 +14,7 @@ use items_0::streamitem::StreamItem;
 use items_0::streamitem::sitem3_data;
 use log::log_item_emit as lg;
 use netpod::DtMs;
+use netpod::UseScylla6Workarounds;
 use netpod::range::evrange::NanoRange;
 use netpod::ttl::RetentionTime;
 use std::collections::VecDeque;
@@ -65,6 +66,7 @@ pub struct BinWriteIndexRtStream {
     lsp_min: u32,
     msp_end: u32,
     lsp_end: u32,
+    use_scylla6_workarounds: UseScylla6Workarounds,
     fut1: Option<Fut1>,
     logbuf: VecDeque<LogItem>,
 }
@@ -79,6 +81,7 @@ impl BinWriteIndexRtStream {
         series: SeriesId,
         pbp: PrebinnedPartitioning,
         range: NanoRange,
+        use_scylla6_workarounds: UseScylla6Workarounds,
         scyqueue: ScyllaQueue,
     ) -> Self {
         lg::info!("============================   log item emitted from binwriteindex.rs");
@@ -104,6 +107,7 @@ impl BinWriteIndexRtStream {
             lsp_min: lsp_beg,
             msp_end,
             lsp_end,
+            use_scylla6_workarounds,
             fut1: None,
             logbuf: Default::default(),
         }
@@ -117,10 +121,11 @@ impl BinWriteIndexRtStream {
         msp: u32,
         lsp_min: u32,
         lsp_max: u32,
+        use_scylla6_workarounds: UseScylla6Workarounds,
     ) -> Result<(u32, u32, u32, VecDeque<BinWriteIndexEntry>), crate::worker::Error> {
         debug!("make_next_query_fut  msp {}  lsp {} {}", msp, lsp_min, lsp_max);
         let res = scyqueue
-            .bin_write_index_read(rt1, series, pbp, MspU32(msp), lsp_min, lsp_max)
+            .bin_write_index_read(rt1, series, pbp, MspU32(msp), lsp_min, lsp_max, use_scylla6_workarounds)
             .await?;
         Ok((msp, lsp_min, lsp_max, res))
     }
@@ -150,6 +155,7 @@ impl BinWriteIndexRtStream {
                 msp,
                 lsp_min,
                 lsp_max,
+                self.use_scylla6_workarounds.clone(),
             );
             Some(Fut1(Box::pin(fut)))
         } else {

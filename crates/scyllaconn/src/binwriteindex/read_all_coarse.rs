@@ -10,7 +10,7 @@ use futures_util::TryStreamExt;
 use items_0::streamitem::Sitemty3;
 use items_0::streamitem::sitem3_data;
 use netpod::DtMs;
-use netpod::log;
+use netpod::UseScylla6Workarounds;
 use netpod::range::evrange::NanoRange;
 use netpod::ttl::RetentionTime;
 use std::collections::VecDeque;
@@ -18,8 +18,8 @@ use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
 
-macro_rules! info { ($($arg:expr),*) => ( if true { log::info!($($arg),*); } ); }
-macro_rules! debug { ($($arg:expr),*) => ( if true { log::debug!($($arg),*); } ); }
+macro_rules! info { ($($arg:tt)*) => ( if true { log::info!($($arg)*); } ); }
+macro_rules! debug { ($($arg:tt)*) => ( if true { log::debug!($($arg)*); } ); }
 
 autoerr::create_error_v1!(
     name(Error, "BinIndexReadAllCoarse"),
@@ -32,6 +32,7 @@ autoerr::create_error_v1!(
 async fn read_all_coarse(
     series: SeriesId,
     range: NanoRange,
+    use_scylla6_workarounds: UseScylla6Workarounds,
     scyqueue: &ScyllaQueue,
 ) -> Result<VecDeque<(RetentionTime, MspU32, LspU32, DtMs)>, Error> {
     let rts = {
@@ -41,7 +42,14 @@ async fn read_all_coarse(
     let mut ret = VecDeque::new();
     for rt in rts {
         let pbp = PrebinnedPartitioning::Day1;
-        let mut stream = BinWriteIndexRtStream::new(rt.clone(), series, pbp, range.clone(), scyqueue.clone());
+        let mut stream = BinWriteIndexRtStream::new(
+            rt.clone(),
+            series,
+            pbp,
+            range.clone(),
+            use_scylla6_workarounds.clone(),
+            scyqueue.clone(),
+        );
         while let Some(x) = stream.try_next().await? {
             match x.into_data() {
                 Ok(x) => {
@@ -77,11 +85,16 @@ pub struct ReadAllCoarse {
 }
 
 impl ReadAllCoarse {
-    pub fn new(series: SeriesId, range: NanoRange, scyqueue: ScyllaQueue) -> Self {
+    pub fn new(
+        series: SeriesId,
+        range: NanoRange,
+        use_scylla6_workarounds: UseScylla6Workarounds,
+        scyqueue: ScyllaQueue,
+    ) -> Self {
         let scyqueue = Box::new(scyqueue);
         let fut = {
             let scyqueue = unsafe { &*(scyqueue.as_ref() as *const ScyllaQueue) };
-            read_all_coarse(series, range, scyqueue)
+            read_all_coarse(series, range, use_scylla6_workarounds, scyqueue)
         };
         Self {
             scyqueue,

@@ -2,9 +2,9 @@ use netpod::ttl::RetentionTime;
 use scylla::client::session::Session;
 use scylla::statement::prepared::PreparedStatement;
 
-macro_rules! info_prepare {
-    ($($arg:tt)*) => { log::info!("prepare cql  {}", format_args!($($arg)*)); };
-}
+macro_rules! log_prepare { ($($arg:tt)*) => { log::debug!("prepare cql  {}", format_args!($($arg)*)); }; }
+
+macro_rules! trace_scy6 { ($($arg:tt)*) => { log::info!("{}", format_args!($($arg)*)); }; }
 
 autoerr::create_error_v1!(
     name(Error, "ScyllaPrepare"),
@@ -141,6 +141,7 @@ impl StmtsEventsRt {
     }
 
     pub fn ts_msp_bck(&self) -> &PreparedStatement {
+        trace_scy6!("StmtsEventsRt ORDER DESC");
         &self.ts_msp_bck
     }
 
@@ -190,7 +191,7 @@ async fn make_msp_dir(
         select_cond,
         query_opts
     );
-    info_prepare!("{ks} {rt} {cql}");
+    log_prepare!("{ks} {rt} {cql}");
     let qu = scy.prepare(cql).await?;
     Ok(qu)
 }
@@ -211,7 +212,7 @@ async fn make_msp_fwd_for_bck_workaround(
         select_cond,
         query_opts
     );
-    info_prepare!("{ks} {rt} {cql}");
+    log_prepare!("{ks} {rt} {cql}");
     let qu = scy.prepare(cql).await?;
     Ok(qu)
 }
@@ -235,7 +236,7 @@ async fn make_lsp_all_shape_st(
         stname,
         query_opts
     );
-    info_prepare!("{ks} {rt} {cql}");
+    log_prepare!("{ks} {rt} {cql}");
     let qu = scy.prepare(cql).await?;
     Ok(qu)
 }
@@ -273,7 +274,7 @@ async fn make_lsp_all_shape(
                 table_name,
                 query_opts
             );
-            info_prepare!("{ks} {rt} {cql}");
+            log_prepare!("{ks} {rt} {cql}");
             let qu = scy.prepare(cql).await?;
             qu
         },
@@ -317,7 +318,7 @@ async fn make_lsp(
         select_cond,
         query_opts
     );
-    info_prepare!("{ks} {rt} {cql}");
+    log_prepare!("{ks} {rt} {cql}");
     let qu = scy.prepare(cql).await?;
     Ok(qu)
 }
@@ -373,7 +374,7 @@ async fn make_lsp_shape(
                 table_name,
                 query_opts
             );
-            info_prepare!("{ks} {rt} {cql}");
+            log_prepare!("{ks} {rt} {cql}");
             let qu = scy.prepare(cql).await?;
             qu
         },
@@ -413,7 +414,7 @@ async fn make_prebinned_f32(
         rt.table_prefix(),
         query_opts
     );
-    info_prepare!("{ks} {rt} {cql}");
+    log_prepare!("{ks} {rt} {cql}");
     let qu = scy.prepare(cql).await?;
     Ok(qu)
 }
@@ -436,7 +437,7 @@ async fn make_bin_write_index_read(
         rt.table_prefix(),
         query_opts
     );
-    info_prepare!("{ks} {rt} {cql}");
+    log_prepare!("{ks} {rt} {cql}");
     let qu = scy.prepare(cql).await?;
     Ok(qu)
 }
@@ -458,28 +459,58 @@ async fn make_rt(ks: &str, rt: &RetentionTime, query_opts: &str, scy: &Session) 
 }
 
 #[derive(Debug)]
-pub struct StmtsEvents {
+pub struct StmtsEventsCacheBypass {
     st: StmtsEventsRt,
     mt: StmtsEventsRt,
     lt: StmtsEventsRt,
+    bypass_cache: bool,
 }
 
-impl StmtsEvents {
+impl StmtsEventsCacheBypass {
     pub async fn new(ks: [&str; 3], bypass_cache: bool, scy: &Session) -> Result<Self, Error> {
         let query_opts = if bypass_cache { "bypass cache" } else { "" };
-        let ret = StmtsEvents {
+        let ret = StmtsEventsCacheBypass {
             st: make_rt(ks[0], &RetentionTime::Short, query_opts, scy).await?,
             mt: make_rt(ks[1], &RetentionTime::Medium, query_opts, scy).await?,
             lt: make_rt(ks[2], &RetentionTime::Long, query_opts, scy).await?,
+            bypass_cache,
         };
         Ok(ret)
     }
 
     pub fn rt(&self, rt: &RetentionTime) -> &StmtsEventsRt {
+        if self.bypass_cache == false {
+            trace_scy6!("StmtsEventsCacheBypass false");
+        }
         match rt {
             RetentionTime::Short => &self.st,
             RetentionTime::Medium => &self.mt,
             RetentionTime::Long => &&self.lt,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct StmtsEvents {
+    cache_use: StmtsEventsCacheBypass,
+    cache_bypass: StmtsEventsCacheBypass,
+}
+
+impl StmtsEvents {
+    pub async fn new(ks: [&str; 3], scy: &Session) -> Result<Self, Error> {
+        let ret = StmtsEvents {
+            cache_use: StmtsEventsCacheBypass::new(ks, false, scy).await?,
+            cache_bypass: StmtsEventsCacheBypass::new(ks, true, scy).await?,
+        };
+        Ok(ret)
+    }
+
+    pub fn cache_bypass(&self, cache_bypass: bool) -> &StmtsEventsCacheBypass {
+        if cache_bypass {
+            &self.cache_bypass
+        } else {
+            trace_scy6!("cache_bypass false");
+            &self.cache_use
         }
     }
 }

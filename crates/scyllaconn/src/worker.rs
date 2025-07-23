@@ -16,6 +16,7 @@ use items_2::binning::container_bins::ContainerBins;
 use netpod::DtMs;
 use netpod::ScyllaConfig;
 use netpod::TsMs;
+use netpod::UseScylla6Workarounds;
 use netpod::log;
 use netpod::ttl::RetentionTime;
 use std::collections::VecDeque;
@@ -57,23 +58,67 @@ impl<T> From<async_channel::SendError<T>> for Error {
 type ScySessTy = scylla::client::session::Session;
 
 #[derive(Debug)]
+struct FindTsMsp {
+    rt: RetentionTime,
+    series: SeriesId,
+    range: ScyllaSeriesRange,
+    bck: bool,
+    use_scylla6_workarounds: UseScylla6Workarounds,
+    tx: Sender<Result<VecDeque<TsMs>, Error>>,
+}
+
+impl FindTsMsp {
+    async fn execute(self, stmts: &StmtsEvents, scy: &ScySessTy) {
+        // TODO avoid the extra clone
+        let tx = self.tx.clone();
+        match self.execute_inner(stmts, scy).await {
+            Ok(()) => {}
+            Err(e) => {
+                if tx.send(Err(e)).await.is_err() {
+                    // TODO count for stats
+                }
+            }
+        }
+    }
+
+    async fn execute_inner(self, stmts: &StmtsEvents, scy: &ScySessTy) -> Result<(), Error> {
+        let res = crate::events2::msp::find_ts_msp(
+            &self.rt,
+            self.series.id(),
+            self.range,
+            self.bck,
+            self.use_scylla6_workarounds,
+            &stmts,
+            &scy,
+        )
+        .await;
+        if self.tx.send(res.map_err(Into::into)).await.is_err() {
+            // TODO count for stats
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug)]
 struct ReadPrebinnedF32 {
     rt: RetentionTime,
     series: u64,
     bin_len: DtMs,
     msp: u64,
     offs: core::ops::Range<u32>,
+    use_scylla6_workarounds: UseScylla6Workarounds,
     tx: Sender<Result<ContainerBins<f32, f32>, streams::timebin::cached::reader::Error>>,
 }
 
 #[derive(Debug)]
 struct BinWriteIndexRead {
-    rt1: RetentionTime,
+    rt: RetentionTime,
     series: SeriesId,
     pbp: PrebinnedPartitioning,
     msp: MspU32,
     lsp_min: u32,
     lsp_max: u32,
+    use_scylla6_workarounds: UseScylla6Workarounds,
     tx: Sender<Result<VecDeque<BinWriteIndexEntry>, Error>>,
 }
 
@@ -101,7 +146,14 @@ impl BinWriteIndexRead {
         );
         log::info!("execute {:?}", params);
         let res = scy
-            .execute_iter(stmts.rt(&self.rt1).bin_write_index_read().clone(), params)
+            .execute_iter(
+                stmts
+                    .cache_bypass(*self.use_scylla6_workarounds)
+                    .rt(&self.rt)
+                    .bin_write_index_read()
+                    .clone(),
+                params,
+            )
             .await?;
         let mut it = res.rows_stream::<(i32, i32)>()?;
         let mut all = VecDeque::new();
@@ -141,14 +193,7 @@ impl fmt::Debug for ExecuteV1 {
 
 #[derive(Debug)]
 enum Job {
-    FindTsMsp(
-        RetentionTime,
-        // series-id
-        u64,
-        ScyllaSeriesRange,
-        bool,
-        Sender<Result<VecDeque<TsMs>, Error>>,
-    ),
+    FindTsMsp(FindTsMsp),
     AccountingReadTs(
         RetentionTime,
         TsMs,
@@ -178,12 +223,21 @@ impl ScyllaQueue {
     pub async fn find_ts_msp(
         &self,
         rt: RetentionTime,
-        series: u64,
+        series: SeriesId,
         range: ScyllaSeriesRange,
         bck: bool,
+        use_scylla6_workarounds: UseScylla6Workarounds,
     ) -> Result<VecDeque<TsMs>, Error> {
         let (tx, rx) = async_channel::bounded(1);
-        let job = Job::FindTsMsp(rt, series, range, bck, tx);
+        let job = FindTsMsp {
+            rt,
+            series,
+            range,
+            bck,
+            use_scylla6_workarounds,
+            tx,
+        };
+        let job = Job::FindTsMsp(job);
         self.tx.send(job).await.map_err(|_| Error::ChannelSend)?;
         let res = rx.recv().await.map_err(|_| Error::ChannelRecv)??;
         Ok(res)
@@ -237,6 +291,7 @@ impl ScyllaQueue {
         bin_len: DtMs,
         msp: u64,
         offs: core::ops::Range<u32>,
+        use_scylla6_workarounds: UseScylla6Workarounds,
     ) -> Result<ContainerBins<f32, f32>, streams::timebin::cached::reader::Error> {
         let (tx, rx) = async_channel::bounded(1);
         let job = Job::ReadPrebinnedF32(ReadPrebinnedF32 {
@@ -245,6 +300,7 @@ impl ScyllaQueue {
             bin_len,
             msp,
             offs,
+            use_scylla6_workarounds,
             tx,
         });
         self.tx
@@ -260,21 +316,23 @@ impl ScyllaQueue {
 
     pub async fn bin_write_index_read(
         &self,
-        rt1: RetentionTime,
+        rt: RetentionTime,
         series: SeriesId,
         pbp: PrebinnedPartitioning,
         msp: MspU32,
         lsp_min: u32,
         lsp_max: u32,
+        use_scylla6_workarounds: UseScylla6Workarounds,
     ) -> Result<VecDeque<BinWriteIndexEntry>, Error> {
         let (tx, rx) = async_channel::bounded(1);
         let job = BinWriteIndexRead {
-            rt1,
+            rt,
             series,
             pbp,
             msp,
             lsp_min,
             lsp_max,
+            use_scylla6_workarounds,
             tx,
         };
         let job = Job::BinWriteIndexRead(job);
@@ -356,25 +414,13 @@ impl ScyllaWorker {
             self.scyconf_lt.keyspace.as_str(),
         ];
         debug!("scylla worker  prepare start");
-        let stmts = StmtsEvents::new(
-            kss.try_into().map_err(|_| Error::MissingKeyspaceConfig)?,
-            self.scyconf_st.bypass_cache,
-            &scy,
-        )
-        .await?;
+        let stmts = StmtsEvents::new(kss.try_into().map_err(|_| Error::MissingKeyspaceConfig)?, &scy).await?;
         let stmts = Arc::new(stmts);
-        // let stmts_cache = StmtsCache::new(kss[0], &scy).await?;
-        // let stmts_cache = Arc::new(stmts_cache);
         debug!("scylla worker  prepare done");
         self.rx
             .map(|job| async {
                 match job {
-                    Job::FindTsMsp(rt, series, range, bck, tx) => {
-                        let res = crate::events2::msp::find_ts_msp(&rt, series, range, bck, &stmts, &scy).await;
-                        if tx.send(res.map_err(Into::into)).await.is_err() {
-                            // TODO count for stats
-                        }
-                    }
+                    Job::FindTsMsp(job) => job.execute(&stmts, &scy).await,
                     Job::AccountingReadTs(rt, ts, tx) => {
                         let ks = match &rt {
                             RetentionTime::Short => &self.scyconf_st.keyspace,
@@ -396,12 +442,14 @@ impl ScyllaWorker {
                         }
                     }
                     Job::ReadPrebinnedF32(job) => {
+                        // TODO remove I guess?
                         let res = super::bincache::worker_read(
                             job.rt,
                             job.series,
                             job.bin_len,
                             job.msp,
                             job.offs,
+                            job.use_scylla6_workarounds,
                             &stmts,
                             &scy,
                         )

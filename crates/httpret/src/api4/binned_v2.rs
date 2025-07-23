@@ -32,6 +32,7 @@ use netpod::ChannelTypeConfigGen;
 use netpod::FromUrl;
 use netpod::NodeConfigCached;
 use netpod::ReqCtx;
+use netpod::UseScylla6Workarounds;
 use netpod::APP_CBOR_FRAMED;
 use netpod::APP_JSON;
 use netpod::APP_JSON_FRAMED;
@@ -208,6 +209,7 @@ async fn binned_instrumented(
 
 fn make_read_provider(
     chname: &str,
+    use_scylla6_workarounds: UseScylla6Workarounds,
     scyqueue: Option<ScyllaQueue>,
     open_bytes: Pin<Arc<OpenBoxedBytesViaHttp>>,
     ctx: &ReqCtx,
@@ -232,7 +234,7 @@ fn make_read_provider(
     let cache_read_provider = if ncc.node_config.cluster.scylla_lt().is_some() {
         scyqueue
             .clone()
-            .map(|qu| scyllaconn::bincache::ScyllaPrebinnedReadProvider::new(qu))
+            .map(|qu| scyllaconn::bincache::ScyllaPrebinnedReadProvider::new(use_scylla6_workarounds, qu))
             .map(|x| Arc::new(x) as Arc<dyn CacheReadProvider>)
             .expect("scylla queue")
     } else if ncc.node.sf_databuffer.is_some() {
@@ -274,6 +276,7 @@ async fn binned_json_framed(
         let stream = scyllaconn::binned2::frombinned::FromBinned::new(
             series,
             binrange.clone(),
+            res2.query.use_scylla6_workarounds().into(),
             scyqueue,
             res2.cache_read_provider,
         );
@@ -383,8 +386,14 @@ impl<'a> HandleRes2<'a> {
             .await?
             .ok_or_else(|| Error::ChannelNotFound)?;
         let open_bytes = Arc::pin(OpenBoxedBytesViaHttp::new(ncc.node_config.cluster.clone()));
-        let (events_read_provider, cache_read_provider) =
-            make_read_provider(ch_conf.name(), scyqueue.clone(), open_bytes, ctx, ncc);
+        let (events_read_provider, cache_read_provider) = make_read_provider(
+            ch_conf.name(),
+            query.use_scylla6_workarounds().into(),
+            scyqueue.clone(),
+            open_bytes,
+            ctx,
+            ncc,
+        );
         let timeout_provider = streamio::streamtimeout::StreamTimeout::boxed();
         let ret = Self {
             logspan,

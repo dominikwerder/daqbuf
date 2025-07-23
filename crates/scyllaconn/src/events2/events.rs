@@ -27,6 +27,7 @@ use netpod::Shape;
 use netpod::TsMs;
 use netpod::TsMsVecFmt;
 use netpod::TsNano;
+use netpod::UseScylla6Workarounds;
 use netpod::log;
 use netpod::ttl::RetentionTime;
 use scylla::client::pager::QueryPager;
@@ -45,6 +46,8 @@ use taskrun::tracing;
 macro_rules! error { ($($arg:tt)*) => ( if true { log::error!($($arg)*); } ) }
 
 macro_rules! warn { ($($arg:tt)*) => ( if true { log::warn!($($arg)*); } ) }
+
+macro_rules! info { ($($arg:tt)*) => ( if true { log::info!($($arg)*); } ) }
 
 macro_rules! trace_init { ($($arg:tt)*) => ( if false { log::trace!($($arg)*); } ) }
 
@@ -69,14 +72,21 @@ pub struct EventReadOpts {
     with_values: bool,
     one_before: bool,
     qucap: u32,
+    use_scylla6_workarounds: UseScylla6Workarounds,
 }
 
 impl EventReadOpts {
-    pub fn new(one_before: bool, with_values: bool, qucap: Option<u32>) -> Self {
+    pub fn new(
+        one_before: bool,
+        with_values: bool,
+        qucap: Option<u32>,
+        use_scylla6_workarounds: UseScylla6Workarounds,
+    ) -> Self {
         Self {
             one_before,
             with_values,
             qucap: qucap.unwrap_or(6),
+            use_scylla6_workarounds,
         }
     }
 
@@ -379,7 +389,13 @@ impl EventsStreamRt {
     ) -> Self {
         trace_init!("EventsStreamRt::new  {ch_conf:?}  {range:?}  {rt:?}  {readopts:?}");
         let series = SeriesId::new(ch_conf.series());
-        let msp_inp = crate::events2::msp::MspStreamRt::new(rt.clone(), series, range.clone(), scyqueue.clone());
+        let msp_inp = crate::events2::msp::MspStreamRt::new(
+            rt.clone(),
+            series,
+            range.clone(),
+            readopts.use_scylla6_workarounds.clone(),
+            scyqueue.clone(),
+        );
         Self {
             qucap: readopts.qucap as usize,
             rt,
@@ -878,6 +894,7 @@ async fn read_next_values_3_fwd(
         table_name
     );
     let qu = stmts
+        .cache_bypass(*opts.readopts.use_scylla6_workarounds)
         .rt(&opts.rt)
         .lsp(!opts.fwd, with_values)
         .shape(val_ty_dyn.is_valueblob())
@@ -926,6 +943,7 @@ async fn read_lsp_all(
         opts.range.beg().delta(opts.ts_msp.ns())
     };
     let mut qu = stmts
+        .cache_bypass(*opts.readopts.use_scylla6_workarounds)
         .rt(&opts.rt)
         .lsp_all()
         .shape(opts.val_ty_dyn.is_valueblob())
@@ -964,6 +982,9 @@ async fn read_next_values_3_bck(
         if n > 1024 * 200 {
             log::info!("{n} lsp in msp {msp}", msp = opts.ts_msp)
             // TODO metrics
+        } else if n > 1024 * 20 {
+            log::debug!("{n} lsp in msp {msp}", msp = opts.ts_msp)
+            // TODO metrics
         }
     }
     jobtrace.add_event_now(ReadEventKind::ReadEventsLspAllDone);
@@ -974,6 +995,9 @@ async fn read_next_values_3_bck(
         return Ok((ret,));
     };
     let val_ty_dyn = &opts.val_ty_dyn;
+    if *opts.readopts.use_scylla6_workarounds == false {
+        info!("{selfname}  NO WORKAROUND");
+    }
     trace_fetch!("{selfname}  {:?}  st_name {}", opts, val_ty_dyn.st_name());
     let series = opts.series;
     let ts_msp = opts.ts_msp;
@@ -981,6 +1005,7 @@ async fn read_next_values_3_bck(
     let with_values = opts.readopts.with_values();
     trace_fetch!("{selfname}  ts_msp {}  lsp {}  {}", ts_msp.fmt(), lsp, table_name);
     let qu = stmts
+        .cache_bypass(*opts.readopts.use_scylla6_workarounds)
         .rt(&opts.rt)
         .lsp(false, with_values)
         // TODO

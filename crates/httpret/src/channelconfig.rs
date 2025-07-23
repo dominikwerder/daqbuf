@@ -605,6 +605,8 @@ impl IocForChannel {
 pub struct ScyllaSeriesTsMspQuery {
     channel: SfDbChannel,
     range: SeriesRange,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    use_scylla6_workarounds: Option<u32>,
 }
 
 impl FromUrl for ScyllaSeriesTsMspQuery {
@@ -624,7 +626,11 @@ impl FromUrl for ScyllaSeriesTsMspQuery {
         } else {
             return Err(Error::MissingTimerange);
         };
-        Ok(Self { channel, range })
+        Ok(Self {
+            channel,
+            range,
+            use_scylla6_workarounds: pairs.get("use_scylla6_workarounds").and_then(|x| x.parse().ok()),
+        })
     }
 }
 
@@ -693,10 +699,14 @@ impl ScyllaSeriesTsMsp {
         use scyllaconn::SeriesId;
         let sid = SeriesId::new(chconf.series());
         let scyqueue = shared_res.scyqueue.clone().unwrap();
-
         let mut st_ts_msp_ms = Vec::new();
-        let mut msp_stream =
-            scyllaconn::events2::msp::MspStreamRt::new(RetentionTime::Short, sid, (&q.range).into(), scyqueue.clone());
+        let mut msp_stream = scyllaconn::events2::msp::MspStreamRt::new(
+            RetentionTime::Short,
+            sid,
+            (&q.range).into(),
+            q.use_scylla6_workarounds.into(),
+            scyqueue.clone(),
+        );
         use chrono::TimeZone;
         while let Some(x) = msp_stream.next().await {
             let v = x.unwrap().ms();
@@ -706,8 +716,13 @@ impl ScyllaSeriesTsMsp {
         }
 
         let mut mt_ts_msp_ms = Vec::new();
-        let mut msp_stream =
-            scyllaconn::events2::msp::MspStreamRt::new(RetentionTime::Medium, sid, (&q.range).into(), scyqueue.clone());
+        let mut msp_stream = scyllaconn::events2::msp::MspStreamRt::new(
+            RetentionTime::Medium,
+            sid,
+            (&q.range).into(),
+            q.use_scylla6_workarounds.into(),
+            scyqueue.clone(),
+        );
         while let Some(x) = msp_stream.next().await {
             let v = x.unwrap().ms();
             let st = chrono::Utc.timestamp_millis_opt(v as _).earliest().unwrap();
@@ -716,8 +731,13 @@ impl ScyllaSeriesTsMsp {
         }
 
         let mut lt_ts_msp_ms = Vec::new();
-        let mut msp_stream =
-            scyllaconn::events2::msp::MspStreamRt::new(RetentionTime::Long, sid, (&q.range).into(), scyqueue.clone());
+        let mut msp_stream = scyllaconn::events2::msp::MspStreamRt::new(
+            RetentionTime::Long,
+            sid,
+            (&q.range).into(),
+            q.use_scylla6_workarounds.into(),
+            scyqueue.clone(),
+        );
         while let Some(x) = msp_stream.next().await {
             let v = x.unwrap().ms();
             let st = chrono::Utc.timestamp_millis_opt(v as _).earliest().unwrap();
