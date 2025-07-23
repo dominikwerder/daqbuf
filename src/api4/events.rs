@@ -83,6 +83,8 @@ pub struct PlainEventsQuery {
     #[serde(default)]
     use_rt: Option<RetentionTime>,
     querymarker: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    use_scylla6_workarounds: Option<u32>,
 }
 
 impl PlainEventsQuery {
@@ -112,6 +114,7 @@ impl PlainEventsQuery {
             log_level: String::new(),
             use_rt: None,
             querymarker: String::new(),
+            use_scylla6_workarounds: None,
         }
     }
 
@@ -253,6 +256,10 @@ impl PlainEventsQuery {
     pub fn use_rt(&self) -> Option<RetentionTime> {
         self.use_rt.clone()
     }
+
+    pub fn use_scylla6_workarounds(&self) -> Option<u32> {
+        self.use_scylla6_workarounds.clone()
+    }
 }
 
 impl HasBackend for PlainEventsQuery {
@@ -341,6 +348,9 @@ impl FromUrl for PlainEventsQuery {
             querymarker: pairs
                 .get("querymarker")
                 .map_or(String::new(), |x| x.to_string()),
+            use_scylla6_workarounds: pairs
+                .get("use_scylla6_workarounds")
+                .and_then(|x| x.parse().ok()),
         };
         Ok(ret)
     }
@@ -407,6 +417,9 @@ impl AppendToUrl for PlainEventsQuery {
         if let Some(x) = self.use_rt.as_ref() {
             g.append_pair("useRt", &x.to_string());
         }
+        if let Some(x) = self.use_scylla6_workarounds.as_ref() {
+            g.append_pair("use_scylla6_workarounds", &x.to_string());
+        }
     }
 }
 
@@ -460,6 +473,7 @@ pub struct EventsSubQuerySettings {
     use_rt: Option<RetentionTime>,
     merger_out_len_max: Option<u32>,
     scylla_read_queue_len: Option<u32>,
+    use_scylla6_workarounds: Option<u32>,
 }
 
 impl EventsSubQuerySettings {
@@ -486,6 +500,7 @@ impl Default for EventsSubQuerySettings {
             use_rt: None,
             merger_out_len_max: None,
             scylla_read_queue_len: None,
+            use_scylla6_workarounds: None,
         }
     }
 }
@@ -505,6 +520,7 @@ impl From<&PlainEventsQuery> for EventsSubQuerySettings {
             use_rt: value.use_rt(),
             merger_out_len_max: value.merger_out_len_max(),
             scylla_read_queue_len: value.scylla_read_queue_len(),
+            use_scylla6_workarounds: value.use_scylla6_workarounds.clone(),
         }
     }
 }
@@ -525,6 +541,7 @@ impl From<&BinnedQuery> for EventsSubQuerySettings {
             use_rt: value.use_rt(),
             merger_out_len_max: value.merger_out_len_max(),
             scylla_read_queue_len: value.scylla_read_queue_len(),
+            use_scylla6_workarounds: value.use_scylla6_workarounds().clone(),
         }
     }
 }
@@ -545,6 +562,7 @@ impl From<&Api1Query> for EventsSubQuerySettings {
             use_rt: None,
             merger_out_len_max: None,
             scylla_read_queue_len: None,
+            use_scylla6_workarounds: None,
         }
     }
 }
@@ -556,6 +574,8 @@ pub struct EventsSubQuery {
     ty: String,
     reqid: String,
     log_level: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    use_scylla6_workarounds: Option<u32>,
 }
 
 impl EventsSubQuery {
@@ -565,12 +585,14 @@ impl EventsSubQuery {
         reqid: String,
         log_level: String,
     ) -> Self {
+        let use_scylla6_workarounds = settings.use_scylla6_workarounds.clone();
         Self {
             select,
             settings,
             ty: "EventsSubQuery".into(),
             reqid,
             log_level,
+            use_scylla6_workarounds,
         }
     }
 
@@ -665,6 +687,10 @@ impl EventsSubQuery {
 
     pub fn settings(&self) -> &EventsSubQuerySettings {
         &self.settings
+    }
+
+    pub fn use_scylla6_workarounds(&self) -> Option<u32> {
+        self.use_scylla6_workarounds.clone()
     }
 }
 
