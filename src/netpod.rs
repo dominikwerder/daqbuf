@@ -1028,6 +1028,7 @@ pub struct Cluster {
     scylla_lt: Option<ScyllaConfig>,
     cache_scylla: Option<ScyllaConfig>,
     pub announce_backends: Option<Vec<String>>,
+    use_scylla6_workarounds: Option<UseScylla6Workarounds>,
 }
 
 impl Cluster {
@@ -1047,6 +1048,12 @@ impl Cluster {
 
     pub fn scylla_lt(&self) -> Option<&ScyllaConfig> {
         self.scylla_lt.as_ref()
+    }
+
+    pub fn use_scylla6_workarounds(&self) -> UseScylla6Workarounds {
+        self.use_scylla6_workarounds
+            .clone()
+            .unwrap_or(UseScylla6Workarounds::with_workarounds())
     }
 
     pub fn test_00() -> Self {
@@ -1069,8 +1076,29 @@ impl Cluster {
             scylla_lt: None,
             cache_scylla: None,
             announce_backends: None,
+            use_scylla6_workarounds: None,
         }
     }
+}
+
+#[test]
+fn test_cluster_config_parse() {
+    let cfg = r###"
+name: some-name
+cluster:
+  backend: noname
+  database:
+    host: some
+    port: 123
+    user: some
+    pass: some
+    name: some
+  nodes:
+  use_scylla6_workarounds: false
+"###;
+    let cfg = serde_yaml::from_slice::<NodeConfig>(cfg.as_bytes()).unwrap();
+    let v = *cfg.cluster.use_scylla6_workarounds();
+    assert!(v == false);
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -4034,6 +4062,7 @@ pub fn test_cluster() -> Cluster {
         is_central_storage: false,
         file_io_buffer_size: Default::default(),
         announce_backends: None,
+        use_scylla6_workarounds: None,
     }
 }
 
@@ -4072,6 +4101,7 @@ pub fn sls_test_cluster() -> Cluster {
         is_central_storage: false,
         file_io_buffer_size: Default::default(),
         announce_backends: None,
+        use_scylla6_workarounds: None,
     }
 }
 
@@ -4110,6 +4140,7 @@ pub fn archapp_test_cluster() -> Cluster {
         is_central_storage: false,
         file_io_buffer_size: Default::default(),
         announce_backends: None,
+        use_scylla6_workarounds: None,
     }
 }
 
@@ -4533,11 +4564,15 @@ pub unsafe fn extltmut<'a, 'b, T>(t: &'a mut T) -> &'b mut T {
     unsafe { core::mem::transmute(t) }
 }
 
-#[derive(Debug, Clone)]
-pub struct UseScylla6Workarounds(pub bool);
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UseScylla6Workarounds(bool);
 
-impl Default for UseScylla6Workarounds {
-    fn default() -> Self {
+impl UseScylla6Workarounds {
+    pub fn production_default() -> Self {
+        Self::with_workarounds()
+    }
+
+    pub fn with_workarounds() -> Self {
         Self(true)
     }
 }
@@ -4550,14 +4585,12 @@ impl std::ops::Deref for UseScylla6Workarounds {
     }
 }
 
-impl From<Option<u32>> for UseScylla6Workarounds {
-    fn from(value: Option<u32>) -> Self {
-        value.map_or(Default::default(), |x| {
-            if x == 0 {
-                UseScylla6Workarounds(false)
-            } else {
-                UseScylla6Workarounds(true)
-            }
-        })
+impl From<u32> for UseScylla6Workarounds {
+    fn from(value: u32) -> Self {
+        if value == 0 {
+            UseScylla6Workarounds(false)
+        } else {
+            UseScylla6Workarounds(true)
+        }
     }
 }

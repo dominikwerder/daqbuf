@@ -1,10 +1,10 @@
 #![allow(unused)]
 use super::evrange::NanoRange;
 use super::evrange::SeriesRange;
-use crate::timeunits::SEC;
 use crate::BinnedRangeEnum;
 use crate::Dim0Kind;
 use crate::TsNano;
+use crate::timeunits::SEC;
 use chrono::DateTime;
 use chrono::Utc;
 
@@ -24,7 +24,7 @@ fn test_binned_range_covering_00() {
     } else {
         panic!()
     }
-    let r2 = r.binned_range_time();
+    let r2 = r.binned_range_time().unwrap();
     let a = r2.edges();
     assert_eq!(a.len(), 1 + r.bin_count() as usize);
     assert_eq!(a[0], TsNano((((10 * 60) + 10) * 60 + 0) * SEC));
@@ -54,7 +54,7 @@ fn test_binned_range_covering_01() {
     } else {
         panic!()
     }
-    let r2 = r.binned_range_time();
+    let r2 = r.binned_range_time().unwrap();
     let a = r2.edges();
     assert_eq!(a.len(), 1 + r.bin_count() as usize);
     assert_eq!(a[0], TsNano((((0 * 60) + 20) * 60 + 0) * SEC));
@@ -84,7 +84,7 @@ fn test_binned_range_covering_02() {
     } else {
         panic!()
     }
-    let r2 = r.binned_range_time();
+    let r2 = r.binned_range_time().unwrap();
     let a = r2.edges();
     assert_eq!(a.len(), 1 + r.bin_count() as usize);
     assert_eq!(a[0], TsNano((((0 * 60) + 20) * 60 + 0) * SEC));
