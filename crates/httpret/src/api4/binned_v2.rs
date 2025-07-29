@@ -62,6 +62,7 @@ macro_rules! error { ($($arg:tt)*) => ( if true { log::error!($($arg)*); } ); }
 macro_rules! info { ($($arg:tt)*) => ( if true { log::info!($($arg)*); } ); }
 macro_rules! debug { ($($arg:tt)*) => ( if true { log::debug!($($arg)*); } ); }
 macro_rules! trace { ($($arg:tt)*) => ( if true { log::trace!($($arg)*); } ); }
+macro_rules! log_query { ($($arg:tt)*) => ( if true { log::info!($($arg)*); } ); }
 
 autoerr::create_error_v1!(
     name(Error, "Api4BinnedV2"),
@@ -221,7 +222,7 @@ fn make_read_provider(
     } else if ncc.node_config.cluster.scylla_lt().is_some() {
         scyqueue
             .clone()
-            .map(|qu| ScyllaEventReadProvider::new(qu))
+            .map(|qu| ScyllaEventReadProvider::new(qu, use_scylla6_workarounds.clone()))
             .map(|x| Arc::new(x) as Arc<dyn EventsReadProvider>)
             .expect("scylla queue")
     } else if ncc.node.sf_databuffer.is_some() {
@@ -253,13 +254,18 @@ fn to_debug<T: std::fmt::Debug>(x: T) -> String {
 async fn binned_json_framed(
     res2: HandleRes2<'_>,
     ctx: &ReqCtx,
-    _ncc: &NodeConfigCached,
+    ncc: &NodeConfigCached,
 ) -> Result<StreamResponse, Error> {
     use futures_util::Stream;
     info!("binned_json_framed  V2 prebinned");
     let series = SeriesId::new(res2.ch_conf.series().unwrap());
     let range = res2.query.range().to_time().unwrap();
     let scyqueue = res2.scyqueue.as_ref().unwrap();
+    let use_scylla6_workarounds = res2
+        .query
+        .use_scylla6_workarounds()
+        .map(From::from)
+        .unwrap_or(ncc.node_config.cluster.use_scylla6_workarounds());
     let stream = if res2.url.as_str().contains("testpart=read_all_coarse") {
         // let stream = scyllaconn::binwriteindex::read_all_coarse::ReadAllCoarse::new(series, range, scyqueue.clone());
         // let stream = stream.map_ok(to_debug).map_err(Error::from);
@@ -276,7 +282,7 @@ async fn binned_json_framed(
         let stream = scyllaconn::binned2::frombinned::FromBinned::new(
             series,
             binrange.clone(),
-            res2.query.use_scylla6_workarounds().into(),
+            use_scylla6_workarounds.clone(),
             scyqueue,
             res2.cache_read_provider,
         );
@@ -382,13 +388,18 @@ impl<'a> HandleRes2<'a> {
         scyqueue: Option<ScyllaQueue>,
         ncc: &NodeConfigCached,
     ) -> Result<Self, Error> {
+        let use_scylla6_workarounds = query
+            .use_scylla6_workarounds()
+            .map(From::from)
+            .unwrap_or(ncc.node_config.cluster.use_scylla6_workarounds());
+        log_query!("HandleRes2::new  {:?}  {:?}", query, use_scylla6_workarounds);
         let ch_conf = ch_conf_from_binned(&query, ctx, pgqueue, ncc)
             .await?
             .ok_or_else(|| Error::ChannelNotFound)?;
         let open_bytes = Arc::pin(OpenBoxedBytesViaHttp::new(ncc.node_config.cluster.clone()));
         let (events_read_provider, cache_read_provider) = make_read_provider(
             ch_conf.name(),
-            query.use_scylla6_workarounds().into(),
+            use_scylla6_workarounds.clone(),
             scyqueue.clone(),
             open_bytes,
             ctx,

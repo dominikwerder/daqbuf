@@ -17,7 +17,7 @@ use items_2::frame::decode_frame;
 use items_2::frame::make_term_frame;
 use items_2::inmem::InMemoryFrame;
 use netpod::histo::HistoLog2;
-use netpod::log::*;
+use netpod::log;
 use netpod::NodeConfigCached;
 use netpod::ReqCtxArc;
 use query::api4::events::EventsSubQuery;
@@ -35,6 +35,11 @@ use tokio::io::AsyncWriteExt;
 use tokio::net::tcp::OwnedWriteHalf;
 use tokio::net::TcpStream;
 use tracing::Instrument;
+
+macro_rules! error { ($($arg:tt)*) => ( if true { log::error!($($arg)*); } ); }
+macro_rules! debug { ($($arg:tt)*) => ( if true { log::debug!($($arg)*); } ); }
+macro_rules! trace { ($($arg:tt)*) => ( if true { log::trace!($($arg)*); } ); }
+macro_rules! log_query { ($($arg:tt)*) => ( if true { log::info!($($arg)*); } ); }
 
 #[cfg(test)]
 mod test;
@@ -94,6 +99,10 @@ async fn make_channel_events_stream_data(
     ncc: &NodeConfigCached,
 ) -> Result<Pin<Box<dyn Stream<Item = Sitemty<ChannelEvents>> + Send>>, Error> {
     // ) -> Result<impl Stream<Item = Sitemty<ChannelEvents>>, Error> {
+    let use_scylla6_workarounds = subq
+        .use_scylla6_workarounds()
+        .unwrap_or(ncc.node_config.cluster.use_scylla6_workarounds());
+    log_query!("make_channel_events_stream_data  {:?}", use_scylla6_workarounds);
     if subq.backend() == TEST_BACKEND {
         let node_count = ncc.node_config.cluster.nodes.len() as u64;
         let node_ix = ncc.ix as u64;
@@ -101,7 +110,7 @@ async fn make_channel_events_stream_data(
         Ok(ret)
     } else if let Some(scyqueue) = scyqueue {
         let cfg = subq.ch_conf().to_scylla()?;
-        let ret = scylla_channel_event_stream(subq, cfg, scyqueue).await?;
+        let ret = scylla_channel_event_stream(subq, cfg, scyqueue, use_scylla6_workarounds).await?;
         Ok(ret)
     } else if let Some(_) = &ncc.node.channel_archiver {
         let e = Error::NotAvailable;
@@ -177,7 +186,7 @@ async fn events_conn_handler_with_reqid(
         }
     }
     {
-        let item = LogItem::level_msg(Level::DEBUG, format!("buf_len_histo: {:?}", buf_len_histo));
+        let item = LogItem::level_msg(log::Level::DEBUG, format!("buf_len_histo: {:?}", buf_len_histo));
         let item: Sitemty<ChannelEvents> = Ok(StreamItem::Log(item));
         let buf = match item.make_frame_dyn() {
             Ok(k) => k,
@@ -211,7 +220,7 @@ where
     let mut frames = Vec::new();
     while let Some(k) = h
         .next()
-        .instrument(span!(Level::INFO, "events_conn_handler/query-input"))
+        .instrument(log::span!(log::Level::INFO, "events_conn_handler/query-input"))
         .await
     {
         match k {
@@ -323,7 +332,7 @@ async fn events_conn_handler(
     let inp = TcpReadAsBytes::new(netin);
     let inp = inp.map_err(sitem_err2_from_string);
     let inp = Box::new(inp);
-    let span1 = span!(Level::INFO, "events_conn_handler");
+    let span1 = log::span!(log::Level::INFO, "events_conn_handler");
     let r = events_conn_handler_inner(inp, netout, addr, scyqueue, &ncc)
         .instrument(span1)
         .await;

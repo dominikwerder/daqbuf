@@ -31,6 +31,7 @@ use netpod::ReqCtx;
 use netpod::ScalarType;
 use netpod::SfDbChannel;
 use netpod::Shape;
+use netpod::UseScylla6Workarounds;
 use netpod::ACCEPT_ALL;
 use netpod::APP_JSON;
 use nodenet::configquorum::find_config_basics_quorum;
@@ -687,6 +688,11 @@ impl ScyllaSeriesTsMsp {
         q: &ScyllaSeriesTsMspQuery,
         shared_res: &ServiceSharedResources,
     ) -> Result<ScyllaSeriesTsMspResponse, Error> {
+        // TODO also use the cluster config default
+        let use_scylla6_workarounds = q
+            .use_scylla6_workarounds
+            .map(From::from)
+            .unwrap_or(UseScylla6Workarounds::production_default());
         let nano_range = if let SeriesRange::TimeRange(x) = q.range.clone() {
             x
         } else {
@@ -704,7 +710,7 @@ impl ScyllaSeriesTsMsp {
             RetentionTime::Short,
             sid,
             (&q.range).into(),
-            q.use_scylla6_workarounds.into(),
+            use_scylla6_workarounds.clone(),
             scyqueue.clone(),
         );
         use chrono::TimeZone;
@@ -720,7 +726,7 @@ impl ScyllaSeriesTsMsp {
             RetentionTime::Medium,
             sid,
             (&q.range).into(),
-            q.use_scylla6_workarounds.into(),
+            use_scylla6_workarounds.clone(),
             scyqueue.clone(),
         );
         while let Some(x) = msp_stream.next().await {
@@ -735,7 +741,7 @@ impl ScyllaSeriesTsMsp {
             RetentionTime::Long,
             sid,
             (&q.range).into(),
-            q.use_scylla6_workarounds.into(),
+            use_scylla6_workarounds.clone(),
             scyqueue.clone(),
         );
         while let Some(x) = msp_stream.next().await {

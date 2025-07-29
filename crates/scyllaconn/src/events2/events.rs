@@ -67,6 +67,8 @@ macro_rules! log_fetch_result {
     ($($arg:tt)*) => { if false { log::trace!("fetch  {}", format_args!($($arg)*)); } };
 }
 
+macro_rules! log_query { ($($arg:tt)*) => ( if true { log::info!($($arg)*); } ) }
+
 #[derive(Debug, Clone)]
 pub struct EventReadOpts {
     with_values: bool,

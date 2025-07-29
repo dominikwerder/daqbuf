@@ -4,7 +4,7 @@ use scylla::statement::prepared::PreparedStatement;
 
 macro_rules! log_prepare { ($($arg:tt)*) => { log::debug!("prepare cql  {}", format_args!($($arg)*)); }; }
 
-macro_rules! trace_scy6 { ($($arg:tt)*) => { log::info!("{}", format_args!($($arg)*)); }; }
+macro_rules! trace_scy6 { ($($arg:tt)*) => { if false { log::trace!("{}", format_args!($($arg)*)); } }; }
 
 autoerr::create_error_v1!(
     name(Error, "ScyllaPrepare"),

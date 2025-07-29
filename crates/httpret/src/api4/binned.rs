@@ -21,7 +21,7 @@ use httpclient::IntoBody;
 use httpclient::Requ;
 use httpclient::StreamResponse;
 use httpclient::ToJsonBody;
-use netpod::log::*;
+use netpod::log;
 use netpod::req_uri_to_url;
 use netpod::timeunits::SEC;
 use netpod::ChannelTypeConfigGen;
@@ -47,6 +47,11 @@ use streams::timebin::cached::reader::EventsReadProvider;
 use streams::timebin::CacheReadProvider;
 use tracing::Instrument;
 use tracing::Span;
+
+macro_rules! error { ($($arg:tt)*) => ( if true { log::error!($($arg)*); } ); }
+macro_rules! debug { ($($arg:tt)*) => ( if true { log::debug!($($arg)*); } ); }
+macro_rules! trace { ($($arg:tt)*) => ( if true { log::trace!($($arg)*); } ); }
+macro_rules! log_query { ($($arg:tt)*) => ( if true { log::info!($($arg)*); } ); }
 
 autoerr::create_error_v1!(
     name(Error, "Api4Binned"),
@@ -145,8 +150,8 @@ async fn binned(
     } else {
         tracing::Span::none()
     };
-    let span1 = span!(
-        Level::INFO,
+    let span1 = log::span!(
+        log::Level::INFO,
         "httpret::binned_cbor_framed",
         reqid,
         beg = query.range().beg_u64() / SEC,
@@ -203,7 +208,7 @@ fn make_read_provider(
     } else if ncc.node_config.cluster.scylla_lt().is_some() {
         scyqueue
             .clone()
-            .map(|qu| ScyllaEventReadProvider::new(qu))
+            .map(|qu| ScyllaEventReadProvider::new(qu, use_scylla6_workarounds.clone()))
             .map(|x| Arc::new(x) as Arc<dyn EventsReadProvider>)
             .expect("scylla queue")
     } else if ncc.node.sf_databuffer.is_some() {
@@ -273,6 +278,12 @@ async fn binned_json_framed(
     ncc: &NodeConfigCached,
 ) -> Result<StreamResponse, Error> {
     debug!("binned_json_framed");
+    let use_scylla6_workarounds = res2
+        .query
+        .use_scylla6_workarounds()
+        .map(From::from)
+        .unwrap_or(ncc.node_config.cluster.use_scylla6_workarounds());
+    log_query!("binned_json_framed  {:?}  {:?}", res2.query, use_scylla6_workarounds);
     // TODO handle None case better and return 404
     let ch_conf = ch_conf_from_binned(&res2.query, ctx, res2.pgqueue, ncc)
         .await?
@@ -280,7 +291,7 @@ async fn binned_json_framed(
     let open_bytes = Arc::pin(OpenBoxedBytesViaHttp::new(ncc.node_config.cluster.clone()));
     let (events_read_provider, cache_read_provider) = make_read_provider(
         ch_conf.name(),
-        res2.query.use_scylla6_workarounds().into(),
+        use_scylla6_workarounds.clone(),
         res2.scyqueue,
         open_bytes,
         ctx,
@@ -311,6 +322,12 @@ async fn binned_cbor_framed(
     ncc: &NodeConfigCached,
 ) -> Result<StreamResponse, Error> {
     debug!("binned_cbor_framed");
+    let use_scylla6_workarounds = res2
+        .query
+        .use_scylla6_workarounds()
+        .map(From::from)
+        .unwrap_or(ncc.node_config.cluster.use_scylla6_workarounds());
+    log_query!("binned_cbor_framed  {:?}  {:?}", res2.query, use_scylla6_workarounds);
     // TODO handle None case better and return 404
     let ch_conf = ch_conf_from_binned(&res2.query, ctx, res2.pgqueue, ncc)
         .await?
@@ -318,7 +335,7 @@ async fn binned_cbor_framed(
     let open_bytes = Arc::pin(OpenBoxedBytesViaHttp::new(ncc.node_config.cluster.clone()));
     let (events_read_provider, cache_read_provider) = make_read_provider(
         ch_conf.name(),
-        res2.query.use_scylla6_workarounds().into(),
+        use_scylla6_workarounds,
         res2.scyqueue,
         open_bytes,
         ctx,
@@ -369,7 +386,10 @@ impl<'a> HandleRes2<'a> {
         let open_bytes = Arc::pin(OpenBoxedBytesViaHttp::new(ncc.node_config.cluster.clone()));
         let (events_read_provider, cache_read_provider) = make_read_provider(
             ch_conf.name(),
-            query.use_scylla6_workarounds().into(),
+            query
+                .use_scylla6_workarounds()
+                .map(From::from)
+                .unwrap_or(ncc.node_config.cluster.use_scylla6_workarounds()),
             scyqueue.clone(),
             open_bytes,
             ctx,

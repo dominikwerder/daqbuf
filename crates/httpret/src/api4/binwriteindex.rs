@@ -213,7 +213,7 @@ fn make_read_provider(
     } else if ncc.node_config.cluster.scylla_lt().is_some() {
         scyqueue
             .clone()
-            .map(|qu| ScyllaEventReadProvider::new(qu))
+            .map(|qu| ScyllaEventReadProvider::new(qu, use_scylla6_workarounds.clone()))
             .map(|x| Arc::new(x) as Arc<dyn EventsReadProvider>)
             .expect("scylla queue")
     } else if ncc.node.sf_databuffer.is_some() {
@@ -241,10 +241,15 @@ fn make_read_provider(
 async fn binned_json_single(
     res2: HandleRes2<'_>,
     ctx: &ReqCtx,
-    _ncc: &NodeConfigCached,
+    ncc: &NodeConfigCached,
 ) -> Result<StreamResponse, Error> {
     // TODO unify with binned_json_framed
     debug!("binned_json_single");
+    let use_scylla6_workarounds = res2
+        .query
+        .use_scylla6_workarounds()
+        .map(From::from)
+        .unwrap_or(ncc.node_config.cluster.use_scylla6_workarounds());
     let rt1 = res2.query.retention_time();
     let pbp = res2.query.prebinned_partitioning();
     // let rts = [RetentionTime::Short, RetentionTime::Medium, RetentionTime::Long];
@@ -256,7 +261,7 @@ async fn binned_json_single(
             SeriesId::new(res2.ch_conf.series().unwrap()),
             pbp.clone(),
             res2.query.range().to_time().unwrap(),
-            res2.query.use_scylla6_workarounds().into(),
+            use_scylla6_workarounds,
             res2.scyqueue.clone().unwrap(),
         );
         while let Some(x) = stream.next().await {
@@ -292,6 +297,10 @@ impl<'a> HandleRes2<'a> {
         scyqueue: Option<ScyllaQueue>,
         ncc: &NodeConfigCached,
     ) -> Result<Self, Error> {
+        let use_scylla6_workarounds = query
+            .use_scylla6_workarounds()
+            .map(From::from)
+            .unwrap_or(ncc.node_config.cluster.use_scylla6_workarounds());
         let q2 = BinnedQuery::new(query.channel().clone(), query.range().clone(), 100);
         let ch_conf = ch_conf_from_binned(&q2, ctx, pgqueue, ncc)
             .await?
@@ -299,7 +308,7 @@ impl<'a> HandleRes2<'a> {
         let open_bytes = Arc::pin(OpenBoxedBytesViaHttp::new(ncc.node_config.cluster.clone()));
         let (events_read_provider, cache_read_provider) = make_read_provider(
             ch_conf.name(),
-            query.use_scylla6_workarounds().into(),
+            use_scylla6_workarounds,
             scyqueue.clone(),
             open_bytes,
             ctx,
