@@ -15,6 +15,7 @@ use netpod::FromUrl;
 use netpod::HasBackend;
 use netpod::HasTimeout;
 use netpod::SfDbChannel;
+use netpod::UseScylla6Workarounds;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -574,8 +575,6 @@ pub struct EventsSubQuery {
     ty: String,
     reqid: String,
     log_level: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    use_scylla6_workarounds: Option<u32>,
 }
 
 impl EventsSubQuery {
@@ -585,14 +584,12 @@ impl EventsSubQuery {
         reqid: String,
         log_level: String,
     ) -> Self {
-        let use_scylla6_workarounds = settings.use_scylla6_workarounds.clone();
         Self {
             select,
             settings,
             ty: "EventsSubQuery".into(),
             reqid,
             log_level,
-            use_scylla6_workarounds,
         }
     }
 
@@ -689,8 +686,8 @@ impl EventsSubQuery {
         &self.settings
     }
 
-    pub fn use_scylla6_workarounds(&self) -> Option<u32> {
-        self.use_scylla6_workarounds.clone()
+    pub fn use_scylla6_workarounds(&self) -> Option<UseScylla6Workarounds> {
+        self.settings.use_scylla6_workarounds.map(From::from)
     }
 }
 
