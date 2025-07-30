@@ -30,7 +30,7 @@ pub async fn create_scy_session_no_ks(scyconf: &ScyllaConfig) -> Result<Session,
         .known_nodes(&scyconf.hosts)
         .default_execution_profile_handle(
             ExecutionProfileBuilder::default()
-                .consistency(Consistency::All)
+                .consistency(Consistency::Quorum)
                 .build()
                 .into_handle(),
         )
