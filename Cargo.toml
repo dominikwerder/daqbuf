@@ -2,14 +2,15 @@
 name = "daqbuf-channeltools"
 version = "0.0.1"
 authors = ["Dominik Werder <dominik.werder@gmail.com>"]
-edition = "2021"
+license = "GPL-3.0-only"
+edition = "2024"
 
 [lib]
 doctest = false
 
 [dependencies]
 futures-util = "0.3.31"
-async-channel = "2.3.1"
+async-channel = "2.5.0"
 autoerr = "0.0"
 pin-project-lite = "0.2.16"
-tokio = { version = "1", default-features = false }
+tokio = { version = "1", default-features = false, features = ["rt"] }
