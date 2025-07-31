@@ -367,6 +367,36 @@ impl CaEventValue {
             }
         }
     }
+
+    pub fn to_json_value(&self) -> serde_json::Value {
+        use serde_json::json;
+        match &self.data {
+            CaDataValue::Scalar(val) => {
+                use super::proto::CaDataScalarValue::*;
+                match val {
+                    I8(x) => json!(*x),
+                    I16(x) => json!(*x),
+                    I32(x) => json!(*x),
+                    F32(x) => json!(*x),
+                    F64(x) => json!(*x),
+                    Enum(x) => json!(*x),
+                    String(x) => json!(x),
+                    Bool(x) => json!(*x),
+                }
+            }
+            CaDataValue::Array(val) => {
+                use super::proto::CaDataArrayValue::*;
+                match val {
+                    I8(x) => x.get(0).map_or(json!(null), |x| json!(*x)),
+                    I16(x) => x.get(0).map_or(json!(null), |x| json!(*x)),
+                    I32(x) => x.get(0).map_or(json!(null), |x| json!(*x)),
+                    F32(x) => x.get(0).map_or(json!(null), |x| json!(*x)),
+                    F64(x) => x.get(0).map_or(json!(null), |x| json!(*x)),
+                    Bool(x) => x.get(0).map_or(json!(null), |x| json!(*x)),
+                }
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
