@@ -2,6 +2,7 @@
 name = "httpret"
 version = "0.4.1"
 authors = ["Dominik Werder <dominik.werder@gmail.com>"]
+license = "GPL-3.0-only"
 edition = "2021"
 
 [lib]
