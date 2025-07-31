@@ -4,6 +4,7 @@ use netpod::ttl::RetentionTime;
 use scylla::client::session::Session as ScySession;
 use scylla::errors::NewSessionError;
 use scylla::errors::PrepareError;
+use scylla::statement::Consistency;
 use scylla::statement::prepared::PreparedStatement;
 use std::sync::Arc;
 
@@ -181,13 +182,14 @@ impl DataStore {
             scy
         );
 
-        let q = scy
+        let mut q = scy
             .prepare(format!(
                 concat!("select * from {}{} limit 1"),
                 rett.table_prefix(),
                 "ts_msp"
             ))
             .await?;
+        q.set_consistency(Consistency::One);
         let qu_dummy = Arc::new(q);
 
         let ret = Self {
