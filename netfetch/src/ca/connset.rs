@@ -1012,6 +1012,7 @@ impl CaConnSet {
         let channels_ca_conn_set = self
             .channel_states
             .iter()
+            .take(req.limit as _)
             .filter(|(k, _)| reg1.is_match(k.name()))
             .map(|(k, v)| (k.name().to_string(), v.clone()))
             .collect();

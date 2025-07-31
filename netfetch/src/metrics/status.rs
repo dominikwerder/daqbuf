@@ -16,6 +16,8 @@ autoerr::create_error_v1!(
     name(Error, "StatusError"),
     enum variants {
         Internal,
+        ChannelSend,
+        ChannelRecv,
     },
 );
 
@@ -56,21 +58,79 @@ impl StorageUsage {
 }
 
 #[derive(Debug, Serialize)]
+struct ChannelWrite {
+    #[serde(with = "humantime_serde")]
+    ts: SystemTime,
+    val: serde_json::Value,
+}
+
+impl ChannelWrite {
+    fn unset() -> Self {
+        Self {
+            ts: SystemTime::UNIX_EPOCH,
+            val: serde_json::Value::Null,
+        }
+    }
+
+    fn is_unset(&self) -> bool {
+        self.ts == SystemTime::UNIX_EPOCH
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct ChannelWrites {
+    #[serde(skip_serializing_if = "ChannelWrite::is_unset")]
+    st: ChannelWrite,
+    #[serde(skip_serializing_if = "ChannelWrite::is_unset")]
+    mt: ChannelWrite,
+    #[serde(skip_serializing_if = "ChannelWrite::is_unset")]
+    lt: ChannelWrite,
+}
+
+impl ChannelWrites {
+    fn from_conn_channel_state_info(chst: &crate::ca::conn::ChannelStateInfo) -> Self {
+        Self {
+            st: ChannelWrite {
+                ts: chst.write_st_last,
+                val: chst.val_lst_st.clone(),
+            },
+            mt: ChannelWrite {
+                ts: chst.write_mt_last,
+                val: chst.val_lst_mt.clone(),
+            },
+            lt: ChannelWrite {
+                ts: chst.write_lt_last,
+                val: chst.val_lst_lt.clone(),
+            },
+        }
+    }
+
+    fn unset() -> Self {
+        Self {
+            st: ChannelWrite::unset(),
+            mt: ChannelWrite::unset(),
+            lt: ChannelWrite::unset(),
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
 struct ChannelState {
     ioc_address: Option<SocketAddr>,
     connection: ConnectionState,
     archiving_configuration: ChannelConfigForStatesApi,
     recv_count: u64,
     recv_bytes: u64,
-    #[serde(with = "humantime_serde", skip_serializing_if = "system_time_epoch")]
+    #[serde(with = "humantime_serde", skip_serializing_if = "is_system_time_unix_epoch")]
     recv_last: SystemTime,
-    #[serde(with = "humantime_serde", skip_serializing_if = "system_time_epoch")]
+    #[serde(with = "humantime_serde", skip_serializing_if = "is_system_time_unix_epoch")]
     write_st_last: SystemTime,
-    #[serde(with = "humantime_serde", skip_serializing_if = "system_time_epoch")]
+    channel_writes: ChannelWrites,
+    #[serde(with = "humantime_serde", skip_serializing_if = "is_system_time_unix_epoch")]
     write_mt_last: SystemTime,
-    #[serde(with = "humantime_serde", skip_serializing_if = "system_time_epoch")]
+    #[serde(with = "humantime_serde", skip_serializing_if = "is_system_time_unix_epoch")]
     write_lt_last: SystemTime,
-    #[serde(with = "humantime_serde", skip_serializing_if = "system_time_epoch")]
+    #[serde(with = "humantime_serde", skip_serializing_if = "is_system_time_unix_epoch")]
     updated: SystemTime,
     #[serde(with = "humantime_serde")]
     pong_last: Option<SystemTime>,
@@ -94,6 +154,7 @@ impl ChannelState {
             write_st_last: SystemTime::UNIX_EPOCH,
             write_mt_last: SystemTime::UNIX_EPOCH,
             write_lt_last: SystemTime::UNIX_EPOCH,
+            channel_writes: ChannelWrites::unset(),
             updated: SystemTime::UNIX_EPOCH,
             pong_last: None,
         }
@@ -125,6 +186,7 @@ impl ChannelState {
             write_st_last: chst.write_st_last,
             write_mt_last: chst.write_mt_last,
             write_lt_last: chst.write_lt_last,
+            channel_writes: ChannelWrites::from_conn_channel_state_info(&chst),
             updated: chst.stnow,
             pong_last: chst.pong_last,
             private,
@@ -147,7 +209,7 @@ impl StatePrivate {
     }
 }
 
-fn system_time_epoch(x: &SystemTime) -> bool {
+fn is_system_time_unix_epoch(x: &SystemTime) -> bool {
     *x == SystemTime::UNIX_EPOCH
 }
 
@@ -187,13 +249,12 @@ async fn channel_states_try(
     tx: Sender<CaConnSetEvent>,
 ) -> Result<axum::Json<ChannelStates>, Error> {
     let name = params.get("name").map_or(String::new(), |x| x.clone()).to_string();
-    let limit = params.get("limit").and_then(|x| x.parse().ok()).unwrap_or(40);
+    let limit = params.get("limit").and_then(|x| x.parse().ok()).unwrap_or(1000 * 1000);
     let (tx2, rx2) = async_channel::bounded(1);
     let req = ChannelStatusesRequest { name, limit, tx: tx2 };
     let item = CaConnSetEvent::ConnSetCmd(ConnSetCmd::ChannelStatuses(req));
-    // TODO handle error
-    tx.send(item).await.unwrap();
-    let res = rx2.recv().await.unwrap();
+    tx.send(item).await.map_err(|e| Error::ChannelSend)?;
+    let res = rx2.recv().await.map_err(|e| Error::ChannelRecv)?;
     let mut states = ChannelStates {
         running_since: Utc::now(),
         channels: BTreeMap::new(),

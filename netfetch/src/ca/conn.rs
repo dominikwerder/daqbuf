@@ -195,6 +195,9 @@ pub struct ChannelStateInfo {
     pub write_st_last: SystemTime,
     pub write_mt_last: SystemTime,
     pub write_lt_last: SystemTime,
+    pub val_lst_st: serde_json::Value,
+    pub val_lst_mt: serde_json::Value,
+    pub val_lst_lt: serde_json::Value,
     pub status_emit_count: u64,
     pub last_comparisons: Option<VecDeque<(UtcDateTime, MonitorReadCmp)>>,
 }
@@ -502,6 +505,9 @@ struct CreatedState {
     dw_st_last: SystemTime,
     dw_mt_last: SystemTime,
     dw_lt_last: SystemTime,
+    val_lst_st: serde_json::Value,
+    val_lst_mt: serde_json::Value,
+    val_lst_lt: serde_json::Value,
     scalar_type: ScalarType,
     shape: Shape,
     name: String,
@@ -541,6 +547,9 @@ impl CreatedState {
             dw_st_last: SystemTime::UNIX_EPOCH,
             dw_mt_last: SystemTime::UNIX_EPOCH,
             dw_lt_last: SystemTime::UNIX_EPOCH,
+            val_lst_st: serde_json::Value::Null,
+            val_lst_mt: serde_json::Value::Null,
+            val_lst_lt: serde_json::Value::Null,
             scalar_type: ScalarType::I8,
             shape: Shape::Scalar,
             name: String::new(),
@@ -660,6 +669,18 @@ impl ChannelState {
                 (a, a, a, a)
             }
         };
+        let (val_lst_st, val_lst_mt, val_lst_lt) = match self {
+            ChannelState::Writable(s) => {
+                let a = s.channel.val_lst_st.clone();
+                let b = s.channel.val_lst_mt.clone();
+                let c = s.channel.val_lst_lt.clone();
+                (a, b, c)
+            }
+            _ => {
+                let a = serde_json::Value::Null;
+                (a.clone(), a.clone(), a.clone())
+            }
+        };
         let item_recv_ivl_ema = match self {
             ChannelState::Writable(s) => {
                 let ema = s.channel.item_recv_ivl_ema.ema();
@@ -705,6 +726,9 @@ impl ChannelState {
             write_st_last,
             write_mt_last,
             write_lt_last,
+            val_lst_st,
+            val_lst_mt,
+            val_lst_lt,
             status_emit_count,
             last_comparisons,
         }
@@ -1094,17 +1118,22 @@ impl<'a> EventAddIngestRefobj<'a> {
             crst.muted_before = 0;
             crst.insert_item_ivl_ema.tick(tsnow);
             let val_for_agg = value.f32_for_binning();
-            let wres = rtwriter.write(CaWriterValue::new(value, crst), tscaproto, tsev, self.iqdqs)?;
+            // TODO refactor
+            let value_cloned = value.clone();
+            let wres = rtwriter.write(CaWriterValue::new(value_cloned, crst), tscaproto, tsev, self.iqdqs)?;
             if wres.st.accept {
                 crst.dw_st_last = stnow;
+                crst.val_lst_st = value.to_json_value();
                 crst.acc_st.push_written(payload_len);
             }
             if wres.mt.accept {
                 crst.dw_mt_last = stnow;
+                crst.val_lst_mt = value.to_json_value();
                 crst.acc_mt.push_written(payload_len);
             }
             if wres.lt.accept {
                 crst.dw_lt_last = stnow;
+                crst.val_lst_lt = value.to_json_value();
                 crst.acc_lt.push_written(payload_len);
             }
             if let Some(binwriter) = self.binwriter.as_mut() {
@@ -3234,6 +3263,9 @@ impl CaConn {
             dw_st_last: SystemTime::UNIX_EPOCH,
             dw_mt_last: SystemTime::UNIX_EPOCH,
             dw_lt_last: SystemTime::UNIX_EPOCH,
+            val_lst_st: serde_json::Value::Null,
+            val_lst_mt: serde_json::Value::Null,
+            val_lst_lt: serde_json::Value::Null,
             scalar_type: scalar_type.clone(),
             shape: shape.clone(),
             name: conf.conf.name().into(),

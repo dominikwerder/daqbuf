@@ -408,6 +408,61 @@ scylla_2nd:
 }
 
 #[test]
+fn test_parse_config_hcl_00() {
+    let conf = r###"
+backend = test_backend
+api_bind = "0.0.0.0:3011"
+search = [
+  "172.26.0.255",
+  "172.26.2.255",
+]
+postgresql {
+  host = HOST
+  port = 2345
+  user = USER
+  pass = PASS
+  name = NAME
+}
+scylla_st { keyspace = KS_ST }
+scylla_mt { keyspace = "KS_MT" }
+scylla_lt { keyspace = KS_LT }
+scylla_lt {
+  keyspace = "KS_LT"
+  hosts = [
+    "1.2:3",
+    "1.2:4",
+  ]
+}
+scylla_st_rf1 { keyspace = "KS_ST_RF1" }
+"###;
+    let mut body = hcl::parse(conf).unwrap();
+    for att in body.attributes_mut() {
+        let e = &mut att.expr;
+        if let hcl::Expression::Variable(id) = e {
+            *e = hcl::Expression::String(id[..].into());
+        }
+    }
+    for block in body.blocks_mut() {
+        for att in block.body.attributes_mut() {
+            let e = &mut att.expr;
+            if let hcl::Expression::Variable(id) = e {
+                *e = hcl::Expression::String(id[..].into());
+            }
+        }
+    }
+    let conf: CaIngestOpts = hcl::from_body(body).unwrap();
+    assert_eq!(conf.backend, "test_backend");
+    assert_eq!(conf.search.len(), 2);
+    assert_eq!(conf.search.get(0), Some(&"172.26.0.255".into()));
+    assert_eq!(conf.search.get(1), Some(&"172.26.2.255".into()));
+    assert_eq!(conf.postgresql.port, 2345);
+    assert_eq!(conf.postgresql.user, "USER");
+    assert_eq!(conf.postgresql.pass, "PASS");
+    assert_eq!(conf.scylla_st.keyspace, "KS_ST");
+    assert_eq!(conf.scylla_lt.keyspace, "KS_LT");
+}
+
+#[test]
 fn test_duration_parse() {
     #[derive(Serialize, Deserialize)]
     struct A {
