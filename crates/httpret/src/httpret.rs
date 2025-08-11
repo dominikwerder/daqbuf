@@ -424,6 +424,8 @@ async fn http_service_inner(
         Ok(h.handle(req, &node_config).await?)
     } else if let Some(h) = channelconfig::ChannelConfigHandler::handler(&req) {
         Ok(h.handle(req, &shared_res.pgqueue, &node_config).await?)
+    } else if let Some(h) = channelconfig::SeriesConfigHandler::handler(&req) {
+        Ok(h.handle(req, &shared_res.pgqueue, &node_config).await?)
     } else if let Some(h) = channelconfig::IocForChannel::handler(&req) {
         Ok(h.handle(req, &node_config).await?)
     } else if let Some(h) = channelconfig::ScyllaChannelsActive::handler(&req) {

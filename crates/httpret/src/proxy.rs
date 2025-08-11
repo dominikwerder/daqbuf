@@ -71,6 +71,7 @@ use url::Url;
 
 #[cfg(feature = "http3")]
 use crate::http3;
+use netpod::SeriesConfigQuery;
 
 const DISTRI_PRE: &str = "/distri/";
 
@@ -223,6 +224,8 @@ async fn proxy_http_service_inner(
         Ok(proxy_backend_query::<BinnedQuery>(req, ctx, proxy_config).await?)
     } else if path == "/api/4/channel/config" {
         Ok(proxy_backend_query::<ChannelConfigQuery>(req, ctx, proxy_config).await?)
+    } else if path == "/api/4/series/config" {
+        Ok(proxy_backend_query::<SeriesConfigQuery>(req, ctx, proxy_config).await?)
     } else if path.starts_with("/api/4/test/http/204") {
         Ok(response(StatusCode::NO_CONTENT).body(body_string("No Content"))?)
     } else if path.starts_with("/api/4/test/http/400") {

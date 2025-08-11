@@ -29,6 +29,7 @@ use netpod::FromUrl;
 use netpod::NodeConfigCached;
 use netpod::ReqCtx;
 use netpod::ScalarType;
+use netpod::SeriesConfigQuery;
 use netpod::SfDbChannel;
 use netpod::Shape;
 use netpod::UseScylla6Workarounds;
@@ -39,6 +40,7 @@ use query::api4::binned::BinnedQuery;
 use query::api4::events::PlainEventsQuery;
 use serde::Deserialize;
 use serde::Serialize;
+use series::SeriesId;
 use std::collections::BTreeMap;
 use url::Url;
 
@@ -933,5 +935,66 @@ impl GenerateScyllaTestData {
             .await?;
         }
         Ok(())
+    }
+}
+
+pub struct SeriesConfigHandler {}
+
+impl SeriesConfigHandler {
+    pub fn handler(req: &Requ) -> Option<Self> {
+        if req.uri().path() == "/api/4/series/config" {
+            Some(Self {})
+        } else {
+            None
+        }
+    }
+
+    pub async fn handle(
+        &self,
+        req: Requ,
+        pgqueue: &PgQueue,
+        node_config: &NodeConfigCached,
+    ) -> Result<StreamResponse, Error> {
+        if req.method() == Method::GET {
+            if accepts_json_or_all(req.headers()) {
+                match self.config(req, pgqueue, &node_config).await {
+                    Ok(k) => Ok(k),
+                    Err(e) => {
+                        warn!("ChannelConfigHandler::handle: got error from channel_config: {e:?}");
+                        Ok(e.to_public_response())
+                    }
+                }
+            } else {
+                Ok(response(StatusCode::BAD_REQUEST).body(body_empty())?)
+            }
+        } else {
+            Ok(response(StatusCode::METHOD_NOT_ALLOWED).body(body_empty())?)
+        }
+    }
+
+    async fn config(
+        &self,
+        req: Requ,
+        pgqueue: &PgQueue,
+        node_config: &NodeConfigCached,
+    ) -> Result<StreamResponse, Error> {
+        let url = req_uri_to_url(req.uri())?;
+        let q = SeriesConfigQuery::from_url(&url)?;
+        let conf = nodenet::channelconfig::scylla_chconf_from_series(q.backend, SeriesId::new(q.series), pgqueue).await;
+        match conf {
+            Ok(conf) => {
+                let res: ChannelConfigResponse = conf.into();
+                let ret = response(StatusCode::OK)
+                    .header(http::header::CONTENT_TYPE, APP_JSON)
+                    .body(ToJsonBody::from(&res).into_body())?;
+                Ok(ret)
+            }
+            Err(e) => {
+                let ret = response(StatusCode::NOT_FOUND)
+                    .header(http::header::CONTENT_TYPE, APP_JSON)
+                    .body(body_empty())?;
+                Ok(ret)
+            }
+        }
     }
 }

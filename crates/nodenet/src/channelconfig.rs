@@ -17,6 +17,7 @@ use netpod::SfChFetchInfo;
 use netpod::SfDbChannel;
 use netpod::Shape;
 use netpod::APP_JSON;
+use scyllaconn::SeriesId;
 use serde::Serialize;
 
 autoerr::create_error_v1!(
@@ -184,6 +185,25 @@ pub async fn channel_config(
     }
 }
 
+pub async fn series_config(
+    range: NanoRange,
+    channel: SfDbChannel,
+    pgqueue: &PgQueue,
+    ncc: &NodeConfigCached,
+) -> Result<Option<ChannelTypeConfigGen>, Error> {
+    if channel.backend() == TEST_BACKEND {
+        Ok(Some(channel_config_test_backend(channel)?))
+    } else if ncc.node_config.cluster.scylla_st().is_some() {
+        debug!("try to get ChConf for scylla type backend");
+        let ret = scylla_chconf_from_sf_db_channel(range, channel, pgqueue).await?;
+        Ok(Some(ChannelTypeConfigGen::Scylla(ret)))
+    } else if ncc.node.sf_databuffer.is_some() {
+        Err(Error::BackendConfigError)
+    } else {
+        Err(Error::BackendConfigError)
+    }
+}
+
 #[derive(Debug, Serialize)]
 pub enum ChannelConfigsGen {
     Scylla(ChConf),
@@ -253,6 +273,12 @@ async fn scylla_chconf_from_sf_db_channel(
         let ret = pgqueue.chconf_best_matching_name_range(channel, range).await??;
         Ok(ret)
     }
+}
+
+pub async fn scylla_chconf_from_series(backend: String, series: SeriesId, pgqueue: &PgQueue) -> Result<ChConf, Error> {
+    trace!("scylla_chconf_from_series  {:?}", series);
+    let ret = pgqueue.chconf_for_series(&backend, series.id()).await??;
+    Ok(ret)
 }
 
 async fn scylla_all_chconf_from_sf_db_channel(channel: &SfDbChannel, _ncc: &NodeConfigCached) -> Result<ChConf, Error> {
