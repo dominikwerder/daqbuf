@@ -3708,6 +3708,49 @@ impl AppendToUrl for ChannelConfigQuery {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SeriesConfigQuery {
+    pub backend: String,
+    pub series: u64,
+}
+
+impl HasBackend for SeriesConfigQuery {
+    fn backend(&self) -> &str {
+        &self.backend
+    }
+}
+
+impl HasTimeout for SeriesConfigQuery {
+    fn timeout(&self) -> Option<Duration> {
+        None
+    }
+}
+
+impl FromUrl for SeriesConfigQuery {
+    type Error = Error;
+
+    fn from_url(url: &Url) -> Result<Self, Self::Error> {
+        let pairs = get_url_query_pairs(url);
+        Self::from_pairs(&pairs)
+    }
+
+    fn from_pairs(pairs: &BTreeMap<String, String>) -> Result<Self, Self::Error> {
+        let ret = Self {
+            backend: pairs.get("backend").ok_or(Error::MissingBackend)?.into(),
+            series: pairs.get("seriesId").ok_or(Error::MissingSeries)?.parse()?,
+        };
+        Ok(ret)
+    }
+}
+
+impl AppendToUrl for SeriesConfigQuery {
+    fn append_to_url(&self, url: &mut Url) {
+        let mut g = url.query_pairs_mut();
+        g.append_pair("backend", &self.backend);
+        g.append_pair("seriesId", &self.series.to_string());
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename = "SfDatabuffer")]
 pub struct SfChannelConfigResponse {
