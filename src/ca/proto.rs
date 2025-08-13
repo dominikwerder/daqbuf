@@ -40,6 +40,7 @@ autoerr::create_error_v1!(
         LogicError,
         BadPayload,
         CaImageUnsupported,
+        Socket,
     },
 );
 
@@ -1282,6 +1283,7 @@ pub struct CaProto {
     resqu: VecDeque<CaItem>,
     event_add_res_cnt: u32,
     bytes_recv_testing: u32,
+    tcp_read_bytes: u64,
 }
 
 impl fmt::Debug for CaProto {
@@ -1299,6 +1301,7 @@ impl fmt::Debug for CaProto {
             .field("resqu", &self.resqu)
             .field("event_add_res_cnt", &self.event_add_res_cnt)
             .field("bytes_recv_testing", &self.bytes_recv_testing)
+            .field("tcp_read_bytes", &self.tcp_read_bytes)
             .finish()
     }
 }
@@ -1324,6 +1327,7 @@ impl CaProto {
             resqu: VecDeque::with_capacity(256),
             event_add_res_cnt: 0,
             bytes_recv_testing: 0,
+            tcp_read_bytes: 0,
         }
     }
 
@@ -1466,6 +1470,7 @@ impl CaProto {
                             have_progress = true;
                             self.mett.tcp_recv_count().inc();
                             self.mett.tcp_recv_bytes().add(nf as _);
+                            self.tcp_read_bytes = self.tcp_read_bytes.wrapping_add(nf as _);
                             continue;
                         }
                     }
@@ -1584,6 +1589,35 @@ impl CaProto {
 
     pub fn get_raw_socket_fd(&self) -> Option<i32> {
         self.raw_socket_fd.clone()
+    }
+
+    fn get_socket_buffer_len(&self) -> Result<u64, Error> {
+        if let Some(rawfd) = self.raw_socket_fd {
+            let mut v: libc::c_int = 0;
+            if unsafe { libc::ioctl(rawfd, libc::FIONREAD, &mut v) } == 0 {
+                if v < 0 || v > 1024 * 1024 * 800 {
+                    Err(Error::Socket)
+                } else {
+                    Ok(v as _)
+                }
+            } else {
+                Err(Error::Socket)
+            }
+        } else {
+            Err(Error::Socket)
+        }
+    }
+
+    pub fn get_read_stats_v1(&mut self) -> Result<(u64, u64, u64), Error> {
+        let socket_len = self.get_socket_buffer_len()?;
+        let tcp_read_bytes = self.tcp_read_bytes;
+        self.tcp_read_bytes = 0;
+        let rlen = self.buf.len() as u64;
+        Ok((socket_len, tcp_read_bytes, rlen))
+    }
+
+    pub fn dbg_buf_rlen(&self) -> u64 {
+        self.buf.len() as u64
     }
 }
 

@@ -20,3 +20,4 @@ autoerr = "0.0"
 series = { path = "../daqbuf-series", package = "daqbuf-series" }
 netpod = { path = "../daqbuf-netpod", package = "daqbuf-netpod" }
 mettrics = { version = "0.0.7", path = "../mettrics" }
+libc = "0.2.175"
