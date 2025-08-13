@@ -27,7 +27,7 @@ use futures_util::FutureExt;
 use futures_util::Stream;
 use futures_util::StreamExt;
 use hashbrown::HashMap;
-use log::*;
+use log;
 use netpod::ScalarType;
 use netpod::SeriesKind;
 use netpod::Shape;
@@ -58,7 +58,6 @@ use scywr::insertqueues::InsertQueuesTx;
 use series::SeriesId;
 use serieswriter::msptool::fixgrid::MspSplitFixGrid;
 use stats::mett::CaConnSetMetrics;
-use std::sync::Arc;
 use std::task::Context;
 use std::task::Poll;
 use std::time::Duration;
@@ -70,22 +69,26 @@ use tracing::Instrument;
 const CHECK_CHANS_PER_TICK: usize = 10000000;
 pub const SEARCH_BATCH_MAX: usize = 64;
 pub const CURRENT_SEARCH_PENDING_MAX: usize = SEARCH_BATCH_MAX * 4;
-const NO_ADDRESS_STAY: Duration = Duration::from_millis(20000);
-const SEARCH_PENDING_TIMEOUT: Duration = Duration::from_millis(30000);
-const CHANNEL_HEALTH_TIMEOUT: Duration = Duration::from_millis(30000);
+const NO_ADDRESS_STAY: Duration = Duration::from_millis(1000 * 20);
+const SEARCH_PENDING_TIMEOUT: Duration = Duration::from_millis(1000 * 30);
+const CHANNEL_HEALTH_TIMEOUT: Duration = Duration::from_millis(1000 * 30);
 const CHANNEL_UNASSIGNED_TIMEOUT: Duration = Duration::from_millis(0);
 const UNASSIGN_FOR_CONFIG_CHANGE_TIMEOUT: Duration = Duration::from_millis(1000 * 10);
 const CHANNEL_MAX_WITHOUT_HEALTH_UPDATE: usize = 3000000;
 
-macro_rules! trace2 { ($($arg:expr),*) => ( if false { trace!($($arg),*); } ); }
+macro_rules! error { ($($arg:tt)*) => ( if false { log::error!($($arg)*); } ); }
+macro_rules! warn { ($($arg:tt)*) => ( if false { log::warn!($($arg)*); } ); }
+macro_rules! info { ($($arg:tt)*) => ( if false { log::info!($($arg)*); } ); }
+macro_rules! debug { ($($arg:tt)*) => ( if false { log::debug!($($arg)*); } ); }
 
-macro_rules! trace3 { ($($arg:expr),*) => ( if false { trace!($($arg),*); } ); }
+macro_rules! trace2 { ($($arg:tt)*) => ( if false { log::trace!($($arg)*); } ); }
+macro_rules! trace3 { ($($arg:tt)*) => ( if false { log::trace!($($arg)*); } ); }
+macro_rules! trace4 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
+macro_rules! trace { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
 
-macro_rules! trace4 { ($($arg:tt)*) => { if false { trace!($($arg)*); } }; }
+macro_rules! trace_health_update { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
 
-macro_rules! trace_health_update { ($($arg:tt)*) => { if false { trace!($($arg)*); } }; }
-
-macro_rules! trace_channel_state { ($($arg:tt)*) => { if false { trace!($($arg)*); } }; }
+macro_rules! trace_channel_state { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
 
 autoerr::create_error_v1!(
     name(Error, "CaConnSet"),

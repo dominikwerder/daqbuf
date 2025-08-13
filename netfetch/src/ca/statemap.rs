@@ -108,10 +108,13 @@ impl MaybeWrongAddressState {
         const A: f32 = Y1 - B * TANH[1];
         let backoff_cnt = backoff_cnt.max(1).min(20);
         let f = A + B * TANH[backoff_cnt as usize];
-        let dtms = 1e3 * f;
+        let dtms = (1e3 * f) as u64;
+        if dtms < 1000 || dtms > 1000 * 60 * 12 {
+            log::warn!("bad channel search backoff wait time {dtms}");
+        }
         Self {
             since,
-            backoff_dt: Duration::from_millis(dtms as u64),
+            backoff_dt: Duration::from_millis(dtms),
         }
     }
 }

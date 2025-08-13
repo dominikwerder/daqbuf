@@ -1448,6 +1448,8 @@ pub struct CaConn {
     metrics_emit_last: Instant,
     fionread_last: u32,
     logs_by_channel_name: HashMap<String, VecDeque<(time::UtcDateTime, String)>>,
+    proto_read_log: VecDeque<(Instant, u64, u64)>,
+    proto_read_print_last: Instant,
 }
 
 impl Drop for CaConn {
@@ -1516,6 +1518,8 @@ impl CaConn {
             metrics_emit_last: tsnow,
             fionread_last: 0,
             logs_by_channel_name: HashMap::new(),
+            proto_read_log: VecDeque::new(),
+            proto_read_print_last: tsnow,
         }
     }
 
@@ -3039,6 +3043,33 @@ impl CaConn {
         Ok(())
     }
 
+    fn check_proto_flow(&mut self, tsnow: Instant, _cx: &mut Context) -> Result<(), Error> {
+        if let Some(proto) = self.proto() {
+            // keep a circular trace, depending on how often we poll this check.
+            let g = proto.get_read_stats_v1()?;
+            let buf_rlen = proto.dbg_buf_rlen();
+            self.proto_read_log.push_back((tsnow, g.0, g.1));
+            let len_max = 40;
+            if self.proto_read_log.len() > len_max {
+                while self.proto_read_log.len() > len_max {
+                    self.proto_read_log.pop_front();
+                }
+                let socket_len: u64 = self.proto_read_log.iter().take(len_max - 1).map(|x| x.1).sum();
+                let tcp_read_bytes: u64 = self.proto_read_log.iter().map(|x| x.2).sum();
+                if socket_len > tcp_read_bytes {
+                    if tsnow > self.proto_read_print_last + Duration::from_millis(1000 * 20) {
+                        self.proto_read_print_last = tsnow;
+                        let addr = &self.remote_addr_dbg;
+                        info!(
+                            "addr  {addr}  buf_rlen {buf_rlen}  socket_len {socket_len}  tcp_read_bytes {tcp_read_bytes}"
+                        );
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     // Can return:
     // Pending, error, work-done (pending state unknown), no-more-work-ever-again.
     fn handle_peer_ready(&mut self, cx: &mut Context) -> Poll<Option<Result<(), Error>>> {
@@ -3513,6 +3544,7 @@ impl CaConn {
         self.check_channels_state_init(tsnow, cx)?;
         self.check_channels_state_poll(tsnow, cx)?;
         self.check_channels_alive(tsnow, cx)?;
+        self.check_proto_flow(tsnow, cx)?;
         // TODO add some random variation
         if self.channel_status_emit_next <= tsnow {
             self.channel_status_emit_next = tsnow + Self::channel_status_emit_ivl(&mut self.rng);
