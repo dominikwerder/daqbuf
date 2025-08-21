@@ -15,6 +15,8 @@ pub fn dbg_chn(chn: &str) -> bool {
             // "SATMA01-DBPM150:EST-Q1-SUM",
             "TEST:SLOWPAUSE:SCALAR:F32:000000",
             "TEST:SLOWPAUSE:SCALAR:F32:000001",
+            "ALWAYS:MISSING",
+            "SARES10-CPPS-01:CURRENT",
         ];
         chns.contains(&chn)
     } else {
@@ -30,6 +32,9 @@ pub fn dbg_series(series: SeriesId) -> bool {
         let seriess = [
             // SATMA01-DBPM150:EST-Q1-SUM
             // 2968634857399905951,
+
+            // "SARES10-CPPS-01:CURRENT",
+            5975660678251320717,
         ];
         seriess.contains(&series.id())
     } else {
