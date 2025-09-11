@@ -3,10 +3,12 @@ use super::findioc::FindIocRes;
 use crate::ca::conn;
 use crate::ca::statemap;
 use crate::ca::statemap::MaybeWrongAddressState;
+use crate::ca::statemap::UnknownAddressState;
 use crate::ca::statemap::WithAddressState;
 use crate::conf::CaIngestOpts;
 use crate::conf::ChannelConfig;
 use crate::daemon_common::ChannelName;
+use crate::queueset::QueueSet;
 use crate::rt::JoinHandle;
 use crate::throttletrace::ThrottleTrace;
 use async_channel::Receiver;
@@ -28,14 +30,19 @@ use futures_util::Stream;
 use futures_util::StreamExt;
 use hashbrown::HashMap;
 use log;
+use netpod::OnDrop;
 use netpod::ScalarType;
 use netpod::SeriesKind;
 use netpod::Shape;
+use netpod::TsNano;
+use scywr::insertqueues::InsertQueuesTx;
 use scywr::iteminsertqueue::ChannelStatusItem;
 use scywr::iteminsertqueue::QueryItem;
 use scywr::senderpolling::SenderPolling;
 use serde::Serialize;
 use series::ChannelStatusSeriesId;
+use series::SeriesId;
+use serieswriter::msptool::fixgrid::MspSplitFixGrid;
 use statemap::ActiveChannelState;
 use statemap::ChannelState;
 use statemap::ChannelStateMap;
@@ -44,20 +51,13 @@ use statemap::ConnectionState;
 use statemap::ConnectionStateValue;
 use statemap::WithStatusSeriesIdState;
 use statemap::WithStatusSeriesIdStateInner;
+use stats::mett::CaConnSetMetrics;
 use std::collections::BTreeMap;
 use std::collections::VecDeque;
 use std::fmt;
 use std::net::SocketAddr;
 use std::net::SocketAddrV4;
 use std::pin::Pin;
-
-use crate::queueset::QueueSet;
-use netpod::OnDrop;
-use netpod::TsNano;
-use scywr::insertqueues::InsertQueuesTx;
-use series::SeriesId;
-use serieswriter::msptool::fixgrid::MspSplitFixGrid;
-use stats::mett::CaConnSetMetrics;
 use std::task::Context;
 use std::task::Poll;
 use std::time::Duration;
@@ -76,18 +76,17 @@ const CHANNEL_UNASSIGNED_TIMEOUT: Duration = Duration::from_millis(0);
 const UNASSIGN_FOR_CONFIG_CHANGE_TIMEOUT: Duration = Duration::from_millis(1000 * 10);
 const CHANNEL_MAX_WITHOUT_HEALTH_UPDATE: usize = 3000000;
 
-macro_rules! error { ($($arg:tt)*) => ( if false { log::error!($($arg)*); } ); }
-macro_rules! warn { ($($arg:tt)*) => ( if false { log::warn!($($arg)*); } ); }
-macro_rules! info { ($($arg:tt)*) => ( if false { log::info!($($arg)*); } ); }
-macro_rules! debug { ($($arg:tt)*) => ( if false { log::debug!($($arg)*); } ); }
+macro_rules! error { ($($arg:tt)*) => ( if true { log::error!($($arg)*); } ); }
+macro_rules! warn { ($($arg:tt)*) => ( if true { log::warn!($($arg)*); } ); }
+macro_rules! info { ($($arg:tt)*) => ( if true { log::info!($($arg)*); } ); }
+macro_rules! debug { ($($arg:tt)*) => ( if true { log::debug!($($arg)*); } ); }
 
-macro_rules! trace2 { ($($arg:tt)*) => ( if false { log::trace!($($arg)*); } ); }
-macro_rules! trace3 { ($($arg:tt)*) => ( if false { log::trace!($($arg)*); } ); }
-macro_rules! trace4 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
-macro_rules! trace { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
+macro_rules! trace2 { ($($arg:tt)*) => ( if true { log::trace!($($arg)*); } ); }
+macro_rules! trace3 { ($($arg:tt)*) => ( if true { log::trace!($($arg)*); } ); }
+macro_rules! trace4 { ($($arg:tt)*) => { if true { log::trace!($($arg)*); } }; }
+macro_rules! trace { ($($arg:tt)*) => { if true { log::trace!($($arg)*); } }; }
 
 macro_rules! trace_health_update { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
-
 macro_rules! trace_channel_state { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
 
 autoerr::create_error_v1!(
@@ -661,8 +660,8 @@ impl CaConnSet {
     }
 
     fn handle_channel_config_flag_reset(&mut self, cmd: ChannelConfigFlagReset) -> Result<(), Error> {
-        for chst in self.channel_states.iter_mut() {
-            chst.1.touched = 0;
+        for (_ch, st1) in self.channel_states.iter_mut() {
+            st1.touched = 0;
         }
         if let Err(_) = cmd.restx.try_send(Ok(())) {
             self.mett.cmd_res_send_err().inc();
@@ -672,11 +671,9 @@ impl CaConnSet {
 
     fn handle_channel_config_remove_unflagged(&mut self, cmd: ChannelConfigRemoveUnflagged) -> Result<(), Error> {
         let mut cmds = VecDeque::new();
-        for chst in self.channel_states.iter_mut() {
-            if chst.1.touched == 0 {
-                let cmd = ChannelRemove {
-                    name: chst.0.name().into(),
-                };
+        for (ch, st1) in self.channel_states.iter_mut() {
+            if st1.touched == 0 {
+                let cmd = ChannelRemove { name: ch.name().into() };
                 cmds.push_back(cmd);
             }
         }
@@ -793,6 +790,9 @@ impl CaConnSet {
                         let deque = &mut self.storage_insert_lt_qu_l1;
                         writer_status.write(item, &mut (), ts_net, ts, deque)?;
                     }
+                    if series::dbg::dbg_chn(ch.name()) {
+                        info!("addr_find_backoff set 0  {}", ch.name());
+                    }
                     *chst2 = ActiveChannelState::WithStatusSeriesId(WithStatusSeriesIdState {
                         cssid: cmd.cssid,
                         addr_find_backoff: 0,
@@ -855,6 +855,9 @@ impl CaConnSet {
                             .write(item, &mut (), ts_net, ts, deque)?;
                     }
                     st3.cssid = cmd.cssid.clone();
+                    if series::dbg::dbg_chn(ch.name()) {
+                        info!("addr_find_backoff set 0  {}", ch.name());
+                    }
                     st3.addr_find_backoff = 0;
                     st3.inner = WithStatusSeriesIdStateInner::WithAddress {
                         addr: addr_v4,
@@ -944,44 +947,79 @@ impl CaConnSet {
     }
 
     fn handle_ioc_query_result(&mut self, results: VecDeque<FindIocRes>) -> Result<(), Error> {
-        trace!("handle_ioc_query_result  {:?}", results);
+        let selfn = "handle_ioc_query_result";
+        trace!("{selfn}  {:?}", results);
         if self.shutdown_stopping {
             return Ok(());
         }
         for res in results {
             let ch = ChannelName::new(res.channel.clone());
             if series::dbg::dbg_chn(&ch.name()) {
-                info!("handle_ioc_query_result  {:?}", res);
+                info!("{selfn}  {:?}", res);
             }
-            if let Some(chst) = self.channel_states.get_mut(&ch) {
-                if let ChannelStateValue::Active(ast) = &mut chst.value {
-                    if let ActiveChannelState::WithStatusSeriesId(st2) = ast {
+            if let Some(st1) = self.channel_states.get_mut(&ch) {
+                if let ChannelStateValue::Active(st2) = &mut st1.value {
+                    if let ActiveChannelState::WithStatusSeriesId(st3) = st2 {
                         if let Some(addr) = res.addr {
                             self.mett.ioc_addr_found().inc();
-                            trace!("ioc found {:?}", res);
+                            if series::dbg::dbg_chn(&ch.name()) {
+                                info!("{selfn}  ioc found {:?}", res);
+                            } else {
+                                trace!("{selfn}  ioc found {:?}", res);
+                            }
+                            st3.addr_find_backoff = 1;
                             let cmd = ChannelAddWithAddr {
-                                ch_cfg: chst.config.clone(),
+                                ch_cfg: st1.config.clone(),
                                 addr: SocketAddr::V4(addr),
-                                cssid: st2.cssid.clone(),
+                                cssid: st3.cssid.clone(),
                             };
                             self.handle_add_channel_with_addr(cmd)?;
                         } else {
                             self.mett.ioc_addr_not_found().inc();
-                            trace!("ioc not found {:?}", res);
+                            if series::dbg::dbg_chn(&ch.name()) {
+                                info!("{selfn}  ioc not found {:?}", res);
+                            } else {
+                                trace!("{selfn}  ioc not found {:?}", res);
+                            }
                             let since = SystemTime::now();
-                            st2.inner = WithStatusSeriesIdStateInner::UnknownAddress { since };
+                            bump_backoff(&mut st3.addr_find_backoff);
+                            match &mut st3.inner {
+                                WithStatusSeriesIdStateInner::UnknownAddress(st4) => {
+                                    st4.since = since;
+                                    st4.backoff_dt = MaybeWrongAddressState::produce_backoff_dt(st3.addr_find_backoff);
+                                }
+                                WithStatusSeriesIdStateInner::MaybeWrongAddress(st4) => {
+                                    st4.since = since;
+                                    st4.backoff_dt = MaybeWrongAddressState::produce_backoff_dt(st3.addr_find_backoff);
+                                }
+                                WithStatusSeriesIdStateInner::AddrSearchPending { .. } => {
+                                    let backoff_dt = MaybeWrongAddressState::produce_backoff_dt(st3.addr_find_backoff);
+                                    st3.inner = WithStatusSeriesIdStateInner::UnknownAddress(UnknownAddressState {
+                                        since,
+                                        backoff_dt,
+                                    });
+                                }
+                                _ => {
+                                    info!("{selfn}  bad state on find ioc result  {}", st3.inner.name());
+                                    let backoff_dt = MaybeWrongAddressState::produce_backoff_dt(st3.addr_find_backoff);
+                                    st3.inner = WithStatusSeriesIdStateInner::UnknownAddress(UnknownAddressState {
+                                        since,
+                                        backoff_dt,
+                                    });
+                                }
+                            }
                         }
                     } else {
                         self.mett.ioc_addr_result_for_unknown_channel().inc();
-                        warn!("TODO got address but no longer active");
+                        warn!("{selfn}  TODO got address but no longer active");
                     }
                 } else {
                     self.mett.ioc_addr_result_for_unknown_channel().inc();
-                    warn!("TODO got address but no longer active");
+                    warn!("{selfn}  TODO got address but no longer active");
                 }
             } else {
                 self.mett.ioc_addr_result_for_unknown_channel().inc();
-                warn!("ioc addr lookup done but channel no longer here");
+                warn!("{selfn}  ioc addr lookup done but channel no longer here");
             }
         }
         Ok(())
@@ -1177,7 +1215,29 @@ impl CaConnSet {
     }
 
     fn handle_ca_conn_eos(&mut self, addr: SocketAddr, reason: EndOfStreamReason) -> Result<(), Error> {
-        debug!("handle_ca_conn_eos  {}  {:?}", addr, reason);
+        let selfn = "handle_ca_conn_eos";
+        debug!("{selfn}  {}  {:?}", addr, reason);
+        for (chn, st1) in self.channel_states.iter() {
+            match &st1.value {
+                ChannelStateValue::Active(st2) => match &st2 {
+                    ActiveChannelState::Init { .. } => {}
+                    ActiveChannelState::WaitForStatusSeriesId { .. } => {}
+                    ActiveChannelState::WithStatusSeriesId(st3) => match &st3.inner {
+                        WithStatusSeriesIdStateInner::WithAddress {
+                            addr: st_addr,
+                            state: _,
+                        } => {
+                            if SocketAddr::V4(*st_addr) == addr {
+                                debug!("{selfn}  EOS  {n}", n = chn.name());
+                            }
+                        }
+                        _ => {}
+                    },
+                },
+                ChannelStateValue::ToRemove { addr: _ } => {}
+                ChannelStateValue::InitDummy => {}
+            }
+        }
         if let Some(e) = self.ca_conn_ress.remove(&addr) {
             self.mett.ca_conn_eos_ok().inc();
             self.await_ca_conn_jhs.push_back((addr, e.jh));
@@ -1189,11 +1249,11 @@ impl CaConnSet {
             use EndOfStreamReason::*;
             match reason {
                 UnspecifiedReason => {
-                    warn!("EndOfStreamReason::UnspecifiedReason");
+                    warn!("{selfn}  EndOfStreamReason::UnspecifiedReason");
                     self.handle_connect_fail(addr)?
                 }
                 Error(e) => {
-                    warn!("received error  {}  {}", addr, e);
+                    warn!("{selfn}  received error  {}  {}", addr, e);
                     self.handle_connect_fail(addr)?
                 }
                 ConnectRefused => self.handle_connect_fail(addr)?,
@@ -1282,7 +1342,7 @@ impl CaConnSet {
                                     // nothing to do
                                 }
                             }
-                            UnknownAddress { since: _ } => {}
+                            UnknownAddress(_) => {}
                             NoAddress { since: _ } => {}
                             MaybeWrongAddress(_) => {}
                             UnassigningForConfigChange(_) => {}
@@ -1380,15 +1440,15 @@ impl CaConnSet {
         tx1: Sender<(SocketAddr, CaConnEvent)>,
         addr: SocketAddr,
     ) -> Result<EndOfStreamReason, Error> {
+        let selfn = "ca_conn_item_merge_inner";
         let mut eos_reason = None;
+        let (eos_check_tx, eos_check_rx) = async_channel::bounded::<Instant>(7);
         while let Some(item) = conn.next().await {
-            trace!("ca_conn_item_merge_inner  item {}", item.desc_short());
             if let Some(x) = &eos_reason {
-                // TODO enable again, should not happen.
-                // let e = Error::with_msg_no_trace(format!("CaConn delivered already eos  {addr}  {x:?}"));
-                // error!("{e}");
-                // return Err(e);
-                warn!("CaConn {} EOS reason [{:?}] after [{:?}]", addr, x, eos_reason);
+                info!(
+                    "{selfn}  {addr}  item after EOS reason [{x:?}]  {item}",
+                    item = item.desc_short()
+                );
             }
             match item.value {
                 CaConnEventValue::None
@@ -1398,22 +1458,46 @@ impl CaConnSet {
                 | CaConnEventValue::ChannelStatus(..)
                 | CaConnEventValue::Metrics(..) => {
                     if let Err(e) = tx1.send((addr, item)).await {
-                        error!("channel send  {:?}", e);
+                        error!("{selfn}  {addr}  channel send  {:?}", e);
                         return Err(e.into());
                     }
                 }
                 CaConnEventValue::EndOfStream(reason) => {
+                    let ts1 = Instant::now();
+                    let eos_check_rx = eos_check_rx.clone();
+                    tokio::spawn(async move {
+                        let fut2 = async {
+                            match eos_check_rx.recv().await {
+                                Ok(ts2) => {
+                                    let dt = ts2.duration_since(ts1);
+                                    let dtms = 1e3 * dt.as_secs_f32();
+                                    info!("{selfn}  {addr}  CaConn EOS dt {dtms:.0} ms");
+                                }
+                                Err(_) => {
+                                    info!("{selfn}  {addr}  can not recv close timestamp");
+                                }
+                            }
+                        };
+                        let to = Duration::from_millis(10000);
+                        match tokio::time::timeout(to, fut2).await {
+                            Ok(()) => {}
+                            Err(_) => {
+                                info!("{selfn}  {addr}  CaConn not finished within timeout");
+                            }
+                        }
+                    });
                     eos_reason = Some(reason);
                 }
                 CaConnEventValue::ChannelRemoved(_) => {
-                    debug!("ca_conn_item_merge_inner  {:?}", item);
+                    trace!("{selfn}  {:?}", item);
                     if let Err(e) = tx1.send((addr, item)).await {
-                        error!("channel send  {:?}", e);
+                        error!("{selfn}  {addr}  channel send  {:?}", e);
                         return Err(e.into());
                     }
                 }
             }
         }
+        let _ = eos_check_tx.send(Instant::now()).await;
         if let Some(x) = eos_reason {
             Ok(x)
         } else {
@@ -1423,6 +1507,7 @@ impl CaConnSet {
     }
 
     fn check_channel_states(&mut self, tsnow: Instant, stnow: SystemTime) -> Result<(), Error> {
+        let selfn = "check_channel_states";
         let (mut search_pending_count, mut assigned_without_health_update) = self.update_channel_state_counts();
         let mut channel_health_timeout_soon = 0;
         let mut channel_health_timeout_reached = 0;
@@ -1438,8 +1523,8 @@ impl CaConnSet {
         #[allow(unused)]
         let mut st_qu_2 = VecDeque::new();
         let mut lt_qu_2 = VecDeque::new();
-        for (i, (ch, st)) in it.enumerate() {
-            match &mut st.value {
+        for (i, (ch, st1)) in it.enumerate() {
+            match &mut st1.value {
                 ChannelStateValue::Active(st2) => match st2 {
                     ActiveChannelState::Init { since: _ } => {
                         // TODO no longer used? remove?
@@ -1455,9 +1540,17 @@ impl CaConnSet {
                         }
                     }
                     ActiveChannelState::WithStatusSeriesId(st3) => match &mut st3.inner {
-                        WithStatusSeriesIdStateInner::UnknownAddress { .. } => {
-                            self.find_ioc_queue_set.push_back(ch.clone());
-                            st3.inner = WithStatusSeriesIdStateInner::AddrSearchPlanned { since: stnow };
+                        WithStatusSeriesIdStateInner::UnknownAddress(st4) => {
+                            if st4.since + st4.backoff_dt < stnow {
+                                if series::dbg::dbg_chn(&ch.name()) {
+                                    info!(
+                                        "{selfn}  UnknownAddress  move to  AddrSearchPlanned  backoff {}",
+                                        st3.addr_find_backoff
+                                    );
+                                }
+                                self.find_ioc_queue_set.push_back(ch.clone());
+                                st3.inner = WithStatusSeriesIdStateInner::AddrSearchPlanned { since: stnow };
+                            }
                         }
                         WithStatusSeriesIdStateInner::AddrSearchPending { since } => {
                             let dt = stnow.duration_since(*since).unwrap_or(Duration::ZERO);
@@ -1478,7 +1571,7 @@ impl CaConnSet {
                                         if *since + CHANNEL_UNASSIGNED_TIMEOUT < stnow {
                                             assigned_without_health_update += 1;
                                             let cmd = ChannelAddWithAddr {
-                                                ch_cfg: st.config.clone(),
+                                                ch_cfg: st1.config.clone(),
                                                 cssid: st3.cssid.clone(),
                                                 addr: SocketAddr::V4(*addr_v4),
                                             };
@@ -1493,7 +1586,7 @@ impl CaConnSet {
                                     if st4.updated + CHANNEL_HEALTH_TIMEOUT < stnow {
                                         channel_health_timeout_reached += 1;
                                         trace!("health timeout  channel {:?}  ~~~~~~~~~~~~~~~~~~~", ch);
-                                        // TODO
+                                        // TODO probably kill the whole CaConn?
                                         error!("TODO  health timeout  channel {:?}  ~~~~~~~~~~~~~~~~~~~", ch);
                                         if true {
                                             std::process::exit(1);
@@ -1525,15 +1618,19 @@ impl CaConnSet {
                         }
                         WithStatusSeriesIdStateInner::NoAddress { since } => {
                             if *since + NO_ADDRESS_STAY < stnow {
-                                st3.inner = WithStatusSeriesIdStateInner::UnknownAddress { since: stnow };
+                                st3.inner = WithStatusSeriesIdStateInner::UnknownAddress(UnknownAddressState {
+                                    since: stnow,
+                                    backoff_dt: MaybeWrongAddressState::produce_backoff_dt(st3.addr_find_backoff),
+                                });
                             }
                         }
                         WithStatusSeriesIdStateInner::MaybeWrongAddress(st4) => {
                             if st4.since + st4.backoff_dt < stnow {
                                 if series::dbg::dbg_chn(ch.name()) {
                                     info!(
-                                        "check_channel_states  MaybeWrongAddress  set to  AddrSearchPlanned  {:?}",
-                                        ch
+                                        "check_channel_states  MaybeWrongAddress  set to  AddrSearchPlanned  {}  backoff {}",
+                                        ch.name(),
+                                        st3.addr_find_backoff
                                     );
                                 }
                                 self.find_ioc_queue_set.push_back(ch.clone());

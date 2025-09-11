@@ -63,6 +63,20 @@ pub struct UnassigningForConfigChangeState {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct UnknownAddressState {
+    #[serde(with = "humantime_serde")]
+    pub since: SystemTime,
+    pub backoff_dt: Duration,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct MaybeWrongAddressState {
+    #[serde(with = "humantime_serde")]
+    pub since: SystemTime,
+    pub backoff_dt: Duration,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub enum WithStatusSeriesIdStateInner {
     AddrSearchPending {
         #[serde(with = "humantime_serde")]
@@ -72,10 +86,7 @@ pub enum WithStatusSeriesIdStateInner {
         addr: SocketAddrV4,
         state: WithAddressState,
     },
-    UnknownAddress {
-        #[serde(with = "humantime_serde")]
-        since: SystemTime,
-    },
+    UnknownAddress(UnknownAddressState),
     NoAddress {
         #[serde(with = "humantime_serde")]
         since: SystemTime,
@@ -88,34 +99,45 @@ pub enum WithStatusSeriesIdStateInner {
     },
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub struct MaybeWrongAddressState {
-    #[serde(with = "humantime_serde")]
-    pub since: SystemTime,
-    pub backoff_dt: Duration,
+impl WithStatusSeriesIdStateInner {
+    pub fn name(&self) -> &'static str {
+        match self {
+            WithStatusSeriesIdStateInner::AddrSearchPending { .. } => "AddrSearchPending",
+            WithStatusSeriesIdStateInner::WithAddress { .. } => "WithAddress",
+            WithStatusSeriesIdStateInner::UnknownAddress(..) => "UnknownAddress",
+            WithStatusSeriesIdStateInner::NoAddress { .. } => "NoAddress",
+            WithStatusSeriesIdStateInner::MaybeWrongAddress(..) => "MaybeWrongAddress",
+            WithStatusSeriesIdStateInner::UnassigningForConfigChange(..) => "UnassigningForConfigChange",
+            WithStatusSeriesIdStateInner::AddrSearchPlanned { .. } => "AddrSearchPlanned",
+        }
+    }
 }
 
 impl MaybeWrongAddressState {
     pub fn new(since: SystemTime, backoff_cnt: u32) -> Self {
-        // print(", ".join(["{:.5}".format(tanh(i/10)) for i in range(24)]))
+        Self {
+            since,
+            backoff_dt: Self::produce_backoff_dt(backoff_cnt),
+        }
+    }
+
+    pub fn produce_backoff_dt(backoff_cnt: u32) -> Duration {
+        // from math import tanh; print(", ".join(["{:.5f}".format(tanh(i/10)) for i in range(24)]));
         const TANH: [f32; 24] = [
-            0.0, 0.099668, 0.19738, 0.29131, 0.37995, 0.46212, 0.53705, 0.60437, 0.66404, 0.7163, 0.76159, 0.8005,
-            0.83365, 0.86172, 0.88535, 0.90515, 0.92167, 0.93541, 0.94681, 0.95624, 0.96403, 0.97045, 0.97574, 0.9801,
+            0.00000, 0.09967, 0.19738, 0.29131, 0.37995, 0.46212, 0.53705, 0.60437, 0.66404, 0.71630, 0.76159, 0.80050,
+            0.83365, 0.86172, 0.88535, 0.90515, 0.92167, 0.93541, 0.94681, 0.95624, 0.96403, 0.97045, 0.97574, 0.98010,
         ];
-        const Y1: f32 = 30.;
-        const Y20: f32 = 300.;
-        const B: f32 = (Y20 - Y1) / (TANH[20] - TANH[1]);
-        const A: f32 = Y1 - B * TANH[1];
-        let backoff_cnt = backoff_cnt.max(1).min(20);
+        const Y1: f32 = 1.;
+        const Y2: f32 = 300.;
+        const B: f32 = (Y2 - Y1) / (TANH[23] - TANH[0]);
+        const A: f32 = Y1 - B * TANH[0];
+        let backoff_cnt = backoff_cnt.min(23);
         let f = A + B * TANH[backoff_cnt as usize];
         let dtms = (1e3 * f) as u64;
         if dtms < 1000 || dtms > 1000 * 60 * 12 {
             log::warn!("bad channel search backoff wait time {dtms}");
         }
-        Self {
-            since,
-            backoff_dt: Duration::from_millis(dtms),
-        }
+        Duration::from_millis(dtms)
     }
 }
 

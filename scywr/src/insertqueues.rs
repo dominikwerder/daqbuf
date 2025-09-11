@@ -1,3 +1,4 @@
+#![allow(mismatched_lifetime_syntaxes)]
 use crate::iteminsertqueue::Accounting;
 use crate::iteminsertqueue::AccountingRecv;
 use crate::iteminsertqueue::QueryItem;

@@ -6,12 +6,12 @@ use super::connevent::CaConnEvent;
 use super::connevent::EndOfStreamReason;
 use crate::ca::conn::CaConnOpts;
 use crate::ca::conn2::progpend::HaveProgressPending;
+use crate::ca::conn2::statetrans::conn::IocConnStateBase;
 use async_channel::Sender;
 use ca_proto::ca::proto;
 use connected::Connected;
 use connecting::Connecting;
 use dbpg::seriesbychannel::ChannelInfoQuery;
-use futures_util::Future;
 use futures_util::FutureExt;
 use futures_util::Stream;
 use futures_util::StreamExt;
@@ -35,7 +35,7 @@ use taskrun::tokio;
 use tokio::net::TcpStream;
 
 macro_rules! conn_err {
-    ($($arg:expr),*) => { if true { info!($($arg),*); } };
+    ($($arg:tt)*) => { if true { info!($($arg)*); } };
 }
 
 autoerr::create_error_v1!(
@@ -66,18 +66,26 @@ impl DurationMeasureSteps {
     }
 }
 
-enum ConnectedState {
-    Init(CaProto),
-    Handshake(CaProto),
-    PeerReady(CaProto),
+#[derive(Debug)]
+struct CaConnState {
+    ioc_conn_state: IocConnStateBase,
 }
 
-#[derive(Debug)]
-enum CaConnState {
-    Connecting(Connecting),
-    Connected(Connected),
-    Shutdown(EndOfStreamReason),
-    Done,
+impl CaConnState {
+    fn new(remote_addr: SocketAddrV4) -> Self {
+        Self {
+            ioc_conn_state: IocConnStateBase::new(remote_addr),
+        }
+    }
+}
+
+impl Stream for CaConnState {
+    type Item = ();
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
+        use Poll::*;
+        todo!()
+    }
 }
 
 struct CaConn {
@@ -106,7 +114,7 @@ impl CaConn {
         Self {
             opts,
             backend,
-            state: CaConnState::Connecting(Connecting::new(remote_addr, tsnow)),
+            state: CaConnState::new(remote_addr),
             iqdqs: InsertDeques::new(),
             ca_conn_event_out_queue: VecDeque::new(),
             ca_conn_event_out_queue_max: 2000,
@@ -122,7 +130,6 @@ impl CaConn {
 
     // call this only from the main fn poll
     fn shutdown_on_error(&mut self, e: Error) {
-        self.state = CaConnState::Shutdown(EndOfStreamReason::Error(e));
         todo!()
     }
 }
@@ -159,17 +166,22 @@ impl Stream for CaConn {
         self.mett.poll_fn_begin().inc();
         let ret = loop {
             self.mett.poll_loop_begin().inc();
-            let qlen = self.iqdqs.len();
-            if qlen >= self.opts.insert_queue_max * 2 / 3 {
-                self.mett.insert_item_queue_pressure().inc();
-            } else if qlen >= self.opts.insert_queue_max {
-                self.mett.insert_item_queue_full().inc();
+
+            // TODO
+            // Drive the state machine, but in which form.
+            // Relationship between overall connection state and channel state?
+
+            match self.state.poll_next_unpin(cx) {
+                _ => todo!(),
             }
-            let mut hppv = HaveProgressPending::new();
-            let hpp = &mut hppv;
-            if let CaConnState::Done = self.state {
+
+            let hpp = &mut HaveProgressPending::new();
+            let are_we_done = false;
+            if are_we_done {
                 break Ready(None);
             } else if let Some(item) = self.ca_conn_event_out_queue.pop_front() {
+                // TODO get rid of the handling of ca_conn_event_out_queue in here.
+                // The future which pushes to the queue must also trigger the async push if needed.
                 break Ready(Some(item));
             }
 
@@ -188,6 +200,12 @@ impl Stream for CaConn {
             }
 
             {
+                // TODO handle iqdqs async on demand.
+                // Batch all insert requests.
+                // Send requests when the queue is full enough.
+                // Send requests periodically: need to fine-tune the internal timer tick.
+                // Use internal timer tick modulo for various purposes.
+
                 // let stats2 = self.stats.clone();
                 // let stats_fn = move |item: &VecDeque<QueryItem>| {
                 //     stats2.iiq_batch_len().ingest(item.len() as u32);
@@ -204,54 +222,10 @@ impl Stream for CaConn {
                 //     stats_fn
                 // );
 
-                // let stats2 = self.stats.clone();
-                // let stats_fn = move |item: &VecDeque<QueryItem>| {
-                //     stats2.iiq_batch_len().ingest(item.len() as u32);
-                // };
-                // flush_queue_dqs!(
-                //     self,
-                //     st_rf3_qu,
-                //     st_rf3_sp_pin,
-                //     send_batched::<256, _>,
-                //     32,
-                //     (&mut have_progress, &mut have_pending),
-                //     "st_rf3_rx",
-                //     cx,
-                //     stats_fn
-                // );
-
-                // let stats2 = self.stats.clone();
-                // let stats_fn = move |item: &VecDeque<QueryItem>| {
-                //     stats2.iiq_batch_len().ingest(item.len() as u32);
-                // };
-                // flush_queue_dqs!(
-                //     self,
-                //     mt_rf3_qu,
-                //     mt_rf3_sp_pin,
-                //     send_batched::<256, _>,
-                //     32,
-                //     (&mut have_progress, &mut have_pending),
-                //     "mt_rf3_rx",
-                //     cx,
-                //     stats_fn
-                // );
-
-                // let stats2 = self.stats.clone();
-                // let stats_fn = move |item: &VecDeque<QueryItem>| {
-                //     stats2.iiq_batch_len().ingest(item.len() as u32);
-                // };
-                // flush_queue_dqs!(
-                //     self,
-                //     lt_rf3_qu,
-                //     lt_rf3_sp_pin,
-                //     send_batched::<256, _>,
-                //     32,
-                //     (&mut have_progress, &mut have_pending),
-                //     "lt_rf3_rx",
-                //     cx,
-                //     stats_fn
-                // );
+                // etc...
             }
+
+            // TODO handle channel info queries async batched on demand, like iqdqs.
 
             // if !self.is_shutdown() {
             //     flush_queue!(
@@ -305,35 +279,6 @@ impl Stream for CaConn {
             // }
 
             let tsnow4 = Instant::now();
-
-            match &mut self.state {
-                CaConnState::Connecting(st2) => match st2.poll_unpin(cx) {
-                    Ready(x) => match x {
-                        Ok(Some(x)) => {
-                            hpp.have_progress();
-                            self.state = CaConnState::Connected(Connected::new(st2.addr(), x, tsnow4));
-                        }
-                        Ok(None) => {
-                            // TODO
-                            // In this case, should probably be treated like error.
-                        }
-                        Err(e) => {
-                            // TODO handle or propagate the error, change state.
-                            conn_err!("{}", e);
-                        }
-                    },
-                    Pending => {
-                        hpp.have_pending();
-                    }
-                },
-                CaConnState::Connected(_) => todo!(),
-                CaConnState::Shutdown(_) => {
-                    // TODO still attempt to flush queues.
-                    // If all queues are flushed, go into Done state.
-                    todo!()
-                }
-                CaConnState::Done => todo!(),
-            }
 
             // break if self.is_shutdown() {
             //     if self.queues_out_flushed() {

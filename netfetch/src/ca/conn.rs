@@ -1059,7 +1059,7 @@ impl<'a> EventAddIngestRefobj<'a> {
         let crst = &mut self.crst;
         let rtwriter = &mut self.rtwriter;
         let mett = &mut self.mett;
-        {
+        if false {
             use ca_proto::ca::proto::CaMetaValue::*;
             match &value.meta {
                 CaMetaTime(meta) => {
@@ -1943,7 +1943,7 @@ impl CaConn {
     }
 
     pub fn channel_add(&mut self, conf: ChannelConfig, cssid: ChannelStatusSeriesId) -> Result<(), Error> {
-        debug!("channel_add  {:?}  {:?}", conf, cssid);
+        trace!("channel_add  {:?}  {:?}", conf, cssid);
         if false {
             if series::dbg::dbg_chn(&conf.name()) {
                 self.trace_channel_poll = true;
@@ -2215,6 +2215,7 @@ impl CaConn {
         tsnow: Instant,
         tscaproto: Instant,
     ) -> Result<(), Error> {
+        let selfn = "handle_event_add_res";
         self.mett.fn_handle_event_add_res().inc();
         let subid = Subid(ev.subid);
         // TODO handle subid-not-found which can also be peer error:
@@ -2229,14 +2230,14 @@ impl CaConn {
             return Ok(());
         };
         let dbg_chn = dbg_chn_cid(cid, self);
+        if dbg_chn {
+            debug!("{selfn}  {ev:?}");
+        }
         let (ch_s, ch_wrst, ch_conf) = if let Some(x) = self.channels.get_mut(&cid) {
             (&mut x.state, &mut x.wrst, &x.conf)
         } else {
             // TODO return better as error and let caller decide (with more structured errors)
-            warn!(
-                "TODO handle_event_add_res can not find channel for  {:?}  {:?}",
-                cid, subid
-            );
+            warn!("TODO {selfn} can not find channel for  {:?}  {:?}", cid, subid);
             // TODO
             // When removing a channel, keep it in "closed" btree for some time because messages can
             // still arrive from all buffers.
@@ -2290,7 +2291,7 @@ impl CaConn {
                 match &mut st.reading {
                     ReadingState::EnableMonitoring(st2) => {
                         let dt = st2.tsbeg.elapsed().as_secs_f32();
-                        trace!("change to Monitoring after dt {:.0} ms", dt);
+                        trace!("{selfn}  change to Monitoring after dt {:.0} ms", dt);
                         st.reading = ReadingState::Monitoring(MonitoringState {
                             tsbeg: tsnow,
                             subid: st2.subid,
@@ -2335,14 +2336,14 @@ impl CaConn {
                     ReadingState::StopMonitoringForPolling(st2) => {
                         // TODO count for metrics
                         if st2.tsbeg + Duration::from_millis(2000) < tsnow {
-                            error!("TODO  handle_event_add_res  handle StopMonitoringForPolling");
+                            error!("TODO  {selfn}  handle StopMonitoringForPolling");
                             std::process::exit(1);
                         }
                     }
                     ReadingState::Polling(st2) => {
                         // TODO count for metrics
                         if st2.tsbeg + Duration::from_millis(2000) < tsnow {
-                            error!("TODO  handle_event_add_res  handle Polling");
+                            error!("TODO  {selfn}  handle Polling");
                             std::process::exit(1);
                         }
                     }
