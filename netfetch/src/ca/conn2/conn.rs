@@ -7,6 +7,7 @@ use super::connevent::EndOfStreamReason;
 use crate::ca::conn::CaConnOpts;
 use crate::ca::conn2::progpend::HaveProgressPending;
 use crate::ca::conn2::statetrans::conn::IocConnStateBase;
+use crate::ca::conn2::statetrans::stateress1::StateRessShr1;
 use async_channel::Sender;
 use ca_proto::ca::proto;
 use connected::Connected;
@@ -34,9 +35,7 @@ use std::time::Instant;
 use taskrun::tokio;
 use tokio::net::TcpStream;
 
-macro_rules! conn_err {
-    ($($arg:tt)*) => { if true { info!($($arg)*); } };
-}
+macro_rules! conn_err { ($($arg:tt)*) => { if true { info!($($arg)*); } }; }
 
 autoerr::create_error_v1!(
     name(Error, "Conn"),
@@ -72,9 +71,9 @@ struct CaConnState {
 }
 
 impl CaConnState {
-    fn new(remote_addr: SocketAddrV4) -> Self {
+    fn new(remote_addr: SocketAddrV4, ress_a: StateRessShr1) -> Self {
         Self {
-            ioc_conn_state: IocConnStateBase::new(remote_addr),
+            ioc_conn_state: IocConnStateBase::new(remote_addr, ress_a),
         }
     }
 }
@@ -88,7 +87,7 @@ impl Stream for CaConnState {
     }
 }
 
-struct CaConn {
+pub struct CaConn {
     opts: CaConnOpts,
     backend: String,
     state: CaConnState,
@@ -100,7 +99,8 @@ struct CaConn {
 }
 
 impl CaConn {
-    fn new(
+    #[allow(unused)]
+    pub fn new(
         opts: CaConnOpts,
         backend: String,
         remote_addr: SocketAddrV4,
@@ -111,10 +111,11 @@ impl CaConn {
         let tsnow = Instant::now();
         let (cq_tx, cq_rx) = async_channel::bounded::<ConnCommand>(32);
         let rng = stats::xoshiro_from_time();
+        let ress_a = todo!();
         Self {
             opts,
             backend,
-            state: CaConnState::new(remote_addr),
+            state: CaConnState::new(remote_addr, ress_a),
             iqdqs: InsertDeques::new(),
             ca_conn_event_out_queue: VecDeque::new(),
             ca_conn_event_out_queue_max: 2000,

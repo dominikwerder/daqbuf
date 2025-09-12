@@ -2,6 +2,7 @@ use async_channel::Sender;
 use scywr::insertqueues::InsertQueuesTx;
 use scywr::iteminsertqueue::QueryItem;
 use std::collections::VecDeque;
+use std::fmt;
 use std::mem;
 
 pub struct ScyWriteQueue {
@@ -32,6 +33,16 @@ impl ScyWriteQueue {
     }
 }
 
+impl fmt::Debug for ScyWriteQueue {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        fmt.debug_struct("ScyWriteQueue")
+            .field("tx", &"Sender")
+            .field("qu.len", &self.qu.len())
+            .finish()
+    }
+}
+
+#[derive(Debug)]
 pub struct ScyWriteQueues {
     st_rf1: ScyWriteQueue,
     st_rf3: ScyWriteQueue,
@@ -39,4 +50,8 @@ pub struct ScyWriteQueues {
     lt_rf3: ScyWriteQueue,
 }
 
-impl ScyWriteQueues {}
+impl ScyWriteQueues {
+    pub fn lt(&mut self) -> &mut ScyWriteQueue {
+        &mut self.lt_rf3
+    }
+}

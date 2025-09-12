@@ -1,10 +1,11 @@
 mod channel;
 mod channelstateinfo;
-mod conn;
+pub(super) mod conn;
 mod conncmd;
 mod connevent;
 mod connfut;
 mod futstack;
 mod progpend;
 mod scywritequeue;
+mod statefut;
 mod statetrans;

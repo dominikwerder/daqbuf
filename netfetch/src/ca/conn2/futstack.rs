@@ -1,4 +1,5 @@
 use futures_util::Future;
+use std::fmt;
 use std::marker::PhantomData;
 use std::mem::MaybeUninit;
 use std::pin::Pin;
@@ -19,14 +20,20 @@ impl<F, const N: usize> AssertFits<F, N> {
 
 #[repr(C)]
 #[repr(align(16))]
-struct ErasedFuture<T, const SIZE: usize> {
+pub struct ErasedFuture<T, const SIZE: usize> {
     futbuf: MaybeUninit<[u8; SIZE]>,
     poll_fn: fn(slf: Pin<&mut Self>, cx: &mut Context) -> Poll<T>,
     drop_fn: fn(slf: &mut Self),
 }
 
+impl<T, const SIZE: usize> fmt::Debug for ErasedFuture<T, SIZE> {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        fmt.debug_struct("ErasedFuture").finish()
+    }
+}
+
 impl<T, const SIZE: usize> ErasedFuture<T, SIZE> {
-    fn new<F>(fut: F) -> Self
+    pub fn new<F>(fut: F) -> Self
     where
         F: Future<Output = T>,
     {
