@@ -12,6 +12,10 @@ fn bool_true() -> bool {
     true
 }
 
+pub fn todoval<T>() -> T {
+    todo!()
+}
+
 #[allow(unused)]
 #[inline(always)]
 pub fn is_log_direct() -> bool {
