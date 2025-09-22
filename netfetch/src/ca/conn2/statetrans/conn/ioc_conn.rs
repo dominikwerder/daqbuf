@@ -212,8 +212,9 @@ impl Stream for IocConn {
                                 };
                                 // TODO connection status requires separate table.
                                 // DUMMY:
-                                let item = QueryItem::Insert(todo!());
-                                let fut = ress_a.borrow_mut().scy_wr_qus().lt().push(item);
+                                let item = QueryItem::Insert(netpod::todoval());
+                                let mut ress_ref = ress_a.borrow_mut();
+                                let fut = ress_ref.scy_wr_qus().lt().push(item);
                                 ErasedFuture::new(fut)
                             };
 
