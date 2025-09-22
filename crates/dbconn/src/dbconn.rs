@@ -200,6 +200,12 @@ autoerr::create_error_v1!(
         BadSeriesId,
         NoFound,
         MultipleFound,
-        Database(String),
+        Postgres(tokio_postgres::Error),
     },
 );
+
+impl From<tokio_postgres::Error> for FindChannelError {
+    fn from(value: tokio_postgres::Error) -> Self {
+        Self::Postgres(value)
+    }
+}

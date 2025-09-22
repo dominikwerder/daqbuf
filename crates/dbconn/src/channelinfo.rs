@@ -5,7 +5,7 @@ use tokio_postgres::Client;
 autoerr::create_error_v1!(
     name(Error, "ChannelInfo"),
     enum variants {
-        Pg(#[from] crate::pg::Error),
+        Postgres(#[from] crate::pg::Error),
         BadValue,
     },
 );

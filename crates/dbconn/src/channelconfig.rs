@@ -1,3 +1,4 @@
+use crate::worker::GetOptionPostgresError;
 use autoerr::dbgdisplay::Dbg;
 use chrono::DateTime;
 use chrono::Utc;
@@ -15,7 +16,7 @@ use tokio_postgres::Client;
 autoerr::create_error_v1!(
     name(Error, "DbChannelConfig"),
     enum variants {
-        Pg(#[from] tokio_postgres::Error),
+        Postgres(#[from] tokio_postgres::Error),
         NotFound(SfDbChannel, NanoRange),
         SeriesNotFound(String, u64),
         BadScalarType(i32),
@@ -24,6 +25,12 @@ autoerr::create_error_v1!(
         NoInput,
     },
 );
+
+impl GetOptionPostgresError for Error {
+    fn get_option_postgres_error(&self) -> Option<&tokio_postgres::Error> {
+        if let Self::Postgres(e) = self { Some(e) } else { None }
+    }
+}
 
 /// It is an unsolved question as to how we want to uniquely address channels.
 /// Currently, the usual (backend, channelname) works in 99% of the cases, but the edge-cases

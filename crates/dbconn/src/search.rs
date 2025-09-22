@@ -22,7 +22,7 @@ autoerr::create_error_v1!(
     enum variants {
         BadShapeFromDb(String),
         BadArchEngValue(String),
-        Pg(#[from] tokio_postgres::Error),
+        Postgres(#[from] tokio_postgres::Error),
         Other(#[from] daqbuf_err::Error),
         Worker(#[from] crate::worker::Error),
     },
