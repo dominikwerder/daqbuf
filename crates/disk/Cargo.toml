@@ -13,7 +13,7 @@ serde_json = "1.0.138"
 serde_cbor = "0.11.2"
 chrono = { version = "0.4.39", features = ["serde"] }
 tokio-stream = {version = "0.1.17", features = ["fs"]}
-async-channel = "1.9.0"
+async-channel = "2.5"
 crossbeam = "0.8.4"
 bytes = "1.10.0"
 crc32fast = "1.4.2"

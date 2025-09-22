@@ -1,18 +1,18 @@
+use crate::ErrConv;
 use crate::create_connection;
 use crate::delay_io_medium;
 use crate::delay_io_short;
-use crate::ErrConv;
-use async_channel::bounded;
 use async_channel::Receiver;
+use async_channel::bounded;
 use chrono::DateTime;
 use chrono::Utc;
 use daqbuf_err as err;
 use err::Error;
 use futures_util::FutureExt;
 use futures_util::Stream;
-use netpod::log::*;
 use netpod::Database;
 use netpod::NodeConfigCached;
+use netpod::log::*;
 use pin_project::pin_project;
 use serde::Deserialize;
 use serde::Serialize;
@@ -293,7 +293,7 @@ async fn update_db_with_channel_names_inner(
 pub async fn update_db_with_channel_names(
     node_config: NodeConfigCached,
     db_config: &Database,
-) -> Result<Receiver<Result<UpdatedDbWithChannelNames, Error>>, Error> {
+) -> Result<Pin<Box<Receiver<Result<UpdatedDbWithChannelNames, Error>>>>, Error> {
     info!("update_db_with_channel_names");
     let (tx, rx) = bounded(16);
     let tx2 = tx.clone();
@@ -311,7 +311,7 @@ pub async fn update_db_with_channel_names(
         }
     };
     tokio::spawn(block2);
-    Ok(rx)
+    Ok(Box::pin(rx))
 }
 
 pub fn update_db_with_channel_names_3(
@@ -434,7 +434,7 @@ async fn update_db_with_all_channel_configs_inner(
 
 pub async fn update_db_with_all_channel_configs(
     node_config: NodeConfigCached,
-) -> Result<Receiver<Result<UpdatedDbWithAllChannelConfigs, Error>>, Error> {
+) -> Result<Pin<Box<Receiver<Result<UpdatedDbWithAllChannelConfigs, Error>>>>, Error> {
     let (tx, rx) = bounded(16);
     let tx2 = tx.clone();
     let tx3 = tx.clone();
@@ -463,7 +463,7 @@ pub async fn update_db_with_all_channel_configs(
         }
     };
     tokio::spawn(block2);
-    Ok(rx)
+    Ok(Box::pin(rx))
 }
 
 pub async fn update_search_cache(node_config: &NodeConfigCached) -> Result<bool, Error> {

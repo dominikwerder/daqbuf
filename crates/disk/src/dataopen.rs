@@ -853,7 +853,8 @@ mod test {
         let cluster = netpod::test_cluster();
         let task = async move {
             let mut paths = Vec::new();
-            let mut files = open_expanded_files(&range, &fetch_info, cluster.nodes[0].clone());
+            let files = open_expanded_files(&range, &fetch_info, cluster.nodes[0].clone());
+            let mut files = Box::pin(files);
             while let Some(file) = files.next().await {
                 match file {
                     Ok(k) => {

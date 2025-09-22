@@ -18,7 +18,7 @@ hyper = { version = "1.6.0", features = ["http1", "http2", "client", "server"] }
 #hyper-tls = { version = "0.6.0" }
 hyper-util = { version = "0.1.10", features = ["full"] }
 bytes = "1.10.0"
-async-channel = "1.9.0"
+async-channel = "2.5"
 autoerr = "0.0"
 daqbuf-err = { path = "../../../daqbuf-err" }
 netpod = { path = "../../../daqbuf-netpod", package = "daqbuf-netpod" }

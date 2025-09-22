@@ -344,8 +344,8 @@ impl FileContentStream5 {
 impl Stream for FileContentStream5 {
     type Item = Result<FileChunkRead, Error>;
 
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
-        self.rx.poll_next_unpin(cx)
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
+        unsafe { self.map_unchecked_mut(|x| &mut x.rx) }.poll_next_unpin(cx)
     }
 }
 
@@ -819,18 +819,21 @@ impl Stream for BlockingTaskIntoChannel {
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         use Poll::*;
-        if let Some(fut) = &mut self.convert_file_fut {
-            match fut.poll_unpin(cx) {
+        let convert_file_fut = &mut unsafe { self.as_mut().get_unchecked_mut() }.convert_file_fut;
+        if let Some(cff) = convert_file_fut {
+            match cff.poll_unpin(cx) {
                 Ready(file) => {
-                    self.convert_file_fut = None;
-                    self.setup(file);
+                    *convert_file_fut = None;
+                    let this = unsafe { self.as_mut().get_unchecked_mut() };
+                    this.setup(file);
                     cx.waker().wake_by_ref();
                     Pending
                 }
                 Pending => Pending,
             }
         } else {
-            match self.rx.poll_next_unpin(cx) {
+            let mut rx = unsafe { self.map_unchecked_mut(|x| &mut x.rx) };
+            match rx.poll_next_unpin(cx) {
                 Ready(Some(Ok(item))) => Ready(Some(Ok(item))),
                 Ready(Some(Err(e))) => Ready(Some(Err(e))),
                 Ready(None) => Ready(None),

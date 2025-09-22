@@ -33,7 +33,7 @@ impl<T> InputTraits for T where T: Stream<Item = Sitemty<EventFull>> {}
 
 pub struct EventChunkerMultifile {
     fetch_info: SfChFetchInfo,
-    file_chan: async_channel::Receiver<Result<OpenedFileSet, Error>>,
+    file_chan: Pin<Box<async_channel::Receiver<Result<OpenedFileSet, Error>>>>,
     evs: Option<Pin<Box<dyn InputTraits + Send>>>,
     disk_io_tune: DiskIoTune,
     event_chunker_conf: EventChunkerConf,
@@ -76,7 +76,7 @@ impl EventChunkerMultifile {
             open_files(&range, &fetch_info, reqctx.reqid(), node)
         };
         Self {
-            file_chan,
+            file_chan: Box::pin(file_chan),
             evs: None,
             disk_io_tune,
             event_chunker_conf,
@@ -157,7 +157,7 @@ impl Stream for EventChunkerMultifile {
                                         self.evs = None;
                                         let (tx, rx) = async_channel::bounded(1);
                                         drop(tx);
-                                        self.file_chan = rx;
+                                        self.file_chan = Box::pin(rx);
                                     }
                                 }
                                 StreamItem::DataItem(RangeCompletableItem::Data(h))
