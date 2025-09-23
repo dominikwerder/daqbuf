@@ -11,10 +11,27 @@ use netpod::SeriesKind;
 use netpod::SfDbChannel;
 use netpod::log::*;
 use netpod::range::evrange::NanoRange;
+use std::fmt;
+use std::hash::RandomState;
 use std::io::ErrorKind;
+use std::time::Duration;
 use taskrun::tokio;
 use tokio::task::JoinHandle;
 use tokio_postgres::Client;
+
+struct JobStash(Job);
+
+impl fmt::Debug for JobStash {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        write!(fmt, "JobStash")
+    }
+}
+
+impl fmt::Display for JobStash {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        fmt::Debug::fmt(self, fmt)
+    }
+}
 
 autoerr::create_error_v1!(
     name(Error, "PgWorker"),
@@ -24,6 +41,7 @@ autoerr::create_error_v1!(
         ChannelRecv,
         Join,
         ChannelConfig(#[from] crate::channelconfig::Error),
+        DatabaseConnectionBad,
     },
 );
 
@@ -43,24 +61,24 @@ pub trait GetOptionPostgresError {
     fn get_option_postgres_error(&self) -> Option<&tokio_postgres::Error>;
 }
 
-fn is_retryable_io_error(kind: ErrorKind) -> bool {
-    matches!(
-        kind,
+fn io_error_is_database_connection_issue(kind: ErrorKind) -> bool {
+    match kind {
         ErrorKind::ConnectionRefused
-            | ErrorKind::ConnectionReset
-            | ErrorKind::ConnectionAborted
-            | ErrorKind::HostUnreachable
-            | ErrorKind::NetworkUnreachable
-            | ErrorKind::NetworkDown
-            | ErrorKind::TimedOut
-            | ErrorKind::NotConnected
-            | ErrorKind::BrokenPipe
-            | ErrorKind::Interrupted
-    )
+        | ErrorKind::ConnectionReset
+        | ErrorKind::ConnectionAborted
+        | ErrorKind::HostUnreachable
+        | ErrorKind::NetworkUnreachable
+        | ErrorKind::NetworkDown
+        | ErrorKind::TimedOut
+        | ErrorKind::NotConnected
+        | ErrorKind::BrokenPipe
+        | ErrorKind::UnexpectedEof
+        | ErrorKind::Interrupted => true,
+        _ => false,
+    }
 }
 
-/// Determines if a PostgreSQL error code indicates a retryable condition
-fn is_retryable_db_error_code(code: &tokio_postgres::error::SqlState) -> bool {
+fn code_is_database_connection_issue(code: &tokio_postgres::error::SqlState) -> bool {
     let c = code.code();
     if c.len() != 5 {
         false
@@ -77,14 +95,14 @@ fn is_retryable_db_error_code(code: &tokio_postgres::error::SqlState) -> bool {
     }
 }
 
-fn is_retryable_postgres_error(error: &tokio_postgres::Error) -> bool {
-    if error.is_closed() {
+fn is_retryable_postgres_error(e1: &tokio_postgres::Error) -> bool {
+    if e1.is_closed() {
         true
-    } else if let Some(db_error) = error.as_db_error() {
-        is_retryable_db_error_code(db_error.code())
-    } else if let Some(e2) = std::error::Error::source(error) {
+    } else if let Some(e2) = e1.as_db_error() {
+        code_is_database_connection_issue(e2.code())
+    } else if let Some(e2) = std::error::Error::source(e1) {
         if let Some(e3) = e2.downcast_ref::<std::io::Error>() {
-            is_retryable_io_error(e3.kind())
+            io_error_is_database_connection_issue(e3.kind())
         } else {
             false
         }
@@ -117,6 +135,21 @@ impl GetOptionPostgresError for crate::FindChannelError {
             Self::Postgres(e) => Some(e),
             _ => None,
         }
+    }
+}
+
+fn is_bad_connection<T, E>(res: &Result<T, E>) -> bool
+where
+    E: GetOptionPostgresError,
+{
+    if let Err(e) = res {
+        if let Some(e2) = e.get_option_postgres_error() {
+            is_retryable_postgres_error(e2)
+        } else {
+            false
+        }
+    } else {
+        false
     }
 }
 
@@ -207,114 +240,144 @@ impl PgQueue {
 
 #[derive(Debug)]
 pub struct PgWorker {
+    pgconf: Database,
     rx: Receiver<Job>,
-    pg: Client,
-    pgjh: Option<JoinHandle<Result<(), err::Error>>>,
 }
 
 impl PgWorker {
-    pub async fn new(pgconf: &Database) -> Result<(PgQueue, Self), Error> {
+    pub async fn new(pgconf: &Database) -> Result<(PgQueue,), Error> {
         let (tx, rx) = async_channel::bounded(64);
-        let (pg, pgjh) = create_connection(pgconf).await?;
-        let queue = PgQueue { tx };
         let worker = Self {
+            pgconf: pgconf.clone(),
             rx,
-            pg,
-            pgjh: Some(pgjh),
         };
-        Ok((queue, worker))
+        // TODO await join handle
+        let worker_jh = taskrun::spawn(async move {
+            let x = worker.work().await;
+            match x {
+                Ok(()) => {}
+                Err(e) => {
+                    error!("received error from PgWorker: {}", e);
+                }
+            }
+        });
+        let queue = PgQueue { tx };
+        Ok((queue,))
     }
 
-    async fn do_job_attempt(&mut self, job: Job) -> Result<(), Error> {
+    async fn do_job_attempt(&mut self, job: Job, pg: &Client) -> Result<(), Error> {
         match job {
             Job::ChConfBestMatchingNameRange(channel, range, tx) => {
-                let res = crate::channelconfig::chconf_best_matching_for_name_and_range(channel, range, &self.pg).await;
-                if let Err(e) = &res {
-                    if let Some(e2) = GetOptionPostgresError::get_option_postgres_error(e) {
-                        if is_retryable_postgres_error(e2) {
-                            // TODO
-                        } else {
-                            // TODO
-                        }
-                    }
-                }
-                if tx.send(res.map_err(Into::into)).await.is_err() {
+                let res = crate::channelconfig::chconf_best_matching_for_name_and_range(channel, range, pg).await;
+                if is_bad_connection(&res) {
+                    Err(Error::DatabaseConnectionBad)
+                } else if tx.send(res.map_err(Into::into)).await.is_err() {
                     // TODO count for stats
+                    Ok(())
+                } else {
+                    Ok(())
                 }
             }
             Job::ChConfForSeries(backend, series, tx) => {
-                let res = crate::channelconfig::chconf_for_series(&backend, series, &self.pg).await;
-                if tx.send(res.map_err(Into::into)).await.is_err() {
+                let res = crate::channelconfig::chconf_for_series(&backend, series, pg).await;
+                if is_bad_connection(&res) {
+                    Err(Error::DatabaseConnectionBad)
+                } else if tx.send(res.map_err(Into::into)).await.is_err() {
                     // TODO count for stats
+                    Ok(())
+                } else {
+                    Ok(())
                 }
             }
             Job::InfoForSeriesIds(ids, tx) => {
-                let res = crate::channelinfo::info_for_series_ids(&ids, &self.pg).await;
-                if tx.send(res.map_err(Into::into)).await.is_err() {
+                let res = crate::channelinfo::info_for_series_ids(&ids, pg).await;
+                if is_bad_connection(&res) {
+                    Err(Error::DatabaseConnectionBad)
+                } else if tx.send(res.map_err(Into::into)).await.is_err() {
                     // TODO count for stats
+                    Ok(())
+                } else {
+                    Ok(())
                 }
             }
             Job::SearchChannel(query, tx) => {
-                let res = crate::search::search_channel_scylla(query, &self.pg).await;
-                if tx.send(res.map_err(Into::into)).await.is_err() {
+                let res = crate::search::search_channel_scylla(query, pg).await;
+                if is_bad_connection(&res) {
+                    Err(Error::DatabaseConnectionBad)
+                } else if tx.send(res.map_err(Into::into)).await.is_err() {
                     // TODO count for stats
+                    Ok(())
+                } else {
+                    Ok(())
                 }
             }
             Job::SfChannelBySeries(query, tx) => {
-                let res = find_sf_channel_by_series(query, &self.pg).await;
-                if tx.send(res.map_err(Into::into)).await.is_err() {
+                let res = find_sf_channel_by_series(query, pg).await;
+                if is_bad_connection(&res) {
+                    Err(Error::DatabaseConnectionBad)
+                } else if tx.send(res.map_err(Into::into)).await.is_err() {
                     // TODO count for stats
+                    Ok(())
+                } else {
+                    Ok(())
                 }
             }
         }
-        Ok(())
     }
 
-    async fn do_job(&mut self, job: Job) -> Result<(), Error> {
+    async fn do_job(&mut self, job: Job, pg: &Client) -> Result<(), Error> {
+        self.do_job_attempt(job, pg).await
+    }
+
+    async fn work_inner(&mut self, pg: &Client) -> Result<(), Error> {
+        let selfname = "PgWorker::work_inner";
         loop {
-            match self.do_job_attempt(job).await {
-                Ok(()) => break,
+            match self.rx.recv().await {
+                Ok(job) => {
+                    self.do_job(job, pg).await?;
+                }
+                Err(_) => {
+                    error!("{selfname} can not receive from channel");
+                    break Err(Error::ChannelRecv);
+                }
+            }
+        }
+    }
+
+    async fn work(mut self) -> Result<(), Error> {
+        let selfname = "PgWorker::work";
+        loop {
+            if self.rx.is_closed() {
+                info!("Postgres worker input queue closed, exiting");
+                break Ok(());
+            }
+            let (pg, pgjh) = create_connection(&self.pgconf).await?;
+            match self.work_inner(&pg).await {
+                Ok(()) => {}
                 Err(e) => match e {
-                    Error::Error(error) => todo!(),
-                    Error::ChannelSend => todo!(),
-                    Error::ChannelRecv => todo!(),
-                    Error::Join => todo!(),
-                    Error::ChannelConfig(error) => todo!(),
+                    Error::ChannelRecv => {
+                        if self.rx.is_closed() == false {
+                            warn!("{selfname} sees {e} error, but channel not closed");
+                        }
+                    }
+                    Error::DatabaseConnectionBad => {
+                        warn!("{selfname} sees {e}");
+                    }
+                    _ => {}
                 },
             }
-        }
-        Ok(())
-    }
-
-    async fn work_inner(mut self) -> Result<(), Error> {
-        loop {
-            let x = self.rx.recv().await;
-            let job = match x {
-                Ok(x) => x,
-                Err(_) => {
-                    error!("PgWorker can not receive from channel");
-                    return Err(Error::ChannelRecv);
+            drop(pg);
+            match tokio::time::timeout(Duration::from_millis(8000), pgjh).await {
+                Ok(Ok(Ok(()))) => {}
+                Ok(x) => {
+                    warn!("{selfname} postgres connection join unclean: {x:?}");
                 }
-            };
-            self.do_job(job).await?;
+                Err(_) => {
+                    warn!("{selfname} drop postgres connection after await timeout");
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(rand::random_range(1200..3500))).await;
         }
-    }
-
-    pub async fn work(self) -> Result<(), Error> {
-        self.work_inner().await
-    }
-
-    pub async fn join(&mut self) -> Result<(), Error> {
-        if let Some(jh) = self.pgjh.take() {
-            jh.await.map_err(|_| Error::Join)?.map_err(Error::from)?;
-            Ok(())
-        } else {
-            Ok(())
-        }
-    }
-
-    pub fn close(&self) {
-        self.rx.close();
     }
 }
 

@@ -122,17 +122,7 @@ pub async fn host(ncc: NodeConfigCached, service_version: ServiceVersion) -> Res
         tokio::spawn(prometheus::host(bind));
     }
     // let rawjh = taskrun::spawn(nodenet::conn::events_service(node_config.clone()));
-    let (pgqueue, pgworker) = PgWorker::new(&ncc.node_config.cluster.database).await?;
-    // TODO use
-    let _pgworker_jh = taskrun::spawn(async move {
-        let x = pgworker.work().await;
-        match x {
-            Ok(()) => {}
-            Err(e) => {
-                error!("received error from PgWorker: {}", e);
-            }
-        }
-    });
+    let (pgqueue,) = PgWorker::new(&ncc.node_config.cluster.database).await?;
     let scyqueue = if let (Some(st), Some(mt), Some(lt)) = (
         ncc.node_config.cluster.scylla_st(),
         ncc.node_config.cluster.scylla_mt(),
