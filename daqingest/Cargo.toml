@@ -1,6 +1,6 @@
 [package]
 name = "daqingest"
-version = "0.3.1-aa.3"
+version = "0.3.1-aa.4"
 authors = ["Dominik Werder <dominik.werder@gmail.com>"]
 edition = "2024"
 
@@ -20,7 +20,7 @@ futures-util = "0.3"
 chrono = "0.4.38"
 bytes = "1.10.0"
 libc = "0.2"
-autoerr = "0.0"
+autoerr = "0.0.5"
 err = { path = "../../daqbuf-err", package = "daqbuf-err" }
 netpod = { path = "../../daqbuf-netpod", package = "daqbuf-netpod" }
 taskrun = { path = "../../daqbuffer/crates/taskrun" }
@@ -30,6 +30,7 @@ log = { path = "../../daqbuf-log", package = "daqbuf-log" }
 stats = { path = "../stats" }
 scywr = { path = "../scywr" }
 dbpg = { path = "../dbpg" }
+daqbuf_dbpg = { path = "../../daqbuf-dbpg", package = "daqbuf-dbpg" }
 netfetch = { path = "../netfetch" }
 serieswriter = { path = "../serieswriter" }
 #ingest-bsread = { path = "../ingest-bsread" }

@@ -24,8 +24,8 @@ byteorder = "1.5"
 futures-util = "0.3"
 md-5 = "0.10.5"
 hex = "0.4.3"
-regex = "1.8.4"
-axum = "0.8.1"
+regex = "1.11.2"
+axum = "0.8.4"
 http-body = "1"
 url = "2.5"
 chrono = "0.4"
@@ -55,6 +55,7 @@ streams = { path = "../../daqbuf-streams", package = "daqbuf-streams" }
 ca_proto = { path = "../../daqbuf-ca-proto", package = "daqbuf-ca-proto" }
 ca-proto-tokio = { path = "../../daqbuf-ca-proto-tokio", package = "daqbuf-ca-proto-tokio" }
 serde-helper = { path = "../../daqbuf-serde-helper", package = "daqbuf-serde-helper" }
+daqbuf_dbpg = { path = "../../daqbuf-dbpg", package = "daqbuf-dbpg" }
 taskrun = { path = "../../daqbuffer/crates/taskrun" }
 mrucache = { path = "../mrucache" }
 batchtools = { path = "../batchtools" }

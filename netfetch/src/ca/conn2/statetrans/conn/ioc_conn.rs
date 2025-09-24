@@ -97,7 +97,7 @@ pub struct ConnectingTcpDone {
     ts_beg: Instant,
     remote_addr: SocketAddrV4,
     ress_a: StateRessShr1,
-    queue_insert: ErasedFuture<(), 4>,
+    queue_insert: ErasedFuture<(), 0xf8>,
 }
 
 impl ConnectingTcpDone {
@@ -105,7 +105,7 @@ impl ConnectingTcpDone {
         tcp: TcpStream,
         ress_a: StateRessShr1,
         remote_addr: SocketAddrV4,
-        queue_insert: ErasedFuture<(), 4>,
+        queue_insert: ErasedFuture<(), 0xf8>,
     ) -> Self {
         let tsnow = Instant::now();
         Self {

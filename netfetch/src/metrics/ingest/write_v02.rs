@@ -2,7 +2,9 @@ use crate::metrics::RoutesResources;
 use axum::Json;
 use axum::extract::FromRequest;
 use axum::extract::Query;
+use axum::http;
 use axum::http::HeaderMap;
+use axum::response::IntoResponse;
 use bytes::Bytes;
 use core::fmt;
 use dbpg::seriesbychannel::ChannelInfoQuery;
@@ -21,6 +23,7 @@ use netpod::TsNano;
 use netpod::log;
 use netpod::ttl::RetentionTime;
 use scywr::insertqueues::InsertDeques;
+use scywr::insertqueues::InsertQueuesTx;
 use scywr::iteminsertqueue::ArrayValue;
 use scywr::iteminsertqueue::DataValue;
 use scywr::iteminsertqueue::QueryItem;
@@ -46,15 +49,15 @@ use std::time::SystemTime;
 use streams::framed_bytes::FramedBytesStream;
 use taskrun::tokio::time::timeout;
 
-macro_rules! error { ($($arg:expr),*) => ( if true { log::error!($($arg),*) } ); }
+macro_rules! error { ($($arg:tt)*) => ( if true { log::error!($($arg)*) } ); }
 
-macro_rules! info { ($($arg:expr),*) => ( if true { log::info!($($arg),*) } ); }
+macro_rules! info { ($($arg:tt)*) => ( if true { log::info!($($arg)*) } ); }
 
-macro_rules! debug_setup { ($($arg:expr),*) => ( if true { log::debug!($($arg),*) } ); }
+macro_rules! debug_setup { ($($arg:tt)*) => ( if true { log::debug!($($arg)*) } ); }
 
-macro_rules! trace_input { ($($arg:expr),*) => ( if true { log::trace!($($arg),*) } ); }
+macro_rules! trace_input { ($($arg:tt)*) => ( if true { log::trace!($($arg)*) } ); }
 
-macro_rules! trace_queues { ($($arg:expr),*) => ( if true { log::trace!($($arg),*) } ); }
+macro_rules! trace_queues { ($($arg:tt)*) => ( if true { log::trace!($($arg)*) } ); }
 
 autoerr::create_error_v1!(
     name(Error, "MetricsIngestV02Write"),
@@ -356,7 +359,7 @@ async fn write_with_fresh_msps_inner(
     body: axum::body::Body,
     rres: Arc<RoutesResources>,
 ) -> Result<Json<serde_json::Value>, Error> {
-    if let Some(ct) = headers.get("content-type") {
+    if let Some(ct) = headers.get(http::header::CONTENT_TYPE) {
         if let Ok(s) = ct.to_str() {
             if s == APP_CBOR_FRAMED {
             } else {
@@ -417,7 +420,7 @@ async fn write_with_fresh_msps_inner(
         let x = match x {
             Ok(x) => x,
             Err(_) => {
-                tick_writers(&mut writer, &mut iqdqs, rt.clone())?;
+                tick_writers(&mut writer, binwriter.as_mut(), &mut iqdqs, &mut iqtx, rt.clone()).await?;
                 continue;
             }
         };
@@ -439,23 +442,9 @@ async fn write_with_fresh_msps_inner(
             &mut binwriter,
             &mut iqdqs,
         )?;
-        trace_queues!("frame send_all begin  {}  {}", iqdqs.summary(), iqtx.summary());
-        iqtx.send_all(&mut iqdqs).await?;
-        trace_queues!("frame send_all done  {}  {}", iqdqs.summary(), iqtx.summary());
-        tick_writers(&mut writer, &mut iqdqs, rt.clone())?;
-        trace_queues!("frame tick_writers done  {}  {}", iqdqs.summary(), iqtx.summary());
-        if let Some(binwriter) = binwriter.as_mut() {
-            binwriter.tick(&mut iqdqs).unwrap();
-        }
+        tick_writers(&mut writer, binwriter.as_mut(), &mut iqdqs, &mut iqtx, rt.clone()).await?;
     }
-    trace_queues!("after send_all begin  {}  {}", iqdqs.summary(), iqtx.summary());
-    iqtx.send_all(&mut iqdqs).await?;
-    trace_queues!("after send_all done  {}  {}", iqdqs.summary(), iqtx.summary());
-    finish_writers(&mut writer, &mut iqdqs, rt.clone())?;
-    trace_queues!("after finish_writers done  {}  {}", iqdqs.summary(), iqtx.summary());
-    if let Some(binwriter) = binwriter.as_mut() {
-        binwriter.tick(&mut iqdqs).unwrap();
-    }
+    finish_writers(&mut writer, binwriter.as_mut(), &mut iqdqs, &mut iqtx, rt.clone()).await?;
     let ret = Json(serde_json::json!({
         "status": "ok",
         "chinfo": chinfo,
@@ -465,24 +454,57 @@ async fn write_with_fresh_msps_inner(
 }
 
 pub async fn write_with_fresh_msps(
-    (headers, Query(params), body): (HeaderMap, Query<HashMap<String, String>>, axum::body::Body),
+    headers: HeaderMap,
+    Query(params): Query<HashMap<String, String>>,
+    body: axum::body::Body,
     rres: Arc<RoutesResources>,
-) -> Json<serde_json::Value> {
+) -> impl IntoResponse {
     match write_with_fresh_msps_inner(headers, params, body, rres).await {
-        Ok(k) => k,
-        Err(e) => Json(serde_json::json!({
-            "error": e.to_string(),
-        })),
+        Ok(k) => k.into_response(),
+        Err(e) => (
+            http::StatusCode::OK,
+            Json(serde_json::json!({
+                "status": "error",
+                "message": e.to_string(),
+            })),
+        )
+            .into_response(),
     }
 }
 
-fn tick_writers(writer: &mut ValueSeriesWriter, deques: &mut InsertDeques, rt: RetentionTime) -> Result<(), Error> {
+async fn tick_writers(
+    writer: &mut ValueSeriesWriter,
+    binwriter: Option<&mut BinWriter>,
+    deques: &mut InsertDeques,
+    iqtx: &mut InsertQueuesTx,
+    rt: RetentionTime,
+) -> Result<(), Error> {
+    trace_queues!("frame send_all begin  {}  {}", deques.summary(), iqtx.summary());
+    iqtx.send_all(deques).await?;
+    trace_queues!("frame send_all done  {}  {}", deques.summary(), iqtx.summary());
     writer.tick(deques.deque(rt))?;
+    if let Some(binwriter) = binwriter {
+        binwriter.tick(deques).unwrap();
+    }
+    trace_queues!("frame tick_writers done  {}  {}", deques.summary(), iqtx.summary());
     Ok(())
 }
 
-fn finish_writers(writer: &mut ValueSeriesWriter, deques: &mut InsertDeques, rt: RetentionTime) -> Result<(), Error> {
+async fn finish_writers(
+    writer: &mut ValueSeriesWriter,
+    binwriter: Option<&mut BinWriter>,
+    deques: &mut InsertDeques,
+    iqtx: &mut InsertQueuesTx,
+    rt: RetentionTime,
+) -> Result<(), Error> {
+    trace_queues!("after send_all begin  {}  {}", deques.summary(), iqtx.summary());
+    iqtx.send_all(deques).await?;
+    trace_queues!("after send_all done  {}  {}", deques.summary(), iqtx.summary());
     writer.tick(deques.deque(rt))?;
+    if let Some(binwriter) = binwriter {
+        binwriter.tick(deques).unwrap();
+    }
+    trace_queues!("after finish_writers done  {}  {}", deques.summary(), iqtx.summary());
     Ok(())
 }
 
@@ -539,7 +561,65 @@ async fn register_series(
     Ok(ret)
 }
 
-async fn write_msp(
+async fn write_events_exact_2(
+    conf: DaqbufChannelConfig,
+    rt: RetentionTime,
+    body: axum::body::Body,
+    rres: Arc<RoutesResources>,
+) -> Result<Json<serde_json::Value>, Error> {
+    debug_setup!("write_events_exact  {:?}  {:?}", conf, rt);
+    let series = SeriesId::new(conf.series);
+    let msp_split = MspSplitDyn::new(1024 * 64, 1024 * 1024 * 10, rt.clone());
+    let mut writer = SeriesWriter::new(series, msp_split)?;
+    let mut binwriter = None;
+    debug_setup!("series writer established");
+    let mut iqdqs = InsertDeques::new();
+    let mut iqtx = rres.iqtx.clone();
+    let mut frames = FramedBytesStream::new(
+        body.into_data_stream()
+            .map_err(|_| streams::framed_bytes::Error::DataInput),
+    );
+    loop {
+        match timeout(Duration::from_millis(2000), frames.try_next()).await {
+            Ok(k) => match k? {
+                Some(frame) => {
+                    trace_input!("got frame len {}", frame.len());
+                    let deque = iqdqs.deque(rt.clone());
+                    frame_write(
+                        &frame,
+                        &conf.name,
+                        rt.clone(),
+                        conf.scalar_type.clone(),
+                        conf.shape.clone(),
+                        &mut writer,
+                        &mut binwriter,
+                        &mut iqdqs,
+                    )?;
+                    tick_writers(&mut writer, binwriter.as_mut(), &mut iqdqs, &mut iqtx, rt.clone()).await?;
+                }
+                None => {
+                    trace_input!("input stream done");
+                    break;
+                }
+            },
+            Err(_) => {
+                tick_writers(&mut writer, binwriter.as_mut(), &mut iqdqs, &mut iqtx, rt.clone()).await?;
+                continue;
+            }
+        }
+    }
+    finish_writers(&mut writer, binwriter.as_mut(), &mut iqdqs, &mut iqtx, rt.clone()).await?;
+    let ret = serde_json::json!({
+        "write_events_exact": {
+            "status": "ok",
+            "seriesId": series.id(),
+        }
+    });
+    let ret = Json(ret);
+    Ok(ret)
+}
+
+async fn write_events_exact(
     headers: HeaderMap,
     params: HashMap<String, String>,
     body: axum::body::Body,
@@ -590,73 +670,7 @@ async fn write_msp(
     }
 }
 
-async fn write_events_exact_2(
-    conf: DaqbufChannelConfig,
-    rt: RetentionTime,
-    body: axum::body::Body,
-    rres: Arc<RoutesResources>,
-) -> Result<Json<serde_json::Value>, Error> {
-    debug_setup!("write_events_exact  {:?}  {:?}", conf, rt);
-    let series = SeriesId::new(conf.series);
-    let msp_split = MspSplitDyn::new(1024 * 64, 1024 * 1024 * 10, rt.clone());
-    let mut writer = SeriesWriter::new(series, msp_split)?;
-    let mut binwriter = None;
-    debug_setup!("series writer established");
-    let mut iqdqs = InsertDeques::new();
-    let mut iqtx = rres.iqtx.clone();
-    let mut frames = FramedBytesStream::new(
-        body.into_data_stream()
-            .map_err(|_| streams::framed_bytes::Error::DataInput),
-    );
-    loop {
-        match timeout(Duration::from_millis(2000), frames.try_next()).await {
-            Ok(k) => match k? {
-                Some(frame) => {
-                    trace_input!("got frame len {}", frame.len());
-                    let deque = iqdqs.deque(rt.clone());
-                    frame_write(
-                        &frame,
-                        &conf.name,
-                        rt.clone(),
-                        conf.scalar_type.clone(),
-                        conf.shape.clone(),
-                        &mut writer,
-                        &mut binwriter,
-                        &mut iqdqs,
-                    )?;
-                    trace_queues!("frame send_all begin  {}  {}", iqdqs.summary(), iqtx.summary());
-                    iqtx.send_all(&mut iqdqs).await?;
-                    trace_queues!("frame send_all done  {}  {}", iqdqs.summary(), iqtx.summary());
-                    tick_writers(&mut writer, &mut iqdqs, rt.clone())?;
-                    trace_queues!("frame tick_writers done  {}  {}", iqdqs.summary(), iqtx.summary());
-                }
-                None => {
-                    trace_input!("input stream done");
-                    break;
-                }
-            },
-            Err(_) => {
-                tick_writers(&mut writer, &mut iqdqs, rt.clone())?;
-                continue;
-            }
-        }
-    }
-    trace_queues!("after send_all begin  {}  {}", iqdqs.summary(), iqtx.summary());
-    iqtx.send_all(&mut iqdqs).await?;
-    trace_queues!("after send_all done  {}  {}", iqdqs.summary(), iqtx.summary());
-    finish_writers(&mut writer, &mut iqdqs, rt.clone())?;
-    trace_queues!("after finish_writers done  {}  {}", iqdqs.summary(), iqtx.summary());
-    let ret = serde_json::json!({
-        "write_events_exact": {
-            "status": "ok",
-            "seriesId": series.id(),
-        }
-    });
-    let ret = Json(ret);
-    Ok(ret)
-}
-
-async fn write_events_exact(
+async fn write_msp(
     headers: HeaderMap,
     params: HashMap<String, String>,
     body: axum::body::Body,

@@ -10,10 +10,37 @@ use taskrun::tokio;
 
 struct AssertFits<F, const N: usize>(PhantomData<F>);
 
+const CHARTAB: [u8; 16] = [
+    b'0', b'1', b'2', b'3', b'4', b'5', b'6', b'7', b'8', b'9', b'a', b'b', b'c', b'd', b'e', b'f',
+];
+
+macro_rules! format_u32 {
+    ($n:expr,$b:expr) => {{
+        let n: u32 = $n;
+        let b: &mut [u8; 8] = $b;
+        let c = n.to_le_bytes();
+        b[0] = CHARTAB[(c[3] >> 4) as usize];
+        b[1] = CHARTAB[(c[3] & 0xf) as usize];
+        b[2] = CHARTAB[(c[2] >> 4) as usize];
+        b[3] = CHARTAB[(c[2] & 0xf) as usize];
+        b[4] = CHARTAB[(c[1] >> 4) as usize];
+        b[5] = CHARTAB[(c[1] & 0xf) as usize];
+        b[6] = CHARTAB[(c[0] >> 4) as usize];
+        b[7] = CHARTAB[(c[0] & 0xf) as usize];
+        if let Ok(x) = str::from_utf8(b) { x } else { "" }
+    }};
+}
+
 impl<F, const N: usize> AssertFits<F, N> {
     const GOOD: bool = {
-        let a = std::mem::size_of::<F>() <= N && std::mem::align_of::<F>() <= 16;
-        assert!(a, "future too large or bad alignment");
+        let size = std::mem::size_of::<F>() as u32;
+        let _align = std::mem::align_of::<F>();
+        let a = std::mem::size_of::<F>() <= N && std::mem::align_of::<F>() <= 8;
+        let mut b1 = [0u8; 8];
+        let s1 = format_u32!(size as u32, &mut b1);
+        if a == false {
+            assert!(a, "{}", s1);
+        }
         a
     };
 }
@@ -28,7 +55,7 @@ pub struct ErasedFuture<T, const SIZE: usize> {
 
 impl<T, const SIZE: usize> fmt::Debug for ErasedFuture<T, SIZE> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        fmt.debug_struct("ErasedFuture").finish()
+        fmt.debug_struct("ErasedFuture").field("SIZE", &SIZE).finish()
     }
 }
 

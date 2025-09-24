@@ -358,6 +358,128 @@ impl RoutesResources {
     }
 }
 
+fn make_routes_ingest(
+    rres: Arc<RoutesResources>,
+    dcom: Arc<DaemonComm>,
+    connset_cmd_tx: Sender<CaConnSetEvent>,
+    stats_set: StatsSet,
+) -> axum::Router {
+    use axum::routing::post;
+    use axum::{Router, extract};
+    use http::StatusCode;
+    Router::new().nest(
+        "/write",
+        Router::new()
+            .route(
+                "/v2",
+                post({
+                    let rres = rres.clone();
+                    move |headers: HeaderMap, params: Query<HashMap<String, String>>, body: axum::body::Body| {
+                        ingest::write_v02::write_with_fresh_msps(headers, params, body, rres)
+                    }
+                }),
+            )
+            .route(
+                "/v1",
+                post({
+                    let rres = rres.clone();
+                    move |(headers, params, body): (HeaderMap, Query<HashMap<String, String>>, axum::body::Body)| {
+                        ingest::post_v01((headers, params, body), rres)
+                    }
+                }),
+            ),
+    )
+}
+
+fn make_routes_daqingest_private(
+    rres: Arc<RoutesResources>,
+    dcom: Arc<DaemonComm>,
+    connset_cmd_tx: Sender<CaConnSetEvent>,
+    stats_set: StatsSet,
+) -> axum::Router {
+    use axum::Router;
+    use axum::extract;
+    use axum::routing::get;
+    Router::new()
+        .nest(
+            "/channel",
+            make_routes_private_channel(rres.clone(), dcom.clone(), connset_cmd_tx.clone(), stats_set.clone()),
+        )
+        .route(
+            "/channel/states",
+            get({
+                let tx = connset_cmd_tx.clone();
+                |Query(params): Query<HashMap<String, String>>| private_channel_states(params, tx)
+            }),
+        )
+}
+
+fn make_routes_daqingest(
+    rres: Arc<RoutesResources>,
+    dcom: Arc<DaemonComm>,
+    connset_cmd_tx: Sender<CaConnSetEvent>,
+    stats_set: StatsSet,
+) -> axum::Router {
+    use axum::Router;
+    use axum::extract;
+    use axum::routing::get;
+    Router::new()
+        .fallback(|| async { axum::Json(json!({ "subcommands": ["channel", "metrics"] } )) })
+        .nest(
+            "/metrics",
+            Router::new().fallback(|| async { StatusCode::NOT_FOUND }).route(
+                "/",
+                get({
+                    let dcom = dcom.clone();
+                    let stats_set = stats_set.clone();
+                    || async move {
+                        let prom = metrics2(dcom).await.unwrap_or(String::new());
+                        prom
+                    }
+                }),
+            ),
+        )
+        .nest(
+            "/metrics2",
+            Router::new().fallback(|| async { StatusCode::NOT_FOUND }).route(
+                "/",
+                get({
+                    let dcom = dcom.clone();
+                    || metrics2(dcom)
+                }),
+            ),
+        )
+        .nest(
+            "/config",
+            Router::new().route(
+                "/reload",
+                get({
+                    let dcom = dcom.clone();
+                    || config_reload(dcom)
+                }),
+            ),
+        )
+        .nest(
+            "/channel",
+            make_routes_channel(rres.clone(), dcom.clone(), connset_cmd_tx.clone(), stats_set.clone()),
+        )
+        .nest(
+            "/ingest",
+            make_routes_ingest(rres.clone(), dcom.clone(), connset_cmd_tx.clone(), stats_set.clone()),
+        )
+        .nest(
+            "/private",
+            make_routes_daqingest_private(rres, dcom, connset_cmd_tx, stats_set.clone()),
+        )
+        .route(
+            "/metricbeat",
+            get({
+                let stats_set = stats_set.clone();
+                || async move { metricbeat(&stats_set) }
+            }),
+        )
+}
+
 fn make_routes(
     rres: Arc<RoutesResources>,
     dcom: Arc<DaemonComm>,
@@ -374,91 +496,8 @@ fn make_routes(
             StatusCode::NOT_FOUND
         })
         .nest(
-            "/daqingest/some",
-            Router::new()
-                .route("/path1", get(|| async { (StatusCode::OK, format!("Hello there!")) }))
-                .route(
-                    "/path2",
-                    get(|qu: Query<DummyQuery>| async move { (StatusCode::OK, format!("{qu:?}")) }),
-                )
-                .route("/path3/", get(|| async { (StatusCode::OK, format!("Hello there!")) })),
-        )
-        .nest(
             "/daqingest",
-            Router::new()
-                .fallback(|| async { axum::Json(json!({"subcommands":["channel", "metrics"]})) })
-                .nest(
-                    "/metrics",
-                    Router::new().fallback(|| async { StatusCode::NOT_FOUND }).route(
-                        "/",
-                        get({
-                            let dcom = dcom.clone();
-                            let stats_set = stats_set.clone();
-                            || async move {
-                                let prom = metrics2(dcom).await.unwrap_or(String::new());
-                                prom
-                            }
-                        }),
-                    ),
-                )
-                .nest(
-                    "/metrics2",
-                    Router::new().fallback(|| async { StatusCode::NOT_FOUND }).route(
-                        "/",
-                        get({
-                            let dcom = dcom.clone();
-                            || metrics2(dcom)
-                        }),
-                    ),
-                )
-                .nest(
-                    "/config",
-                    Router::new()
-                        .route("/", get(|| async { axum::Json(json!({"__tmp":"slashed"})) }))
-                        .route("//", get(|| async { axum::Json(json!({"__tmp":"doubleslashed"})) }))
-                        .route(
-                            "/reload",
-                            get({
-                                let dcom = dcom.clone();
-                                || config_reload(dcom)
-                            }),
-                        ),
-                )
-                .nest(
-                    "/channel",
-                    make_routes_channel(rres.clone(), dcom.clone(), connset_cmd_tx.clone(), stats_set.clone()),
-                )
-                .nest(
-                    "/private",
-                    Router::new()
-                        .nest(
-                            "/ingest",
-                            make_routes_ingest(rres.clone(), dcom.clone(), connset_cmd_tx.clone(), stats_set.clone()),
-                        )
-                        .nest(
-                            "/channel",
-                            make_routes_private_channel(
-                                rres.clone(),
-                                dcom.clone(),
-                                connset_cmd_tx.clone(),
-                                stats_set.clone(),
-                            ),
-                        )
-                        .route(
-                            "/channel/states",
-                            get({
-                                let tx = connset_cmd_tx.clone();
-                                |Query(params): Query<HashMap<String, String>>| private_channel_states(params, tx)
-                            }),
-                        ),
-                ),
-        )
-        .route(
-            "/daqingest/metricbeat",
-            get({
-                let stats_set = stats_set.clone();
-                || async move { metricbeat(&stats_set) }
-            }),
+            make_routes_daqingest(rres, dcom.clone(), connset_cmd_tx, stats_set.clone()),
         )
         .route(
             "/daqingest/always-error/",
@@ -553,39 +592,6 @@ fn make_routes_channel(
             get({
                 let dcom = dcom.clone();
                 |Query(params): Query<HashMap<String, String>>| channel_remove(params, dcom)
-            }),
-        )
-}
-
-fn make_routes_ingest(
-    rres: Arc<RoutesResources>,
-    dcom: Arc<DaemonComm>,
-    connset_cmd_tx: Sender<CaConnSetEvent>,
-    stats_set: StatsSet,
-) -> axum::Router {
-    use axum::routing::{get, post, put};
-    use axum::{Router, extract};
-    use http::StatusCode;
-    Router::new()
-        .nest(
-            "/write",
-            Router::new().route(
-                "/v1",
-                put({
-                    let rres = rres.clone();
-                    move |(headers, params, body): (HeaderMap, Query<HashMap<String, String>>, axum::body::Body)| {
-                        ingest::write_v02::write_with_fresh_msps((headers, params, body), rres)
-                    }
-                }),
-            ),
-        )
-        .route(
-            "/v1",
-            post({
-                let rres = rres.clone();
-                move |(headers, params, body): (HeaderMap, Query<HashMap<String, String>>, axum::body::Body)| {
-                    ingest::post_v01((headers, params, body), rres)
-                }
             }),
         )
 }
