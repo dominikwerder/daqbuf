@@ -714,7 +714,7 @@ mod container_events_serde {
     use std::fmt;
     use std::marker::PhantomData;
 
-    macro_rules! trace_serde { ($($arg:expr),*) => ( if false { eprintln!($($arg),*); }) }
+    macro_rules! trace_serde { ($($arg:tt)*) => ( if false { eprintln!($($arg)*); }) }
 
     impl<EVT> Serialize for ContainerEvents<EVT>
     where
@@ -778,6 +778,7 @@ mod container_events_serde {
                         tss = Some(map.next_value()?);
                     }
                     "vals" => {
+                        trace_serde!("Vis ContainerEvents visit_map");
                         vals = Some(map.next_value()?);
                     }
                     _ => {
@@ -803,6 +804,7 @@ mod container_events_serde {
         where
             D: Deserializer<'de>,
         {
+            trace_serde!("Deserialize for ContainerEvents<EVT>");
             let stname = std::any::type_name::<Self>();
             de.deserialize_struct(stname, &["tss", "vals"], Vis { _t1: PhantomData })
         }

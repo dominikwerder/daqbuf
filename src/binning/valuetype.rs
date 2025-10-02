@@ -13,7 +13,7 @@ use serde::Deserialize;
 use serde::Serialize;
 use std::collections::VecDeque;
 
-macro_rules! trace_ingest_event { ($($arg:expr),*) => ( if false { log::trace!($($arg),*) } ); }
+macro_rules! trace_ingest_event { ($($arg:tt)*) => ( if false { log::trace!($($arg)*) } ); }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EnumVariantContainer {
