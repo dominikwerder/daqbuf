@@ -99,12 +99,12 @@ async fn main_run_inner(opts: DaqIngestOpts) -> Result<(), Error> {
             daqingest::opts::ScyllaSubcmd::Schema(j) => match j.sub {
                 daqingest::opts::ScyllaSchemaSubcmd::Check(h) => {
                     info!("daqingest version {} {}", clap::crate_version!(), buildmark);
-                    let (opts, _) = parse_config(h.config.into()).await?;
+                    let (opts, _) = parse_config(h.config.into()).await.map_err(Error::from_string)?;
                     scylla_schema_check(opts, false).await?;
                 }
                 daqingest::opts::ScyllaSchemaSubcmd::Change(h) => {
                     info!("daqingest version {} {}", clap::crate_version!(), buildmark);
-                    let (opts, _) = parse_config(h.config.into()).await?;
+                    let (opts, _) = parse_config(h.config.into()).await.map_err(Error::from_string)?;
                     scylla_schema_check(opts, true).await?;
                 }
             },
@@ -112,7 +112,7 @@ async fn main_run_inner(opts: DaqIngestOpts) -> Result<(), Error> {
         SubCmd::ChannelAccess(k) => match k {
             ChannelAccess::CaIngest(k) => {
                 info!("daqingest version {} {}", clap::crate_version!(), buildmark);
-                let (conf, channels_config) = parse_config(k.config.into()).await?;
+                let (conf, channels_config) = parse_config(k.config.into()).await.map_err(Error::from_string)?;
                 daqingest::daemon::run(conf, channels_config).await?
             }
             ChannelAccess::CaSearch(_k) => {

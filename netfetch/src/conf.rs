@@ -1,4 +1,3 @@
-use err::Error;
 use netpod::Database;
 use netpod::log;
 use regex::Regex;
@@ -13,6 +12,22 @@ use std::time::Duration;
 use taskrun::tokio;
 use tokio::fs::OpenOptions;
 use tokio::io::AsyncReadExt;
+
+autoerr::create_error_v1!(
+    name(ConfError, "Config"),
+    enum variants {
+        IO(#[from] std::io::Error),
+        ConfigFileBad(String),
+        YamlBad,
+        Invalid,
+    },
+);
+
+impl From<serde_yaml::Error> for ConfError {
+    fn from(_: serde_yaml::Error) -> Self {
+        ConfError::YamlBad
+    }
+}
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct CaIngestOpts {
@@ -483,7 +498,7 @@ fn test_duration_parse() {
     assert_eq!(a.dur, Duration::from_millis(3170));
 }
 
-async fn parse_channel_config_txt(fname: &Path) -> Result<ChannelsConfig, Error> {
+async fn parse_channel_config_txt(fname: &Path) -> Result<ChannelsConfig, ConfError> {
     let basename = fname.file_stem().unwrap().to_str().unwrap();
     let re_p = Regex::new("--------------------------").unwrap();
     let re_n = Regex::new("--------------------------").unwrap();
@@ -524,35 +539,35 @@ async fn parse_channel_config_txt(fname: &Path) -> Result<ChannelsConfig, Error>
     Ok(conf)
 }
 
-pub async fn parse_channels(channels_dir: Option<PathBuf>) -> Result<Option<ChannelsConfig>, Error> {
+pub async fn parse_channels(channels_dir: Option<PathBuf>) -> Result<Option<ChannelsConfig>, ConfError> {
     if let Some(fname) = channels_dir.as_ref() {
         let meta = tokio::fs::metadata(fname).await?;
         if meta.is_file() {
             if fname.ends_with(".txt") {
                 Ok(Some(parse_channel_config_txt(fname).await?))
             } else {
-                let e = Error::with_msg_no_trace(format!("unsupported channel config file {:?}", fname));
-                return Err(e);
+                let e = ConfError::ConfigFileBad(fname.to_string_lossy().into());
+                Err(e)
             }
         } else if meta.is_dir() {
             Ok(Some(parse_config_dir(&fname).await?))
         } else {
-            let e = Error::with_msg_no_trace(format!("unsupported channel config input {:?}", fname));
-            return Err(e);
+            let e = ConfError::ConfigFileBad(fname.to_string_lossy().into());
+            Err(e)
         }
     } else {
         Ok(None)
     }
 }
 
-pub async fn parse_config(config: PathBuf) -> Result<(CaIngestOpts, Option<ChannelsConfig>), Error> {
+pub async fn parse_config(config: PathBuf) -> Result<(CaIngestOpts, Option<ChannelsConfig>), ConfError> {
     let mut file = OpenOptions::new().read(true).open(config).await?;
     let mut buf = Vec::new();
     file.read_to_end(&mut buf).await?;
-    let conf: CaIngestOpts = serde_yaml::from_slice(&buf).map_err(Error::from_string)?;
+    let conf: CaIngestOpts = serde_yaml::from_slice(&buf)?;
     drop(file);
     if !conf.is_valid() {
-        let e = Error::with_msg_no_trace(format!("invalid config file"));
+        let e = ConfError::Invalid;
         return Err(e);
     }
     // let re_p = regex::Regex::new(&conf.whitelist.clone().unwrap_or("--nothing-ur9nc23ur98c--".into()))?;
@@ -561,7 +576,7 @@ pub async fn parse_config(config: PathBuf) -> Result<(CaIngestOpts, Option<Chann
     Ok((conf, channels))
 }
 
-async fn parse_config_dir(dir: &Path) -> Result<ChannelsConfig, Error> {
+async fn parse_config_dir(dir: &Path) -> Result<ChannelsConfig, ConfError> {
     let mut ret = ChannelsConfig::new();
     let mut rd = tokio::fs::read_dir(dir).await?;
     loop {
@@ -576,8 +591,7 @@ async fn parse_config_dir(dir: &Path) -> Result<ChannelsConfig, Error> {
         if fns.ends_with(".yml") || fns.ends_with(".yaml") {
             let basename = fnp.file_stem().unwrap().to_str().unwrap();
             let buf = tokio::fs::read(e.path()).await?;
-            let conf: BTreeMap<String, ChannelConfigParse> =
-                serde_yaml::from_slice(&buf).map_err(Error::from_string)?;
+            let conf: BTreeMap<String, ChannelConfigParse> = serde_yaml::from_slice(&buf)?;
             log::info!("parsed {} channels from {}", conf.len(), fns);
             ret.push_from_parsed(&conf, basename);
         } else {

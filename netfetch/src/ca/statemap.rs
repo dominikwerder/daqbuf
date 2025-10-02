@@ -192,8 +192,7 @@ pub enum ChannelStateValue {
 pub struct ChannelState {
     pub value: ChannelStateValue,
     pub config: ChannelConfig,
-    pub touched: u8,
-    config_file_basename: String,
+    touched: u8,
 }
 
 impl ChannelState {
@@ -211,7 +210,6 @@ impl ChannelState {
             value: ChannelStateValue::InitDummy,
             config: ChannelConfig::dummy(),
             touched: 0,
-            config_file_basename: String::new(),
         }
     }
 
@@ -222,8 +220,23 @@ impl ChannelState {
             }),
             config: ch_cfg.clone(),
             touched: 1,
-            config_file_basename: ch_cfg.config_file_basename().into(),
         }
+    }
+
+    pub fn config_file_basename(&self) -> &str {
+        self.config.config_file_basename()
+    }
+
+    pub fn set_touched(&mut self) {
+        self.touched = self.touched.saturating_add(1);
+    }
+
+    pub fn clear_touched(&mut self) {
+        self.touched = 0;
+    }
+
+    pub fn is_touched(&self) -> bool {
+        self.touched != 0
     }
 }
 

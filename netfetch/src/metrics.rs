@@ -27,6 +27,7 @@ use http::Request;
 use http::StatusCode;
 use http_body::Body;
 use log::*;
+use netpod::APP_JSON;
 use scywr::config::ScyllaIngestConfig;
 use scywr::insertqueues::InsertQueuesTx;
 use scywr::iteminsertqueue::QueryItem;
@@ -156,12 +157,17 @@ async fn config_reload(dcom: Arc<DaemonComm>) -> Result<axum::Json<serde_json::V
     dcom.tx.send(item).await;
     match rx.recv().await {
         Ok(x) => {
-            let res = serde_json::json!({"result":{"ok":x}});
+            let res = json!({
+                "status": "ok",
+            });
             let ret = serde_json::to_value(&res).unwrap();
             Ok(axum::Json(ret))
         }
         Err(e) => {
-            let res = serde_json::json!({"result":{"err":"recverr"}});
+            let res = json!({
+                "status": "error",
+                "error": e.to_string(),
+            });
             let ret = serde_json::to_value(&res).unwrap();
             Ok(axum::Json(ret))
         }
@@ -261,13 +267,51 @@ async fn channel_inspect_inner(
     }
 }
 
-async fn channel_inspect(
+async fn channel_inspect(params: HashMap<String, String>, dcom: Arc<DaemonComm>) -> impl IntoResponse {
+    match channel_inspect_inner(params, dcom).await {
+        Ok(ret) => ret.into_response(),
+        Err(e) => (
+            StatusCode::OK,
+            [(http::header::CONTENT_TYPE, APP_JSON)],
+            axum::Json(json!({"status":"error","error":e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+async fn ca_conn_set_setpoint_channel_configs_inner(
     params: HashMap<String, String>,
     dcom: Arc<DaemonComm>,
-) -> Result<axum::Json<serde_json::Value>, Response> {
-    match channel_inspect_inner(params, dcom).await {
-        Ok(ret) => Ok(ret),
-        Err(e) => Err(PublicErrorMsg(e.to_string()).into_response()),
+) -> Result<axum::Json<serde_json::Value>, Error> {
+    let (tx, rx) = async_channel::bounded(1);
+    let ev = DaemonEvent::CaConnSetCmd(crate::ca::connset::ConnSetCmd::ChannelConfigSetpoint(
+        crate::ca::connset::ChannelConfigSetpointRequest {
+            name: String::new(),
+            tx,
+        },
+    ));
+    dcom.tx.send(ev).await?;
+    match rx.recv().await {
+        Ok(js) => match serde_json::from_str(&js) {
+            Ok(js) => Ok(axum::Json(js)),
+            Err(e) => Err(Error::from_string(format!("error parsing json from CaConnSet {e}"))),
+        },
+        Err(e) => Err(Error::from_string(format!("recv error while waiting for answer {e}"))),
+    }
+}
+
+async fn ca_conn_set_setpoint_channel_configs(
+    params: HashMap<String, String>,
+    dcom: Arc<DaemonComm>,
+) -> impl IntoResponse {
+    match ca_conn_set_setpoint_channel_configs_inner(params, dcom).await {
+        Ok(ret) => ret.into_response(),
+        Err(e) => (
+            StatusCode::OK,
+            [(http::header::CONTENT_TYPE, APP_JSON)],
+            axum::Json(json!({"status":"error","error":e.to_string()})),
+        )
+            .into_response(),
     }
 }
 
@@ -620,6 +664,13 @@ fn make_routes_private_channel(
             get({
                 let dcom = dcom.clone();
                 |Query(params): Query<HashMap<String, String>>| channel_inspect(params, dcom)
+            }),
+        )
+        .route(
+            "/CaConnSet-channel-configs",
+            get({
+                let dcom = dcom.clone();
+                |Query(params): Query<HashMap<String, String>>| ca_conn_set_setpoint_channel_configs(params, dcom)
             }),
         )
 }

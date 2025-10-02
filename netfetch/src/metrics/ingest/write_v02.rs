@@ -143,17 +143,19 @@ where
     T: EventValueType,
     F1: Fn(<T as EventValueType>::IterTy1<'_>) -> DataValue,
 {
+    let selfname = "evpush_dim0";
     let evs: ContainerEvents<T> = ciborium::de::from_reader(Cursor::new(params.frame))
         .map_err(|e| {
             error!("cbor decode error {e}");
         })
         .map_err(|_| Error::Decode)?;
-    // trace_input!("see events {:?}", evs);
-    let stnow = SystemTime::now();
-    let tsev = TsNano::from_system_time(stnow);
+    // let stnow = SystemTime::now();
+    // let tsev = TsNano::from_system_time(stnow);
     let tsnow = Instant::now();
+    let ts_net = tsnow;
     let mut emit_state = WritableTypeState::new(params.writer.sid(), params.rt.clone());
-    if evs.len() != 0 {
+    if evs.len() == 0 {
+    } else {
         if params.binwriter.is_none() {
             for (i, (ts, val)) in evs.iter_zip().enumerate() {
                 let min_quiets = MinQuiets::http_ingest_default();
@@ -180,45 +182,81 @@ where
             }
         }
         let binwriter = params.binwriter.as_mut().unwrap();
-        for (i, (ts, val)) in evs.iter_zip().enumerate() {
+        for (i, (tsev, val)) in evs.iter_zip().enumerate() {
             let val = val.clone();
             let val = f1(val);
             let val_f32 = val.f32_for_binning();
-            binwriter.ingest(ts, val_f32, params.iqdqs).unwrap();
+            trace_input!("{selfname}  {:20}  {:8.3}", tsev, val_f32);
+            binwriter.ingest(tsev, val_f32, params.iqdqs).unwrap();
         }
         let deque = params.iqdqs.deque(params.rt.clone());
-        for (i, (ts, val)) in evs.iter_zip().enumerate() {
+        for (i, (tsev, val)) in evs.iter_zip().enumerate() {
             let val = val.clone();
-            trace_input!("ev  {:6}  {:20}  {:20?}", i, ts, val);
+            trace_input!("{selfname}  {:6}  {:20}  {:20?}", i, tsev, val);
             let val = f1(val);
             params
                 .writer
-                .write(WritableType(ts, val), &mut emit_state, tsnow, tsev, deque)?;
+                .write(WritableType(tsev, val), &mut emit_state, ts_net, tsev, deque)?;
         }
-    } else {
     }
     Ok(())
 }
 
 fn evpush_dim0_enum(mut params: EvPushParams) -> Result<(), Error> {
+    let selfname = "evpush_dim0_enum";
     let evs: ContainerEvents<EnumVariant> = ciborium::de::from_reader(Cursor::new(params.frame))
         .map_err(|e| {
             error!("cbor decode error {e}");
         })
         .map_err(|_| Error::Decode)?;
-    // trace_input!("see events {:?}", evs);
-    let stnow = SystemTime::now();
-    let tsev = TsNano::from_system_time(stnow);
+    // let stnow = SystemTime::now();
+    // let tsev = TsNano::from_system_time(stnow);
     let tsnow = Instant::now();
+    let ts_net = tsnow;
     let mut emit_state = WritableTypeState::new(params.writer.sid(), params.rt.clone());
-    let deque = params.iqdqs.deque(params.rt.clone());
-    for (i, (ts, val)) in evs.iter_zip().enumerate() {
-        let val = val.clone();
-        trace_input!("ev  {:6}  {:20}  {:20?}", i, ts, val);
-        let val = DataValue::Scalar(ScalarValue::Enum(val.ix as i16, val.name.into()));
-        params
-            .writer
-            .write(WritableType(ts, val), &mut emit_state, tsnow, tsev, deque)?;
+    if evs.len() == 0 {
+    } else {
+        if params.binwriter.is_none() {
+            for (i, (ts, val)) in evs.iter_zip().enumerate() {
+                let min_quiets = MinQuiets::http_ingest_default();
+                let is_polled = false;
+                let emit_znt_zero_default = WriteCntZero::Disable;
+                let do_discard_front = DiscardFirstOutput::Enable;
+                let cssid = ChannelStatusSeriesId::new(0);
+                let sid = params.writer.sid();
+                let wr2 = BinWriter::new(
+                    ts,
+                    min_quiets,
+                    is_polled,
+                    emit_znt_zero_default,
+                    do_discard_front,
+                    cssid,
+                    sid,
+                    params.scalar_type.clone(),
+                    params.shape.clone(),
+                    params.chname.into(),
+                )
+                .unwrap();
+                *params.binwriter = Some(wr2);
+                break;
+            }
+        }
+        let binwriter = params.binwriter.as_mut().unwrap();
+        for (i, (tsev, val)) in evs.iter_zip().enumerate() {
+            let val = val.clone();
+            let val_f32 = val.ix as f32;
+            trace_input!("{selfname}  {:20}  {:8.3}", tsev, val_f32);
+            binwriter.ingest(tsev, val_f32, params.iqdqs).unwrap();
+        }
+        let deque = params.iqdqs.deque(params.rt.clone());
+        for (i, (tsev, val)) in evs.iter_zip().enumerate() {
+            let val = val.clone();
+            trace_input!("{selfname}  {:6}  {:20}  {:20?}", i, tsev, val);
+            let val = DataValue::Scalar(ScalarValue::Enum(val.ix as i16, val.name.into()));
+            params
+                .writer
+                .write(WritableType(tsev, val), &mut emit_state, ts_net, tsev, deque)?;
+        }
     }
     Ok(())
 }
@@ -228,13 +266,17 @@ where
     Vec<T>: EventValueType,
     F1: Fn(<Vec<T> as EventValueType>::IterTy1<'_>) -> DataValue,
 {
+    let selfname = "evpush_dim1";
     let evs: ContainerEvents<Vec<T>> = ciborium::de::from_reader(Cursor::new(params.frame))
         .map_err(|e| {
             error!("cbor decode error {e}");
         })
         .map_err(|_| Error::Decode)?;
     trace_input!("see events {:?}", evs);
-    error!("TODO require timestamp in input format");
+    if true {
+        error!("TODO require timestamp in input format");
+        return Err(Error::NotSupported);
+    }
     let stnow = SystemTime::now();
     let tsev = TsNano::from_system_time(stnow);
     let tsnow = Instant::now();
@@ -242,7 +284,7 @@ where
     let deque = params.iqdqs.deque(params.rt.clone());
     for (i, (ts, val)) in evs.iter_zip().enumerate() {
         let val = val.clone();
-        trace_input!("ev  {:6}  {:20}  {:20?}", i, ts, val);
+        trace_input!("{selfname}  {:6}  {:20}  {:20?}", i, ts, val);
         let val = f1(val);
         params
             .writer
@@ -353,12 +395,52 @@ fn frame_write(
     Ok(())
 }
 
+async fn tick_writers(
+    writer: &mut ValueSeriesWriter,
+    binwriter: Option<&mut BinWriter>,
+    deques: &mut InsertDeques,
+    iqtx: &mut InsertQueuesTx,
+    rt: RetentionTime,
+) -> Result<(), Error> {
+    trace_queues!("frame send_all begin  {}  {}", deques.summary(), iqtx.summary());
+    iqtx.send_all(deques).await?;
+    trace_queues!("frame send_all done  {}  {}", deques.summary(), iqtx.summary());
+    writer.tick(deques.deque(rt))?;
+    if let Some(binwriter) = binwriter {
+        binwriter.tick(deques).unwrap();
+    }
+    trace_queues!("frame tick_writers done  {}  {}", deques.summary(), iqtx.summary());
+    Ok(())
+}
+
+async fn finish_writers(
+    writer: &mut ValueSeriesWriter,
+    binwriter: Option<&mut BinWriter>,
+    deques: &mut InsertDeques,
+    iqtx: &mut InsertQueuesTx,
+    rt: RetentionTime,
+) -> Result<(), Error> {
+    trace_queues!("after send_all begin  {}  {}", deques.summary(), iqtx.summary());
+    iqtx.send_all(deques).await?;
+    trace_queues!("after send_all done  {}  {}", deques.summary(), iqtx.summary());
+    writer.tick(deques.deque(rt))?;
+    if let Some(binwriter) = binwriter {
+        binwriter.tick(deques).unwrap();
+    }
+    trace_queues!("after finish_writers done  {}  {}", deques.summary(), iqtx.summary());
+    iqtx.send_all(deques).await?;
+    trace_queues!("after again send_all done  {}  {}", deques.summary(), iqtx.summary());
+    Ok(())
+}
+
 async fn write_with_fresh_msps_inner(
     headers: HeaderMap,
     params: HashMap<String, String>,
     body: axum::body::Body,
     rres: Arc<RoutesResources>,
 ) -> Result<Json<serde_json::Value>, Error> {
+    info!("params: {params:?}");
+    info!("headers: {headers:?}");
     if let Some(ct) = headers.get(http::header::CONTENT_TYPE) {
         if let Ok(s) = ct.to_str() {
             if s == APP_CBOR_FRAMED {
@@ -448,7 +530,9 @@ async fn write_with_fresh_msps_inner(
     let ret = Json(serde_json::json!({
         "status": "ok",
         "chinfo": chinfo,
-        "series_id": chinfo.series.to_series().id(),
+        "backend": chinfo.backend,
+        "channelName": chinfo.channel,
+        "seriesId": chinfo.series.to_series().id(),
     }));
     Ok(ret)
 }
@@ -461,51 +545,12 @@ pub async fn write_with_fresh_msps(
 ) -> impl IntoResponse {
     match write_with_fresh_msps_inner(headers, params, body, rres).await {
         Ok(k) => k.into_response(),
-        Err(e) => (
-            http::StatusCode::OK,
-            Json(serde_json::json!({
-                "status": "error",
-                "message": e.to_string(),
-            })),
-        )
-            .into_response(),
+        Err(e) => Json(serde_json::json!({
+            "status": "error",
+            "message": e.to_string(),
+        }))
+        .into_response(),
     }
-}
-
-async fn tick_writers(
-    writer: &mut ValueSeriesWriter,
-    binwriter: Option<&mut BinWriter>,
-    deques: &mut InsertDeques,
-    iqtx: &mut InsertQueuesTx,
-    rt: RetentionTime,
-) -> Result<(), Error> {
-    trace_queues!("frame send_all begin  {}  {}", deques.summary(), iqtx.summary());
-    iqtx.send_all(deques).await?;
-    trace_queues!("frame send_all done  {}  {}", deques.summary(), iqtx.summary());
-    writer.tick(deques.deque(rt))?;
-    if let Some(binwriter) = binwriter {
-        binwriter.tick(deques).unwrap();
-    }
-    trace_queues!("frame tick_writers done  {}  {}", deques.summary(), iqtx.summary());
-    Ok(())
-}
-
-async fn finish_writers(
-    writer: &mut ValueSeriesWriter,
-    binwriter: Option<&mut BinWriter>,
-    deques: &mut InsertDeques,
-    iqtx: &mut InsertQueuesTx,
-    rt: RetentionTime,
-) -> Result<(), Error> {
-    trace_queues!("after send_all begin  {}  {}", deques.summary(), iqtx.summary());
-    iqtx.send_all(deques).await?;
-    trace_queues!("after send_all done  {}  {}", deques.summary(), iqtx.summary());
-    writer.tick(deques.deque(rt))?;
-    if let Some(binwriter) = binwriter {
-        binwriter.tick(deques).unwrap();
-    }
-    trace_queues!("after finish_writers done  {}  {}", deques.summary(), iqtx.summary());
-    Ok(())
 }
 
 async fn register_series(
@@ -553,7 +598,8 @@ async fn register_series(
     let ret = serde_json::json!({
         "register_series": {
             "status": "ok",
-            "chinfo": chinfo,
+            "backend": chinfo.backend,
+            "channelName": chinfo.channel,
             "seriesId": chinfo.series.to_series().id(),
         }
     });

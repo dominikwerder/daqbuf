@@ -26,8 +26,9 @@ pub enum DaemonEvent {
     ChannelRemove(ChannelName),
     ChannelCommand(crate::ca::connset::ChannelCommand),
     CaConnSetItem(CaConnSetItem),
+    CaConnSetCmd(crate::ca::connset::ConnSetCmd),
     Shutdown,
-    ConfigReload(Sender<u64>),
+    ConfigReload(Sender<Result<(), Box<dyn core::error::Error + Send>>>),
     GetMetrics(Sender<MetricsPrometheusShort>),
     ScyllaInsertWorkerOutput(scywr::insertworker::InsertWorkerOutputItem),
 }
@@ -41,6 +42,7 @@ impl DaemonEvent {
             ChannelRemove(x) => format!("ChannelRemove {x:?}"),
             ChannelCommand(x) => format!("ChannelCommand {x:?}"),
             CaConnSetItem(_) => format!("CaConnSetItem"),
+            CaConnSetCmd(_) => format!("CaConnSetCmd"),
             Shutdown => format!("Shutdown"),
             ConfigReload(..) => format!("ConfigReload"),
             GetMetrics(..) => format!("GetMetrics"),

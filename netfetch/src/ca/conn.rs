@@ -970,6 +970,8 @@ struct EventAddIngestRefobjStage1<'a> {
     rtwriter: &'a mut CaRtWriter,
     mett: &'a mut CaConnMetrics,
     rng: &'a mut Xoshiro128PlusPlus,
+    chname: &'a str,
+    is_dbg: bool,
     binwriter: Option<&'a mut BinWriter>,
 }
 
@@ -981,6 +983,8 @@ impl<'a> EventAddIngestRefobjStage1<'a> {
             rtwriter: self.rtwriter,
             mett: self.mett,
             rng: self.rng,
+            chname: self.chname,
+            is_dbg: self.is_dbg,
             binwriter: self.binwriter,
             wrst,
         }
@@ -993,8 +997,9 @@ struct EventAddIngestRefobjStage2<'a> {
     rtwriter: &'a mut CaRtWriter,
     mett: &'a mut CaConnMetrics,
     rng: &'a mut Xoshiro128PlusPlus,
+    chname: &'a str,
+    is_dbg: bool,
     binwriter: Option<&'a mut BinWriter>,
-    //
     wrst: &'a mut WriterStatus,
 }
 
@@ -1007,6 +1012,8 @@ impl<'a> EventAddIngestRefobjStage2<'a> {
             rtwriter: self.rtwriter,
             mett: self.mett,
             rng: self.rng,
+            chname: self.chname,
+            is_dbg: self.is_dbg,
             binwriter: self.binwriter,
             use_ioc_time: v,
         }
@@ -1020,6 +1027,8 @@ struct EventAddIngestRefobj<'a> {
     rtwriter: &'a mut CaRtWriter,
     mett: &'a mut CaConnMetrics,
     rng: &'a mut Xoshiro128PlusPlus,
+    chname: &'a str,
+    is_dbg: bool,
     binwriter: Option<&'a mut BinWriter>,
     use_ioc_time: bool,
 }
@@ -1031,18 +1040,22 @@ impl<'a> EventAddIngestRefobj<'a> {
         st: &'a mut WritableState,
         mett: &'a mut CaConnMetrics,
         rng: &'a mut Xoshiro128PlusPlus,
+        chname: &'a str,
     ) -> EventAddIngestRefobjStage1<'a> {
         let binwriter = if opts.binwriter_enable {
             Some(&mut st.binwriter)
         } else {
             None
         };
+        let is_dbg = series::dbg::dbg_series(st.writer.series());
         EventAddIngestRefobjStage1 {
             iqdqs,
             crst: &mut st.channel,
             rtwriter: &mut st.writer,
             mett,
             rng,
+            chname,
+            is_dbg,
             binwriter,
         }
     }
@@ -1118,10 +1131,20 @@ impl<'a> EventAddIngestRefobj<'a> {
             crst.muted_before = 0;
             crst.insert_item_ivl_ema.tick(tsnow);
             let val_for_agg = value.f32_for_binning();
+            if self.is_dbg {
+                info!("{}  chname {}  ts {}", "event_add_ingest", self.chname, tsev);
+            }
             // TODO refactor
             let value_cloned = value.clone();
             let wres = rtwriter.write(CaWriterValue::new(value_cloned, crst), tscaproto, tsev, self.iqdqs)?;
+            // series::dbg;
             if wres.st.accept {
+                if self.is_dbg {
+                    info!(
+                        "{}  chname {}  ts {} accepted for st",
+                        "event_add_ingest", self.chname, tsev
+                    );
+                }
                 crst.dw_st_last = stnow;
                 crst.val_lst_st = value.to_json_value();
                 crst.acc_st.push_written(payload_len);
@@ -1182,7 +1205,7 @@ impl fmt::Debug for CmdChannelInspectFull {
     }
 }
 
-struct StatusPrivate {
+pub struct StatusPrivate {
     tx: Sender<serde_json::Value>,
 }
 
@@ -2230,10 +2253,10 @@ impl CaConn {
             return Ok(());
         };
         let dbg_chn = dbg_chn_cid(cid, self);
-        if dbg_chn {
-            debug!("{selfn}  {ev:?}");
-        }
         let (ch_s, ch_wrst, ch_conf) = if let Some(x) = self.channels.get_mut(&cid) {
+            if dbg_chn {
+                info!("{selfn}  {chn}  {ev:?}", chn = x.conf.name());
+            }
             (&mut x.state, &mut x.wrst, &x.conf)
         } else {
             // TODO return better as error and let caller decide (with more structured errors)
@@ -2305,6 +2328,7 @@ impl CaConn {
                             st,
                             &mut self.mett,
                             &mut self.rng,
+                            ch_conf.name(),
                         )
                         .and_channel_status_writer(ch_wrst)
                         .and_with_use_ioc_time(ch_conf.use_ioc_time());
@@ -2328,6 +2352,7 @@ impl CaConn {
                             st,
                             &mut self.mett,
                             &mut self.rng,
+                            ch_conf.name(),
                         )
                         .and_channel_status_writer(ch_wrst)
                         .and_with_use_ioc_time(ch_conf.use_ioc_time());
@@ -2492,6 +2517,7 @@ impl CaConn {
                                             st,
                                             &mut self.mett,
                                             &mut self.rng,
+                                            ch_conf.name(),
                                         )
                                         .and_channel_status_writer(ch_wrst)
                                         .and_with_use_ioc_time(ch_conf.use_ioc_time());
@@ -2599,6 +2625,7 @@ impl CaConn {
                                                     st,
                                                     &mut self.mett,
                                                     &mut self.rng,
+                                                    ch_conf.name(),
                                                 )
                                                 .and_channel_status_writer(ch_wrst)
                                                 .and_with_use_ioc_time(ch_conf.use_ioc_time());

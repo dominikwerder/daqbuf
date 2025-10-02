@@ -229,6 +229,17 @@ pub struct ChannelStatusesPrivateResponse {
     pub channels_ca_conn_set: BTreeMap<String, serde_json::Value>,
 }
 
+pub struct ChannelConfigSetpointRequest {
+    pub name: String,
+    pub tx: Sender<String>,
+}
+
+impl fmt::Debug for ChannelConfigSetpointRequest {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        fmt.debug_struct("ChannelConfigSetpointRequest").finish()
+    }
+}
+
 #[derive(Debug)]
 pub struct ChannelCommand {
     pub channel: String,
@@ -244,6 +255,7 @@ pub enum ConnSetCmd {
     Shutdown,
     ChannelStatuses(ChannelStatusesRequest),
     ChannelStatusesPrivate(ChannelStatusesPrivateRequest),
+    ChannelConfigSetpoint(ChannelConfigSetpointRequest),
     // TODO rename to ConnCommand because it must be handled by some specific Conn
     ChannelCommand(ChannelCommand),
 }
@@ -303,6 +315,11 @@ impl CaConnSetCtrl {
     pub async fn remove_channel(&self, name: String) -> Result<(), Error> {
         let cmd = ChannelRemove { name };
         let cmd = ConnSetCmd::ChannelRemove(cmd);
+        self.tx.send(CaConnSetEvent::ConnSetCmd(cmd)).await?;
+        Ok(())
+    }
+
+    pub async fn send_ca_conn_set_command(&self, cmd: ConnSetCmd) -> Result<(), Error> {
         self.tx.send(CaConnSetEvent::ConnSetCmd(cmd)).await?;
         Ok(())
     }
@@ -554,6 +571,7 @@ impl CaConnSet {
                 ConnSetCmd::Shutdown => self.handle_shutdown(),
                 ConnSetCmd::ChannelStatuses(x) => self.handle_channel_statuses_req(x),
                 ConnSetCmd::ChannelStatusesPrivate(x) => self.handle_channel_statuses_private_req(x),
+                ConnSetCmd::ChannelConfigSetpoint(x) => self.handle_channel_config_setpoint(x),
                 ConnSetCmd::ChannelCommand(x) => self.handle_channel_command(x),
             },
         }
@@ -585,7 +603,7 @@ impl CaConnSet {
 
     fn handle_add_channel_existing(cmd: ChannelAdd, ress: StateTransRes) -> Result<(), Error> {
         let tsnow = Instant::now();
-        ress.chst.touched = 1;
+        ress.chst.set_touched();
         if cmd.ch_cfg == ress.chst.config {
             debug!("handle_add_channel_existing  config same  {}", cmd.name());
             if let Err(_) = cmd.restx.try_send(Ok(())) {
@@ -594,7 +612,6 @@ impl CaConnSet {
             Ok(())
         } else {
             debug!("handle_add_channel_existing  config changed  {}", cmd.name());
-            // TODO
             match &mut ress.chst.value {
                 ChannelStateValue::Active(st2) => match st2 {
                     ActiveChannelState::Init { .. } => {
@@ -649,6 +666,7 @@ impl CaConnSet {
                     ress.chst.config = cmd.ch_cfg;
                 }
                 ChannelStateValue::InitDummy => {
+                    ress.chst.config = cmd.ch_cfg;
                     return Err(Error::UnexpectedChannelDummyState);
                 }
             }
@@ -661,7 +679,7 @@ impl CaConnSet {
 
     fn handle_channel_config_flag_reset(&mut self, cmd: ChannelConfigFlagReset) -> Result<(), Error> {
         for (_ch, st1) in self.channel_states.iter_mut() {
-            st1.touched = 0;
+            st1.clear_touched();
         }
         if let Err(_) = cmd.restx.try_send(Ok(())) {
             self.mett.cmd_res_send_err().inc();
@@ -672,7 +690,8 @@ impl CaConnSet {
     fn handle_channel_config_remove_unflagged(&mut self, cmd: ChannelConfigRemoveUnflagged) -> Result<(), Error> {
         let mut cmds = VecDeque::new();
         for (ch, st1) in self.channel_states.iter_mut() {
-            if st1.touched == 0 {
+            if st1.is_touched() {
+            } else {
                 let cmd = ChannelRemove { name: ch.name().into() };
                 cmds.push_back(cmd);
             }
@@ -868,12 +887,13 @@ impl CaConnSet {
                         }),
                     };
                     if false {
-                        let _ = WithStatusSeriesIdState {
-                            cssid: todo!(),
-                            addr_find_backoff: todo!(),
-                            inner: todo!(),
-                            writer_status: todo!(),
-                        };
+                        // TODO
+                        // let _ = WithStatusSeriesIdState {
+                        //     cssid: todo!(),
+                        //     addr_find_backoff: todo!(),
+                        //     inner: todo!(),
+                        //     writer_status: todo!(),
+                        // };
                     }
                     let addr = cmd.addr;
                     if self.ca_conn_ress.contains_key(&addr) {
@@ -1073,6 +1093,33 @@ impl CaConnSet {
             // ca_conn.cmd_queue.push_back(item);
         }
         let reg1 = regex::Regex::new(&req.name)?;
+        Ok(())
+    }
+
+    fn handle_channel_config_setpoint(&mut self, req: ChannelConfigSetpointRequest) -> Result<(), Error> {
+        let selfname = "handle_channel_config_setpoint";
+        info!("{selfname}");
+        if self.shutdown_stopping {
+            return Ok(());
+        }
+        let a: Vec<_> = self
+            .channel_states
+            .iter()
+            .map(|x| {
+                let js = serde_json::json!({
+                    "name": x.0.name(),
+                    "config": x.1.config,
+                    "cfgbase": x.1.config_file_basename(),
+                });
+                js
+            })
+            .collect();
+        let res = serde_json::json!({
+            "channels": a,
+        });
+        let s = serde_json::to_string(&res).unwrap_or_else(|_| String::from("null"));
+        info!("{selfname}  sending len {}", s.len());
+        let _ = req.tx.try_send(s);
         Ok(())
     }
 

@@ -635,13 +635,13 @@ impl Daemon {
     async fn handle_config_reload_inner(&mut self) -> Result<(), Error> {
         let channels_dir = self.ingest_opts.channels();
         let channels = match netfetch::conf::parse_channels(channels_dir).await {
-            Ok(x) => {
-                if let Some(x) = &x {
-                    info!("parsed {} channels", x.len());
-                } else {
-                    info!("config does not specify channels");
-                }
-                x
+            Ok(Some(x)) => {
+                info!("parsed {} channels", x.len());
+                Some(x)
+            }
+            Ok(None) => {
+                warn!("config does not specify channels");
+                None
             }
             Err(e) => {
                 return Err(Error::with_msg_no_trace(format!(
@@ -653,20 +653,20 @@ impl Daemon {
             // TODO
             // Send a marker flag-clear to CaConnSet.
             if true {
-                let (tx, rx) = async_channel::bounded(10);
+                let (tx, rx) = async_channel::bounded(4);
                 self.connset_ctrl.channel_config_flag_reset(tx).await?;
                 rx.recv().await??;
             }
             // Send all the channel-add commands.
             let mut i = 0;
             for ch_cfg in channels.channels() {
-                let (tx, rx) = async_channel::bounded(10);
+                let (tx, rx) = async_channel::bounded(4);
                 self.connset_ctrl.add_channel(ch_cfg.clone(), tx).await?;
                 rx.recv().await??;
                 i += 1;
             }
             if true {
-                let (tx, rx) = async_channel::bounded(10);
+                let (tx, rx) = async_channel::bounded(4);
                 self.connset_ctrl.channel_config_remove_unflagged(tx).await?;
                 rx.recv().await??;
             }
@@ -678,17 +678,20 @@ impl Daemon {
         }
     }
 
-    async fn handle_config_reload(&mut self, tx: async_channel::Sender<u64>) -> Result<(), Error> {
+    async fn handle_config_reload(
+        &mut self,
+        tx: async_channel::Sender<Result<(), Box<dyn std::error::Error + Send>>>,
+    ) -> Result<(), Error> {
         match self.handle_config_reload_inner().await {
             Ok(()) => {
-                if tx.send(0).await.is_err() {
+                if tx.send(Ok(())).await.is_err() {
                     self.daemon_metrics.channel_send_err().inc();
                 }
                 Ok(())
             }
             Err(e) => {
                 error!("handle_config_reload {}", e);
-                if tx.send(127).await.is_err() {
+                if tx.send(Err(Box::new(e))).await.is_err() {
                     self.daemon_metrics.channel_send_err().inc();
                 }
                 Ok(())
@@ -733,6 +736,12 @@ impl Daemon {
             ChannelRemove(ch) => self.handle_channel_remove(ch).await,
             ChannelCommand(cmd) => self.handle_channel_command(cmd).await,
             CaConnSetItem(item) => self.handle_ca_conn_set_item(item).await,
+            CaConnSetCmd(item) => {
+                info!("handle_event  recv CaConnSetCmd  {:?}", item);
+                self.connset_ctrl.send_ca_conn_set_command(item).await?;
+                info!("handle_event  recv CaConnSetCmd  forwarded");
+                Ok(())
+            }
             Shutdown => self.handle_shutdown().await,
             ConfigReload(tx) => self.handle_config_reload(tx).await,
             GetMetrics(tx) => {
