@@ -48,7 +48,7 @@ pub async fn plain_events_json(
         timeout_provider,
     )
     .await?;
-    warn!("plain_events_json  collected  {:?}", collected);
+    trace!("plain_events_json  collected  {:?}", collected);
     match collected {
         CollectResult::Some(x) => {
             let x = x.into_user_facing_api_type_box();
