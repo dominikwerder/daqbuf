@@ -163,7 +163,7 @@ async fn plain_events_prep(
             }
         });
         let js = serde_json::to_string(&obj).unwrap();
-        info!("{js}");
+        info!("api4-request-events {js}");
     }
     plain_events(res2, req).await
 }

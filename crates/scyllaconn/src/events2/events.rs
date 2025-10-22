@@ -819,7 +819,7 @@ fn phantomval<T>() -> T {
     panic!()
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ReadEventsJobParams {
     series: SeriesId,
     rt: RetentionTime,
@@ -1049,11 +1049,11 @@ async fn read_next_values_3(
 
 async fn read_events_v02_inner(
     params: ReadEventsJobParams,
-    tx: async_channel::Sender<Result<(Box<dyn BinningggContainerEventsDyn>, ReadJobTrace), crate::worker::Error>>,
     stmts: Arc<StmtsEvents>,
     scy: Arc<scylla::client::session::Session>,
 ) -> Result<(Box<dyn BinningggContainerEventsDyn>, ReadJobTrace), crate::worker::Error> {
     let val_ty_dyn = new_val_ty_dyn_from_shape_scalar_type(params.shape.clone(), params.scalar_type.clone());
+    let params_dbg = params.clone();
     let opts = ReadNextValuesOpts {
         rt: params.rt.clone(),
         series: params.series,
@@ -1066,7 +1066,12 @@ async fn read_events_v02_inner(
     use crate::worker::TimelimitedJobResult;
     use crate::worker::Timeoutable;
     let fut = read_next_values_3(opts, scy, stmts).with_timeout(Duration::from_millis(5000));
-    let res = fut.await.map_err_timeout_job()??;
+    let res = fut.await.map_err_timeout_job().inspect_err(|e| match e {
+        crate::worker::Error::TimeoutJob => {
+            warn!("read_events_v02_inner  TimeoutJob  params {:?}", params_dbg);
+        }
+        _ => {}
+    })??;
     Ok(res)
 }
 
@@ -1076,7 +1081,7 @@ pub(crate) async fn read_events_v02(
     stmts: Arc<StmtsEvents>,
     scy: Arc<scylla::client::session::Session>,
 ) {
-    let res = read_events_v02_inner(params, tx.clone(), stmts, scy).await;
+    let res = read_events_v02_inner(params, stmts, scy).await;
     if tx.try_send(res).is_err() {
         warn!("read_events_v02_inner  tx.try_send failed");
     }

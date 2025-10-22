@@ -40,7 +40,8 @@ autoerr::create_error_v1!(
         Prepare(#[from] crate::events2::prepare::Error),
         Events(#[from] crate::events2::events::Error),
         Msp(#[from] crate::events2::msp::Error),
-        ChannelSend,
+        // Reserved for failure of sending jobs to the worker. Not for results back to client.
+        JobChannelSend,
         ChannelRecv,
         Join,
         Toplist(#[from] crate::accounting::toplist::Error),
@@ -51,7 +52,6 @@ autoerr::create_error_v1!(
         ScyllaNextRow(#[from] scylla::errors::NextRowError),
         ScyllaPagerExecution(#[from] scylla::errors::PagerExecutionError),
         TimeoutJob,
-        TimeoutChannelSend,
     },
 );
 
@@ -64,19 +64,6 @@ impl<T> TimelimitedJobResult<T> for Result<T, tokio::time::error::Elapsed> {
         match self {
             Ok(x) => Ok(x),
             Err(_) => Err(Error::TimeoutJob),
-        }
-    }
-}
-
-pub trait TimelimitedResultSend<T, G> {
-    fn map_err_timeout_send(self) -> Result<T, Error>;
-}
-
-impl<T, G> TimelimitedResultSend<T, G> for Result<T, async_channel::SendError<G>> {
-    fn map_err_timeout_send(self) -> Result<T, Error> {
-        match self {
-            Ok(x) => Ok(x),
-            Err(_) => Err(Error::TimeoutChannelSend),
         }
     }
 }
@@ -203,7 +190,10 @@ impl BinWriteIndexRead {
             };
             all.push_back(v);
         }
-        self.tx.send(Ok(all)).await.map_err_timeout_send()?;
+        if self.tx.try_send(Ok(all)).is_err() {
+            // TODO count for stats
+            warn!("BinWriteIndexRead: failed to send result back to caller");
+        }
         Ok(())
     }
 
@@ -213,8 +203,9 @@ impl BinWriteIndexRead {
         match self.execute_inner(stmts, scy).await {
             Ok(()) => {}
             Err(e) => {
-                if tx.send(Err(e)).await.is_err() {
+                if tx.try_send(Err(e)).is_err() {
                     // TODO count for stats
+                    warn!("BinWriteIndexRead: failed to send result back to caller");
                 }
             }
         }
@@ -290,7 +281,7 @@ impl ScyllaQueue {
             tx,
         };
         let job = Job::FindTsMsp(job);
-        self.tx.send(job).await.map_err(|_| Error::ChannelSend)?;
+        self.tx.send(job).await.map_err(|_| Error::JobChannelSend)?;
         let res = rx.recv().await.map_err(|_| Error::ChannelRecv)??;
         Ok(res)
     }
@@ -301,7 +292,7 @@ impl ScyllaQueue {
     ) -> Result<(Box<dyn BinningggContainerEventsDyn>, ReadJobTrace), Error> {
         let (tx, rx) = async_channel::bounded(1);
         let job = Job::ReadEvents02(params, tx);
-        self.tx.send(job).await.map_err(|_| Error::ChannelSend)?;
+        self.tx.send(job).await.map_err(|_| Error::JobChannelSend)?;
         let res = rx.recv().await.map_err(|_| Error::ChannelRecv)??;
         Ok(res)
     }
@@ -313,7 +304,7 @@ impl ScyllaQueue {
     ) -> Result<crate::accounting::toplist::UsageData, Error> {
         let (tx, rx) = async_channel::bounded(1);
         let job = Job::AccountingReadTs(rt, ts, tx);
-        self.tx.send(job).await.map_err(|_| Error::ChannelSend)?;
+        self.tx.send(job).await.map_err(|_| Error::JobChannelSend)?;
         let res = rx.recv().await.map_err(|_| Error::ChannelRecv)??;
         Ok(res)
     }

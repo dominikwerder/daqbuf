@@ -187,7 +187,7 @@ async fn binned_instrumented(
             }
         });
         let js = serde_json::to_string(&obj).unwrap();
-        info!("{js}");
+        info!("api4-request-binned {js}");
     }
     if accepts_cbor_framed(&head.headers) {
         Ok(binned_cbor_framed(res2, ctx, ncc).await?)
