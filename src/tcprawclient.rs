@@ -51,7 +51,7 @@ autoerr::create_error_v1!(
     },
 );
 
-struct DisplayDebug<T: fmt::Debug>(T);
+pub struct DisplayDebug<T: fmt::Debug>(T);
 
 impl<T: fmt::Debug> fmt::Debug for DisplayDebug<T> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
