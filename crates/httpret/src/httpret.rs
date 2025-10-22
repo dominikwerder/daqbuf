@@ -169,18 +169,24 @@ pub async fn host(ncc: NodeConfigCached, service_version: ServiceVersion) -> Res
         let shared_res = shared_res.clone();
         tokio::task::spawn(async move {
             let res = hyper::server::conn::http1::Builder::new()
-                .serve_connection(
-                    io,
+                .serve_connection(io, {
+                    let conn_req_cnt = std::sync::RwLock::new(0u64);
                     service_fn(move |req| {
-                        the_service_fn(
+                        let n = conn_req_cnt.write().map_or(u64::MAX, |mut x| {
+                            let n = *x;
+                            *x += 1;
+                            n
+                        });
+                        service_request(
                             req,
                             addr,
+                            n,
                             node_config.clone(),
                             service_version.clone(),
                             shared_res.clone(),
                         )
-                    }),
-                )
+                    })
+                })
                 .await;
             match res {
                 Ok(()) => {}
@@ -210,16 +216,17 @@ pub async fn host(ncc: NodeConfigCached, service_version: ServiceVersion) -> Res
     Ok(())
 }
 
-async fn the_service_fn(
+async fn service_request(
     req: Requ,
     addr: SocketAddr,
+    n: u64,
     node_config: NodeConfigCached,
     service_version: ServiceVersion,
     shared_res: Arc<ServiceSharedResources>,
 ) -> Result<StreamResponse, Error> {
     let ctx = ReqCtx::new_with_node(&req, &node_config);
     let reqid = ctx.reqid().into();
-    let fut = the_service_fn_log_enabled(ctx, req, addr, node_config, service_version, shared_res);
+    let fut = the_service_fn_log_enabled(ctx, req, addr, n, node_config, service_version, shared_res);
     streams::logqueue::LogQueueFutureWrap::new(reqid, fut).await
 }
 
@@ -227,12 +234,13 @@ async fn the_service_fn_log_enabled(
     ctx: ReqCtx,
     req: Requ,
     addr: SocketAddr,
+    n: u64,
     node_config: NodeConfigCached,
     service_version: ServiceVersion,
     shared_res: Arc<ServiceSharedResources>,
 ) -> Result<StreamResponse, Error> {
     let reqid_span = span!(Level::INFO, "req", reqid = ctx.reqid());
-    let f = http_service(req, addr, ctx, node_config, service_version, shared_res);
+    let f = http_service(req, addr, n, ctx, node_config, service_version, shared_res);
     let f = Cont { f: Box::pin(f) };
     f.instrument(reqid_span).await
 }
@@ -240,14 +248,16 @@ async fn the_service_fn_log_enabled(
 async fn http_service(
     req: Requ,
     addr: SocketAddr,
+    n: u64,
     ctx: ReqCtx,
     node_config: NodeConfigCached,
     service_version: ServiceVersion,
     shared_res: Arc<ServiceSharedResources>,
 ) -> Result<StreamResponse, Error> {
     info!(
-        "http-request  {:?} - {:?} - {:?} - {:?}",
+        "http-request  {:?} - n:{} - {:?} - {:?} - {:?}",
         addr,
+        n,
         req.method(),
         req.uri(),
         req.headers()
@@ -314,8 +324,11 @@ async fn http_service_try(
     }
     let mut res = http_service_inner(req, &ctx, node_config, service_version, shared_res).await?;
     let hm = res.headers_mut();
-    hm.append("Access-Control-Allow-Origin", "*".parse().unwrap());
-    hm.append("Access-Control-Allow-Headers", "*".parse().unwrap());
+    if false {
+        let asterisk = HeaderValue::from_static("*");
+        hm.append(http::header::ACCESS_CONTROL_ALLOW_ORIGIN, asterisk.clone());
+        hm.append(http::header::ACCESS_CONTROL_ALLOW_HEADERS, asterisk);
+    }
     for m in ctx.marks() {
         hm.append(netpod::PSI_DAQBUFFER_SERVICE_MARK, m.parse().unwrap());
     }
@@ -382,6 +395,9 @@ async fn http_service_inner(
         } else {
             Ok(response(StatusCode::METHOD_NOT_ALLOWED).body(body_empty())?)
         }
+    } else if path.starts_with("/api/4/private/trigger/13/") {
+        taskrun::trigger_error_worker_scylla_events(Some(true));
+        Ok(response(StatusCode::OK).body(body_empty())?)
     } else if let Some(h) = api4::binwriteindex::BinWriteIndexHandler::handler(&req) {
         Ok(h.handle(req, ctx, &shared_res, &node_config).await?)
     } else if let Some(h) = api4::binned_v2::BinnedV2Handler::handler(&req) {

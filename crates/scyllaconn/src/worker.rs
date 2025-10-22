@@ -22,7 +22,11 @@ use netpod::ttl::RetentionTime;
 use std::collections::VecDeque;
 use std::fmt;
 use std::sync::Arc;
+use std::time::Duration;
+use taskrun::tokio;
 
+macro_rules! error { ($($arg:tt)*) => ( if true { log::error!($($arg)*); } ); }
+macro_rules! warn { ($($arg:tt)*) => ( if true { log::warn!($($arg)*); } ); }
 macro_rules! info { ($($arg:tt)*) => ( if true { log::info!($($arg)*); } ); }
 macro_rules! debug { ($($arg:tt)*) => ( if true { log::debug!($($arg)*); } ); }
 
@@ -46,16 +50,57 @@ autoerr::create_error_v1!(
         ScyllaType(#[from] scylla::deserialize::TypeCheckError),
         ScyllaNextRow(#[from] scylla::errors::NextRowError),
         ScyllaPagerExecution(#[from] scylla::errors::PagerExecutionError),
+        TimeoutJob,
+        TimeoutChannelSend,
     },
 );
 
-impl<T> From<async_channel::SendError<T>> for Error {
-    fn from(_: async_channel::SendError<T>) -> Self {
-        Self::ChannelSend
+pub trait TimelimitedJobResult<T> {
+    fn map_err_timeout_job(self) -> Result<T, Error>;
+}
+
+impl<T> TimelimitedJobResult<T> for Result<T, tokio::time::error::Elapsed> {
+    fn map_err_timeout_job(self) -> Result<T, Error> {
+        match self {
+            Ok(x) => Ok(x),
+            Err(_) => Err(Error::TimeoutJob),
+        }
+    }
+}
+
+pub trait TimelimitedResultSend<T, G> {
+    fn map_err_timeout_send(self) -> Result<T, Error>;
+}
+
+impl<T, G> TimelimitedResultSend<T, G> for Result<T, async_channel::SendError<G>> {
+    fn map_err_timeout_send(self) -> Result<T, Error> {
+        match self {
+            Ok(x) => Ok(x),
+            Err(_) => Err(Error::TimeoutChannelSend),
+        }
     }
 }
 
 type ScySessTy = scylla::client::session::Session;
+
+pub trait Timeoutable {
+    fn with_timeout(self, dur: Duration) -> tokio::time::Timeout<Self>
+    where
+        Self: Sized;
+}
+
+impl<F> Timeoutable for F
+where
+    F: futures_util::Future,
+{
+    fn with_timeout(self, dur: Duration) -> tokio::time::Timeout<Self>
+    where
+        // Self: Sized,
+        Self: futures_util::Future,
+    {
+        tokio::time::timeout(dur, self)
+    }
+}
 
 #[derive(Debug)]
 struct FindTsMsp {
@@ -68,34 +113,41 @@ struct FindTsMsp {
 }
 
 impl FindTsMsp {
-    async fn execute(self, stmts: &StmtsEvents, scy: &ScySessTy) {
-        // TODO avoid the extra clone
-        let tx = self.tx.clone();
-        match self.execute_inner(stmts, scy).await {
-            Ok(()) => {}
-            Err(e) => {
-                if tx.send(Err(e)).await.is_err() {
-                    // TODO count for stats
-                }
-            }
-        }
-    }
-
-    async fn execute_inner(self, stmts: &StmtsEvents, scy: &ScySessTy) -> Result<(), Error> {
+    async fn execute_inner(self, stmts: &StmtsEvents, scy: &ScySessTy) -> Result<VecDeque<TsMs>, Error> {
         let res = crate::events2::msp::find_ts_msp(
             &self.rt,
             self.series.id(),
-            self.range,
-            self.bck,
+            self.range.clone(),
+            self.bck.clone(),
             self.use_scylla6_workarounds,
             &stmts,
             &scy,
         )
-        .await;
-        if self.tx.send(res.map_err(Into::into)).await.is_err() {
-            // TODO count for stats
+        .with_timeout(Duration::from_millis(5000))
+        .await
+        .map_err_timeout_job()
+        .inspect_err(|_| {
+            warn!(
+                "FindTsMsp: job timeout {:?}",
+                (&self.rt, &self.series, &self.range, &self.bck)
+            );
+        })??;
+        Ok(res)
+    }
+
+    async fn execute(self, stmts: &StmtsEvents, scy: &ScySessTy) {
+        // TODO avoid the extra clone
+        let tx = self.tx.clone();
+        let params_dbg = (
+            self.rt.clone(),
+            self.series.clone(),
+            self.range.clone(),
+            self.bck.clone(),
+        );
+        let x = self.execute_inner(stmts, scy).await;
+        if tx.try_send(x).is_err() {
+            warn!("FindTsMsp: failed to send result back to caller {:?}", params_dbg);
         }
-        Ok(())
     }
 }
 
@@ -123,19 +175,6 @@ struct BinWriteIndexRead {
 }
 
 impl BinWriteIndexRead {
-    async fn execute(self, stmts: &StmtsEvents, scy: &ScySessTy) {
-        // TODO avoid the extra clone
-        let tx = self.tx.clone();
-        match self.execute_inner(stmts, scy).await {
-            Ok(()) => {}
-            Err(e) => {
-                if tx.send(Err(e)).await.is_err() {
-                    // TODO count for stats
-                }
-            }
-        }
-    }
-
     async fn execute_inner(self, stmts: &StmtsEvents, scy: &ScySessTy) -> Result<(), Error> {
         let params = (
             self.series.id() as i64,
@@ -144,7 +183,7 @@ impl BinWriteIndexRead {
             self.lsp_min as i32,
             self.lsp_max as i32,
         );
-        log::info!("execute {:?}", params);
+        info!("execute {:?}", params);
         let res = scy
             .execute_iter(
                 stmts
@@ -164,8 +203,21 @@ impl BinWriteIndexRead {
             };
             all.push_back(v);
         }
-        self.tx.send(Ok(all)).await?;
+        self.tx.send(Ok(all)).await.map_err_timeout_send()?;
         Ok(())
+    }
+
+    async fn execute(self, stmts: &StmtsEvents, scy: &ScySessTy) {
+        // TODO avoid the extra clone
+        let tx = self.tx.clone();
+        match self.execute_inner(stmts, scy).await {
+            Ok(()) => {}
+            Err(e) => {
+                if tx.send(Err(e)).await.is_err() {
+                    // TODO count for stats
+                }
+            }
+        }
     }
 }
 
@@ -405,7 +457,7 @@ impl ScyllaWorker {
         Ok((queue, worker))
     }
 
-    pub async fn work(self) -> Result<(), Error> {
+    async fn work_inner(&self) -> Result<(), Error> {
         let scy = create_scy_session_no_ks(&self.scyconf_st).await?;
         let scy = Arc::new(scy);
         let kss = [
@@ -418,6 +470,7 @@ impl ScyllaWorker {
         let stmts = Arc::new(stmts);
         debug!("scylla worker  prepare done");
         self.rx
+            .clone()
             .map(|job| async {
                 match job {
                     Job::FindTsMsp(job) => job.execute(&stmts, &scy).await,
@@ -470,19 +523,31 @@ impl ScyllaWorker {
                         let _ = job.tx.send(res).await;
                     }
                     Job::ReadEvents02(params, tx) => {
-                        let res = crate::events2::events::read_events_v02(params, scy.clone(), stmts.clone())
-                            .await
-                            .map_err(From::from);
-                        if tx.send(res).await.is_err() {
-                            // TODO count for stats
-                        }
+                        crate::events2::events::read_events_v02(params, tx, stmts.clone(), scy.clone()).await
                     }
                 }
             })
             .buffer_unordered(CONCURRENT_QUERIES_PER_WORKER)
             .for_each(|_| futures_util::future::ready(()))
             .await;
-        info!("scylla worker finished");
         Ok(())
+    }
+
+    pub async fn work(self) -> Result<(), Error> {
+        loop {
+            info!("scylla worker start");
+            match self.work_inner().await {
+                Ok(()) => {
+                    info!("scylla worker finished");
+                    break Ok(());
+                }
+                Err(e) => {
+                    error!("scylla worker error: {}", e);
+                    let x = 5;
+                    error!("scylla worker sleep {x} sec before reconnect");
+                    taskrun::tokio::time::sleep(std::time::Duration::from_secs(x)).await;
+                }
+            }
+        }
     }
 }

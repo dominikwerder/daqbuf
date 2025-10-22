@@ -434,3 +434,17 @@ pub fn query_log_level() -> tracing::Level {
     });
     level
 }
+
+pub fn trigger_error_worker_scylla_events(set: Option<bool>) -> bool {
+    static TR: std::sync::Mutex<bool> = std::sync::Mutex::new(false);
+    let mut g = TR.lock().unwrap();
+    let v = *g;
+    if let Some(x) = set {
+        *g = x;
+    } else {
+        if *g {
+            *g = false;
+        }
+    }
+    v
+}

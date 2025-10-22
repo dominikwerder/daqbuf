@@ -154,6 +154,17 @@ async fn plain_events_prep(
     logspan: Span,
 ) -> Result<StreamResponse, Error> {
     let res2 = HandleRes2::new(ctx, logspan, evq.clone(), pgqueue, ncc).await?;
+    {
+        let obj = serde_json::json!({
+            "query_type": "events",
+            "channel": {
+                "name": res2.ch_conf.name(),
+                "series": res2.ch_conf.series(),
+            }
+        });
+        let js = serde_json::to_string(&obj).unwrap();
+        info!("{js}");
+    }
     plain_events(res2, req).await
 }
 

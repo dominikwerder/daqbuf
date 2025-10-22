@@ -41,6 +41,7 @@ use std::task::Context;
 use std::task::Poll;
 use std::time::Duration;
 use std::time::Instant;
+use taskrun::tokio;
 use taskrun::tracing;
 
 macro_rules! error { ($($arg:tt)*) => ( if true { log::error!($($arg)*); } ) }
@@ -118,6 +119,7 @@ autoerr::create_error_v1!(
         ScyllaWorker(Box<crate::worker::Error>),
         ScyllaTypeCheck(#[from] scylla::deserialize::TypeCheckError),
         ScyllaPagerExecution(#[from] scylla::errors::PagerExecutionError),
+        UserTriggered,
     },
 );
 
@@ -862,6 +864,9 @@ async fn read_next_values_3_fwd(
     let range = opts.range;
     let table_name = val_ty_dyn.table_name();
     let with_values = opts.readopts.with_values();
+    if taskrun::trigger_error_worker_scylla_events(None) {
+        return Err(Error::UserTriggered);
+    }
     if range.end() > TsNano::from_ns(i64::MAX as u64) {
         return Err(Error::RangeEndOverflow);
     }
@@ -1042,11 +1047,12 @@ async fn read_next_values_3(
     Ok((ret, jobtrace))
 }
 
-pub async fn read_events_v02(
+async fn read_events_v02_inner(
     params: ReadEventsJobParams,
-    scy: Arc<scylla::client::session::Session>,
+    tx: async_channel::Sender<Result<(Box<dyn BinningggContainerEventsDyn>, ReadJobTrace), crate::worker::Error>>,
     stmts: Arc<StmtsEvents>,
-) -> Result<(Box<dyn BinningggContainerEventsDyn>, ReadJobTrace), Error> {
+    scy: Arc<scylla::client::session::Session>,
+) -> Result<(Box<dyn BinningggContainerEventsDyn>, ReadJobTrace), crate::worker::Error> {
     let val_ty_dyn = new_val_ty_dyn_from_shape_scalar_type(params.shape.clone(), params.scalar_type.clone());
     let opts = ReadNextValuesOpts {
         rt: params.rt.clone(),
@@ -1057,7 +1063,23 @@ pub async fn read_events_v02(
         readopts: params.readopts,
         val_ty_dyn,
     };
-    read_next_values_3(opts, scy, stmts).await
+    use crate::worker::TimelimitedJobResult;
+    use crate::worker::Timeoutable;
+    let fut = read_next_values_3(opts, scy, stmts).with_timeout(Duration::from_millis(5000));
+    let res = fut.await.map_err_timeout_job()??;
+    Ok(res)
+}
+
+pub(crate) async fn read_events_v02(
+    params: ReadEventsJobParams,
+    tx: async_channel::Sender<Result<(Box<dyn BinningggContainerEventsDyn>, ReadJobTrace), crate::worker::Error>>,
+    stmts: Arc<StmtsEvents>,
+    scy: Arc<scylla::client::session::Session>,
+) {
+    let res = read_events_v02_inner(params, tx.clone(), stmts, scy).await;
+    if tx.try_send(res).is_err() {
+        warn!("read_events_v02_inner  tx.try_send failed");
+    }
 }
 
 trait ValTyDyn: fmt::Debug + Send {

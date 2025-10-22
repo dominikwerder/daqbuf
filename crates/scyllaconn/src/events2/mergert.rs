@@ -5,20 +5,20 @@ use crate::range::ScyllaSeriesRange;
 use crate::worker::ScyllaQueue;
 use futures_util::Stream;
 use futures_util::StreamExt;
-use items_0::streamitem::sitem_err2_from_string;
 use items_0::streamitem::RangeCompletableItem;
 use items_0::streamitem::SitemErrTy;
 use items_0::streamitem::StreamItem;
+use items_0::streamitem::sitem_err2_from_string;
 use items_2::channelevents::ChannelEvents;
 use items_2::merger::Merger;
+use netpod::ChConf;
 use netpod::log;
 use netpod::ttl::RetentionTime;
-use netpod::ChConf;
 use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
 
-macro_rules! trace_init { ($($arg:expr),*) => ( if true { log::trace!($($arg),*); } ) }
+macro_rules! trace_init { ($($arg:tt)*) => ( if true { log::trace!($($arg)*); } ) }
 
 autoerr::create_error_v1!(
     name(Error, "EventsMergeRt"),

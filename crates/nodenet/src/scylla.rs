@@ -9,9 +9,8 @@ use items_0::streamitem::Sitemty;
 use items_0::streamitem::StreamItem;
 use items_2::binning::container_events::ContainerEvents;
 use items_2::channelevents::ChannelEvents;
-use netpod::log::*;
+use netpod::log;
 use netpod::ChConf;
-use netpod::NodeConfigCached;
 use netpod::SeriesKind;
 use netpod::UseScylla6Workarounds;
 use query::api4::events::EventsSubQuery;
@@ -24,6 +23,9 @@ use std::task::Context;
 use std::task::Poll;
 use streams::timebin::cached::reader::EventsReadProvider;
 use taskrun::tokio;
+
+macro_rules! warn { ($($arg:tt)*) => ( if true { log::warn!($($arg)*); } ) }
+macro_rules! trace { ($($arg:tt)*) => ( if true { log::trace!($($arg)*); } ) }
 
 autoerr::create_error_v1!(
     name(Error, "ScyllaChannelEventStream"),

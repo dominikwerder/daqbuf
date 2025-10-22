@@ -49,6 +49,7 @@ use tracing::Instrument;
 use tracing::Span;
 
 macro_rules! error { ($($arg:tt)*) => ( if true { log::error!($($arg)*); } ); }
+macro_rules! info { ($($arg:tt)*) => ( if true { log::info!($($arg)*); } ); }
 macro_rules! debug { ($($arg:tt)*) => ( if true { log::debug!($($arg)*); } ); }
 macro_rules! trace { ($($arg:tt)*) => ( if true { log::trace!($($arg)*); } ); }
 macro_rules! log_query { ($($arg:tt)*) => ( if true { log::info!($($arg)*); } ); }
@@ -152,7 +153,7 @@ async fn binned(
     };
     let span1 = log::span!(
         log::Level::INFO,
-        "httpret::binned_cbor_framed",
+        "httpret::binned",
         reqid,
         beg = query.range().beg_u64() / SEC,
         end = query.range().end_u64() / SEC,
@@ -177,6 +178,17 @@ async fn binned_instrumented(
     logspan: Span,
 ) -> Result<StreamResponse, Error> {
     let res2 = HandleRes2::new(ctx, logspan, query.clone(), pgqueue, scyqueue, ncc).await?;
+    {
+        let obj = serde_json::json!({
+            "query_type": "binned",
+            "channel": {
+                "name": res2.ch_conf.name(),
+                "series": res2.ch_conf.series(),
+            }
+        });
+        let js = serde_json::to_string(&obj).unwrap();
+        info!("{js}");
+    }
     if accepts_cbor_framed(&head.headers) {
         Ok(binned_cbor_framed(res2, ctx, ncc).await?)
     } else if accepts_json_framed(&head.headers) {
