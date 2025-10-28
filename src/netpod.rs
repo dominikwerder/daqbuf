@@ -780,13 +780,13 @@ mod string_fix_impl_serde {
 
 #[derive(Debug, Clone, PartialOrd, PartialEq, Serialize, Deserialize)]
 pub struct EnumVariant {
-    ix: u16,
+    ix: i16,
     name: String,
 }
 
 #[derive(Debug, Clone, PartialOrd, PartialEq)]
 pub struct EnumVariantRef<'a> {
-    pub ix: u16,
+    pub ix: i16,
     pub name: &'a str,
 }
 
@@ -800,14 +800,14 @@ impl<'a> From<EnumVariantRef<'a>> for EnumVariant {
 }
 
 impl EnumVariant {
-    pub fn new(ix: u16, name: impl Into<String>) -> Self {
+    pub fn new(ix: i16, name: impl Into<String>) -> Self {
         Self {
             ix,
             name: name.into(),
         }
     }
 
-    pub fn ix(&self) -> u16 {
+    pub fn ix(&self) -> i16 {
         self.ix
     }
 
@@ -819,7 +819,7 @@ impl EnumVariant {
         self.name.clone()
     }
 
-    pub fn into_parts(self) -> (u16, String) {
+    pub fn into_parts(self) -> (i16, String) {
         (self.ix, self.name)
     }
 }
@@ -827,7 +827,7 @@ impl EnumVariant {
 impl Default for EnumVariant {
     fn default() -> Self {
         Self {
-            ix: u16::MAX,
+            ix: i16::MIN,
             name: String::new(),
         }
     }
