@@ -1215,16 +1215,16 @@ fn new_val_ty_dyn_from_shape_scalar_type(shape: Shape, scalar_type: ScalarType) 
                 BOOL => ValTyDynTesting::<Vec<bool>>::boxed(),
                 STRING => {
                     warn!("read not yet supported  {:?}  {:?}", shape, scalar_type);
-                    err::todoval()
+                    ValTyDynTesting::<Vec<String>>::boxed()
                 }
                 Enum => {
                     warn!("read not yet supported  {:?}  {:?}", shape, scalar_type);
-                    err::todoval()
+                    ValTyDynTesting::<Vec<EnumVariant>>::boxed()
                 }
             }
         }
         Shape::Image(_, _) => {
-            error!("TODO ReadValues add more types");
+            error!("read not yet supported  {:?}  {:?}", shape, scalar_type);
             err::todoval()
         }
     }
@@ -1399,39 +1399,7 @@ impl ValTy for EnumVariant {
 
     fn scy_row_to_ts_val(msp: TsMs, inp: Self::ScyRowTy) -> (TsNano, Self) {
         let ts = TsNano::from_ns(msp.ns_u64() + inp.0 as u64);
-        (ts, EnumVariant::new(inp.1 as u16, inp.2))
-    }
-}
-
-impl ValTy for Vec<String> {
-    type ScaTy = String;
-    type ScyTy = Vec<String>;
-    type ScyRowTy = (i64, Vec<String>);
-    type Container = ContainerEvents<Vec<String>>;
-
-    fn from_valueblob(_inp: Vec<u8>) -> Self {
-        panic!("unused")
-    }
-
-    fn table_name() -> &'static str {
-        "array_string"
-    }
-
-    fn default() -> Self {
-        Vec::new()
-    }
-
-    fn is_valueblob() -> bool {
-        false
-    }
-
-    fn st_name() -> &'static str {
-        "string"
-    }
-
-    fn scy_row_to_ts_val(msp: TsMs, inp: Self::ScyRowTy) -> (TsNano, Self) {
-        let ts = TsNano::from_ns(msp.ns_u64() + inp.0 as u64);
-        (ts, inp.1)
+        (ts, EnumVariant::new(inp.1 as i16, inp.2))
     }
 }
 
@@ -1459,3 +1427,73 @@ impl_scaty_array!(Vec<i64>, i64, Vec<i64>, "i64", "i64");
 impl_scaty_array!(Vec<f32>, f32, Vec<f32>, "f32", "f32");
 impl_scaty_array!(Vec<f64>, f64, Vec<f64>, "f64", "f64");
 impl_scaty_array!(Vec<bool>, bool, Vec<bool>, "bool", "bool");
+
+// TODO
+// Dummys
+
+impl ValTy for Vec<String> {
+    type ScaTy = String;
+    type ScyTy = Vec<String>;
+    type ScyRowTy = (i64, Vec<String>);
+    type Container = ContainerEvents<Vec<String>>;
+
+    fn from_valueblob(_inp: Vec<u8>) -> Self {
+        warn!("enum string not yet supported");
+        Vec::new()
+    }
+
+    fn table_name() -> &'static str {
+        "array_string"
+    }
+
+    fn default() -> Self {
+        Vec::new()
+    }
+
+    fn is_valueblob() -> bool {
+        false
+    }
+
+    fn st_name() -> &'static str {
+        "string"
+    }
+
+    fn scy_row_to_ts_val(msp: TsMs, inp: Self::ScyRowTy) -> (TsNano, Self) {
+        let ts = TsNano::from_ns(msp.ns_u64() + inp.0 as u64);
+        (ts, Vec::new())
+    }
+}
+
+impl ValTy for Vec<EnumVariant> {
+    type ScaTy = EnumVariant;
+    // TODO
+    type ScyTy = i16;
+    type ScyRowTy = (i64, i16, String);
+    type Container = ContainerEvents<Vec<EnumVariant>>;
+
+    fn from_valueblob(_inp: Vec<u8>) -> Self {
+        warn!("enum waveform not yet supported");
+        Vec::new()
+    }
+
+    fn table_name() -> &'static str {
+        "array_enum"
+    }
+
+    fn default() -> Self {
+        Vec::new()
+    }
+
+    fn is_valueblob() -> bool {
+        false
+    }
+
+    fn st_name() -> &'static str {
+        "enum"
+    }
+
+    fn scy_row_to_ts_val(msp: TsMs, inp: Self::ScyRowTy) -> (TsNano, Self) {
+        let ts = TsNano::from_ns(msp.ns_u64() + inp.0 as u64);
+        (ts, Vec::new())
+    }
+}

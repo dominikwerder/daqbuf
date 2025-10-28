@@ -21,7 +21,10 @@ use netpod::log;
 use netpod::ttl::RetentionTime;
 use std::collections::VecDeque;
 use std::fmt;
+use std::pin::Pin;
 use std::sync::Arc;
+use std::task::Context;
+use std::task::Poll;
 use std::time::Duration;
 use taskrun::tokio;
 
@@ -423,6 +426,36 @@ impl ScyllaQueue {
     }
 }
 
+struct FutCatchUnwind<F> {
+    fut: F,
+}
+
+impl<F> FutCatchUnwind<F> {
+    fn new(fut: F) -> Self {
+        Self { fut }
+    }
+}
+
+impl<F> Future for FutCatchUnwind<F>
+where
+    F: futures_util::Future,
+{
+    type Output = std::thread::Result<F::Output>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        use Poll::*;
+        use std::panic::AssertUnwindSafe;
+        let fut = unsafe { self.as_mut().map_unchecked_mut(|s| &mut s.fut) };
+        let lmb = AssertUnwindSafe(|| fut.poll(cx));
+        let res = std::panic::catch_unwind(lmb);
+        match res {
+            Ok(Ready(v)) => Ready(Ok(v)),
+            Ok(Pending) => Pending,
+            Err(e) => Ready(Err(e)),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct ScyllaWorker {
     rx: Receiver<Job>,
@@ -527,7 +560,18 @@ impl ScyllaWorker {
     pub async fn work(self) -> Result<(), Error> {
         loop {
             info!("scylla worker start");
-            match self.work_inner().await {
+            let res = FutCatchUnwind::new(self.work_inner()).await;
+            let res = match res {
+                Ok(x) => x,
+                Err(e) => {
+                    error!("panic in scylla worker: {:?}", e);
+                    let x = 10;
+                    info!("scylla worker sleep {x} sec before reconnect");
+                    taskrun::tokio::time::sleep(std::time::Duration::from_secs(x)).await;
+                    continue;
+                }
+            };
+            match res {
                 Ok(()) => {
                     info!("scylla worker finished");
                     break Ok(());
