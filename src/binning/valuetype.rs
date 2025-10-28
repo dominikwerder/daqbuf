@@ -17,7 +17,7 @@ macro_rules! trace_ingest_event { ($($arg:tt)*) => ( if false { log::trace!($($a
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EnumVariantContainer {
-    ixs: VecDeque<u16>,
+    ixs: VecDeque<i16>,
     names: VecDeque<String>,
 }
 
