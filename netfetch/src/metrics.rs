@@ -23,6 +23,7 @@ use axum::response::Response;
 use bytes::Bytes;
 use dbpg::seriesbychannel::ChannelInfoQuery;
 use err::Error;
+use futures_util::future::ready;
 use http::Request;
 use http::StatusCode;
 use http_body::Body;
@@ -38,6 +39,7 @@ use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::net::SocketAddrV4;
+use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
@@ -456,6 +458,158 @@ fn make_routes_daqingest_private(
                 |Query(params): Query<HashMap<String, String>>| private_channel_states(params, tx)
             }),
         )
+        .route(
+            "/debug_current_time",
+            get(|| async {
+                let ts = time::UtcDateTime::now();
+                let format = time::format_description::parse("[year]-[month]-[day] [hour]:[minute]:[second]Z").unwrap();
+                let s = ts.format(&format).unwrap();
+                axum::Json(json!({"ts":s}))
+            }),
+        )
+}
+
+fn make_routes_daqingest_ui_static(rres: Arc<RoutesResources>) -> axum::Router {
+    use axum::Router;
+    use axum::extract;
+    use axum::routing::get;
+    Router::new()
+        .fallback(|| async { axum::Json(json!({ "description": "ingest ui" } )) })
+        .route(
+            "/allpaths",
+            get({ move || async move { format!("{:?}", daqingest_ui::assets::all_asset_paths()) } }),
+        )
+        .route(
+            "/path1/{*path}",
+            get({ move |extract::Path(path): extract::Path<String>| async move { format!("{path:?}") } }),
+        )
+        .route(
+            "/path3{*path}",
+            get({ move |extract::Path(path): extract::Path<String>| async move { format!("{path:?}") } }),
+        )
+        .nest(
+            "/path2",
+            Router::new().fallback(get({
+                move |extract::Path(path): extract::Path<String>| async move { format!("{path:?}") }
+            })),
+        )
+        .nest(
+            "/path3",
+            Router::new().fallback(get({ move |req: extract::Request| async move { format!("{req:?}") } })),
+        )
+        .route(
+            "/ui1/{*path}",
+            get({
+                let pre = "/ui1";
+                move |extract::Path(path): extract::Path<String>| async move {
+                    info!("pre {pre:?}  path {path:?}");
+                    match daqingest_ui::assets::get_asset(&format!("{pre}/{path}")) {
+                        Some((bytes, mime)) => ([(http::header::CONTENT_TYPE, mime)], bytes).into_response(),
+                        None => (StatusCode::NOT_FOUND, "Not Found").into_response(),
+                    }
+                }
+            }),
+        )
+}
+
+fn make_routes_daqingest_ui_node(rres: Arc<RoutesResources>) -> axum::Router {
+    use axum::Router;
+    use axum::extract;
+    use axum::routing::get;
+    Router::new()
+        .fallback(|| async { StatusCode::NOT_FOUND })
+        .route(
+            "/allpaths",
+            get({ move || async move { format!("{:?}", daqingest_ui::assets::all_asset_paths()) } }),
+        )
+        .route("/a1", get(|| ready(format!("a1 without trailing"))))
+        .route("/a1/", get(|| ready(format!("a1 with trailing"))))
+        .route("/b1/", get(|| ready(format!("b1 with trailing"))))
+        .route("/b1", get(|| ready(format!("b1 without trailing"))))
+        .route("/c1", get(|| ready(format!("c1 without trailing"))))
+        .route("/c1/", get(|| ready(format!("c1 with trailing"))))
+        .route(
+            "/c1/{*path}",
+            get(|extract::Path(path): extract::Path<String>| ready(format!("c1 with wildcard  {path:?}"))),
+        )
+        .route("/d1/", get(|| ready(format!("d1 with trailing"))))
+        .route("/e1", get(|| ready(format!("e1 without trailing"))))
+        .route(
+            "/e1/{*path}",
+            get(|extract::Path(path): extract::Path<String>| ready(format!("e1 with wildcard  {path:?}"))),
+        )
+        .route("/f1/", get(|| ready(format!("f1 with trailing"))))
+        .route(
+            "/f1/{*path}",
+            get(|extract::Path(path): extract::Path<String>| ready(format!("f1 with wildcard  {path:?}"))),
+        )
+        .route(
+            "/ui1/_app/{*path}",
+            get({
+                let pre = "/ui1/client/daqingest/ui/ui1/_app";
+                move |extract::Path(path): extract::Path<String>| async move {
+                    let full = format!("{pre}/{path}");
+                    match daqingest_ui::assets::get_asset(&full) {
+                        Some((bytes, mime)) => ([(http::header::CONTENT_TYPE, mime)], bytes).into_response(),
+                        None => (StatusCode::NOT_FOUND, "Not Found").into_response(),
+                    }
+                }
+            }),
+        )
+        .route(
+            "/ui1",
+            get(|| ready((StatusCode::SEE_OTHER, [(http::header::LOCATION, "ui1/")]))),
+        )
+        .route(
+            "/ui1/",
+            get({
+                let pre = "/ui1/prerendered/daqingest/ui/ui1";
+                let path = "index.html";
+                move || async move {
+                    let full = format!("{pre}/{path}");
+                    match daqingest_ui::assets::get_asset(&full) {
+                        Some((bytes, mime)) => ([(http::header::CONTENT_TYPE, mime)], bytes).into_response(),
+                        None => (StatusCode::NOT_FOUND, "Not Found").into_response(),
+                    }
+                }
+            }),
+        )
+        .route(
+            "/ui1/img/{*path}",
+            get({
+                let pre = "/ui1/client/daqingest/ui/ui1/img";
+                move |extract::Path(path): extract::Path<String>| async move {
+                    let full = format!("{pre}/{path}");
+                    match daqingest_ui::assets::get_asset(&full) {
+                        Some((bytes, mime)) => ([(http::header::CONTENT_TYPE, mime)], bytes).into_response(),
+                        None => (StatusCode::NOT_FOUND, "Not Found").into_response(),
+                    }
+                }
+            }),
+        )
+        .route(
+            "/ui1/{*path}",
+            get({
+                let pre = "/ui1/prerendered/daqingest/ui/ui1";
+                move |extract::Path(path): extract::Path<String>| async move {
+                    let path2 = if path == "" {
+                        format!("index.html")
+                    } else {
+                        let p2 = PathBuf::from(&path);
+                        if p2.extension().is_some() {
+                            format!("{path}")
+                        } else {
+                            format!("{path}.html")
+                        }
+                    };
+                    let full = format!("{pre}/{path2}");
+                    match daqingest_ui::assets::get_asset(&full) {
+                        Some((bytes, mime)) => ([(http::header::CONTENT_TYPE, mime)], bytes).into_response(),
+                        None => (StatusCode::NOT_FOUND, "Not Found").into_response(),
+                    }
+                }
+            }),
+        )
 }
 
 fn make_routes_daqingest(
@@ -513,7 +667,7 @@ fn make_routes_daqingest(
         )
         .nest(
             "/private",
-            make_routes_daqingest_private(rres, dcom, connset_cmd_tx, stats_set.clone()),
+            make_routes_daqingest_private(rres.clone(), dcom, connset_cmd_tx.clone(), stats_set.clone()),
         )
         .route(
             "/metricbeat",
@@ -522,6 +676,7 @@ fn make_routes_daqingest(
                 || async move { metricbeat(&stats_set) }
             }),
         )
+        .nest("/ui", make_routes_daqingest_ui_node(rres))
 }
 
 fn make_routes(

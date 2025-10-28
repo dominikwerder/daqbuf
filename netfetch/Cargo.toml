@@ -59,6 +59,7 @@ daqbuf_dbpg = { path = "../../daqbuf-dbpg", package = "daqbuf-dbpg" }
 taskrun = { path = "../../daqbuffer/crates/taskrun" }
 mrucache = { path = "../mrucache" }
 batchtools = { path = "../batchtools" }
+daqingest-ui = { path = "../../daqbuf-ingest-ui", package = "daqbuf-ingest-ui" }
 
 [features]
 disabled = []
