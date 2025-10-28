@@ -141,7 +141,7 @@ impl Stream for ConvertForTesting {
                                         ^ buf[5]
                                         ^ buf[6]
                                         ^ buf[7];
-                                    let val = EnumVariant::new(h as u16, h.to_string());
+                                    let val = EnumVariant::new(h as i16, h.to_string());
                                     dst.push_back(ts, val);
                                 }
                                 let item = Ok(DataItem(Data(ChannelEvents::Events(Box::new(dst)))));
