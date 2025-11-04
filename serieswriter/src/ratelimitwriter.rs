@@ -86,6 +86,14 @@ where
         Ok(ret)
     }
 
+    pub fn last_insert_ts(&self) -> TsNano {
+        self.last_insert_ts
+    }
+
+    pub fn last_insert_val(&self) -> Option<&ET> {
+        self.last_insert_val.as_ref()
+    }
+
     pub fn write(
         &mut self,
         item: ET,

@@ -5,6 +5,7 @@ use super::conncmd::ConnCommand;
 use super::connevent::CaConnEvent;
 use super::connevent::EndOfStreamReason;
 use crate::ca::conn::CaConnOpts;
+use crate::ca::conn2::channel::ChannelBasic;
 use crate::ca::conn2::progpend::HaveProgressPending;
 use crate::ca::conn2::statetrans::conn::IocConnStateBase;
 use crate::ca::conn2::statetrans::stateress1::StateRessShr1;
@@ -17,7 +18,6 @@ use futures_util::FutureExt;
 use futures_util::Stream;
 use futures_util::StreamExt;
 use hashbrown::HashMap;
-use log::*;
 use proto::CaProto;
 use scywr::insertqueues::InsertDeques;
 use scywr::insertqueues::InsertQueuesTx;
@@ -35,7 +35,10 @@ use std::time::Instant;
 use taskrun::tokio;
 use tokio::net::TcpStream;
 
-macro_rules! conn_err { ($($arg:tt)*) => { if true { info!($($arg)*); } }; }
+macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
+macro_rules! warn { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
+macro_rules! info { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
+macro_rules! conn_err { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
 
 autoerr::create_error_v1!(
     name(Error, "Conn"),
@@ -99,7 +102,6 @@ pub struct CaConn {
 }
 
 impl CaConn {
-    #[allow(unused)]
     pub fn new(
         opts: CaConnOpts,
         backend: String,
@@ -122,6 +124,13 @@ impl CaConn {
             rng,
             mett: stats::mett::CaConnMetrics::new(),
         }
+    }
+
+    fn __test_channel(mut self: Pin<&mut Self>, cx: &mut Context, ch1: &mut ChannelBasic) {
+        // let mut ch1 = ChannelBasic::new();
+        let ch1pin = Pin::new(ch1);
+        let cx = todo!();
+        ch1pin.config_update(cx, todo!());
     }
 
     fn poll_own_ticker(mut self: Pin<&mut Self>, cx: &mut Context) -> Result<Poll<()>, Error> {

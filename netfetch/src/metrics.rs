@@ -544,6 +544,10 @@ fn make_routes_daqingest_ui_node(rres: Arc<RoutesResources>) -> axum::Router {
             get(|extract::Path(path): extract::Path<String>| ready(format!("f1 with wildcard  {path:?}"))),
         )
         .route(
+            "/g1{*path}",
+            get(|extract::Path(path): extract::Path<String>| ready(format!("g1 with wildcard  {path:?}"))),
+        )
+        .route(
             "/ui1/_app/{*path}",
             get({
                 let pre = "/ui1/client/daqingest/ui/ui1/_app";

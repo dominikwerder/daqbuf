@@ -1137,7 +1137,6 @@ impl<'a> EventAddIngestRefobj<'a> {
             // TODO refactor
             let value_cloned = value.clone();
             let wres = rtwriter.write(CaWriterValue::new(value_cloned, crst), tscaproto, tsev, self.iqdqs)?;
-            // series::dbg;
             if wres.st.accept {
                 if self.is_dbg {
                     info!(
@@ -2035,7 +2034,8 @@ impl CaConn {
             // TODO shutdown the internal writer structures.
             match &mut conf.state {
                 ChannelState::Writable(st2) => {
-                    if st2.writer.tick(&mut self.iqdqs).is_err() {
+                    let tsnow_nano = TsNano::from_system_time(stnow);
+                    if st2.writer.tick(&mut self.iqdqs, tsnow_nano).is_err() {
                         self.mett.logic_error().inc();
                     }
                     if st2.writer.on_close(&mut self.iqdqs).is_err() {
@@ -3558,6 +3558,8 @@ impl CaConn {
 
     fn handle_own_ticker(mut self: Pin<&mut Self>, cx: &mut Context) -> Result<(), Error> {
         let tsnow = Instant::now();
+        let stnow = SystemTime::now();
+        let tsnow_nano = TsNano::from_system_time(stnow);
         if !self.is_shutdown() {
             self.ticker = Self::new_self_ticker(&mut self.rng);
             match self.ticker.poll_unpin(cx) {
@@ -3581,7 +3583,7 @@ impl CaConn {
         }
         if self.tick_last_writer + Duration::from_millis(2000) <= tsnow {
             self.tick_last_writer = tsnow;
-            match self.tick_writers() {
+            match self.tick_writers(tsnow_nano) {
                 Ok(()) => {}
                 Err(e) => {
                     error!("error in writers: {}", e);
@@ -3781,12 +3783,12 @@ impl CaConn {
         }
     }
 
-    fn tick_writers(&mut self) -> Result<(), Error> {
+    fn tick_writers(&mut self, tsnow: TsNano) -> Result<(), Error> {
         for (_, chconf) in &mut self.channels {
             let chst = &mut chconf.state;
             if let ChannelState::Writable(st2) = chst {
                 let iqdqs = &mut self.iqdqs;
-                st2.writer.tick(iqdqs)?;
+                st2.writer.tick(iqdqs, tsnow)?;
                 if self.opts.binwriter_enable {
                     st2.binwriter.tick(iqdqs)?;
                 }

@@ -10,6 +10,7 @@ use scywr::insertqueues::InsertDeques;
 use scywr::iteminsertqueue::QueryItem;
 use serde::Serialize;
 use series::SeriesId;
+use stats::rand_xoshiro::rand_core::le;
 use std::collections::VecDeque;
 use std::time::Duration;
 use std::time::Instant;
@@ -373,7 +374,78 @@ where
         Ok(ret)
     }
 
-    pub fn tick(&mut self, iqdqs: &mut InsertDeques) -> Result<(), Error> {
+    fn check_quiet_reput(&mut self, iqdqs: &mut InsertDeques, tsnow: TsNano) -> Result<(), Error> {
+        let main_last_value = if let Some(x) = &self.last_insert_val {
+            x
+        } else {
+            return Ok(());
+        };
+        // TODO need to know if this is polled or monitored.
+        let tsl_st = Some(&self.state_st.writer)
+            .map(|w| w.last_insert_val().map(|_| w.last_insert_ts()))
+            .flatten();
+        let tsl_mt = Some(&self.state_mt.writer)
+            .map(|w| w.last_insert_val().map(|_| w.last_insert_ts()))
+            .flatten();
+        let tsl_lt = Some(&self.state_lt.writer)
+            .map(|w| w.last_insert_val().map(|_| w.last_insert_ts()))
+            .flatten();
+        let mut max_tsl = None;
+        let mut max_rt = None;
+        let mut max_rt2 = None;
+        if let Some(tsl) = tsl_st {
+            max_tsl = Some(tsl);
+            max_rt = Some(RetentionTime::Short);
+        }
+        if let Some(tsl) = tsl_mt {
+            if tsl > max_tsl.unwrap_or(TsNano::from_ns(0)) {
+                if max_tsl.is_some() {
+                    max_rt2 = max_rt;
+                }
+                max_tsl = Some(tsl);
+                max_rt = Some(RetentionTime::Medium);
+            }
+        }
+        if let Some(tsl) = tsl_lt {
+            if tsl > max_tsl.unwrap_or(TsNano::from_ns(0)) {
+                if max_tsl.is_some() {
+                    max_rt2 = max_rt;
+                }
+                max_tsl = Some(tsl);
+                max_rt = Some(RetentionTime::Long);
+            }
+        }
+        let _ = max_tsl;
+        let ww = match max_rt {
+            Some(RetentionTime::Short) => match max_rt2 {
+                Some(RetentionTime::Medium) => {
+                    Some((self.min_quiets().mt.clone(), &mut self.state_mt, &mut iqdqs.mt_rf3_qu))
+                }
+                Some(RetentionTime::Long) => {
+                    Some((self.min_quiets().lt.clone(), &mut self.state_lt, &mut iqdqs.lt_rf3_qu))
+                }
+                _ => None,
+            },
+            Some(RetentionTime::Medium) => match max_rt2 {
+                Some(RetentionTime::Long) => {
+                    Some((self.min_quiets().lt.clone(), &mut self.state_lt, &mut iqdqs.lt_rf3_qu))
+                }
+                _ => None,
+            },
+            _ => None,
+        };
+        if let Some((q, st, iqdq)) = ww {
+            let tt = st.writer.last_insert_ts().add_ns(q.as_nanos() as u64);
+            if tt <= tsnow {
+                Self::write_inner(st, main_last_value.clone(), Instant::now(), self.last_insert_ts, iqdq)?;
+            } else {
+            }
+        }
+        Ok(())
+    }
+
+    pub fn tick(&mut self, iqdqs: &mut InsertDeques, tsnow: TsNano) -> Result<(), Error> {
+        self.check_quiet_reput(iqdqs, tsnow)?;
         if self.do_st_rf1 {
             self.state_st.writer.tick(&mut iqdqs.st_rf1_qu)?;
         } else {
