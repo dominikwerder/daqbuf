@@ -6,6 +6,7 @@ use crate::ServiceSharedResources;
 use daqbuf_err as err;
 use dbconn::worker::PgQueue;
 use err::ToPublicError;
+use http::header;
 use http::Method;
 use http::StatusCode;
 use httpclient::body_empty;
@@ -22,6 +23,7 @@ use netpod::NodeConfigCached;
 use netpod::ScalarType;
 use netpod::Shape;
 use netpod::TsMs;
+use netpod::APP_JSON;
 use query::api4::AccountingToplistQuery;
 use scyllaconn::accounting::toplist::UsageData;
 use serde::Deserialize;
@@ -210,7 +212,9 @@ impl AccountingIngested {
             }
         }
         let body = ToJsonBody::from(&ret).into_body();
-        Ok(response(StatusCode::OK).body(body)?)
+        Ok(response(StatusCode::OK)
+            .header(header::CONTENT_TYPE, APP_JSON)
+            .body(body)?)
     }
 }
 
@@ -262,7 +266,9 @@ impl AccountingToplistCounts {
         let qu = AccountingToplistQuery::from_url(&url)?;
         let res = fetch_data(qu.rt(), qu.ts().to_ts_ms(), ctx, shared_res, ncc).await?;
         let body = ToJsonBody::from(&res).into_body();
-        Ok(response(StatusCode::OK).body(body)?)
+        Ok(response(StatusCode::OK)
+            .header(header::CONTENT_TYPE, APP_JSON)
+            .body(body)?)
     }
 }
 
