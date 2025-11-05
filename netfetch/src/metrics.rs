@@ -844,7 +844,9 @@ pub async fn metrics_service(
 ) -> Result<(), Error> {
     info!("metrics service start  {}", bind_to);
     let addr: SocketAddr = bind_to.parse().map_err(Error::from_string)?;
-    let router = make_routes(rres, dcom, connset_cmd_tx, stats_set).into_make_service();
+    let router = make_routes(rres, dcom, connset_cmd_tx, stats_set)
+        .layer(tower_http::compression::CompressionLayer::new().gzip(true))
+        .into_make_service();
     let listener = TcpListener::bind(addr).await?;
     // into_make_service_with_connect_info
     axum::serve(listener, router)

@@ -10,14 +10,14 @@ use scywr::insertqueues::InsertDeques;
 use scywr::iteminsertqueue::QueryItem;
 use serde::Serialize;
 use series::SeriesId;
-use stats::rand_xoshiro::rand_core::le;
 use std::collections::VecDeque;
 use std::time::Duration;
 use std::time::Instant;
 
-macro_rules! debug_init { ($det:expr, $($arg:expr),*) => ( if $det { log::info!($($arg),*); } ); }
-macro_rules! trace_emit { ($det:expr, $($arg:expr),*) => ( if $det { log::trace!($($arg),*); } ); }
-macro_rules! trace_rt_decision { ($det:expr, $($arg:expr),*) => ( if $det { log::trace!($($arg),*); } ); }
+macro_rules! trace_reput { ($det:expr, $($arg:tt)*) => ( if false { log::trace!($($arg)*); } ); }
+macro_rules! debug_init { ($det:expr, $($arg:tt)*) => ( if $det { log::info!($($arg)*); } ); }
+macro_rules! trace_emit { ($det:expr, $($arg:tt)*) => ( if $det { log::trace!($($arg)*); } ); }
+macro_rules! trace_rt_decision { ($det:expr, $($arg:tt)*) => ( if $det { log::trace!($($arg)*); } ); }
 
 autoerr::create_error_v1!(
     name(Error, "SerieswriterRtwriter"),
@@ -352,6 +352,28 @@ where
         Ok(ret)
     }
 
+    fn write_inner_force(
+        state: &mut State<ET, MspSplitDyn>,
+        item: ET,
+        ts_net: Instant,
+        tsev: TsNano,
+        deque: &mut VecDeque<QueryItem>,
+    ) -> Result<WriteRtRes, Error> {
+        let x = state.writer.write_force(item, ts_net, tsev, deque)?;
+        let ret = WriteRtRes {
+            accept: x.accept,
+            bytes: x.bytes,
+            msp_rewrite: x.msp_rewrite,
+            ignore_rewind_time: 0,
+            ignore_same_time: 0,
+            ignore_same_value: 0,
+            ignore_monitor_not_min_quiet: x.ignore_monitor_not_min_quiet,
+            ignore_poll_not_min_quiet: x.ignore_poll_not_min_quiet,
+            ignore_rate_cap: x.ignore_rate_cap,
+        };
+        Ok(ret)
+    }
+
     fn write_inner(
         state: &mut State<ET, MspSplitDyn>,
         item: ET,
@@ -375,71 +397,87 @@ where
     }
 
     fn check_quiet_reput(&mut self, iqdqs: &mut InsertDeques, tsnow: TsNano) -> Result<(), Error> {
-        let main_last_value = if let Some(x) = &self.last_insert_val {
-            x
-        } else {
-            return Ok(());
-        };
-        // TODO need to know if this is polled or monitored.
+        #[allow(unused)]
+        let dtd = self.do_trace_detail;
         let tsl_st = Some(&self.state_st.writer)
-            .map(|w| w.last_insert_val().map(|_| w.last_insert_ts()))
+            .map(|w| w.last_insert_val().map(|x| (w.last_insert_ts(), x)))
             .flatten();
         let tsl_mt = Some(&self.state_mt.writer)
-            .map(|w| w.last_insert_val().map(|_| w.last_insert_ts()))
+            .map(|w| w.last_insert_val().map(|x| (w.last_insert_ts(), x)))
             .flatten();
         let tsl_lt = Some(&self.state_lt.writer)
-            .map(|w| w.last_insert_val().map(|_| w.last_insert_ts()))
+            .map(|w| w.last_insert_val().map(|x| (w.last_insert_ts(), x)))
             .flatten();
-        let mut max_tsl = None;
-        let mut max_rt = None;
-        let mut max_rt2 = None;
-        if let Some(tsl) = tsl_st {
-            max_tsl = Some(tsl);
-            max_rt = Some(RetentionTime::Short);
-        }
-        if let Some(tsl) = tsl_mt {
-            if tsl > max_tsl.unwrap_or(TsNano::from_ns(0)) {
-                if max_tsl.is_some() {
-                    max_rt2 = max_rt;
-                }
-                max_tsl = Some(tsl);
-                max_rt = Some(RetentionTime::Medium);
+        trace_reput!(dtd, "tsl_st {tsl_st:?}");
+        trace_reput!(dtd, "tsl_mt {tsl_mt:?}");
+        trace_reput!(dtd, "tsl_lt {tsl_lt:?}");
+        let mut max_tsl: Option<((TsNano, &ET), RetentionTime)> = None;
+        if let Some((tsl, vall)) = &tsl_lt {
+            if max_tsl.as_ref().map_or(true, |x| *tsl > x.0.0) {
+                max_tsl = Some(((*tsl, vall), RetentionTime::Long));
             }
         }
-        if let Some(tsl) = tsl_lt {
-            if tsl > max_tsl.unwrap_or(TsNano::from_ns(0)) {
-                if max_tsl.is_some() {
-                    max_rt2 = max_rt;
-                }
-                max_tsl = Some(tsl);
-                max_rt = Some(RetentionTime::Long);
+        if let Some((tsl, vall)) = &tsl_mt {
+            if max_tsl.as_ref().map_or(true, |x| *tsl > x.0.0) {
+                max_tsl = Some(((*tsl, vall), RetentionTime::Medium));
             }
         }
-        let _ = max_tsl;
-        let ww = match max_rt {
-            Some(RetentionTime::Short) => match max_rt2 {
-                Some(RetentionTime::Medium) => {
-                    Some((self.min_quiets().mt.clone(), &mut self.state_mt, &mut iqdqs.mt_rf3_qu))
-                }
-                Some(RetentionTime::Long) => {
-                    Some((self.min_quiets().lt.clone(), &mut self.state_lt, &mut iqdqs.lt_rf3_qu))
-                }
-                _ => None,
-            },
-            Some(RetentionTime::Medium) => match max_rt2 {
-                Some(RetentionTime::Long) => {
-                    Some((self.min_quiets().lt.clone(), &mut self.state_lt, &mut iqdqs.lt_rf3_qu))
-                }
-                _ => None,
-            },
-            _ => None,
-        };
-        if let Some((q, st, iqdq)) = ww {
-            let tt = st.writer.last_insert_ts().add_ns(q.as_nanos() as u64);
-            if tt <= tsnow {
-                Self::write_inner(st, main_last_value.clone(), Instant::now(), self.last_insert_ts, iqdq)?;
-            } else {
+        if let Some((tsl, vall)) = &tsl_st {
+            if max_tsl.as_ref().map_or(true, |x| *tsl > x.0.0) {
+                max_tsl = Some(((*tsl, vall), RetentionTime::Short));
             }
+        }
+        trace_reput!(dtd, "max_tsl {max_tsl:?}");
+        match max_tsl {
+            Some(((tsl, vall), RetentionTime::Short)) => {
+                trace_reput!(dtd, "MATCH Short");
+                let mut chosen = false;
+                if !chosen {
+                    let q = self.min_quiets().lt;
+                    let tt = tsl.add_ns(q.as_nanos() as u64);
+                    if tt <= tsnow {
+                        trace_reput!(dtd, "MATCH Short - Long go");
+                        chosen = true;
+                        let _ = chosen;
+                        let vall = vall.clone();
+                        Self::write_inner_force(&mut self.state_lt, vall, Instant::now(), tsl, &mut iqdqs.lt_rf3_qu)?;
+                        return Ok(());
+                    } else {
+                        trace_reput!(dtd, "MATCH Short - Long wait");
+                    }
+                }
+                if !chosen {
+                    let q = self.min_quiets().mt;
+                    let tt = tsl.add_ns(q.as_nanos() as u64);
+                    if tt <= tsnow {
+                        trace_reput!(dtd, "MATCH Short - Medium go");
+                        chosen = true;
+                        let vall = vall.clone();
+                        Self::write_inner_force(&mut self.state_mt, vall, Instant::now(), tsl, &mut iqdqs.mt_rf3_qu)?;
+                    } else {
+                        trace_reput!(dtd, "MATCH Short - Medium wait");
+                    }
+                }
+                let _ = chosen;
+            }
+            Some(((tsl, vall), RetentionTime::Medium)) => {
+                trace_reput!(dtd, "MATCH Medium");
+                let mut chosen = false;
+                if !chosen {
+                    let q = self.min_quiets().lt;
+                    let tt = tsl.add_ns(q.as_nanos() as u64);
+                    if tt <= tsnow {
+                        trace_reput!(dtd, "MATCH Medium - Long go");
+                        chosen = true;
+                        let vall = vall.clone();
+                        Self::write_inner_force(&mut self.state_lt, vall, Instant::now(), tsl, &mut iqdqs.lt_rf3_qu)?;
+                    } else {
+                        trace_reput!(dtd, "MATCH Medium - Long wait");
+                    }
+                }
+                let _ = chosen;
+            }
+            _ => {}
         }
         Ok(())
     }

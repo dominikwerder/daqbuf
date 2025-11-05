@@ -14,7 +14,7 @@ use std::time::Instant;
 
 macro_rules! debug { ($($arg:tt)*) => ( if true { log::debug!($($arg)*); } ); }
 macro_rules! trace { ($($arg:tt)*) => ( if true { log::trace!($($arg)*); } ); }
-macro_rules! trace_rt_decision { ($dtd:expr, $($arg:tt)*) => ( if $dtd { log::trace!($($arg)*); } ); }
+macro_rules! trace_decision { ($dtd:expr, $($arg:tt)*) => ( if $dtd { log::info!($($arg)*); } ); }
 
 autoerr::create_error_v1!(
     name(Error, "RateLimitWriter"),
@@ -94,6 +94,30 @@ where
         self.last_insert_val.as_ref()
     }
 
+    pub fn write_force(
+        &mut self,
+        item: ET,
+        ts_net: Instant,
+        tsev: TsNano,
+        deque: &mut VecDeque<QueryItem>,
+    ) -> Result<WriteRes, Error> {
+        let ignore_monitor_not_min_quiet: u8 = 0;
+        let ignore_poll_not_min_quiet: u8 = 0;
+        let ignore_rate_cap: u8 = 0;
+        self.last_insert_ts = tsev;
+        self.last_insert_val = Some(item.clone());
+        let res = self.writer.write(item, &mut self.emit_state, ts_net, tsev, deque)?;
+        let ret = WriteRes {
+            accept: true,
+            bytes: res.bytes,
+            msp_rewrite: res.msp_rewrite,
+            ignore_monitor_not_min_quiet,
+            ignore_poll_not_min_quiet,
+            ignore_rate_cap,
+        };
+        Ok(ret)
+    }
+
     pub fn write(
         &mut self,
         item: ET,
@@ -112,7 +136,7 @@ where
         let mut ignore_rate_cap: u8 = 0;
         let do_write = {
             if !self.is_polled && ts.ms() < tsl.ms() + min_quiet {
-                trace_rt_decision!(
+                trace_decision!(
                     dtd,
                     "{}  {}  ignore, because monitor not min quiet  {}  {}",
                     dbgname,
@@ -123,7 +147,7 @@ where
                 ignore_monitor_not_min_quiet += 1;
                 false
             } else if self.is_polled && ts.ms() + 800 < tsl.ms() + min_quiet {
-                trace_rt_decision!(
+                trace_decision!(
                     dtd,
                     "{}  {}  ignore, because poll not min quiet  {}  {}",
                     dbgname,
@@ -134,7 +158,7 @@ where
                 ignore_poll_not_min_quiet += 1;
                 false
             } else if ts < tsl.add_dt_nano(DtNano::from_ms(1)) {
-                trace_rt_decision!(
+                trace_decision!(
                     dtd,
                     "{}  {}  ignore, because store rate cap  {}  {}",
                     dbgname,
@@ -145,12 +169,13 @@ where
                 ignore_rate_cap += 1;
                 false
             } else {
-                trace_rt_decision!(dtd, "{}  {}  accept  {}  {}", dbgname, sid, ts, tsl);
+                trace_decision!(dtd, "{}  {}  accept  {}  {}", dbgname, sid, ts, tsl);
                 true
             }
         };
         if do_write {
             self.last_insert_ts = ts;
+            self.last_insert_val = Some(item.clone());
             let res = self.writer.write(item, &mut self.emit_state, ts_net, ts, deque)?;
             let ret = WriteRes {
                 accept: true,
