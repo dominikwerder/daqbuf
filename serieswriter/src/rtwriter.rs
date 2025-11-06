@@ -434,7 +434,7 @@ where
                 let mut chosen = false;
                 if !chosen {
                     let q = self.min_quiets().lt;
-                    let tt = tsl.add_ns(q.as_nanos() as u64);
+                    let tt = TsNano::from_ns(tsl.ns().saturating_add(q.as_nanos() as u64));
                     if tt <= tsnow {
                         trace_reput!(dtd, "MATCH Short - Long go");
                         chosen = true;
@@ -448,7 +448,7 @@ where
                 }
                 if !chosen {
                     let q = self.min_quiets().mt;
-                    let tt = tsl.add_ns(q.as_nanos() as u64);
+                    let tt = TsNano::from_ns(tsl.ns().saturating_add(q.as_nanos() as u64));
                     if tt <= tsnow {
                         trace_reput!(dtd, "MATCH Short - Medium go");
                         chosen = true;
@@ -465,7 +465,7 @@ where
                 let mut chosen = false;
                 if !chosen {
                     let q = self.min_quiets().lt;
-                    let tt = tsl.add_ns(q.as_nanos() as u64);
+                    let tt = TsNano::from_ns(tsl.ns().saturating_add(q.as_nanos() as u64));
                     if tt <= tsnow {
                         trace_reput!(dtd, "MATCH Medium - Long go");
                         chosen = true;
