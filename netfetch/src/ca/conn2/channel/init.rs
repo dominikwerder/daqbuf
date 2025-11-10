@@ -1,17 +1,25 @@
 use super::AcceptMessageResult;
+use crate::ca::conn2::caids::Cid;
+use crate::ca::conn2::caids::Sid;
 use crate::ca::conn2::channel::SharedResources;
 use crate::ca::conn2::todoval;
+use crate::conf::ChannelConfig;
 use async_channel::SendError;
 use async_channel::Sender;
 use async_channel::TrySendError;
 use ca_proto::ca::proto;
 use serde::Serialize;
+use series::ChannelStatusSeriesId;
 use std::collections::VecDeque;
 use std::fmt;
 use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
 use std::time::Instant;
+
+macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
+macro_rules! warn { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
+macro_rules! info { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
 
 autoerr::create_error_v1!(
     name(Error, "ChannelError"),
@@ -69,14 +77,23 @@ async fn tx_send(tx: Sender<proto::CaMsg>, item: proto::CaMsg) -> Result<(), Err
 #[derive(Debug, Serialize)]
 pub struct TryOpen {
     state: State,
+    conf: ChannelConfig,
+    cssid: ChannelStatusSeriesId,
     ress: SharedResources,
     local_epics_hostname: String,
 }
 
 impl TryOpen {
-    pub fn new(ress: SharedResources, local_epics_hostname: String) -> Self {
+    pub fn new(
+        conf: ChannelConfig,
+        cssid: ChannelStatusSeriesId,
+        ress: SharedResources,
+        local_epics_hostname: String,
+    ) -> Self {
         Self {
             state: State::Init,
+            conf,
+            cssid,
             ress,
             local_epics_hostname,
         }
@@ -87,7 +104,18 @@ impl TryOpen {
         cx: Context,
         msg: proto::CaMsg,
     ) -> Result<AcceptMessageResult, Error> {
-        todo!()
+        use Poll::*;
+        match msg.ty {
+            proto::CaMsgTy::CreateChanRes(k) => {
+                todo!();
+                // TODO process message
+                Ok(AcceptMessageResult::Accepted(()))
+            }
+            k => {
+                warn!("got some other unhandled message during handshake: {:?}", k);
+                Ok(AcceptMessageResult::Accepted(()))
+            }
+        }
     }
 }
 
@@ -100,15 +128,23 @@ impl Future for TryOpen {
             let this = &mut *self;
             break match &mut this.state {
                 State::Init => {
-                    let tsnow = Instant::now();
                     let hostname = self.local_epics_hostname.clone();
                     let mut msgs = VecDeque::new();
-                    let msg = proto::CaMsg::from_ty_ts(proto::CaMsgTy::Version, tsnow);
+                    let tsnow = Instant::now();
+                    // TODO generate a cid.
+                    let cid = Cid::new(todoval());
+                    // let sid = Sid::new(k.sid);
+                    // let cssid = cssid.clone();
+                    let name = self.conf.name();
+                    let msg = proto::CaMsg::from_ty_ts(
+                        proto::CaMsgTy::CreateChan(proto::CreateChan {
+                            cid: cid.to_u32(),
+                            channel: name.into(),
+                        }),
+                        tsnow,
+                    );
                     msgs.push_back(msg);
-                    let msg = proto::CaMsg::from_ty_ts(proto::CaMsgTy::ClientName, tsnow);
-                    msgs.push_back(msg);
-                    let msg = proto::CaMsg::from_ty_ts(proto::CaMsgTy::HostName(hostname), tsnow);
-                    msgs.push_back(msg);
+                    // TODO optional during dev emit to status series that we try to connect.
                     self.state = State::OpenSend(None, msgs);
                     continue;
                 }
@@ -148,7 +184,7 @@ impl Future for TryOpen {
                     // We do not poll here.
                     Pending
                 }
-                State::Open => todo!(),
+                State::Open => Ready(Ok(())),
             };
         }
     }

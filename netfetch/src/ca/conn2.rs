@@ -1,3 +1,4 @@
+mod caids;
 mod channel;
 mod channelstateinfo;
 pub(super) mod conn;

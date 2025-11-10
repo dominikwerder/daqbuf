@@ -32,8 +32,8 @@ pub struct Status {}
 
 #[must_use]
 pub enum AcceptMessageResult {
-    Full,
-    Accept(()),
+    Declined,
+    Accepted(()),
 }
 
 #[derive(Debug, Clone)]
