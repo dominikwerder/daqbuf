@@ -15,6 +15,7 @@ use netpod::range::evrange::NanoRange;
 use netpod::ttl::RetentionTime;
 use std::collections::VecDeque;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::task::Context;
 use std::task::Poll;
 
@@ -78,8 +79,7 @@ pub fn select_potential_binlen(options: VecDeque<(RetentionTime, MspU32, LspU32,
 }
 
 pub struct ReadAllCoarse {
-    #[allow(unused)]
-    scyqueue: Box<ScyllaQueue>,
+    scyqueue: Arc<ScyllaQueue>,
     fut: Option<Pin<Box<dyn Future<Output = Result<VecDeque<(RetentionTime, MspU32, LspU32, DtMs)>, Error>> + Send>>>,
     results: VecDeque<(RetentionTime, MspU32, LspU32, DtMs)>,
 }
@@ -91,10 +91,10 @@ impl ReadAllCoarse {
         use_scylla6_workarounds: UseScylla6Workarounds,
         scyqueue: ScyllaQueue,
     ) -> Self {
-        let scyqueue = Box::new(scyqueue);
+        let scyqueue = Arc::new(scyqueue);
         let fut = {
-            let scyqueue = unsafe { &*(scyqueue.as_ref() as *const ScyllaQueue) };
-            read_all_coarse(series, range, use_scylla6_workarounds, scyqueue)
+            let scyqueue = scyqueue.clone();
+            async move { read_all_coarse(series, range, use_scylla6_workarounds, &scyqueue).await }
         };
         Self {
             scyqueue,

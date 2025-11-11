@@ -8,9 +8,7 @@ use daqbuf_series::msp::PrebinnedPartitioning;
 use futures_util::Future;
 use futures_util::FutureExt;
 use futures_util::Stream;
-use items_0::streamitem::LogItem;
 use items_0::streamitem::Sitemty3;
-use items_0::streamitem::StreamItem;
 use items_0::streamitem::sitem3_data;
 use log::log_item_emit as lg;
 use netpod::DtMs;
@@ -25,6 +23,24 @@ use std::task::Poll;
 
 macro_rules! info { ($($arg:tt)*) => ( if true { log::info!($($arg)*); } ); }
 macro_rules! debug { ($($arg:tt)*) => ( if true { log::debug!($($arg)*); } ); }
+
+macro_rules! info_item {
+    ($($arg:tt)*) => {
+        {
+            let item = items_0::streamitem::LogItem::info(format!($($arg)*));
+            streams::logqueue::push_log_item(item);
+        }
+    };
+}
+
+macro_rules! debug_item {
+    ($($arg:tt)*) => {
+        {
+            let item = items_0::streamitem::LogItem::debug(format!($($arg)*));
+            streams::logqueue::push_log_item(item);
+        }
+    };
+}
 
 autoerr::create_error_v1!(
     name(Error, "BinWriteIndexRtStream"),
@@ -58,7 +74,7 @@ pub struct BinWriteIndexSet {
 
 #[derive(Debug)]
 pub struct BinWriteIndexRtStream {
-    rt1: RetentionTime,
+    rt: RetentionTime,
     series: SeriesId,
     scyqueue: ScyllaQueue,
     pbp: PrebinnedPartitioning,
@@ -68,7 +84,6 @@ pub struct BinWriteIndexRtStream {
     lsp_end: u32,
     use_scylla6_workarounds: UseScylla6Workarounds,
     fut1: Option<Fut1>,
-    logbuf: VecDeque<LogItem>,
 }
 
 impl BinWriteIndexRtStream {
@@ -77,7 +92,7 @@ impl BinWriteIndexRtStream {
     }
 
     pub fn new(
-        rt1: RetentionTime,
+        rt: RetentionTime,
         series: SeriesId,
         pbp: PrebinnedPartitioning,
         range: NanoRange,
@@ -89,8 +104,8 @@ impl BinWriteIndexRtStream {
             "============================   log item emitted from binwriteindex.rs WITH PARAM {}",
             42
         );
-        info!("{}::new  INFO/DEBUG test", Self::type_name());
-        debug!("{}::new", Self::type_name());
+        lg::debug!("{}::new  INFO/DEBUG test", Self::type_name());
+        lg::debug!("{}::new", Self::type_name());
         let (msp_beg, lsp_beg) = pbp.msp_lsp(range.beg_ts().to_ts_ms());
         let (msp_end, lsp_end) = pbp.msp_lsp(
             range
@@ -99,7 +114,7 @@ impl BinWriteIndexRtStream {
                 .to_ts_ms(),
         );
         BinWriteIndexRtStream {
-            rt1,
+            rt,
             series,
             scyqueue,
             pbp,
@@ -109,12 +124,11 @@ impl BinWriteIndexRtStream {
             lsp_end,
             use_scylla6_workarounds,
             fut1: None,
-            logbuf: Default::default(),
         }
     }
 
     async fn next_query_fut(
-        scyqueue: &ScyllaQueue,
+        scyqueue: ScyllaQueue,
         rt1: RetentionTime,
         series: SeriesId,
         pbp: PrebinnedPartitioning,
@@ -131,11 +145,13 @@ impl BinWriteIndexRtStream {
     }
 
     fn make_next_query_fut(mut self: Pin<&mut Self>, _cx: &mut Context) -> Option<Fut1> {
-        let msg = format!(
+        info_item!(
             "make_next_query_fut  msp {}  msp_end {}  lsp_min {}  lsp_end {}",
-            self.msp, self.msp_end, self.lsp_min, self.lsp_end
+            self.msp,
+            self.msp_end,
+            self.lsp_min,
+            self.lsp_end
         );
-        self.logbuf.push_back(LogItem::info(msg));
         if self.msp <= self.msp_end {
             let msp = self.msp;
             self.msp += 1;
@@ -146,17 +162,26 @@ impl BinWriteIndexRtStream {
             } else {
                 self.pbp.patch_len()
             };
-            let scyqueue = unsafe { netpod::extltref(&self.scyqueue) };
-            let fut = Self::next_query_fut(
-                scyqueue,
-                self.rt1.clone(),
-                self.series.clone(),
-                self.pbp.clone(),
-                msp,
-                lsp_min,
-                lsp_max,
-                self.use_scylla6_workarounds.clone(),
-            );
+            let fut = {
+                let scyqueue = self.scyqueue.clone();
+                let rt = self.rt.clone();
+                let series = self.series.clone();
+                let pbp = self.pbp.clone();
+                let use_scylla6_workarounds = self.use_scylla6_workarounds.clone();
+                async move {
+                    Self::next_query_fut(
+                        scyqueue,
+                        rt,
+                        series,
+                        pbp,
+                        msp,
+                        lsp_min,
+                        lsp_max,
+                        use_scylla6_workarounds,
+                    )
+                    .await
+                }
+            };
             Some(Fut1(Box::pin(fut)))
         } else {
             debug!("make_next_query_fut  done");
@@ -171,9 +196,7 @@ impl Stream for BinWriteIndexRtStream {
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         use Poll::*;
         loop {
-            break if let Some(x) = self.logbuf.pop_front() {
-                Ready(Some(Ok(StreamItem::Log(x))))
-            } else if let Some(fut) = self.fut1.as_mut() {
+            break if let Some(fut) = self.fut1.as_mut() {
                 match fut.0.poll_unpin(cx) {
                     Ready(Ok(x)) => {
                         self.fut1 = None;

@@ -173,7 +173,7 @@ impl BinWriteIndexRead {
             self.lsp_min as i32,
             self.lsp_max as i32,
         );
-        info!("execute {:?}", params);
+        info!("BinWriteIndexRead execute {:?}", params);
         let res = scy
             .execute_iter(
                 stmts

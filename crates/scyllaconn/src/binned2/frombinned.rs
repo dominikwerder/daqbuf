@@ -30,6 +30,30 @@ use std::task::Context;
 use std::task::Poll;
 use streams::timebin::CacheReadProvider;
 
+#[allow(unused)]
+fn _logitems() {
+    use items_0::streamitem::LogItem;
+    use streams::logqueue::push_log_item;
+}
+
+macro_rules! info_item {
+    ($($arg:tt)*) => {
+        {
+            let item = items_0::streamitem::LogItem::info(format!($($arg)*));
+            streams::logqueue::push_log_item(item);
+        }
+    };
+}
+
+macro_rules! debug_item {
+    ($($arg:tt)*) => {
+        {
+            let item = items_0::streamitem::LogItem::debug(format!($($arg)*));
+            streams::logqueue::push_log_item(item);
+        }
+    };
+}
+
 autoerr::create_error_v1!(
     name(Error, "Binned2FromBinned"),
     enum variants {
@@ -105,11 +129,6 @@ impl FromBinned {
         self.logoutbuf.push_back(x.to_string());
     }
 
-    fn push_json<T: Serialize>(&mut self, x: T) {
-        let js = serde_json::to_string(&x).unwrap();
-        self.logoutbuf.push_back(js);
-    }
-
     fn handle_coarse_index(&mut self, rows: VecDeque<IndexRow>) {
         self.push_string(format!("handle_coarse_index"));
         for e in rows {
@@ -130,48 +149,42 @@ impl FromBinned {
     }
 
     fn build_day1_jobs(&mut self) {
-        {
-            let item = items_0::streamitem::LogItem::info("some log string".into());
-            streams::logqueue::push_log_item(item);
-        }
+        info_item!("some log string");
         let mut jobs = VecDeque::new();
         let pbp1 = PrebinnedPartitioning::Day1;
-        self.push_string(format!("binrange {:?}", self.binrange));
-        self.push_string(format!("to_nano_range {:?}", self.binrange.to_nano_range()));
+        info_item!("binrange {:?}", self.binrange);
+        debug_item!("DEBUG LOG ITEM --------------");
+        info_item!("to_nano_range {:?}", self.binrange.to_nano_range());
         let it = MspLspIter::new_covering(self.binrange.to_nano_range(), pbp1.clone());
         for day in it {
             {
                 let nday = pbp1.patch_len() as u64 * day.0.to_u64() + day.1.to_u32() as u64;
                 let ts = 60 * 60 * 24 * nday;
                 let ts = time::UtcDateTime::from_unix_timestamp(ts as _);
-                self.push_string(format!("build_day1_jobs  {:?}  ts {:?}", day, ts));
+                debug_item!("build_day1_jobs  {:?}  ts {:?}", day, ts);
             }
             let k = (day.0, day.1);
             if let Some(ixs) = self.index_map.get(&k) {
-                let mut log = Vec::new();
-                log.push(format!("have index {:?}", ixs));
+                debug_item!("have index {:?}", ixs);
                 let mut found = None;
                 for ix in ixs.iter().rev() {
                     if ix.0.ms() <= self.binrange.bin_len_dt_ms().ms() {
                         if let Some(found) = found.as_ref() {
-                            log.push(format!("already found a better solution found {:?}  e {:?}", found, ix));
+                            debug_item!("already found a better solution found {:?}  e {:?}", found, ix);
                         } else {
                             match PrebinnedPartitioning::from_binlen(ix.0) {
                                 Ok(pbp2) => {
-                                    log.push(format!("FOUND {:?}", ix));
+                                    debug_item!("FOUND {:?}", ix);
                                     found = Some((ix.1.clone(), pbp2));
                                 }
                                 Err(_) => {
-                                    log.push(format!("binlen not a pbp {:?}", ix));
+                                    debug_item!("binlen not a pbp {:?}", ix);
                                 }
                             }
                         }
                     } else {
-                        log.push(format!("too coarse {:?}", ix));
+                        debug_item!("too coarse {:?}", ix);
                     }
-                }
-                for x in log {
-                    self.push_string(x);
                 }
                 if let Some(ix) = found {
                     // determine already here the msp/lsp range that this job must query
@@ -186,7 +199,7 @@ impl FromBinned {
                     {
                         let ts_beg = time::UtcDateTime::from_unix_timestamp(beg.sec() as _);
                         let ts_end = time::UtcDateTime::from_unix_timestamp(end.sec() as _);
-                        self.push_string(format!("beg {:?}  end {:?}", ts_beg, ts_end));
+                        debug_item!("beg {:?}  end {:?}", ts_beg, ts_end);
                     }
                     let it3 = {
                         let range = NanoRange::from_ms_u64(beg.ms(), end.ms());
@@ -205,7 +218,7 @@ impl FromBinned {
                     jobs.push_back(job);
                 }
             } else {
-                self.push_string(format!("no index entry"));
+                debug_item!("no index entry");
             }
         }
         self.jobs = jobs;
@@ -226,13 +239,13 @@ impl FromBinned {
             // let tsend: TsMs = job.3;
             // let range = NanoRange::from_ms_u64(tsbeg.ms(), tsend.ms());
 
-            self.push_string(format!("make job  {:?}", job));
+            debug_item!("make job  {:?}", job);
 
             let chunk_it = MspChunker::from_min_max(pbp, job.min, job.max);
-            self.push_string(format!("chunk_it {:?}", chunk_it));
+            debug_item!("chunk_it {:?}", chunk_it);
             let mut futs = VecDeque::new();
             for chunk in chunk_it {
-                self.push_string(format!("chunk {:?}", chunk));
+                debug_item!("chunk {:?}", chunk);
                 let offs = chunk.lsp1.to_u32()..chunk.lsp2.to_u32();
                 let fut = self
                     .cache_read_provider
@@ -298,7 +311,7 @@ impl Stream for FromBinned {
                                     rows.push_back(x);
                                 }
                                 Err(x) => {
-                                    self2.push_string(format!("{:?}", x));
+                                    debug_item!("{:?}", x);
                                 }
                             }
                             continue;
@@ -311,7 +324,7 @@ impl Stream for FromBinned {
                         Ready(None) => {
                             let a = std::mem::replace(rows, def());
                             self2.state_a = StateA::Done;
-                            self2.push_string("done with reading coarse");
+                            debug_item!("done with reading coarse");
                             self2.handle_coarse_index(a);
                             self2.build_day1_jobs();
                             self2.state_a = StateA::ExecuteJobs;
@@ -324,7 +337,7 @@ impl Stream for FromBinned {
                             match fut.poll_unpin(cx) {
                                 Ready((log, bins)) => {
                                     self2.job_fut = None;
-                                    self.push_string(format!("ExecuteJobs sees Ready"));
+                                    debug_item!("ExecuteJobs sees Ready");
                                     for x in log {
                                         self.push_string(x);
                                     }

@@ -81,6 +81,7 @@ autoerr::create_error_v1!(
         Binned2FromBinned(#[from] scyllaconn::binned2::frombinned::Error),
         BinnedQuery(#[from] query::api4::binned::Error),
         BadRange,
+        Msg(String),
     },
 );
 
@@ -266,14 +267,14 @@ async fn binned_json_framed(
         .use_scylla6_workarounds()
         .map(From::from)
         .unwrap_or(ncc.node_config.cluster.use_scylla6_workarounds());
-    let stream = if res2.url.as_str().contains("testpart=read_all_coarse") {
+    let stream = if false {
         // let stream = scyllaconn::binwriteindex::read_all_coarse::ReadAllCoarse::new(series, range, scyqueue.clone());
         // let stream = stream.map_ok(to_debug).map_err(Error::from);
         // let msg = format!("{}", res2.url.as_str());
         // let stream = futures_util::stream::iter([Ok(msg)]).chain(stream);
         // Box::pin(stream) as Pin<Box<dyn Stream<Item = _> + Send>>
         todo!("testpart=read_all_coarse disabled")
-    } else if res2.url.as_str().contains("testpart=frombinned") {
+    } else if true {
         let binrange = res2
             .query
             .covering_range()?
@@ -287,10 +288,7 @@ async fn binned_json_framed(
             res2.cache_read_provider,
         );
         let stream = stream.map_err(Error::from);
-        // let msg = format!("{}", res2.url.as_str());
-        // let stream = futures_util::stream::iter([Ok(msg)]).chain(stream);
         let stream = stream.map(|x| x);
-
         // use items_2::binning::timeweight::timeweight_bins::BinnedBinsTimeweight;
         use items_0::streamitem::StreamItem;
         use items_2::binning::timeweight::timeweight_bins_lazy::BinnedBinsTimeweightLazy;
@@ -311,7 +309,6 @@ async fn binned_json_framed(
             };
             futures_util::future::ready(ret)
         });
-
         let stream = stream.map(|item| {
             use items_0::streamitem::RangeCompletableItem;
             use items_0::streamitem::StreamItem;
@@ -350,7 +347,9 @@ async fn binned_json_framed(
         // let msg = format!("UNKNOWN  {}", res2.url.as_str());
         // let stream = futures_util::stream::iter([Ok(msg)]);
         // Box::pin(stream)
-        todo!()
+        let e = streams::json_stream::Error::Msg(format!("unknown testpart AA in url: {}", res2.url.as_str()));
+        let stream = futures_util::stream::iter([Err(e)]);
+        Box::pin(stream)
     };
     let stream = streams::lenframe::bytes_chunks_to_len_framed_str(stream);
     let stream = streams::instrument::InstrumentStream::new(stream, res2.logspan);
