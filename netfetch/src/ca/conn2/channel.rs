@@ -1,11 +1,14 @@
 mod init;
 
 use crate::ca::conn2::proto_channel::ProtoOutChannel;
+use crate::conf::ChannelConfig;
 use ca_proto::ca::proto;
 use serde::Serialize;
+use series::ChannelStatusSeriesId;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::Context;
+use std::task::Poll;
 
 macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
 macro_rules! warn { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
@@ -56,10 +59,10 @@ pub struct ChannelBasic {
 }
 
 impl ChannelBasic {
-    pub fn new(ress: SharedResources) -> Self {
+    pub fn new(conf: ChannelConfig, cssid: ChannelStatusSeriesId, ress: SharedResources) -> Self {
         let local_epics_hostname = String::new();
         Self {
-            state: ChannelState::TryOpen(init::TryOpen::new(ress.clone(), local_epics_hostname)),
+            state: ChannelState::TryOpen(init::TryOpen::new(conf, cssid, ress.clone(), local_epics_hostname)),
             ress,
         }
     }
@@ -88,5 +91,35 @@ impl ChannelBasic {
 
     pub fn close(mut self: Pin<&mut Self>, cx: Context, conf: ()) -> Result<(), Error> {
         todo!()
+    }
+}
+
+impl Future for ChannelBasic {
+    type Output = Result<(), Error>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        use Poll::*;
+        match &mut self.as_mut().get_mut().state {
+            ChannelState::TryOpen(s) => match Pin::new(s).poll(cx) {
+                Ready(Ok(())) => {
+                    self.state = ChannelState::WaitOpened;
+                    Pending
+                }
+                Ready(Err(e)) => Ready(Err(Error::ChannelInit(e))),
+                Pending => Pending,
+            },
+            ChannelState::WaitOpened => {
+                todo!()
+            }
+            ChannelState::Open => {
+                todo!()
+            }
+            ChannelState::TryClose => {
+                todo!()
+            }
+            ChannelState::WaitClosed => {
+                todo!()
+            }
+        }
     }
 }

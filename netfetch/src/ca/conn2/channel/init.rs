@@ -117,6 +117,10 @@ impl TryOpen {
             }
         }
     }
+
+    pub fn dismantle(self) -> (ChannelConfig, ChannelStatusSeriesId, SharedResources) {
+        (self.conf, self.cssid, self.ress)
+    }
 }
 
 impl Future for TryOpen {
