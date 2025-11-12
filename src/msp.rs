@@ -23,7 +23,11 @@ impl MspU32 {
     }
 
     pub fn from_db_i32(x: i32) -> Self {
-        MspU32(x as u32)
+        Self(x as u32)
+    }
+
+    pub fn to_u32(&self) -> u32 {
+        self.0
     }
 
     pub fn to_u64(&self) -> u64 {
@@ -40,7 +44,24 @@ impl LspU32 {
     }
 
     pub fn from_db_i32(x: i32) -> Self {
-        LspU32(x as u32)
+        Self(x as u32)
+    }
+
+    pub fn to_u32(&self) -> u32 {
+        self.0
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct BinlenU32(pub u32);
+
+impl BinlenU32 {
+    pub fn to_db_i32(&self) -> i32 {
+        self.0 as i32
+    }
+
+    pub fn from_db_i32(x: i32) -> Self {
+        Self(x as u32)
     }
 
     pub fn to_u32(&self) -> u32 {
@@ -201,6 +222,31 @@ impl PrebinnedPartitioning {
             m2.0 += 1;
         }
         (m2, l2)
+    }
+
+    pub fn from_str(s: &str) -> Result<Self, Error> {
+        use PrebinnedPartitioning::*;
+        match s {
+            "Sec1" => Ok(Sec1),
+            "Sec10" => Ok(Sec10),
+            "Min1" => Ok(Min1),
+            "Min10" => Ok(Min10),
+            "Hour1" => Ok(Hour1),
+            "Day1" => Ok(Day1),
+            _ => Err(Error::PrebinnedPartitioningInvalid),
+        }
+    }
+
+    pub fn to_str(&self) -> &'static str {
+        use PrebinnedPartitioning::*;
+        match self {
+            Sec1 => "Sec1",
+            Sec10 => "Sec10",
+            Min1 => "Min1",
+            Min10 => "Min10",
+            Hour1 => "Hour1",
+            Day1 => "Day1",
+        }
     }
 }
 
