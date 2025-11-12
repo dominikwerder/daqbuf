@@ -111,6 +111,15 @@ impl LogItem {
         }
     }
 
+    pub fn debug(msg: String) -> Self {
+        Self {
+            ts: time::UtcDateTime::now(),
+            level: Level::DEBUG,
+            msg,
+            origin: String::new(),
+        }
+    }
+
     pub fn level(&self) -> Level {
         self.level
     }
