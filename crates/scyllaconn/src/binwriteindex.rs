@@ -3,6 +3,7 @@ pub mod read_all_coarse;
 
 use crate::worker::ScyllaQueue;
 use daqbuf_series::SeriesId;
+use daqbuf_series::msp::BinlenU32;
 use daqbuf_series::msp::LspU32;
 use daqbuf_series::msp::MspU32;
 use daqbuf_series::msp::PrebinnedPartitioning;
@@ -68,7 +69,7 @@ type Fut2 = Pin<
 #[derive(Debug)]
 pub struct BinWriteIndexEntry {
     pub lsp: LspU32,
-    pub binlen: u32,
+    pub binlen: BinlenU32,
 }
 
 #[derive(Debug)]
@@ -123,10 +124,10 @@ impl BinWriteIndexRtStream {
             series,
             scyqueue,
             pbp,
-            msp: MspU32(msp_beg),
-            lsp_min: LspU32(lsp_beg),
-            msp_end: MspU32(msp_end),
-            lsp_end: LspU32(lsp_end),
+            msp: msp_beg,
+            lsp_min: lsp_beg,
+            msp_end: msp_end,
+            lsp_end: lsp_end,
             use_scylla6_workarounds,
             fut1: None,
         }

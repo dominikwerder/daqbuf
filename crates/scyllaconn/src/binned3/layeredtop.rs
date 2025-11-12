@@ -60,7 +60,7 @@ async fn fetch_index_entries(
                     pbp: pbp.clone(),
                     msp,
                     lsp,
-                    binlen: DtMs::from_ms_u64(e.binlen as _),
+                    binlen: DtMs::from_ms_u64(e.binlen.to_u32() as _),
                 };
                 a.push_back(y);
             }

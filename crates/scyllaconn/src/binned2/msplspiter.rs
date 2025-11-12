@@ -14,9 +14,9 @@ pub struct MspLspItem {
 pub struct MspLspIter {
     range: NanoRange,
     pbp: PrebinnedPartitioning,
-    mins: (u32, u32),
-    maxs: (u32, u32),
-    curs: (u32, u32),
+    mins: (MspU32, LspU32),
+    maxs: (MspU32, LspU32),
+    curs: (MspU32, LspU32),
 }
 
 impl MspLspIter {
@@ -40,11 +40,11 @@ impl MspLspIter {
     }
 
     pub fn mins(&self) -> (MspU32, LspU32) {
-        (MspU32(self.mins.0), LspU32(self.mins.1))
+        self.mins
     }
 
     pub fn maxs(&self) -> (MspU32, LspU32) {
-        (MspU32(self.maxs.0), LspU32(self.maxs.1))
+        self.maxs
     }
 }
 
@@ -55,12 +55,12 @@ impl Iterator for MspLspIter {
         if self.curs.0 >= self.maxs.0 && self.curs.1 >= self.maxs.1 {
             None
         } else {
-            let msp = MspU32(self.curs.0);
-            let lsp = LspU32(self.curs.1);
-            self.curs.1 += 1;
-            if self.curs.1 >= self.pbp.patch_len() {
-                self.curs.1 = 0;
-                self.curs.0 += 1;
+            let msp = self.curs.0;
+            let lsp = self.curs.1;
+            self.curs.1.0 += 1;
+            if self.curs.1.0 >= self.pbp.patch_len() {
+                self.curs.1.0 = 0;
+                self.curs.0.0 += 1;
             }
             Some((msp, lsp))
         }

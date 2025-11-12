@@ -7,6 +7,7 @@ use crate::range::ScyllaSeriesRange;
 use async_channel::Receiver;
 use async_channel::Sender;
 use daqbuf_series::SeriesId;
+use daqbuf_series::msp::BinlenU32;
 use daqbuf_series::msp::LspU32;
 use daqbuf_series::msp::MspU32;
 use daqbuf_series::msp::PrebinnedPartitioning;
@@ -190,7 +191,7 @@ impl BinWriteIndexRead {
         while let Some((lsp, binlen)) = it.try_next().await? {
             let v = BinWriteIndexEntry {
                 lsp: LspU32::from_db_i32(lsp),
-                binlen: binlen as u32,
+                binlen: BinlenU32(binlen as u32),
             };
             all.push_back(v);
         }

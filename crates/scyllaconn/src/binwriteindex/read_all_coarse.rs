@@ -55,7 +55,7 @@ async fn read_all_coarse(
             match x.into_data() {
                 Ok(x) => {
                     for e in x.entries {
-                        let binlen = DtMs::from_ms_u64(e.binlen as u64);
+                        let binlen = DtMs::from_ms_u64(e.binlen.to_u32() as u64);
                         let item = (rt.clone(), x.msp.clone(), e.lsp, binlen);
                         ret.push_back(item);
                     }

@@ -24,12 +24,10 @@ pub struct MspChunker {
 impl MspChunker {
     pub fn new_covering(range: NanoRange, pbp: PrebinnedPartitioning) -> Self {
         let mins = pbp.msp_lsp(range.beg_ts().to_ts_ms());
-        let mins = (MspU32(mins.0), LspU32(mins.1));
         let end1 = range.end_ts().to_ts_ms();
         let g = DtMs::from_ms_u64(pbp.bin_len().ms() - 1);
         let end2 = end1.add_dt_ms(g);
         let maxs = pbp.msp_lsp(end2);
-        let maxs = (MspU32(maxs.0), LspU32(maxs.1));
         Self {
             pbp,
             min: mins,

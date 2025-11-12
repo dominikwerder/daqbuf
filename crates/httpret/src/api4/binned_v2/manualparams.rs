@@ -47,7 +47,7 @@ macro_rules! trace { ($($arg:tt)*) => ( if true { log::trace!($($arg)*); } ); }
 macro_rules! log_query { ($($arg:tt)*) => ( if true { log::info!($($arg)*); } ); }
 
 autoerr::create_error_v1!(
-    name(Error, "BinnedSingleday"),
+    name(Error, "BinnedManualParams"),
     enum variants {
         ChannelNotFound,
         BadQuery(String),
@@ -88,7 +88,7 @@ pub struct Singleday {}
 
 impl Singleday {
     pub fn handler(req: &Requ) -> Option<Self> {
-        if req.uri().path() == "/api/4/private/binnedv2/singleday" {
+        if req.uri().path() == "/api/4/private/binnedv2/manualparams" {
             Some(Self {})
         } else {
             None
@@ -208,42 +208,17 @@ async fn deliver_json(res2: HandleRes2<'_>, ctx: &ReqCtx, ncc: &NodeConfigCached
     let scyqueue = res2.scyqueue.as_ref().unwrap();
     let rt_opt = res2.query.use_rt();
     let pbp1_opt = res2.query.pbp1();
+    let use_pbp_opt = res2.query.use_pbp();
     info!(
-        "deliver_json  {rt_opt:?}  {pbp1_opt:?}  scyfix {:?}",
+        "deliver_json  {rt_opt:?}  pbp1_opt {pbp1_opt:?}  scyfix {:?}  use_pbp_opt {use_pbp_opt:?}",
         res2.use_scylla6_workarounds
     );
     let rt = rt_opt.clone().map_or(RetentionTime::Long, |x| x.clone());
-    let pbp1 = pbp1_opt.map_or(PrebinnedPartitioning::Day1, |x| x.clone());
-    info!("deliver_json  BinWriteIndexRtStream::new  {rt:?}  {pbp1:?}");
-    let stream = BinWriteIndexRtStream::new(
-        rt.clone(),
-        series.clone(),
-        pbp1.clone(),
-        range.clone(),
-        res2.use_scylla6_workarounds.clone(),
-        scyqueue.clone(),
-    );
-    let stream = stream.then(|item| {
-        //
-        match item {
-            Ok(x) => match x {
-                StreamItem::DataItem(x) => {
-                    let gg = x.entries.iter().fold(Vec::new(), |mut a, x| {
-                        let pbp2 = PrebinnedPartitioning::from_binlen(DtMs::from_ms_u64(x.binlen.to_u32() as u64));
-                        let tt1 = range.beg_ts().to_ts_ms();
-                        let msp_lsp_res = pbp2.as_ref().ok().map(|x| x.msp_lsp(tt1));
-                        a.push((pbp2, msp_lsp_res));
-                        a
-                    });
-                    ready(Ok(StreamItem::Log(LogItem::info(format!(
-                        "TODO handle item {x:?}  {gg:?}"
-                    )))))
-                }
-                x => ready(Ok(x)),
-            },
-            _ => ready(item),
-        }
-    });
+    let use_pbp = use_pbp_opt.map_or(PrebinnedPartitioning::Day1, |x| x.clone());
+    info!("deliver_json  {rt:?}  {use_pbp:?}");
+
+    let stream = futures_util::stream::iter([Ok::<String, Error>(netpod::todoval())]);
+
     let stream = streams::logqueue::LogItemMux::new(stream, ctx.reqid().into());
     let (objs,) = stream
         .fold((Vec::new(),), |mut a, x| {
@@ -255,9 +230,6 @@ async fn deliver_json(res2: HandleRes2<'_>, ctx: &ReqCtx, ncc: &NodeConfigCached
         "rt": rt_opt,
         "pbp1": pbp1_opt,
         "objs": objs,
-        "uses_index_min10": pbp1.uses_index_min10(),
-        "range": range,
-        "series": series,
     });
     let bb = serde_json::to_vec(&js).unwrap();
     let stream = futures_util::stream::iter([Bytes::from(bb)]).map(|x| Ok::<_, Error>(x));

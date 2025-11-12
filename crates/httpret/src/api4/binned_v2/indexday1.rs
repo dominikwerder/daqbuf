@@ -19,10 +19,13 @@ use httpclient::error_status_response;
 use httpclient::not_found_response;
 use httpclient::Requ;
 use httpclient::StreamResponse;
+use items_0::streamitem::LogItem;
+use items_0::streamitem::StreamItem;
 use netpod::log;
 use netpod::req_uri_to_url;
 use netpod::timeunits::SEC;
 use netpod::ttl::RetentionTime;
+use netpod::DtMs;
 use netpod::FromUrl;
 use netpod::NodeConfigCached;
 use netpod::ReqCtx;
@@ -220,6 +223,24 @@ async fn deliver_json(res2: HandleRes2<'_>, ctx: &ReqCtx, ncc: &NodeConfigCached
         res2.use_scylla6_workarounds.clone(),
         scyqueue.clone(),
     );
+    let stream = stream.then(|item| match item {
+        Ok(x) => match x {
+            StreamItem::DataItem(x) => {
+                let gg = x.entries.iter().fold(Vec::new(), |mut a, x| {
+                    let pbp2 = PrebinnedPartitioning::from_binlen(DtMs::from_ms_u64(x.binlen.to_u32() as u64));
+                    let tt1 = range.beg_ts().to_ts_ms();
+                    let msp_lsp_res = pbp2.as_ref().ok().map(|x| x.msp_lsp(tt1));
+                    a.push((pbp2, msp_lsp_res));
+                    a
+                });
+                ready(Ok(StreamItem::Log(LogItem::info(format!(
+                    "TODO handle item {x:?}  {gg:?}"
+                )))))
+            }
+            x => ready(Ok(x)),
+        },
+        _ => ready(item),
+    });
     let stream = streams::logqueue::LogItemMux::new(stream, ctx.reqid().into());
     let (objs,) = stream
         .fold((Vec::new(),), |mut a, x| {

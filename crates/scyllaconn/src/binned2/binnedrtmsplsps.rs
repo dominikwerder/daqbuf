@@ -1,11 +1,3 @@
-/*
-Fetches the bins for a given RT, binlen and MSP.
-Issues the scylla commands.
-Assembles the results.
-Does basic sanity checks.
-May re-chunk the result if too large.
-*/
-
 use crate::worker::ScyllaQueue;
 use daqbuf_series::SeriesId;
 use daqbuf_series::msp::LspU32;
