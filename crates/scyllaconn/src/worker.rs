@@ -7,6 +7,7 @@ use crate::range::ScyllaSeriesRange;
 use async_channel::Receiver;
 use async_channel::Sender;
 use daqbuf_series::SeriesId;
+use daqbuf_series::msp::LspU32;
 use daqbuf_series::msp::MspU32;
 use daqbuf_series::msp::PrebinnedPartitioning;
 use futures_util::StreamExt;
@@ -158,8 +159,8 @@ struct BinWriteIndexRead {
     series: SeriesId,
     pbp: PrebinnedPartitioning,
     msp: MspU32,
-    lsp_min: u32,
-    lsp_max: u32,
+    lsp_min: LspU32,
+    lsp_max: LspU32,
     use_scylla6_workarounds: UseScylla6Workarounds,
     tx: Sender<Result<VecDeque<BinWriteIndexEntry>, Error>>,
 }
@@ -169,9 +170,9 @@ impl BinWriteIndexRead {
         let params = (
             self.series.id() as i64,
             self.pbp.db_ix() as i16,
-            self.msp.0 as i32,
-            self.lsp_min as i32,
-            self.lsp_max as i32,
+            self.msp.to_db_i32(),
+            self.lsp_min.to_db_i32(),
+            self.lsp_max.to_db_i32(),
         );
         info!("BinWriteIndexRead execute {:?}", params);
         let res = scy
@@ -188,7 +189,7 @@ impl BinWriteIndexRead {
         let mut all = VecDeque::new();
         while let Some((lsp, binlen)) = it.try_next().await? {
             let v = BinWriteIndexEntry {
-                lsp: lsp as u32,
+                lsp: LspU32::from_db_i32(lsp),
                 binlen: binlen as u32,
             };
             all.push_back(v);
@@ -366,8 +367,8 @@ impl ScyllaQueue {
         series: SeriesId,
         pbp: PrebinnedPartitioning,
         msp: MspU32,
-        lsp_min: u32,
-        lsp_max: u32,
+        lsp_min: LspU32,
+        lsp_max: LspU32,
         use_scylla6_workarounds: UseScylla6Workarounds,
     ) -> Result<VecDeque<BinWriteIndexEntry>, Error> {
         let (tx, rx) = async_channel::bounded(1);

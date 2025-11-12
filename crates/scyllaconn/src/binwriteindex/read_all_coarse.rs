@@ -56,7 +56,7 @@ async fn read_all_coarse(
                 Ok(x) => {
                     for e in x.entries {
                         let binlen = DtMs::from_ms_u64(e.binlen as u64);
-                        let item = (rt.clone(), x.msp.clone(), LspU32(e.lsp), binlen);
+                        let item = (rt.clone(), x.msp.clone(), e.lsp, binlen);
                         ret.push_back(item);
                     }
                 }

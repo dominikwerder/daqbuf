@@ -135,9 +135,13 @@ pub fn not_found_response(msg: String, reqid: impl AsRef<str>) -> http::Response
     error_status_response(StatusCode::NOT_FOUND, msg, reqid)
 }
 
-pub fn error_status_response(status: StatusCode, msg: String, reqid: impl AsRef<str>) -> http::Response<StreamBody> {
+pub fn error_status_response<M: AsRef<str>>(
+    status: StatusCode,
+    msg: M,
+    reqid: impl AsRef<str>,
+) -> http::Response<StreamBody> {
     let js = serde_json::json!({
-        "message": msg.to_string(),
+        "message": msg.as_ref(),
         "requestid": reqid.as_ref(),
     });
     if let Ok(body) = serde_json::to_string_pretty(&js) {

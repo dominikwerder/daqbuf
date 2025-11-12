@@ -122,13 +122,13 @@ impl ChannelStatusEventsHandler {
         if req.method() != Method::GET {
             Ok(error_status_response(
                 StatusCode::METHOD_NOT_ALLOWED,
-                "expect a GET request".into(),
+                "expect a GET request",
                 ctx.reqid(),
             ))
         } else if !accepts_json_or_all(req.headers()) {
             Ok(error_status_response(
                 StatusCode::NOT_ACCEPTABLE,
-                "server can only deliver json".into(),
+                "server can only deliver json",
                 ctx.reqid(),
             ))
         } else {

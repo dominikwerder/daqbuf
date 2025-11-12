@@ -47,8 +47,8 @@ async fn fetch_index_entries(
             series,
             pbp.clone(),
             msp,
-            lsp.to_u32(),
-            1 + lsp.to_u32(),
+            lsp,
+            LspU32(1 + lsp.to_u32()),
             use_scylla6_workarounds,
         )
         .await

@@ -3,6 +3,7 @@ pub mod read_all_coarse;
 
 use crate::worker::ScyllaQueue;
 use daqbuf_series::SeriesId;
+use daqbuf_series::msp::LspU32;
 use daqbuf_series::msp::MspU32;
 use daqbuf_series::msp::PrebinnedPartitioning;
 use futures_util::Future;
@@ -57,12 +58,16 @@ impl fmt::Debug for Fut1 {
     }
 }
 
-type Fut2 =
-    Pin<Box<dyn Future<Output = Result<(u32, u32, u32, VecDeque<BinWriteIndexEntry>), crate::worker::Error>> + Send>>;
+type Fut2 = Pin<
+    Box<
+        dyn Future<Output = Result<(MspU32, LspU32, LspU32, VecDeque<BinWriteIndexEntry>), crate::worker::Error>>
+            + Send,
+    >,
+>;
 
 #[derive(Debug)]
 pub struct BinWriteIndexEntry {
-    pub lsp: u32,
+    pub lsp: LspU32,
     pub binlen: u32,
 }
 
@@ -78,10 +83,10 @@ pub struct BinWriteIndexRtStream {
     series: SeriesId,
     scyqueue: ScyllaQueue,
     pbp: PrebinnedPartitioning,
-    msp: u32,
-    lsp_min: u32,
-    msp_end: u32,
-    lsp_end: u32,
+    msp: MspU32,
+    lsp_min: LspU32,
+    msp_end: MspU32,
+    lsp_end: LspU32,
     use_scylla6_workarounds: UseScylla6Workarounds,
     fut1: Option<Fut1>,
 }
@@ -118,10 +123,10 @@ impl BinWriteIndexRtStream {
             series,
             scyqueue,
             pbp,
-            msp: msp_beg,
-            lsp_min: lsp_beg,
-            msp_end,
-            lsp_end,
+            msp: MspU32(msp_beg),
+            lsp_min: LspU32(lsp_beg),
+            msp_end: MspU32(msp_end),
+            lsp_end: LspU32(lsp_end),
             use_scylla6_workarounds,
             fut1: None,
         }
@@ -132,21 +137,21 @@ impl BinWriteIndexRtStream {
         rt1: RetentionTime,
         series: SeriesId,
         pbp: PrebinnedPartitioning,
-        msp: u32,
-        lsp_min: u32,
-        lsp_max: u32,
+        msp: MspU32,
+        lsp_min: LspU32,
+        lsp_max: LspU32,
         use_scylla6_workarounds: UseScylla6Workarounds,
-    ) -> Result<(u32, u32, u32, VecDeque<BinWriteIndexEntry>), crate::worker::Error> {
-        debug!("make_next_query_fut  msp {}  lsp {} {}", msp, lsp_min, lsp_max);
+    ) -> Result<(MspU32, LspU32, LspU32, VecDeque<BinWriteIndexEntry>), crate::worker::Error> {
+        debug!("make_next_query_fut  {:?}  min {:?}  max {:?}", msp, lsp_min, lsp_max);
         let res = scyqueue
-            .bin_write_index_read(rt1, series, pbp, MspU32(msp), lsp_min, lsp_max, use_scylla6_workarounds)
+            .bin_write_index_read(rt1, series, pbp, msp, lsp_min, lsp_max, use_scylla6_workarounds)
             .await?;
         Ok((msp, lsp_min, lsp_max, res))
     }
 
     fn make_next_query_fut(mut self: Pin<&mut Self>, _cx: &mut Context) -> Option<Fut1> {
         info_item!(
-            "make_next_query_fut  msp {}  msp_end {}  lsp_min {}  lsp_end {}",
+            "make_next_query_fut  msp {:?}  end {:?}  min {:?}  end {:?}",
             self.msp,
             self.msp_end,
             self.lsp_min,
@@ -154,13 +159,13 @@ impl BinWriteIndexRtStream {
         );
         if self.msp <= self.msp_end {
             let msp = self.msp;
-            self.msp += 1;
+            self.msp.0 += 1;
             let lsp_min = self.lsp_min;
-            self.lsp_min = 0;
+            self.lsp_min.0 = 0;
             let lsp_max = if self.msp > self.msp_end {
                 self.lsp_end
             } else {
-                self.pbp.patch_len()
+                LspU32(self.pbp.patch_len())
             };
             let fut = {
                 let scyqueue = self.scyqueue.clone();
@@ -200,10 +205,7 @@ impl Stream for BinWriteIndexRtStream {
                 match fut.0.poll_unpin(cx) {
                     Ready(Ok(x)) => {
                         self.fut1 = None;
-                        let item = BinWriteIndexSet {
-                            msp: MspU32(x.0),
-                            entries: x.3,
-                        };
+                        let item = BinWriteIndexSet { msp: x.0, entries: x.3 };
                         Ready(Some(sitem3_data(item)))
                     }
                     Ready(Err(e)) => {
@@ -216,6 +218,7 @@ impl Stream for BinWriteIndexRtStream {
                 self.fut1 = Some(fut);
                 continue;
             } else {
+                info!("BinWriteIndexRtStream  poll_next  Ready(None)");
                 Ready(None)
             };
         }

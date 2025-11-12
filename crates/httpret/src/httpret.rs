@@ -400,7 +400,11 @@ async fn http_service_inner(
         Ok(response(StatusCode::OK).body(body_empty())?)
     } else if let Some(h) = api4::binwriteindex::BinWriteIndexHandler::handler(&req) {
         Ok(h.handle(req, ctx, &shared_res, &node_config).await?)
-    } else if let Some(h) = api4::binned_v2::BinnedV2Handler::handler(&req) {
+    } else if let Some(h) = api4::binned_v2::indexday1::IndexDay1::handler(&req) {
+        Ok(h.handle(req, ctx, &shared_res, &node_config).await?)
+    } else if let Some(h) = api4::binned_v2::singleday::Singleday::handler(&req) {
+        Ok(h.handle(req, ctx, &shared_res, &node_config).await?)
+    } else if let Some(h) = api4::binned_v2::full_test1::BinnedV2Handler::handler(&req) {
         Ok(h.handle(req, ctx, &shared_res, &node_config).await?)
     } else if let Some(h) = api4::eventdata::EventDataHandler::handler(&req) {
         Ok(h.handle(req, ctx, &node_config, shared_res)
