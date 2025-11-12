@@ -147,6 +147,8 @@ pub struct BinnedQuery {
     use_scylla6_workarounds: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pbp1: Option<PrebinnedPartitioning>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    use_pbp: Option<PrebinnedPartitioning>,
 }
 
 impl BinnedQuery {
@@ -178,6 +180,7 @@ impl BinnedQuery {
             pbd_evs: None,
             use_scylla6_workarounds: None,
             pbp1: None,
+            use_pbp: None,
         }
     }
 
@@ -348,6 +351,10 @@ impl BinnedQuery {
     pub fn pbp1(&self) -> Option<&PrebinnedPartitioning> {
         self.pbp1.as_ref()
     }
+
+    pub fn use_pbp(&self) -> Option<&PrebinnedPartitioning> {
+        self.use_pbp.as_ref()
+    }
 }
 
 impl HasBackend for BinnedQuery {
@@ -431,6 +438,9 @@ impl FromUrl for BinnedQuery {
                 .and_then(|x| x.parse().ok()),
             pbp1: pairs
                 .get("pbp1")
+                .and_then(|x| PrebinnedPartitioning::from_str(x).ok()),
+            use_pbp: pairs
+                .get("usePbp")
                 .and_then(|x| PrebinnedPartitioning::from_str(x).ok()),
         };
         debug!("BinnedQuery::from_url  {:?}", ret);
@@ -526,6 +536,9 @@ impl AppendToUrl for BinnedQuery {
         }
         if let Some(x) = self.pbp1.as_ref() {
             g.append_pair("pbp1", x.to_str());
+        }
+        if let Some(x) = self.pbp1.as_ref() {
+            g.append_pair("usePbp", x.to_str());
         }
     }
 }
