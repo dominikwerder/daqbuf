@@ -159,7 +159,7 @@ impl PrebinnedPartitioning {
         self.bin_len().mul(self.patch_len() as u64)
     }
 
-    pub fn msp_lsp(&self, val: TsMs) -> (u32, u32) {
+    pub fn msp_lsp(&self, val: TsMs) -> (MspU32, LspU32) {
         let div1ms = self.patch_dt().ms();
         let div2ms = self.bin_len().ms();
         let valms = val.ms();
@@ -167,7 +167,7 @@ impl PrebinnedPartitioning {
         let re1 = valms % div1ms;
         let qu2 = re1 / div2ms;
         let _re2 = re1 % div2ms;
-        (qu1 as u32, qu2 as u32)
+        (MspU32(qu1 as u32), LspU32(qu2 as u32))
     }
 
     pub fn uses_index_min10(&self) -> bool {
