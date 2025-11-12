@@ -123,16 +123,18 @@ fn push_log_item_queue_3(item: LogItem) -> Result<(), PushError> {
         .unwrap()
 }
 
-fn push_log_item_queue_4(item: LogItem) -> Result<(), PushError> {
+fn push_log_item_queue_4(item: LogItem) -> () {
+    // TODO dismiss messages in worst case and raise a flag instead.
     LOG_QUEUE_4
         .try_with(|x| {
             let h = x.try_borrow().unwrap();
             (h.push_v0)(h.log_tx, item)
         })
         .unwrap()
+        .unwrap()
 }
 
-pub fn push_log_item(item: LogItem) -> Result<(), PushError> {
+pub fn push_log_item(item: LogItem) -> () {
     push_log_item_queue_4(item)
 }
 
@@ -225,6 +227,7 @@ where
                     }
                     Ready(None) => {
                         self2.log_rx1 = None;
+                        have_progress = true;
                     }
                     Pending => {
                         have_pending = true;
@@ -237,14 +240,9 @@ where
                     Ready(None) => {
                         self2.inp = None;
                         if let Some(rx) = self2.log_rx1.as_ref() {
-                            if rx.len() == 0 {
-                                self2.log_rx1 = None;
-                                continue;
-                            } else {
-                                continue;
-                            }
-                        } else {
+                            rx.close();
                         }
+                        have_progress = true;
                     }
                     Pending => {
                         have_pending = true;
@@ -255,18 +253,10 @@ where
                 continue;
             } else if have_pending {
                 Pending
-            } else if self2.inp.is_none() {
-                if let Some(rx) = self2.log_rx1.as_ref() {
-                    if rx.len() == 0 {
-                        self2.log_rx1 = None;
-                        continue;
-                    } else {
-                        continue;
-                    }
-                } else {
-                    Ready(None)
-                }
+            } else if self2.inp.is_none() && self2.log_rx1.is_none() {
+                Ready(None)
             } else {
+                log::error!("no progress no pending");
                 panic!("no progress no pending")
             };
         };
