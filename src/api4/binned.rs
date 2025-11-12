@@ -145,6 +145,8 @@ pub struct BinnedQuery {
     pbd_evs: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     use_scylla6_workarounds: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pbp1: Option<PrebinnedPartitioning>,
 }
 
 impl BinnedQuery {
@@ -175,6 +177,7 @@ impl BinnedQuery {
             pbd_rts_pbp_block: None,
             pbd_evs: None,
             use_scylla6_workarounds: None,
+            pbp1: None,
         }
     }
 
@@ -341,6 +344,10 @@ impl BinnedQuery {
     pub fn use_scylla6_workarounds(&self) -> Option<u32> {
         self.use_scylla6_workarounds.clone()
     }
+
+    pub fn pbp1(&self) -> Option<&PrebinnedPartitioning> {
+        self.pbp1.as_ref()
+    }
 }
 
 impl HasBackend for BinnedQuery {
@@ -422,6 +429,9 @@ impl FromUrl for BinnedQuery {
             use_scylla6_workarounds: pairs
                 .get("use_scylla6_workarounds")
                 .and_then(|x| x.parse().ok()),
+            pbp1: pairs
+                .get("pbp1")
+                .and_then(|x| PrebinnedPartitioning::from_str(x).ok()),
         };
         debug!("BinnedQuery::from_url  {:?}", ret);
         Ok(ret)
@@ -513,6 +523,9 @@ impl AppendToUrl for BinnedQuery {
         }
         if let Some(x) = self.use_scylla6_workarounds.as_ref() {
             g.append_pair("use_scylla6_workarounds", &x.to_string());
+        }
+        if let Some(x) = self.pbp1.as_ref() {
+            g.append_pair("pbp1", x.to_str());
         }
     }
 }
