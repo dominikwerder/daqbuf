@@ -196,15 +196,15 @@ where
         self.ts2s.back().map(|&x| x)
     }
 
-    pub fn ts1s_iter(&self) -> std::collections::vec_deque::Iter<TsNano> {
+    pub fn ts1s_iter(&self) -> std::collections::vec_deque::Iter<'_, TsNano> {
         self.ts1s.iter()
     }
 
-    pub fn ts2s_iter(&self) -> std::collections::vec_deque::Iter<TsNano> {
+    pub fn ts2s_iter(&self) -> std::collections::vec_deque::Iter<'_, TsNano> {
         self.ts2s.iter()
     }
 
-    pub fn cnts_iter(&self) -> std::collections::vec_deque::Iter<u64> {
+    pub fn cnts_iter(&self) -> std::collections::vec_deque::Iter<'_, u64> {
         self.cnts.iter()
     }
 
@@ -224,7 +224,7 @@ where
         self.lsts.iter_ty_1()
     }
 
-    pub fn fnls_iter(&self) -> std::collections::vec_deque::Iter<bool> {
+    pub fn fnls_iter(&self) -> std::collections::vec_deque::Iter<'_, bool> {
         self.fnls.iter()
     }
 
@@ -237,10 +237,10 @@ where
                     std::iter::Zip<
                         std::iter::Zip<
                             std::iter::Zip<
-                                std::collections::vec_deque::Iter<TsNano>,
-                                std::collections::vec_deque::Iter<TsNano>,
+                                std::collections::vec_deque::Iter<'_, TsNano>,
+                                std::collections::vec_deque::Iter<'_, TsNano>,
                             >,
-                            std::collections::vec_deque::Iter<u64>,
+                            std::collections::vec_deque::Iter<'_, u64>,
                         >,
                         impl Iterator<Item = EVT::IterTy1<'_>>,
                     >,
@@ -250,7 +250,7 @@ where
             >,
             impl Iterator<Item = EVT::IterTy1<'_>>,
         >,
-        std::collections::vec_deque::Iter<bool>,
+        std::collections::vec_deque::Iter<'_, bool>,
     > {
         self.ts1s_iter()
             .zip(self.ts2s_iter())
@@ -292,8 +292,8 @@ where
     pub fn edges_iter(
         &self,
     ) -> std::iter::Zip<
-        std::collections::vec_deque::Iter<TsNano>,
-        std::collections::vec_deque::Iter<TsNano>,
+        std::collections::vec_deque::Iter<'_, TsNano>,
+        std::collections::vec_deque::Iter<'_, TsNano>,
     > {
         self.ts1s.iter().zip(self.ts2s.iter())
     }
@@ -307,6 +307,15 @@ where
             self.len()
         );
         pp
+    }
+
+    pub fn lst_last(&self) -> Option<EVT::IterTy1<'_>> {
+        let len = self.len();
+        if len == 0 {
+            None
+        } else {
+            self.lsts.get_iter_ty_1(len - 1)
+        }
     }
 
     pub fn push_back(
@@ -330,7 +339,7 @@ where
         self.fnls.push_back(fnl);
     }
 
-    pub fn iter_debug(&self) -> IterDebug<EVT, BVT> {
+    pub fn iter_debug(&self) -> IterDebug<'_, EVT, BVT> {
         IterDebug {
             bins: self,
             ix: 0,
@@ -648,8 +657,8 @@ where
     fn edges_iter(
         &self,
     ) -> std::iter::Zip<
-        std::collections::vec_deque::Iter<TsNano>,
-        std::collections::vec_deque::Iter<TsNano>,
+        std::collections::vec_deque::Iter<'_, TsNano>,
+        std::collections::vec_deque::Iter<'_, TsNano>,
     > {
         self.ts1s.iter().zip(self.ts2s.iter())
     }
