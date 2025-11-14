@@ -8,6 +8,7 @@ use crate::tcprawclient::OpenBoxedBytesStreamsBox;
 use netpod::ChannelTypeConfigGen;
 use netpod::ReqCtx;
 use query::api4::events::PlainEventsQuery;
+use std::sync::Arc;
 
 autoerr::create_error_v1!(
     name(Error, "PlainEventsCbor"),
@@ -21,7 +22,7 @@ pub async fn plain_events_cbor_stream(
     ch_conf: ChannelTypeConfigGen,
     ctx: &ReqCtx,
     open_bytes: OpenBoxedBytesStreamsBox,
-    timeout_provider: Box<dyn StreamTimeout2>,
+    timeout_provider: Arc<dyn StreamTimeout2>,
 ) -> Result<CborStream, Error> {
     let stream = dyn_events_stream(evq, ch_conf, ctx, open_bytes).await?;
     let stream =

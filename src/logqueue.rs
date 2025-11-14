@@ -153,7 +153,7 @@ fn log_tx_send_noop(log_tx: *const LogItemMuxTx, item: LogItem) -> Result<(), Pu
 fn log_tx_send_real(log_tx: *const LogItemMuxTx, item: LogItem) -> Result<(), PushError> {
     if let Some(tx) = unsafe { &*log_tx }.log_tx1.as_ref() {
         match tx.try_send(item) {
-            Ok(_) => {}
+            Ok(()) => {}
             Err(e) => {
                 eprintln!("--------------------   log_tx_send_real  Err {e}");
             }
@@ -178,7 +178,11 @@ pub struct LogItemMux<S> {
 }
 
 impl<S> LogItemMux<S> {
-    pub fn new(inp: S, reqid: String) -> Self {
+    pub fn new(inp: S, reqid: String) -> Self
+    where
+        S: Stream + Unpin,
+        <S as Stream>::Item: FromLogItem,
+    {
         let (log_tx1, log_rx1) = async_channel::bounded(4000);
         let (log_tx2, log_rx2) = kanal::bounded_async(4000);
         Self {
@@ -221,11 +225,12 @@ where
                             let item = <S as Stream>::Item::from_log_item(x);
                             break Ready(Some(item));
                         } else {
-                            log::info!("LogItemMux got {x:?}");
+                            log::trace!("LogItemMux  log_rx1  got {x:?}");
                             have_progress = true;
                         }
                     }
                     Ready(None) => {
+                        log::trace!("LogItemMux  log_rx1  got None");
                         self2.log_rx1 = None;
                         have_progress = true;
                     }
@@ -240,6 +245,7 @@ where
                     Ready(None) => {
                         self2.inp = None;
                         if let Some(rx) = self2.log_rx1.as_ref() {
+                            log::trace!("LogItemMux  closing log_rx1");
                             rx.close();
                         }
                         have_progress = true;
@@ -254,6 +260,7 @@ where
             } else if have_pending {
                 Pending
             } else if self2.inp.is_none() && self2.log_rx1.is_none() {
+                log::trace!("LogItemMux  both inputs None");
                 Ready(None)
             } else {
                 log::error!("no progress no pending");

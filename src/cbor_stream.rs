@@ -21,6 +21,7 @@ use netpod::log::*;
 use netpod::ScalarType;
 use netpod::Shape;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::task::Context;
 use std::task::Poll;
 use std::time::Duration;
@@ -56,7 +57,7 @@ pub type CborStream = Pin<Box<dyn Stream<Item = Result<CborBytes, Error>> + Send
 pub fn events_stream_to_cbor_stream(
     stream: ChannelEventsStream,
     ivl: Duration,
-    timeout_provider: Box<dyn StreamTimeout2>,
+    timeout_provider: Arc<dyn StreamTimeout2>,
 ) -> impl Stream<Item = Result<CborBytes, Error>> {
     let stream = TimeoutableStream::new(ivl, timeout_provider, stream);
     let stream = stream.map(|x| match x {

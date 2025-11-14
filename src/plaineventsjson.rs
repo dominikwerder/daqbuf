@@ -13,6 +13,7 @@ use netpod::ChannelTypeConfigGen;
 use netpod::Cluster;
 use netpod::ReqCtx;
 use query::api4::events::PlainEventsQuery;
+use std::sync::Arc;
 use std::time::Instant;
 
 autoerr::create_error_v1!(
@@ -30,7 +31,7 @@ pub async fn plain_events_json(
     ctx: &ReqCtx,
     _cluster: &Cluster,
     open_bytes: OpenBoxedBytesStreamsBox,
-    timeout_provider: Box<dyn StreamTimeout2>,
+    timeout_provider: Arc<dyn StreamTimeout2>,
 ) -> Result<CollectResult<JsonBytes>, Error> {
     debug!("plain_events_json  evquery {:?}", evq);
     let deadline = Instant::now() + evq.timeout_content_or_default();
@@ -73,7 +74,7 @@ pub async fn plain_events_json_stream(
     ch_conf: ChannelTypeConfigGen,
     ctx: &ReqCtx,
     open_bytes: OpenBoxedBytesStreamsBox,
-    timeout_provider: Box<dyn StreamTimeout2>,
+    timeout_provider: Arc<dyn StreamTimeout2>,
 ) -> Result<JsonStream, Error> {
     trace!("plain_events_json_stream");
     let stream = dyn_events_stream(evq, ch_conf, ctx, open_bytes).await?;

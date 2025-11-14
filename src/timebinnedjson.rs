@@ -314,7 +314,7 @@ pub async fn timebinned_json(
     ctx: &ReqCtx,
     cache_read_provider: Arc<dyn CacheReadProvider>,
     events_read_provider: Arc<dyn EventsReadProvider>,
-    timeout_provider: Box<dyn StreamTimeout2>,
+    timeout_provider: Arc<dyn StreamTimeout2>,
 ) -> Result<CollectResult<JsonBytes>, Error> {
     let deadline = Instant::now()
         + query
@@ -504,7 +504,7 @@ pub async fn timebinned_json_framed(
     ctx: &ReqCtx,
     cache_read_provider: Arc<dyn CacheReadProvider>,
     events_read_provider: Arc<dyn EventsReadProvider>,
-    timeout_provider: Box<dyn StreamTimeout2>,
+    timeout_provider: Arc<dyn StreamTimeout2>,
 ) -> Result<JsonStream, Error> {
     let binned_range = query.covering_range()?;
     // TODO derive better values, from query
@@ -542,7 +542,7 @@ pub async fn timebinned_cbor_framed(
     ctx: &ReqCtx,
     cache_read_provider: Arc<dyn CacheReadProvider>,
     events_read_provider: Arc<dyn EventsReadProvider>,
-    timeout_provider: Box<dyn StreamTimeout2>,
+    timeout_provider: Arc<dyn StreamTimeout2>,
 ) -> Result<CborStream, Error> {
     let binned_range = query.covering_range()?;
     // TODO derive better values, from query

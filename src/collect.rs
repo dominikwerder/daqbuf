@@ -14,6 +14,7 @@ use items_0::streamitem::StreamItem;
 use netpod::log::*;
 use netpod::DiskStats;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::task::Context;
 use std::task::Poll;
 use std::time::Instant;
@@ -69,7 +70,7 @@ where
         deadline: Instant,
         events_max: u64,
         bytes_max: u64,
-        timeout_provider: Box<dyn StreamTimeout2>,
+        timeout_provider: Arc<dyn StreamTimeout2>,
     ) -> Self {
         Self {
             inp,

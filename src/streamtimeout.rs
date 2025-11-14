@@ -3,6 +3,7 @@ use futures_util::Stream;
 use futures_util::StreamExt;
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::task::Context;
 use std::task::Poll;
 use std::time::Duration;
@@ -10,13 +11,13 @@ use std::time::Instant;
 
 pub type BoxedTimeoutFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
 
-pub trait StreamTimeout2: Send {
+pub trait StreamTimeout2: Send + Sync {
     fn timeout_intervals(&self, ivl: Duration) -> BoxedTimeoutFuture;
 }
 
 pub struct TimeoutableStream<S> {
     ivl: Duration,
-    timeout_provider: Box<dyn StreamTimeout2>,
+    timeout_provider: Arc<dyn StreamTimeout2>,
     inp: Pin<Box<S>>,
     timeout_fut: BoxedTimeoutFuture,
     last_seen: Instant,
@@ -26,7 +27,7 @@ impl<S> TimeoutableStream<S>
 where
     S: Stream,
 {
-    pub fn new(ivl: Duration, timeout_provider: Box<dyn StreamTimeout2>, inp: S) -> Self {
+    pub fn new(ivl: Duration, timeout_provider: Arc<dyn StreamTimeout2>, inp: S) -> Self {
         let timeout_fut = timeout_provider.timeout_intervals(ivl);
         Self {
             ivl,
