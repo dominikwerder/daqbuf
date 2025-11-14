@@ -194,8 +194,8 @@ pub mod log_item_emit {
     #[allow(unused)]
     #[macro_export]
     macro_rules! log_item_emit_debug {
-        ($fmt:expr, $($arg:tt)*) => {
-            let msg = format!("{}", format_args!($fmt, $($arg)*));
+        ($($arg:tt)*) => {
+            let msg = format!("{}", format_args!($($arg)*));
             let item = items_0::streamitem::LogItem::origin_level_msg(
                 module_path!().into(),
                 $crate::tracing_rxp::Level::DEBUG,
@@ -204,6 +204,20 @@ pub mod log_item_emit {
             streams::logqueue::push_log_item(item);
         };
     }
+    #[allow(unused)]
+    #[macro_export]
+    macro_rules! log_item_emit_trace {
+        ($($arg:tt)*) => {
+            let msg = format!("{}", format_args!($($arg)*));
+            let item = items_0::streamitem::LogItem::origin_level_msg(
+                module_path!().into(),
+                $crate::tracing_rxp::Level::TRACE,
+                msg,
+            );
+            streams::logqueue::push_log_item(item);
+        };
+    }
     pub use log_item_emit_debug as debug;
     pub use log_item_emit_info as info;
+    pub use log_item_emit_trace as trace;
 }
