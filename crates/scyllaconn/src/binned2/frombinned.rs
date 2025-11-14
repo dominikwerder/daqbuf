@@ -1,4 +1,4 @@
-use super::mspiter::MspChunker;
+use super::mspchunker::MspChunker;
 use super::msplspiter::MspLspIter;
 use crate::binwriteindex::read_all_coarse::ReadAllCoarse;
 use crate::worker::ScyllaQueue;

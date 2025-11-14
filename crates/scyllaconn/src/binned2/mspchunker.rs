@@ -1,7 +1,9 @@
 use daqbuf_series::msp::LspU32;
 use daqbuf_series::msp::MspU32;
 use daqbuf_series::msp::PrebinnedPartitioning;
+use netpod::BinnedRange;
 use netpod::DtMs;
+use netpod::TsNano;
 use netpod::range::evrange::NanoRange;
 
 // lsp2 is meant exclusive.
@@ -25,6 +27,20 @@ impl MspChunker {
     pub fn new_covering(range: NanoRange, pbp: PrebinnedPartitioning) -> Self {
         let mins = pbp.msp_lsp(range.beg_ts().to_ts_ms());
         let end1 = range.end_ts().to_ts_ms();
+        let g = DtMs::from_ms_u64(pbp.bin_len().ms() - 1);
+        let end2 = end1.add_dt_ms(g);
+        let maxs = pbp.msp_lsp(end2);
+        Self {
+            pbp,
+            min: mins,
+            max: maxs,
+            cur: mins,
+        }
+    }
+
+    pub fn from_binned_range(range: BinnedRange<TsNano>, pbp: PrebinnedPartitioning) -> Self {
+        let mins = pbp.msp_lsp(range.nano_beg().to_ts_ms());
+        let end1 = range.nano_end().to_ts_ms();
         let g = DtMs::from_ms_u64(pbp.bin_len().ms() - 1);
         let end2 = end1.add_dt_ms(g);
         let maxs = pbp.msp_lsp(end2);

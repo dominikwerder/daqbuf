@@ -269,7 +269,7 @@ struct HandleRes2<'a> {
     evq: PlainEventsQuery,
     ch_conf: ChannelTypeConfigGen,
     open_bytes: Pin<Arc<OpenBoxedBytesViaHttp>>,
-    timeout_provider: Box<dyn StreamTimeout2>,
+    timeout_provider: Arc<dyn StreamTimeout2>,
     #[allow(unused)]
     pgqueue: &'a PgQueue,
     ctx: &'a ReqCtx,
@@ -288,7 +288,7 @@ impl<'a> HandleRes2<'a> {
             .await?
             .ok_or_else(|| Error::ChannelNotFound)?;
         let open_bytes = Arc::pin(OpenBoxedBytesViaHttp::new(ncc.node_config.cluster.clone()));
-        let timeout_provider = streamio::streamtimeout::StreamTimeout::boxed();
+        let timeout_provider = streamio::streamtimeout::StreamTimeout::arced();
         let ret = Self {
             logspan,
             evq,

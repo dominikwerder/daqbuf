@@ -20,8 +20,7 @@ async fn stream_timeout_inner() -> Result<(), u8> {
     let stream = stream.inspect(|_| {
         // eprintln!("A see {x:?}");
     });
-    let timeout_provider = StreamTimeout::new();
-    let timeout_provider = Box::new(timeout_provider);
+    let timeout_provider = StreamTimeout::arced();
     let ivl = Duration::from_millis(200);
     let stream = TimeoutableStream::new(ivl, timeout_provider, stream);
     let stream = stream.inspect({

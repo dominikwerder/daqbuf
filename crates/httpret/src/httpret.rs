@@ -404,6 +404,8 @@ async fn http_service_inner(
         Ok(h.handle(req, ctx, &shared_res, &node_config).await?)
     } else if let Some(h) = api4::binned_v2::singleday::Singleday::handler(&req) {
         Ok(h.handle(req, ctx, &shared_res, &node_config).await?)
+    } else if let Some(h) = api4::binned_v2::manualparams::Manualparams::handler(&req) {
+        Ok(h.handle(req, ctx, &shared_res, &node_config).await?)
     } else if let Some(h) = api4::binned_v2::full_test1::BinnedV2Handler::handler(&req) {
         Ok(h.handle(req, ctx, &shared_res, &node_config).await?)
     } else if let Some(h) = api4::eventdata::EventDataHandler::handler(&req) {

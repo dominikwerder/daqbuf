@@ -10,11 +10,13 @@ use httpclient::body_stream;
 use httpclient::body_string;
 use httpclient::Requ;
 use httpclient::StreamResponse;
-use netpod::log::*;
+use netpod::log;
 use netpod::NodeConfigCached;
 use netpod::ReqCtx;
 use netpod::APP_JSON;
 use netpod::APP_JSON_LINES;
+
+macro_rules! info { ($($arg:tt)*) => ( if true { log::info!($($arg)*); } ); }
 
 pub struct UpdateDbWithChannelNamesHandler {}
 

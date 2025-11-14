@@ -309,7 +309,7 @@ async fn binned_json_framed(
         ctx,
         ncc,
     );
-    let timeout_provider = streamio::streamtimeout::StreamTimeout::boxed();
+    let timeout_provider = streamio::streamtimeout::StreamTimeout::arced();
     let stream = streams::timebinnedjson::timebinned_json_framed(
         res2.query,
         ch_conf,
@@ -353,7 +353,7 @@ async fn binned_cbor_framed(
         ctx,
         ncc,
     );
-    let timeout_provider = streamio::streamtimeout::StreamTimeout::boxed();
+    let timeout_provider = streamio::streamtimeout::StreamTimeout::arced();
     let stream = streams::timebinnedjson::timebinned_cbor_framed(
         res2.query,
         ch_conf,
@@ -378,7 +378,7 @@ pub struct HandleRes2<'a> {
     ch_conf: ChannelTypeConfigGen,
     events_read_provider: Arc<dyn EventsReadProvider>,
     cache_read_provider: Arc<dyn CacheReadProvider>,
-    timeout_provider: Box<dyn StreamTimeout2>,
+    timeout_provider: Arc<dyn StreamTimeout2>,
     pgqueue: &'a PgQueue,
     scyqueue: Option<ScyllaQueue>,
 }
@@ -407,7 +407,7 @@ impl<'a> HandleRes2<'a> {
             ctx,
             ncc,
         );
-        let timeout_provider = streamio::streamtimeout::StreamTimeout::boxed();
+        let timeout_provider = streamio::streamtimeout::StreamTimeout::arced();
         let ret = Self {
             logspan,
             query,

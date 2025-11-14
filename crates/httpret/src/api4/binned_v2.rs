@@ -1,3 +1,5 @@
+pub mod binexpand;
+pub mod edgecheck;
 pub mod full_test1;
 pub mod indexday1;
 pub mod manualparams;

@@ -75,7 +75,7 @@ pub struct HandleRes2<'a> {
     pub ch_conf: ChannelTypeConfigGen,
     pub events_read_provider: Arc<dyn EventsReadProvider>,
     pub cache_read_provider: Arc<dyn CacheReadProvider>,
-    pub timeout_provider: Box<dyn StreamTimeout2>,
+    pub timeout_provider: Arc<dyn StreamTimeout2>,
     pub pgqueue: &'a PgQueue,
     pub scyqueue: Option<ScyllaQueue>,
     pub use_scylla6_workarounds: UseScylla6Workarounds,
@@ -108,7 +108,7 @@ impl<'a> HandleRes2<'a> {
             ctx,
             ncc,
         );
-        let timeout_provider = streamio::streamtimeout::StreamTimeout::boxed();
+        let timeout_provider = streamio::streamtimeout::StreamTimeout::arced();
         let ret = Self {
             logspan,
             url,

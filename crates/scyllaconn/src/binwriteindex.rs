@@ -25,24 +25,9 @@ use std::task::Poll;
 
 macro_rules! info { ($($arg:tt)*) => ( if true { log::info!($($arg)*); } ); }
 macro_rules! debug { ($($arg:tt)*) => ( if true { log::debug!($($arg)*); } ); }
+macro_rules! trace { ($($arg:tt)*) => ( if true { log::trace!($($arg)*); } ); }
 
-macro_rules! info_item {
-    ($($arg:tt)*) => {
-        {
-            let item = items_0::streamitem::LogItem::info(format!($($arg)*));
-            streams::logqueue::push_log_item(item);
-        }
-    };
-}
-
-macro_rules! debug_item {
-    ($($arg:tt)*) => {
-        {
-            let item = items_0::streamitem::LogItem::debug(format!($($arg)*));
-            streams::logqueue::push_log_item(item);
-        }
-    };
-}
+macro_rules! trace_item { ($($arg:tt)*) => ( if true { lg::trace!($($arg)*); } ); }
 
 autoerr::create_error_v1!(
     name(Error, "BinWriteIndexRtStream"),
@@ -143,7 +128,7 @@ impl BinWriteIndexRtStream {
         lsp_max: LspU32,
         use_scylla6_workarounds: UseScylla6Workarounds,
     ) -> Result<(MspU32, LspU32, LspU32, VecDeque<BinWriteIndexEntry>), crate::worker::Error> {
-        debug!("make_next_query_fut  {:?}  min {:?}  max {:?}", msp, lsp_min, lsp_max);
+        trace_item!("make_next_query_fut  {:?}  min {:?}  max {:?}", msp, lsp_min, lsp_max);
         let res = scyqueue
             .bin_write_index_read(rt1, series, pbp, msp, lsp_min, lsp_max, use_scylla6_workarounds)
             .await?;
@@ -151,7 +136,7 @@ impl BinWriteIndexRtStream {
     }
 
     fn make_next_query_fut(mut self: Pin<&mut Self>, _cx: &mut Context) -> Option<Fut1> {
-        info_item!(
+        trace_item!(
             "make_next_query_fut  msp {:?}  end {:?}  min {:?}  end {:?}",
             self.msp,
             self.msp_end,
@@ -190,7 +175,7 @@ impl BinWriteIndexRtStream {
             };
             Some(Fut1(Box::pin(fut)))
         } else {
-            debug!("make_next_query_fut  done");
+            trace_item!("make_next_query_fut  done");
             None
         }
     }
@@ -219,7 +204,7 @@ impl Stream for BinWriteIndexRtStream {
                 self.fut1 = Some(fut);
                 continue;
             } else {
-                info!("BinWriteIndexRtStream  poll_next  Ready(None)");
+                trace_item!("BinWriteIndexRtStream  poll_next  Ready(None)");
                 Ready(None)
             };
         }

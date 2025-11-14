@@ -47,6 +47,7 @@ items_2 = { path = "../../../daqbuf-items-2", package = "daqbuf-items-2" }
 series = { path = "../../../daqbuf-series", package = "daqbuf-series" }
 parse = { path = "../../../daqbuf-parse", package = "daqbuf-parse" }
 streams = { path = "../../../daqbuf-streams", package = "daqbuf-streams" }
+log = { path = "../../../daqbuf-log", package = "daqbuf-log" }
 streamio = { path = "../streamio" }
 nodenet = { path = "../nodenet" }
 commonio = { path = "../commonio" }
