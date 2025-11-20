@@ -1374,6 +1374,10 @@ where
         }
         Box::new(ret)
     }
+
+    fn dbg_to_tss(&self) -> VecDeque<TsNano> {
+        self.tss.clone()
+    }
 }
 
 impl ContainerEvents<f32> {
