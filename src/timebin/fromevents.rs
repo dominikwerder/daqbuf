@@ -14,7 +14,7 @@ use std::sync::Arc;
 use std::task::Context;
 use std::task::Poll;
 
-macro_rules! trace_emit { ($($arg:expr),*) => ( if true { log::trace!($($arg),*); } ) }
+macro_rules! trace_emit { ($($arg:tt)*) => ( if true { log::trace!($($arg)*); } ) }
 
 autoerr::create_error_v1!(
     name(Error, "ReadingBinnedFromEvents"),

@@ -1,7 +1,7 @@
 use super::cached::reader::CacheReadProvider;
 use super::cached::reader::EventsReadProvider;
 use super::opts::BinningOptions;
-use crate::log::*;
+use crate::log;
 use crate::timebin::fromevents::BinnedFromEvents;
 use futures_util::FutureExt;
 use futures_util::Stream;
@@ -29,13 +29,10 @@ use std::sync::Arc;
 use std::task::Context;
 use std::task::Poll;
 
-macro_rules! debug_init { ($($arg:tt)*) => ( if true { debug!($($arg)*); } ) }
-
-macro_rules! debug_setup { ($($arg:tt)*) => ( if true { debug!($($arg)*); } ) }
-
-macro_rules! trace_cache { ($($arg:tt)*) => ( if true { debug!($($arg)*); } ) }
-
-macro_rules! trace_handle { ($($arg:tt)*) => ( if true { trace!($($arg)*); } ) }
+macro_rules! debug_init { ($($arg:tt)*) => ( if true { log::debug!($($arg)*); } ) }
+macro_rules! debug_setup { ($($arg:tt)*) => ( if true { log::info!($($arg)*); } ) }
+macro_rules! trace_cache { ($($arg:tt)*) => ( if true { log::debug!($($arg)*); } ) }
+macro_rules! trace_handle { ($($arg:tt)*) => ( if true { log::trace!($($arg)*); } ) }
 
 autoerr::create_error_v1!(
     name(Error, "BinCachedGapFill"),
@@ -418,7 +415,7 @@ impl Stream for GapFill {
                                         "finer input didn't deliver to the end",
                                     )))
                                 } else {
-                                    warn!(
+                                    log::warn!(
                                         "{}  inp_finer  Ready(None)  last_bin_ts2 {:?}  not delivered to the end, but maybe in the future",
                                         self.dbgname, self.last_bin_ts2
                                     );
@@ -430,15 +427,16 @@ impl Stream for GapFill {
                                 continue;
                             }
                         } else {
-                            warn!(
+                            log::warn!(
                                 "-----------------------------------------------------------------"
                             );
-                            warn!(
+                            log::warn!(
                                 "{}  inp_finer  Ready(None)  last_bin_ts2 {:?}",
-                                self.dbgname, self.last_bin_ts2
+                                self.dbgname,
+                                self.last_bin_ts2
                             );
                             if self.inp_finer_fills_gap {
-                                error!(
+                                log::error!(
                                     "{}  inp_finer  Ready(None)  last_bin_ts2 {:?}  inp_finer_fills_gap {}",
                                     self.dbgname, self.last_bin_ts2,self.inp_finer_fills_gap
                                 );
@@ -446,9 +444,10 @@ impl Stream for GapFill {
                                     "finer input delivered nothing, received nothing at all so far",
                                 )))
                             } else {
-                                warn!(
+                                log::warn!(
                                     "{}  inp_finer  Ready(None)  last_bin_ts2 {:?}",
-                                    self.dbgname, self.last_bin_ts2
+                                    self.dbgname,
+                                    self.last_bin_ts2
                                 );
                                 continue;
                             }
@@ -494,7 +493,7 @@ impl Stream for GapFill {
                                     beg: j.ns(),
                                     end: self.range.full_range().end(),
                                 };
-                                debug!(
+                                debug_setup!(
                                     "{}  received something but not all, setup rest from finer  {}  {}  {}",
                                     self.dbgname, self.range, j, range
                                 );
@@ -505,14 +504,16 @@ impl Stream for GapFill {
                                     Err(e) => Ready(Some(sitem_err_from_string(e))),
                                 }
                             } else {
-                                debug!("{}  received everything", self.dbgname);
+                                debug_setup!("{}  received everything", self.dbgname);
                                 Ready(None)
                             }
                         } else {
                             let range = self.range.to_nano_range();
-                            debug!(
+                            debug_setup!(
                                 "{}  received nothing at all, setup full range from finer  {}  {}",
-                                self.dbgname, self.range, range
+                                self.dbgname,
+                                self.range,
+                                range
                             );
                             match self.as_mut().setup_inp_finer(range, false) {
                                 Ok(()) => {

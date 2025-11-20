@@ -6,18 +6,29 @@ use items_0::streamitem::Sitemty;
 use items_0::streamitem::StreamItem::*;
 use items_2::binning::container_events::ContainerEvents;
 use items_2::channelevents::ChannelEvents;
+use log;
+use netpod::DtNano;
 use netpod::EnumVariant;
+use netpod::TsNano;
 use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
 
+const DO_TRACE_PERIODIC: bool = false;
+macro_rules! trace_event_periodic { ($($arg:tt)*) => ( if DO_TRACE_PERIODIC { log::info!($($arg)*); } ) }
+
 pub struct ConvertForBinning<INP> {
     inp: INP,
+    dbg_print_next: TsNano,
 }
 
 impl<INP> ConvertForBinning<INP> {
     pub fn new(inp: INP) -> Self {
-        Self { inp }
+        trace_event_periodic!("ConvertForBinning::new");
+        Self {
+            inp,
+            dbg_print_next: TsNano::from_ns(0),
+        }
     }
 }
 
@@ -33,6 +44,25 @@ where
             Ready(Some(item)) => match &item {
                 Ok(DataItem(Data(cevs))) => match cevs {
                     ChannelEvents::Events(evs) => {
+                        if DO_TRACE_PERIODIC {
+                            let tss = evs.dbg_to_tss();
+                            trace_event_periodic!(
+                                "ConvertForBinning  container len {n}",
+                                n = tss.len()
+                            );
+                            for ts in tss {
+                                let g = &mut self.dbg_print_next;
+                                if ts >= *g {
+                                    let h = g.add_dt_nano(DtNano::from_ms(1000 * 60 * 5));
+                                    if ts >= h {
+                                        *g = ts;
+                                    } else {
+                                        *g = h;
+                                    }
+                                    trace_event_periodic!("ConvertForBinning  sees event  {ts}");
+                                }
+                            }
+                        }
                         let evs = evs.to_f32_for_binning_v01();
                         let item = ChannelEvents::Events(evs);
                         let item = sitem_data(item);
