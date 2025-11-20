@@ -23,6 +23,8 @@ macro_rules! trace_msp { ($($arg:tt)*) => ( if true { log::trace!($($arg)*); } )
 
 macro_rules! log_fetch_result { ($($arg:tt)*) => { if true { log::trace!("fetch  {}", format_args!($($arg)*)); } }; }
 
+macro_rules! debug_scy6 { ($($arg:tt)*) => { if true { log::debug!($($arg)*); } }; }
+
 autoerr::create_error_v1!(
     name(Error, "EventsMsp"),
     enum variants {
@@ -337,10 +339,26 @@ pub async fn find_ts_msp(
         bck
     );
     if bck {
-        if *use_scylla6_workarounds {
-            find_ts_msp_bck_workaround(rt, series, range, stmts, scy).await
+        if daqbuf_series::dbg::dbg_check_scy6(daqbuf_series::SeriesId::new(series)) {
+            log::info!("find_ts_msp with scy6 check");
+            let res1 = find_ts_msp_bck(rt, series, range.clone(), stmts, scy).await?;
+            let res2 = find_ts_msp_bck_workaround(rt, series, range, stmts, scy).await?;
+            if res1 != res2 {
+                log::error!(
+                    "find_ts_msp_bck  workaround and normal differ  workaround {:?}  normal {:?}",
+                    res2,
+                    res1
+                );
+            } else {
+                log::info!("find_ts_msp_bck  workaround and normal agree");
+            }
+            Ok(res1)
         } else {
-            find_ts_msp_bck(rt, series, range, stmts, scy).await
+            if use_scylla6_workarounds.get() {
+                find_ts_msp_bck_workaround(rt, series, range, stmts, scy).await
+            } else {
+                find_ts_msp_bck(rt, series, range, stmts, scy).await
+            }
         }
     } else {
         find_ts_msp_fwd(rt, series, range, use_scylla6_workarounds, stmts, scy).await
@@ -362,7 +380,11 @@ async fn find_ts_msp_fwd(
     log_fetch_result!("{selfname}  {:?}", params);
     let mut res = scy
         .execute_iter(
-            stmts.cache_bypass(*use_scylla6_workarounds).rt(rt).ts_msp_fwd().clone(),
+            stmts
+                .cache_bypass(use_scylla6_workarounds.get())
+                .rt(rt)
+                .ts_msp_fwd()
+                .clone(),
             params,
         )
         .await?
@@ -386,10 +408,9 @@ async fn find_ts_msp_bck(
     let mut ret = VecDeque::new();
     let params = (series as i64, range.beg().ms() as i64);
     log_fetch_result!("{selfname}  {:?}", params);
-    let mut res = scy
-        .execute_iter(stmts.cache_bypass(false).rt(rt).ts_msp_bck().clone(), params)
-        .await?
-        .rows_stream::<(i64,)>()?;
+    let stmt = stmts.cache_bypass(false).rt(rt).ts_msp_bck().clone();
+    debug_scy6!("{selfname}  EXECUTE {cql}  {params:?}", cql = stmt.get_statement());
+    let mut res = scy.execute_iter(stmt, params).await?.rows_stream::<(i64,)>()?;
     while let Some(row) = res.try_next().await? {
         let ts = TsMs::from_ms_u64(row.0 as u64);
         log_fetch_result!("{selfname}  {params:?}  {ts}");
@@ -411,23 +432,20 @@ async fn find_ts_msp_bck_workaround(
     // let params = (series as i64, 0 as i64, range.beg().ms() as i64);
     let params = (series as i64, 0 as i64, i64::MAX);
     log_fetch_result!("{selfname}  {:?}", params);
-    let mut res = scy
-        .execute_iter(stmts.cache_bypass(true).rt(rt).ts_msp_bck_workaround().clone(), params)
-        .await?
-        .rows_stream::<(i64,)>()?;
+    let stmt = stmts.cache_bypass(true).rt(rt).ts_msp_bck_workaround().clone();
+    debug_scy6!("{selfname}  EXECUTE {cql}  {params:?}", cql = stmt.get_statement());
+    let mut res = scy.execute_iter(stmt, params).await?.rows_stream::<(i64,)>()?;
     let mut c = 0;
     while let Some(row) = res.try_next().await? {
         c += 1;
         let ts = TsMs::from_ms_u64(row.0 as u64);
         if ts >= range.beg().to_ts_ms() {
             log_fetch_result!("{selfname}  {params:?}  {ts}  DISCARD AFTER RANGE");
+        } else if ret.len() > 1024 * 1024 {
+            return Err(Error::TooManyRows);
         } else {
-            if ret.len() > 1024 * 1024 {
-                return Err(Error::TooManyRows);
-            } else {
-                log_fetch_result!("{selfname}  {params:?}  {ts}  USE");
-                ret.push(ts);
-            }
+            log_fetch_result!("{selfname}  {params:?}  {ts}  USE");
+            ret.push(ts);
         }
     }
     log_fetch_result!("{selfname}  {params:?}  considered msp {c}");

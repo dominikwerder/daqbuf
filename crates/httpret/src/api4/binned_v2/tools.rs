@@ -93,7 +93,13 @@ impl<'a> HandleRes2<'a> {
     ) -> Result<Self, Error> {
         let use_scylla6_workarounds = query
             .use_scylla6_workarounds()
-            .map(From::from)
+            .map(|x| {
+                if x == 0 {
+                    UseScylla6Workarounds::no_workarounds()
+                } else {
+                    UseScylla6Workarounds::with_workarounds()
+                }
+            })
             .unwrap_or(ncc.node_config.cluster.use_scylla6_workarounds());
         log_query!("HandleRes2::new  {:?}  {:?}", query, use_scylla6_workarounds);
         let ch_conf = ch_conf_from_binned(&query, ctx, pgqueue, ncc)

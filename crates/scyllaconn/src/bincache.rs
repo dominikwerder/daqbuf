@@ -127,7 +127,7 @@ pub async fn worker_read(
     let res = scy
         .execute_iter(
             stmts
-                .cache_bypass(*use_scylla6_workarounds)
+                .cache_bypass(use_scylla6_workarounds.get())
                 .rt(&rt)
                 .prebinned_f32()
                 .clone(),

@@ -659,7 +659,7 @@ impl ScyllaSeriesTsMsp {
         &self,
         req: Requ,
         shared_res: &ServiceSharedResources,
-        _ncc: &NodeConfigCached,
+        ncc: &NodeConfigCached,
     ) -> Result<StreamResponse, Error> {
         if req.method() == Method::GET {
             let accept_def = APP_JSON;
@@ -670,7 +670,7 @@ impl ScyllaSeriesTsMsp {
             if accept == APP_JSON || accept == ACCEPT_ALL {
                 let url = req_uri_to_url(req.uri())?;
                 let q = ScyllaSeriesTsMspQuery::from_url(&url)?;
-                match self.get_ts_msps(&q, shared_res).await {
+                match self.get_ts_msps(&q, shared_res, ncc).await {
                     Ok(k) => {
                         let body = ToJsonBody::from(&k).into_body();
                         Ok(response(StatusCode::OK).body(body)?)
@@ -689,12 +689,19 @@ impl ScyllaSeriesTsMsp {
         &self,
         q: &ScyllaSeriesTsMspQuery,
         shared_res: &ServiceSharedResources,
+        ncc: &NodeConfigCached,
     ) -> Result<ScyllaSeriesTsMspResponse, Error> {
         // TODO also use the cluster config default
         let use_scylla6_workarounds = q
             .use_scylla6_workarounds
-            .map(From::from)
-            .unwrap_or(UseScylla6Workarounds::production_default());
+            .map(|x| {
+                if x == 0 {
+                    UseScylla6Workarounds::no_workarounds()
+                } else {
+                    UseScylla6Workarounds::with_workarounds()
+                }
+            })
+            .unwrap_or(ncc.node_config.cluster.use_scylla6_workarounds());
         let nano_range = if let SeriesRange::TimeRange(x) = q.range.clone() {
             x
         } else {

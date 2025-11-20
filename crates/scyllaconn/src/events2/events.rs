@@ -901,7 +901,7 @@ async fn read_next_values_3_fwd(
         table_name
     );
     let qu = stmts
-        .cache_bypass(*opts.readopts.use_scylla6_workarounds)
+        .cache_bypass(opts.readopts.use_scylla6_workarounds.get())
         .rt(&opts.rt)
         .lsp(!opts.fwd, with_values)
         .shape(val_ty_dyn.is_valueblob())
@@ -950,7 +950,7 @@ async fn read_lsp_all(
         opts.range.beg().delta(opts.ts_msp.ns())
     };
     let mut qu = stmts
-        .cache_bypass(*opts.readopts.use_scylla6_workarounds)
+        .cache_bypass(opts.readopts.use_scylla6_workarounds.get())
         .rt(&opts.rt)
         .lsp_all()
         .shape(opts.val_ty_dyn.is_valueblob())
@@ -1002,8 +1002,8 @@ async fn read_next_values_3_bck(
         return Ok((ret,));
     };
     let val_ty_dyn = &opts.val_ty_dyn;
-    if *opts.readopts.use_scylla6_workarounds == false {
-        info!("{selfname}  NO WORKAROUND");
+    if opts.readopts.use_scylla6_workarounds.get() == false {
+        trace_init!("{selfname}  NO WORKAROUND");
     }
     trace_fetch!("{selfname}  {:?}  st_name {}", opts, val_ty_dyn.st_name());
     let series = opts.series;
@@ -1012,7 +1012,7 @@ async fn read_next_values_3_bck(
     let with_values = opts.readopts.with_values();
     trace_fetch!("{selfname}  ts_msp {}  lsp {}  {}", ts_msp.fmt(), lsp, table_name);
     let qu = stmts
-        .cache_bypass(*opts.readopts.use_scylla6_workarounds)
+        .cache_bypass(opts.readopts.use_scylla6_workarounds.get())
         .rt(&opts.rt)
         .lsp(false, with_values)
         // TODO
@@ -1052,26 +1052,85 @@ async fn read_events_v02_inner(
     stmts: Arc<StmtsEvents>,
     scy: Arc<scylla::client::session::Session>,
 ) -> Result<(Box<dyn BinningggContainerEventsDyn>, ReadJobTrace), crate::worker::Error> {
-    let val_ty_dyn = new_val_ty_dyn_from_shape_scalar_type(params.shape.clone(), params.scalar_type.clone());
-    let params_dbg = params.clone();
-    let opts = ReadNextValuesOpts {
-        rt: params.rt.clone(),
-        series: params.series,
-        ts_msp: params.ts_msp,
-        range: params.range,
-        fwd: params.fwd,
-        readopts: params.readopts,
-        val_ty_dyn,
-    };
     use crate::worker::TimelimitedJobResult;
     use crate::worker::Timeoutable;
-    let fut = read_next_values_3(opts, scy, stmts).with_timeout(Duration::from_millis(5000));
-    let res = fut.await.map_err_timeout_job().inspect_err(|e| match e {
-        crate::worker::Error::TimeoutJob => {
-            warn!("read_events_v02_inner  TimeoutJob  params {:?}", params_dbg);
+    let val_ty_dyn = new_val_ty_dyn_from_shape_scalar_type(params.shape.clone(), params.scalar_type.clone());
+    let params_dbg = params.clone();
+    let res = if daqbuf_series::dbg::dbg_check_scy6(params.series) {
+        log::info!(
+            "read_events_v02_inner  DEBUG COMPARISON RUN  series id {}",
+            params.series.id()
+        );
+        let res1 = {
+            let mut opts = ReadNextValuesOpts {
+                rt: params.rt.clone(),
+                series: params.series,
+                ts_msp: params.ts_msp,
+                range: params.range.clone(),
+                fwd: params.fwd,
+                readopts: params.readopts.clone(),
+                val_ty_dyn: val_ty_dyn.clone_boxed(),
+            };
+            opts.readopts.use_scylla6_workarounds = UseScylla6Workarounds::no_workarounds();
+            let fut = read_next_values_3(opts, scy.clone(), stmts.clone()).with_timeout(Duration::from_millis(5000));
+            let res = fut.await.map_err_timeout_job().inspect_err(|e| match e {
+                crate::worker::Error::TimeoutJob => {
+                    warn!("read_events_v02_inner  TimeoutJob  params {:?}", params_dbg);
+                }
+                _ => {}
+            })??;
+            res
+        };
+        let res2 = {
+            let mut opts = ReadNextValuesOpts {
+                rt: params.rt.clone(),
+                series: params.series,
+                ts_msp: params.ts_msp,
+                range: params.range,
+                fwd: params.fwd,
+                readopts: params.readopts,
+                val_ty_dyn,
+            };
+            opts.readopts.use_scylla6_workarounds = UseScylla6Workarounds::with_workarounds();
+            let fut = read_next_values_3(opts, scy, stmts).with_timeout(Duration::from_millis(5000));
+            let res = fut.await.map_err_timeout_job().inspect_err(|e| match e {
+                crate::worker::Error::TimeoutJob => {
+                    warn!("read_events_v02_inner  TimeoutJob  params {:?}", params_dbg);
+                }
+                _ => {}
+            })??;
+            res
+        };
+        let tss1 = res1.0.dbg_to_tss();
+        let tss2 = res2.0.dbg_to_tss();
+        if tss1 != tss2 {
+            log::info!(
+                "read_events_v02_inner  DIFFERENCE  len {n} vs {m}",
+                n = tss1.len(),
+                m = tss2.len()
+            );
+        } else {
         }
-        _ => {}
-    })??;
+        res1
+    } else {
+        let opts = ReadNextValuesOpts {
+            rt: params.rt.clone(),
+            series: params.series,
+            ts_msp: params.ts_msp,
+            range: params.range,
+            fwd: params.fwd,
+            readopts: params.readopts,
+            val_ty_dyn,
+        };
+        let fut = read_next_values_3(opts, scy, stmts).with_timeout(Duration::from_millis(5000));
+        let res = fut.await.map_err_timeout_job().inspect_err(|e| match e {
+            crate::worker::Error::TimeoutJob => {
+                warn!("read_events_v02_inner  TimeoutJob  params {:?}", params_dbg);
+            }
+            _ => {}
+        })??;
+        res
+    };
     Ok(res)
 }
 

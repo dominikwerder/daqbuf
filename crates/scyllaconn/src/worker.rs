@@ -179,7 +179,7 @@ impl BinWriteIndexRead {
         let res = scy
             .execute_iter(
                 stmts
-                    .cache_bypass(*self.use_scylla6_workarounds)
+                    .cache_bypass(self.use_scylla6_workarounds.get())
                     .rt(&self.rt)
                     .bin_write_index_read()
                     .clone(),
