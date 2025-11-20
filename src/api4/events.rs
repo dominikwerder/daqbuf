@@ -687,7 +687,13 @@ impl EventsSubQuery {
     }
 
     pub fn use_scylla6_workarounds(&self) -> Option<UseScylla6Workarounds> {
-        self.settings.use_scylla6_workarounds.map(From::from)
+        self.settings.use_scylla6_workarounds.map(|x| {
+            if x == 0 {
+                UseScylla6Workarounds::no_workarounds()
+            } else {
+                UseScylla6Workarounds::with_workarounds()
+            }
+        })
     }
 }
 
