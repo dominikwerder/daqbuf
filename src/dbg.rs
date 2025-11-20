@@ -41,3 +41,11 @@ pub fn dbg_series(series: SeriesId) -> bool {
         false
     }
 }
+
+pub fn dbg_check_scy6(series: SeriesId) -> bool {
+    let seriess = [
+        // SF-STAT-AR-USER:UT
+        // 1001110436017869811,
+    ];
+    seriess.contains(&series.id())
+}
