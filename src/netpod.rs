@@ -1032,6 +1032,7 @@ pub struct Cluster {
     scylla_lt: Option<ScyllaConfig>,
     cache_scylla: Option<ScyllaConfig>,
     pub announce_backends: Option<Vec<String>>,
+    #[serde(with = "serde_UseScylla6Workarounds")]
     use_scylla6_workarounds: Option<UseScylla6Workarounds>,
 }
 
@@ -1101,7 +1102,7 @@ cluster:
   use_scylla6_workarounds: false
 "###;
     let cfg = serde_yaml::from_slice::<NodeConfig>(cfg.as_bytes()).unwrap();
-    let v = *cfg.cluster.use_scylla6_workarounds();
+    let v = cfg.cluster.use_scylla6_workarounds().get();
     assert!(v == false);
 }
 
@@ -4612,7 +4613,9 @@ pub unsafe fn extltmut<'a, 'b, T>(t: &'a mut T) -> &'b mut T {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UseScylla6Workarounds(bool);
+pub struct UseScylla6Workarounds {
+    v: bool,
+}
 
 impl UseScylla6Workarounds {
     pub fn production_default() -> Self {
@@ -4620,24 +4623,113 @@ impl UseScylla6Workarounds {
     }
 
     pub fn with_workarounds() -> Self {
-        Self(true)
+        Self { v: true }
+    }
+
+    pub fn no_workarounds() -> Self {
+        Self { v: false }
+    }
+
+    pub fn get(&self) -> bool {
+        self.v
     }
 }
 
-impl std::ops::Deref for UseScylla6Workarounds {
-    type Target = bool;
+#[allow(non_snake_case)]
+mod serde_UseScylla6Workarounds {
+    use super::UseScylla6Workarounds;
+    use serde::Deserialize;
+    use serde::Deserializer;
+    use serde::Serializer;
 
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl From<u32> for UseScylla6Workarounds {
-    fn from(value: u32) -> Self {
-        if value == 0 {
-            UseScylla6Workarounds(false)
+    pub fn serialize<S>(x: &Option<UseScylla6Workarounds>, ser: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        if let Some(x) = x {
+            ser.serialize_some(&x.get())
         } else {
-            UseScylla6Workarounds(true)
+            ser.serialize_none()
         }
     }
+
+    #[allow(unused)]
+    pub fn deserialize_opt<'de, D>(de: D) -> Result<Option<UseScylla6Workarounds>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let x = Option::<bool>::deserialize(de)?;
+        if let Some(x) = x {
+            let b = if x {
+                UseScylla6Workarounds::with_workarounds()
+            } else {
+                UseScylla6Workarounds::no_workarounds()
+            };
+            Ok(Some(b))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn deserialize<'de, D>(de: D) -> Result<Option<UseScylla6Workarounds>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let x = bool::deserialize(de)?;
+        let b = if x {
+            UseScylla6Workarounds::with_workarounds()
+        } else {
+            UseScylla6Workarounds::no_workarounds()
+        };
+        Ok(Some(b))
+    }
+
+    #[test]
+    fn test_config_usage() {
+        #[derive(Deserialize)]
+        struct ConfA {
+            #[serde(with = "super::serde_UseScylla6Workarounds", default)]
+            use_scylla6_workarounds: Option<UseScylla6Workarounds>,
+        }
+        #[derive(Deserialize)]
+        struct ConfB {
+            conf_a: ConfA,
+        }
+        let s = r###"
+conf_a:
+  use_scylla6_workarounds: true
+"###;
+        let c: ConfB = serde_yaml::from_str(s).unwrap();
+        assert_eq!(c.conf_a.use_scylla6_workarounds.unwrap().get(), true);
+        let s = r###"
+conf_a:
+  use_scylla6_workarounds: false
+"###;
+        let c: ConfB = serde_yaml::from_str(s).unwrap();
+        assert_eq!(c.conf_a.use_scylla6_workarounds.unwrap().get(), false);
+        let s = r###"
+conf_a:
+  some_other: test
+"###;
+        let c: ConfB = serde_yaml::from_str(s).unwrap();
+        assert_eq!(c.conf_a.use_scylla6_workarounds.is_none(), true);
+    }
 }
+
+// impl std::ops::Deref for UseScylla6Workarounds {
+//     type Target = bool;
+
+//     fn deref(&self) -> &Self::Target {
+//         &self.0
+//     }
+// }
+
+// impl From<u32> for UseScylla6Workarounds {
+//     fn from(value: u32) -> Self {
+//         if value == 0 {
+//             UseScylla6Workarounds(false)
+//         } else {
+//             UseScylla6Workarounds(true)
+//         }
+//     }
+// }
