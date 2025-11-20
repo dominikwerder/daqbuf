@@ -9,6 +9,7 @@ use crate::merge::MergeableDyn;
 use netpod::BinnedRange;
 use netpod::BinnedRangeEnum;
 use netpod::TsNano;
+use std::collections::VecDeque;
 use std::fmt;
 use std::ops::Range;
 
@@ -92,6 +93,7 @@ pub trait BinningggContainerEventsDyn:
     fn as_collectable_dyn_mut(&mut self) -> &mut dyn CollectableDyn;
     fn truncate_front(&mut self, len: usize);
     fn to_f32_for_binning_v01(&self) -> Box<dyn BinningggContainerEventsDyn>;
+    fn dbg_to_tss(&self) -> VecDeque<TsNano>;
 }
 
 pub trait BinningggContainerBinsDyn:
