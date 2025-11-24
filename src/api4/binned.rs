@@ -1,3 +1,5 @@
+use crate::api4::extraopts::ExtraOptsQuery;
+use crate::api4::scyllaopts::ScyllaOptsQuery;
 use crate::transform::TransformQuery;
 use netpod::get_url_query_pairs;
 use netpod::log::*;
@@ -28,6 +30,8 @@ autoerr::create_error_v1!(
         BadUseRt,
         Netpod(#[from] netpod::Error),
         Transform(#[from] crate::transform::Error),
+        ScyllaOpts(#[from] crate::api4::scyllaopts::Error),
+        ExtraOpts(#[from] crate::api4::extraopts::Error),
     },
 );
 
@@ -144,11 +148,11 @@ pub struct BinnedQuery {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pbd_evs: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    use_scylla6_workarounds: Option<u32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pbp1: Option<PrebinnedPartitioning>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     use_pbp: Option<PrebinnedPartitioning>,
+    scylla_opts: ScyllaOptsQuery,
+    extra_opts: ExtraOptsQuery,
 }
 
 impl BinnedQuery {
@@ -178,9 +182,10 @@ impl BinnedQuery {
             pbd_enable: None,
             pbd_rts_pbp_block: None,
             pbd_evs: None,
-            use_scylla6_workarounds: None,
             pbp1: None,
             use_pbp: None,
+            scylla_opts: ScyllaOptsQuery::new(),
+            extra_opts: ExtraOptsQuery::new(),
         }
     }
 
@@ -344,16 +349,20 @@ impl BinnedQuery {
         self.pbd_evs.clone()
     }
 
-    pub fn use_scylla6_workarounds(&self) -> Option<u32> {
-        self.use_scylla6_workarounds.clone()
-    }
-
     pub fn pbp1(&self) -> Option<&PrebinnedPartitioning> {
         self.pbp1.as_ref()
     }
 
     pub fn use_pbp(&self) -> Option<&PrebinnedPartitioning> {
         self.use_pbp.as_ref()
+    }
+
+    pub fn scylla_opts(&self) -> &ScyllaOptsQuery {
+        &self.scylla_opts
+    }
+
+    pub fn extra_opts(&self) -> &ExtraOptsQuery {
+        &self.extra_opts
     }
 }
 
@@ -433,15 +442,14 @@ impl FromUrl for BinnedQuery {
                 .get("pbd_rts_pbp_block")
                 .and_then(|x| serde_json::from_str(x).ok()),
             pbd_evs: pairs.get("pbd_evs").and_then(|x| x.parse().ok()),
-            use_scylla6_workarounds: pairs
-                .get("use_scylla6_workarounds")
-                .and_then(|x| x.parse().ok()),
             pbp1: pairs
                 .get("pbp1")
                 .and_then(|x| PrebinnedPartitioning::from_str(x).ok()),
             use_pbp: pairs
                 .get("usePbp")
                 .and_then(|x| PrebinnedPartitioning::from_str(x).ok()),
+            scylla_opts: ScyllaOptsQuery::from_pairs(pairs)?,
+            extra_opts: ExtraOptsQuery::from_pairs(pairs)?,
         };
         debug!("BinnedQuery::from_url  {:?}", ret);
         Ok(ret)
@@ -531,15 +539,15 @@ impl AppendToUrl for BinnedQuery {
         if let Some(x) = self.pbd_enable.as_ref() {
             g.append_pair("pbd_enable", &x.to_string());
         }
-        if let Some(x) = self.use_scylla6_workarounds.as_ref() {
-            g.append_pair("use_scylla6_workarounds", &x.to_string());
-        }
         if let Some(x) = self.pbp1.as_ref() {
             g.append_pair("pbp1", x.to_str());
         }
         if let Some(x) = self.pbp1.as_ref() {
             g.append_pair("usePbp", x.to_str());
         }
+        drop(g);
+        self.scylla_opts.append_to_url(url);
+        self.extra_opts.append_to_url(url);
     }
 }
 

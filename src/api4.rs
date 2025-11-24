@@ -1,5 +1,7 @@
 pub mod binned;
 pub mod events;
+pub mod extraopts;
+pub mod scyllaopts;
 
 use chrono::DateTime;
 use chrono::TimeZone;

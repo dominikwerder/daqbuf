@@ -1,4 +1,6 @@
 use super::binned::BinnedQuery;
+use crate::api4::extraopts::ExtraOptsQuery;
+use crate::api4::scyllaopts::ScyllaOptsQuery;
 use crate::transform::TransformQuery;
 use netpod::get_url_query_pairs;
 use netpod::is_false;
@@ -29,6 +31,8 @@ autoerr::create_error_v1!(
         MissingTimerange,
         BadQuery,
         Transform(#[from] crate::transform::Error),
+        ScyllaOpts(#[from] crate::api4::scyllaopts::Error),
+        ExtraOpts(#[from] crate::api4::extraopts::Error),
         Netpod(#[from] netpod::Error),
     },
 );
@@ -84,8 +88,8 @@ pub struct PlainEventsQuery {
     #[serde(default)]
     use_rt: Option<RetentionTime>,
     querymarker: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    use_scylla6_workarounds: Option<u32>,
+    scylla_opts: ScyllaOptsQuery,
+    extra_opts: ExtraOptsQuery,
 }
 
 impl PlainEventsQuery {
@@ -115,7 +119,8 @@ impl PlainEventsQuery {
             log_level: String::new(),
             use_rt: None,
             querymarker: String::new(),
-            use_scylla6_workarounds: None,
+            scylla_opts: ScyllaOptsQuery::new(),
+            extra_opts: ExtraOptsQuery::new(),
         }
     }
 
@@ -258,8 +263,12 @@ impl PlainEventsQuery {
         self.use_rt.clone()
     }
 
-    pub fn use_scylla6_workarounds(&self) -> Option<u32> {
-        self.use_scylla6_workarounds.clone()
+    pub fn scylla_opts(&self) -> &ScyllaOptsQuery {
+        &self.scylla_opts
+    }
+
+    pub fn extra_opts(&self) -> &ExtraOptsQuery {
+        &self.extra_opts
     }
 }
 
@@ -349,9 +358,8 @@ impl FromUrl for PlainEventsQuery {
             querymarker: pairs
                 .get("querymarker")
                 .map_or(String::new(), |x| x.to_string()),
-            use_scylla6_workarounds: pairs
-                .get("use_scylla6_workarounds")
-                .and_then(|x| x.parse().ok()),
+            scylla_opts: ScyllaOptsQuery::from_pairs(pairs)?,
+            extra_opts: ExtraOptsQuery::from_pairs(pairs)?,
         };
         Ok(ret)
     }
@@ -418,9 +426,9 @@ impl AppendToUrl for PlainEventsQuery {
         if let Some(x) = self.use_rt.as_ref() {
             g.append_pair("useRt", &x.to_string());
         }
-        if let Some(x) = self.use_scylla6_workarounds.as_ref() {
-            g.append_pair("use_scylla6_workarounds", &x.to_string());
-        }
+        drop(g);
+        self.scylla_opts.append_to_url(url);
+        self.extra_opts.append_to_url(url);
     }
 }
 
@@ -474,7 +482,8 @@ pub struct EventsSubQuerySettings {
     use_rt: Option<RetentionTime>,
     merger_out_len_max: Option<u32>,
     scylla_read_queue_len: Option<u32>,
-    use_scylla6_workarounds: Option<u32>,
+    scylla_opts: ScyllaOptsQuery,
+    extra_opts: ExtraOptsQuery,
 }
 
 impl EventsSubQuerySettings {
@@ -501,7 +510,8 @@ impl Default for EventsSubQuerySettings {
             use_rt: None,
             merger_out_len_max: None,
             scylla_read_queue_len: None,
-            use_scylla6_workarounds: None,
+            scylla_opts: ScyllaOptsQuery::new(),
+            extra_opts: ExtraOptsQuery::new(),
         }
     }
 }
@@ -521,7 +531,8 @@ impl From<&PlainEventsQuery> for EventsSubQuerySettings {
             use_rt: value.use_rt(),
             merger_out_len_max: value.merger_out_len_max(),
             scylla_read_queue_len: value.scylla_read_queue_len(),
-            use_scylla6_workarounds: value.use_scylla6_workarounds.clone(),
+            scylla_opts: value.scylla_opts().clone(),
+            extra_opts: value.extra_opts().clone(),
         }
     }
 }
@@ -542,7 +553,8 @@ impl From<&BinnedQuery> for EventsSubQuerySettings {
             use_rt: value.use_rt(),
             merger_out_len_max: value.merger_out_len_max(),
             scylla_read_queue_len: value.scylla_read_queue_len(),
-            use_scylla6_workarounds: value.use_scylla6_workarounds().clone(),
+            scylla_opts: value.scylla_opts().clone(),
+            extra_opts: value.extra_opts().clone(),
         }
     }
 }
@@ -563,7 +575,8 @@ impl From<&Api1Query> for EventsSubQuerySettings {
             use_rt: None,
             merger_out_len_max: None,
             scylla_read_queue_len: None,
-            use_scylla6_workarounds: None,
+            scylla_opts: ScyllaOptsQuery::new(),
+            extra_opts: ExtraOptsQuery::new(),
         }
     }
 }
@@ -686,14 +699,12 @@ impl EventsSubQuery {
         &self.settings
     }
 
-    pub fn use_scylla6_workarounds(&self) -> Option<UseScylla6Workarounds> {
-        self.settings.use_scylla6_workarounds.map(|x| {
-            if x == 0 {
-                UseScylla6Workarounds::no_workarounds()
-            } else {
-                UseScylla6Workarounds::with_workarounds()
-            }
-        })
+    pub fn scylla_opts(&self) -> &ScyllaOptsQuery {
+        &self.settings.scylla_opts
+    }
+
+    pub fn extra_opts(&self) -> &ExtraOptsQuery {
+        &self.settings.extra_opts
     }
 }
 
@@ -714,7 +725,14 @@ impl Frame1Parts {
 
 #[test]
 fn parse_frame1() {
-    let inp = r##"{"query":{"select":{"ch_conf":{"Scylla":{"backend":"swissfel-daqbuf-ca","series":2367705320261409690,"scalar_type":"ChannelStatus","shape":[],"name":"SLGRE-LI2C03_CH6:TEMP"}},"range":{"TimeRange":{"beg":1695736001000000000,"end":1695736301000000000}},"transform":{"event":"ValueFull","time_binning":"None"},"wasm1":null},"settings":{"timeout":null,"events_max":200000,"event_delay":null,"stream_batch_len":null,"buf_len_disk_io":null,"queue_len_disk_io":null,"create_errors":[]},"ty":"EventsSubQuery","reqid":"3ea23209"}}"##;
+    let inp = concat!(
+        r##"{"query":{"select":{"ch_conf":{"Scylla":{"backend":"swissfel-daqbuf-ca","series":2367705320261409690"##,
+        r##","scalar_type":"ChannelStatus","shape":[],"name":"SLGRE-LI2C03_CH6:TEMP"}}"##,
+        r##","range":{"TimeRange":{"beg":1695736001000000000,"end":1695736301000000000}}"##,
+        r##","transform":{"event":"ValueFull","time_binning":"None"},"wasm1":null}"##,
+        r##","settings":{"timeout":null,"events_max":200000,"event_delay":null,"stream_batch_len":null"##,
+        r##","buf_len_disk_io":null,"queue_len_disk_io":null,"create_errors":[]},"ty":"EventsSubQuery","reqid":"3ea23209"}}"##
+    );
     // TODO assert
     let _v: Frame1Parts = serde_json::from_str(inp).unwrap();
 }
