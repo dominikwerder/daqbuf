@@ -1032,7 +1032,7 @@ pub struct Cluster {
     scylla_lt: Option<ScyllaConfig>,
     cache_scylla: Option<ScyllaConfig>,
     pub announce_backends: Option<Vec<String>>,
-    #[serde(with = "serde_UseScylla6Workarounds")]
+    #[serde(with = "serde_UseScylla6Workarounds", default)]
     use_scylla6_workarounds: Option<UseScylla6Workarounds>,
 }
 
