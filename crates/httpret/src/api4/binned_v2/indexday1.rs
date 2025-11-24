@@ -208,10 +208,7 @@ async fn deliver_json(res2: HandleRes2<'_>, ctx: &ReqCtx, ncc: &NodeConfigCached
     let scyqueue = res2.scyqueue.as_ref().unwrap();
     let rt_opt = res2.query.use_rt();
     let pbp1_opt = res2.query.pbp1();
-    info!(
-        "deliver_json  {rt_opt:?}  {pbp1_opt:?}  scyfix {:?}",
-        res2.use_scylla6_workarounds
-    );
+    info!("deliver_json  {rt_opt:?}  {pbp1_opt:?}  scyfix {:?}", res2.scylla_opts);
     let rt = rt_opt.clone().map_or(RetentionTime::Long, |x| x.clone());
     let pbp1 = pbp1_opt.map_or(PrebinnedPartitioning::Day1, |x| x.clone());
     info!("deliver_json  BinWriteIndexRtStream::new  {rt:?}  {pbp1:?}");
@@ -220,7 +217,7 @@ async fn deliver_json(res2: HandleRes2<'_>, ctx: &ReqCtx, ncc: &NodeConfigCached
         series.clone(),
         pbp1.clone(),
         range.clone(),
-        res2.use_scylla6_workarounds.clone(),
+        res2.scylla_opts.clone(),
         scyqueue.clone(),
     );
     let stream = stream.then(|item| match item {

@@ -1,23 +1,17 @@
 use crate::bodystream::response;
 use crate::channelconfig::ch_conf_from_binned;
-use crate::requests::accepts_cbor_framed;
-use crate::requests::accepts_json_framed;
 use crate::requests::accepts_json_or_all;
-use crate::requests::accepts_octets;
 use crate::ServiceSharedResources;
 use daqbuf_err as err;
 use dbconn::worker::PgQueue;
 use futures_util::StreamExt;
-use futures_util::TryStreamExt;
 use http::header::CONTENT_TYPE;
 use http::request::Parts;
 use http::Method;
 use http::StatusCode;
 use httpclient::bad_request_response;
 use httpclient::body_empty;
-use httpclient::body_stream;
 use httpclient::error_response;
-use httpclient::error_status_response;
 use httpclient::not_found_response;
 use httpclient::IntoBody;
 use httpclient::Requ;
@@ -26,27 +20,21 @@ use httpclient::ToJsonBody;
 use netpod::log;
 use netpod::req_uri_to_url;
 use netpod::timeunits::SEC;
-use netpod::ttl::RetentionTime;
 use netpod::ChannelTypeConfigGen;
 use netpod::FromUrl;
 use netpod::NodeConfigCached;
 use netpod::ReqCtx;
 use netpod::UseScylla6Workarounds;
-use netpod::APP_CBOR_FRAMED;
 use netpod::APP_JSON;
-use netpod::APP_JSON_FRAMED;
 use netpod::HEADER_NAME_REQUEST_ID;
 use nodenet::client::OpenBoxedBytesViaHttp;
-use nodenet::scylla::ScyllaEventReadProvider;
 use query::api4::binned::BinWriteIndexQuery;
 use query::api4::binned::BinnedQuery;
+use query::api4::scyllaopts::ScyllaOptsQuery;
 use scyllaconn::worker::ScyllaQueue;
-use series::msp::PrebinnedPartitioning;
 use series::SeriesId;
 use std::pin::Pin;
 use std::sync::Arc;
-use streams::eventsplainreader::DummyCacheReadProvider;
-use streams::eventsplainreader::SfDatabufferEventReadProvider;
 use streams::streamtimeout::StreamTimeout2;
 use streams::timebin::cached::reader::EventsReadProvider;
 use streams::timebin::CacheReadProvider;
@@ -201,41 +189,13 @@ async fn binned_instrumented(
 
 fn make_read_provider(
     chname: &str,
-    use_scylla6_workarounds: UseScylla6Workarounds,
+    scylla_opts: ScyllaOptsQuery,
     scyqueue: Option<ScyllaQueue>,
     open_bytes: Pin<Arc<OpenBoxedBytesViaHttp>>,
     ctx: &ReqCtx,
     ncc: &NodeConfigCached,
 ) -> (Arc<dyn EventsReadProvider>, Arc<dyn CacheReadProvider>) {
-    let events_read_provider = if chname.starts_with("unittest") {
-        let x = streams::teststream::UnitTestStream::new();
-        Arc::new(x)
-    } else if ncc.node_config.cluster.scylla_lt().is_some() {
-        scyqueue
-            .clone()
-            .map(|qu| ScyllaEventReadProvider::new(qu, use_scylla6_workarounds.clone()))
-            .map(|x| Arc::new(x) as Arc<dyn EventsReadProvider>)
-            .expect("scylla queue")
-    } else if ncc.node.sf_databuffer.is_some() {
-        // TODO do not clone the request. Pass an Arc up to here.
-        let x = SfDatabufferEventReadProvider::new(Arc::new(ctx.clone()), open_bytes);
-        Arc::new(x)
-    } else {
-        panic!("unexpected backend")
-    };
-    let cache_read_provider = if ncc.node_config.cluster.scylla_lt().is_some() {
-        scyqueue
-            .clone()
-            .map(|qu| scyllaconn::bincache::ScyllaPrebinnedReadProvider::new(use_scylla6_workarounds, qu))
-            .map(|x| Arc::new(x) as Arc<dyn CacheReadProvider>)
-            .expect("scylla queue")
-    } else if ncc.node.sf_databuffer.is_some() {
-        let x = DummyCacheReadProvider::new();
-        Arc::new(x)
-    } else {
-        panic!("unexpected backend")
-    };
-    (events_read_provider, cache_read_provider)
+    todo!()
 }
 
 async fn binned_json_single(
@@ -256,7 +216,7 @@ async fn binned_json_single(
             SeriesId::new(res2.ch_conf.series().unwrap()),
             pbp.clone(),
             res2.query.range().to_time().unwrap(),
-            res2.use_scylla6_workarounds.clone(),
+            todo!(),
             res2.scyqueue.clone().unwrap(),
         );
         while let Some(x) = stream.next().await {
@@ -274,7 +234,7 @@ struct HandleRes2<'a> {
     logspan: Span,
     url: Url,
     query: BinWriteIndexQuery,
-    use_scylla6_workarounds: UseScylla6Workarounds,
+    scylla_opts: ScyllaOptsQuery,
     ch_conf: ChannelTypeConfigGen,
     events_read_provider: Arc<dyn EventsReadProvider>,
     cache_read_provider: Arc<dyn CacheReadProvider>,
@@ -293,35 +253,21 @@ impl<'a> HandleRes2<'a> {
         scyqueue: Option<ScyllaQueue>,
         ncc: &NodeConfigCached,
     ) -> Result<Self, Error> {
-        let use_scylla6_workarounds = query
-            .use_scylla6_workarounds()
-            .map(|x| {
-                if x == 0 {
-                    UseScylla6Workarounds::no_workarounds()
-                } else {
-                    UseScylla6Workarounds::with_workarounds()
-                }
-            })
-            .unwrap_or(ncc.node_config.cluster.use_scylla6_workarounds());
+        todo!("unify with similar code");
+        let scylla_opts = ScyllaOptsQuery::new();
         let q2 = BinnedQuery::new(query.channel().clone(), query.range().clone(), 100);
         let ch_conf = ch_conf_from_binned(&q2, ctx, pgqueue, ncc)
             .await?
             .ok_or_else(|| Error::ChannelNotFound)?;
         let open_bytes = Arc::pin(OpenBoxedBytesViaHttp::new(ncc.node_config.cluster.clone()));
-        let (events_read_provider, cache_read_provider) = make_read_provider(
-            ch_conf.name(),
-            use_scylla6_workarounds.clone(),
-            scyqueue.clone(),
-            open_bytes,
-            ctx,
-            ncc,
-        );
+        let (events_read_provider, cache_read_provider) =
+            make_read_provider(ch_conf.name(), scylla_opts, scyqueue.clone(), open_bytes, ctx, ncc);
         let timeout_provider = streamio::streamtimeout::StreamTimeout::boxed();
         let ret = Self {
             logspan,
             url,
             query,
-            use_scylla6_workarounds,
+            scylla_opts,
             ch_conf,
             events_read_provider,
             cache_read_provider,

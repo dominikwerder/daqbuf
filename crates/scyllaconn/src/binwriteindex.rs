@@ -14,9 +14,9 @@ use items_0::streamitem::Sitemty3;
 use items_0::streamitem::sitem3_data;
 use log::log_item_emit as lg;
 use netpod::DtMs;
-use netpod::UseScylla6Workarounds;
 use netpod::range::evrange::NanoRange;
 use netpod::ttl::RetentionTime;
+use query::api4::scyllaopts::ScyllaOptsQuery;
 use std::collections::VecDeque;
 use std::fmt;
 use std::pin::Pin;
@@ -73,7 +73,7 @@ pub struct BinWriteIndexRtStream {
     lsp_min: LspU32,
     msp_end: MspU32,
     lsp_end: LspU32,
-    use_scylla6_workarounds: UseScylla6Workarounds,
+    scylla_opts: ScyllaOptsQuery,
     fut1: Option<Fut1>,
 }
 
@@ -87,7 +87,7 @@ impl BinWriteIndexRtStream {
         series: SeriesId,
         pbp: PrebinnedPartitioning,
         range: NanoRange,
-        use_scylla6_workarounds: UseScylla6Workarounds,
+        scylla_opts: ScyllaOptsQuery,
         scyqueue: ScyllaQueue,
     ) -> Self {
         lg::info!("============================   log item emitted from binwriteindex.rs");
@@ -113,7 +113,7 @@ impl BinWriteIndexRtStream {
             lsp_min: lsp_beg,
             msp_end: msp_end,
             lsp_end: lsp_end,
-            use_scylla6_workarounds,
+            scylla_opts,
             fut1: None,
         }
     }
@@ -126,11 +126,11 @@ impl BinWriteIndexRtStream {
         msp: MspU32,
         lsp_min: LspU32,
         lsp_max: LspU32,
-        use_scylla6_workarounds: UseScylla6Workarounds,
+        scylla_opts: ScyllaOptsQuery,
     ) -> Result<(MspU32, LspU32, LspU32, VecDeque<BinWriteIndexEntry>), crate::worker::Error> {
         trace_item!("make_next_query_fut  {:?}  min {:?}  max {:?}", msp, lsp_min, lsp_max);
         let res = scyqueue
-            .bin_write_index_read(rt1, series, pbp, msp, lsp_min, lsp_max, use_scylla6_workarounds)
+            .bin_write_index_read(rt1, series, pbp, msp, lsp_min, lsp_max, scylla_opts)
             .await?;
         Ok((msp, lsp_min, lsp_max, res))
     }
@@ -158,7 +158,7 @@ impl BinWriteIndexRtStream {
                 let rt = self.rt.clone();
                 let series = self.series.clone();
                 let pbp = self.pbp.clone();
-                let use_scylla6_workarounds = self.use_scylla6_workarounds.clone();
+                let use_scylla6_workarounds = self.scylla_opts.clone();
                 async move {
                     Self::next_query_fut(
                         scyqueue,

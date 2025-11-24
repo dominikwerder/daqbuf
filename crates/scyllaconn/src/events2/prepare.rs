@@ -181,7 +181,7 @@ async fn make_msp_dir(
     let select_cond = if bck {
         "ts_msp < ? order by ts_msp desc limit 2"
     } else {
-        "ts_msp >= ? and ts_msp < ? limit 20"
+        "ts_msp >= ? and ts_msp < ? limit 40"
     };
     let cql = format!(
         "select ts_msp from {}.{}{} where series = ? and {} {}",
@@ -509,7 +509,6 @@ impl StmtsEvents {
         if cache_bypass {
             &self.cache_bypass
         } else {
-            trace_scy6!("cache_bypass false");
             &self.cache_use
         }
     }

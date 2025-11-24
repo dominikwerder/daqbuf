@@ -11,8 +11,8 @@ use items_0::streamitem::Sitemty3;
 use netpod::BinnedRange;
 use netpod::DtMs;
 use netpod::TsNano;
-use netpod::UseScylla6Workarounds;
 use netpod::ttl::RetentionTime;
+use query::api4::scyllaopts::ScyllaOptsQuery;
 use std::collections::VecDeque;
 use std::pin::Pin;
 use std::task::Context;
@@ -36,21 +36,13 @@ async fn fetch_index_entries(
     series: SeriesId,
     msp: MspU32,
     lsp: LspU32,
-    use_scylla6_workarounds: UseScylla6Workarounds,
+    scylla_opts: ScyllaOptsQuery,
     scyqueue: &ScyllaQueue,
 ) -> FetchingIndexFutRes {
     let rt = RetentionTime::Long;
     let pbp = PrebinnedPartitioning::Day1;
     match scyqueue
-        .bin_write_index_read(
-            rt,
-            series,
-            pbp.clone(),
-            msp,
-            lsp,
-            LspU32(1 + lsp.to_u32()),
-            use_scylla6_workarounds,
-        )
+        .bin_write_index_read(rt, series, pbp.clone(), msp, lsp, LspU32(1 + lsp.to_u32()), scylla_opts)
         .await
     {
         Ok(x) => {
@@ -81,7 +73,7 @@ enum StateModFn {
 struct Common {
     series: SeriesId,
     msplspiter: MspLspIter,
-    use_scylla6_workarounds: UseScylla6Workarounds,
+    scylla_opts: ScyllaOptsQuery,
     scyqueue: ScyllaQueue,
     logoutbuf: VecDeque<LogItem>,
 }
@@ -101,7 +93,7 @@ impl BinReadLayeredTop {
     pub fn new(
         series: SeriesId,
         binrange: BinnedRange<TsNano>,
-        use_scylla6_workarounds: UseScylla6Workarounds,
+        scylla_opts: ScyllaOptsQuery,
         scyqueue: ScyllaQueue,
     ) -> Result<Self, Error> {
         // TODO
@@ -113,7 +105,7 @@ impl BinReadLayeredTop {
             common: Common {
                 series,
                 msplspiter,
-                use_scylla6_workarounds,
+                scylla_opts,
                 scyqueue,
                 logoutbuf: VecDeque::new(),
             },
@@ -135,7 +127,7 @@ impl BinReadLayeredTop {
                         common.series.clone(),
                         x.0,
                         x.1,
-                        common.use_scylla6_workarounds.clone(),
+                        common.scylla_opts.clone(),
                         scyqueue,
                     )),
                 });

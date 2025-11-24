@@ -98,11 +98,8 @@ async fn make_channel_events_stream_data(
     scyqueue: Option<&ScyllaQueue>,
     ncc: &NodeConfigCached,
 ) -> Result<Pin<Box<dyn Stream<Item = Sitemty<ChannelEvents>> + Send>>, Error> {
-    // ) -> Result<impl Stream<Item = Sitemty<ChannelEvents>>, Error> {
-    let use_scylla6_workarounds = subq
-        .use_scylla6_workarounds()
-        .unwrap_or(ncc.node_config.cluster.use_scylla6_workarounds());
-    log_query!("make_channel_events_stream_data  {:?}", use_scylla6_workarounds);
+    let scylla_opts = subq.scylla_opts().clone();
+    log_query!("make_channel_events_stream_data  scylla_opts  {:?}", scylla_opts);
     if subq.backend() == TEST_BACKEND {
         let node_count = ncc.node_config.cluster.nodes.len() as u64;
         let node_ix = ncc.ix as u64;
@@ -110,7 +107,7 @@ async fn make_channel_events_stream_data(
         Ok(ret)
     } else if let Some(scyqueue) = scyqueue {
         let cfg = subq.ch_conf().to_scylla()?;
-        let ret = scylla_channel_event_stream(subq, cfg, scyqueue, use_scylla6_workarounds).await?;
+        let ret = scylla_channel_event_stream(subq, cfg, scyqueue, scylla_opts).await?;
         Ok(ret)
     } else if let Some(_) = &ncc.node.channel_archiver {
         let e = Error::NotAvailable;

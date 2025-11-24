@@ -236,7 +236,7 @@ async fn deliver_json_framed(
         let stream = scyllaconn::binned2::frombinned::FromBinned::new(
             series,
             binrange.clone(),
-            res2.use_scylla6_workarounds.clone(),
+            res2.scylla_opts.clone(),
             scyqueue,
             res2.cache_read_provider,
         );

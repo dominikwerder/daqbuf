@@ -10,9 +10,9 @@ use futures_util::TryStreamExt;
 use items_0::streamitem::Sitemty3;
 use items_0::streamitem::sitem3_data;
 use netpod::DtMs;
-use netpod::UseScylla6Workarounds;
 use netpod::range::evrange::NanoRange;
 use netpod::ttl::RetentionTime;
+use query::api4::scyllaopts::ScyllaOptsQuery;
 use std::collections::VecDeque;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -33,7 +33,7 @@ autoerr::create_error_v1!(
 async fn read_all_coarse(
     series: SeriesId,
     range: NanoRange,
-    use_scylla6_workarounds: UseScylla6Workarounds,
+    scylla_opts: ScyllaOptsQuery,
     scyqueue: &ScyllaQueue,
 ) -> Result<VecDeque<(RetentionTime, MspU32, LspU32, DtMs)>, Error> {
     let rts = {
@@ -48,7 +48,7 @@ async fn read_all_coarse(
             series,
             pbp,
             range.clone(),
-            use_scylla6_workarounds.clone(),
+            scylla_opts.clone(),
             scyqueue.clone(),
         );
         while let Some(x) = stream.try_next().await? {
@@ -85,16 +85,11 @@ pub struct ReadAllCoarse {
 }
 
 impl ReadAllCoarse {
-    pub fn new(
-        series: SeriesId,
-        range: NanoRange,
-        use_scylla6_workarounds: UseScylla6Workarounds,
-        scyqueue: ScyllaQueue,
-    ) -> Self {
+    pub fn new(series: SeriesId, range: NanoRange, scylla_opts: ScyllaOptsQuery, scyqueue: ScyllaQueue) -> Self {
         let scyqueue = Arc::new(scyqueue);
         let fut = {
             let scyqueue = scyqueue.clone();
-            async move { read_all_coarse(series, range, use_scylla6_workarounds, &scyqueue).await }
+            async move { read_all_coarse(series, range, scylla_opts, &scyqueue).await }
         };
         Self {
             scyqueue,

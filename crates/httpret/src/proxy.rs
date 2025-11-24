@@ -80,7 +80,11 @@ pub async fn proxy(proxy_config: ProxyConfig, service_version: ServiceVersion) -
     use std::str::FromStr;
     let bind_addr = SocketAddr::from_str(&format!("{}:{}", proxy_config.listen, proxy_config.port))?;
     #[cfg(feature = "http3")]
-    let http3 = http3::Http3Support::new_or_dummy(bind_addr.clone()).await?;
+    let http3 = if proxy_config.port == 8382 {
+        http3::Http3Support::new_or_dummy(bind_addr.clone()).await?
+    } else {
+        http3::Http3Support::dummy()
+    };
     let listener = TcpListener::bind(bind_addr).await?;
     loop {
         let (stream, addr) = match listener.accept().await {

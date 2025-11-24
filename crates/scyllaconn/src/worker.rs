@@ -18,7 +18,6 @@ use items_2::binning::container_bins::ContainerBins;
 use netpod::DtMs;
 use netpod::ScyllaConfig;
 use netpod::TsMs;
-use netpod::UseScylla6Workarounds;
 use netpod::log;
 use netpod::ttl::RetentionTime;
 use std::collections::VecDeque;
@@ -100,7 +99,7 @@ struct FindTsMsp {
     series: SeriesId,
     range: ScyllaSeriesRange,
     bck: bool,
-    use_scylla6_workarounds: UseScylla6Workarounds,
+    scylla_opts: query::api4::scyllaopts::ScyllaOptsQuery,
     tx: Sender<Result<VecDeque<TsMs>, Error>>,
 }
 
@@ -111,7 +110,7 @@ impl FindTsMsp {
             self.series.id(),
             self.range.clone(),
             self.bck.clone(),
-            self.use_scylla6_workarounds,
+            self.scylla_opts.clone(),
             &stmts,
             &scy,
         )
@@ -150,7 +149,7 @@ struct ReadPrebinnedF32 {
     bin_len: DtMs,
     msp: u64,
     offs: core::ops::Range<u32>,
-    use_scylla6_workarounds: UseScylla6Workarounds,
+    scylla_opts: query::api4::scyllaopts::ScyllaOptsQuery,
     tx: Sender<Result<ContainerBins<f32, f32>, streams::timebin::cached::reader::Error>>,
 }
 
@@ -162,7 +161,7 @@ struct BinWriteIndexRead {
     msp: MspU32,
     lsp_min: LspU32,
     lsp_max: LspU32,
-    use_scylla6_workarounds: UseScylla6Workarounds,
+    scylla_opts: query::api4::scyllaopts::ScyllaOptsQuery,
     tx: Sender<Result<VecDeque<BinWriteIndexEntry>, Error>>,
 }
 
@@ -179,7 +178,7 @@ impl BinWriteIndexRead {
         let res = scy
             .execute_iter(
                 stmts
-                    .cache_bypass(self.use_scylla6_workarounds.get())
+                    .cache_bypass(self.scylla_opts.bins_fwd_cache_bypass())
                     .rt(&self.rt)
                     .bin_write_index_read()
                     .clone(),
@@ -274,7 +273,7 @@ impl ScyllaQueue {
         series: SeriesId,
         range: ScyllaSeriesRange,
         bck: bool,
-        use_scylla6_workarounds: UseScylla6Workarounds,
+        scylla_opts: query::api4::scyllaopts::ScyllaOptsQuery,
     ) -> Result<VecDeque<TsMs>, Error> {
         let (tx, rx) = async_channel::bounded(1);
         let job = FindTsMsp {
@@ -282,7 +281,7 @@ impl ScyllaQueue {
             series,
             range,
             bck,
-            use_scylla6_workarounds,
+            scylla_opts,
             tx,
         };
         let job = Job::FindTsMsp(job);
@@ -339,7 +338,7 @@ impl ScyllaQueue {
         bin_len: DtMs,
         msp: u64,
         offs: core::ops::Range<u32>,
-        use_scylla6_workarounds: UseScylla6Workarounds,
+        scylla_opts: query::api4::scyllaopts::ScyllaOptsQuery,
     ) -> Result<ContainerBins<f32, f32>, streams::timebin::cached::reader::Error> {
         let (tx, rx) = async_channel::bounded(1);
         let job = Job::ReadPrebinnedF32(ReadPrebinnedF32 {
@@ -348,7 +347,7 @@ impl ScyllaQueue {
             bin_len,
             msp,
             offs,
-            use_scylla6_workarounds,
+            scylla_opts,
             tx,
         });
         self.tx
@@ -370,7 +369,7 @@ impl ScyllaQueue {
         msp: MspU32,
         lsp_min: LspU32,
         lsp_max: LspU32,
-        use_scylla6_workarounds: UseScylla6Workarounds,
+        scylla_opts: query::api4::scyllaopts::ScyllaOptsQuery,
     ) -> Result<VecDeque<BinWriteIndexEntry>, Error> {
         let (tx, rx) = async_channel::bounded(1);
         let job = BinWriteIndexRead {
@@ -380,7 +379,7 @@ impl ScyllaQueue {
             msp,
             lsp_min,
             lsp_max,
-            use_scylla6_workarounds,
+            scylla_opts,
             tx,
         };
         let job = Job::BinWriteIndexRead(job);
@@ -528,7 +527,7 @@ impl ScyllaWorker {
                             job.bin_len,
                             job.msp,
                             job.offs,
-                            job.use_scylla6_workarounds,
+                            job.scylla_opts,
                             &stmts,
                             &scy,
                         )

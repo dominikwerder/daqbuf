@@ -13,9 +13,8 @@ use netpod::log;
 use serde_json::Value as JsVal;
 use tokio_postgres::Client as PgClient;
 
-macro_rules! debug { ($($arg:expr),*) => ( if true { log::debug!($($arg),*) } ); }
-
-macro_rules! trace { ($($arg:expr),*) => ( if true { log::trace!($($arg),*) } ); }
+macro_rules! debug { ($($arg:tt)*) => ( if true { log::debug!($($arg)*) } ); }
+macro_rules! trace { ($($arg:tt)*) => ( if true { log::trace!($($arg)*) } ); }
 
 autoerr::create_error_v1!(
     name(Error, "DbconnSearch"),
@@ -185,6 +184,7 @@ async fn search_channel_archeng(
     _conf: &ChannelArchiver,
     database: &Database,
 ) -> Result<ChannelSearchResult, Error> {
+    let selfn = "search_channel_archeng";
     // Channel archiver provides only channel name. Also, search criteria are currently ANDed.
     // Therefore search only if user only provides a name criterion.
     let empty = if !query.source_regex.is_empty() {
@@ -205,8 +205,9 @@ async fn search_channel_archeng(
         " from channels c",
         " where c.name ~* $1",
         " order by c.name",
-        " limit 100"
+        " limit 125"
     ));
+    log::info!("{selfn}  limit search 125");
     let (cl, _pgjh) = create_connection(database).await?;
     let rows = cl.query(sql.as_str(), &[&query.name_regex]).await.err_conv()?;
     let mut res = Vec::new();

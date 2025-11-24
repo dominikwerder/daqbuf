@@ -249,20 +249,13 @@ fn build_stream(
     let use_pbp_opt = res2.query.use_pbp();
     info!(
         "deliver_json  {rt_opt:?}  pbp1_opt {pbp1_opt:?}  scyfix {:?}  use_pbp_opt {use_pbp_opt:?}",
-        res2.use_scylla6_workarounds
+        res2.scylla_opts
     );
     let rt = rt_opt.clone().map_or(RetentionTime::Long, |x| x.clone());
     let use_pbp = use_pbp_opt.map_or(PrebinnedPartitioning::Day1, |x| x.clone());
     let brange = BinnedRange::from_nano_range(range, use_pbp.bin_len());
     info!("deliver_json  {rt:?}  {use_pbp:?}  {brange:?}");
-    let stream = BinnedRtPbpStream::new(
-        series,
-        rt,
-        use_pbp,
-        brange.clone(),
-        res2.use_scylla6_workarounds,
-        scyqueue.clone(),
-    );
+    let stream = BinnedRtPbpStream::new(series, rt, use_pbp, brange.clone(), res2.scylla_opts, scyqueue.clone());
     let stream = BinnedExpand::new(stream, brange.clone());
     let stream = Edgecheck::new(stream, brange.clone());
     // let stream = futures_util::stream::iter([Ok::<StreamItem<String>, Error>(netpod::todoval())]);

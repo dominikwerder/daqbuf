@@ -6,8 +6,8 @@ use futures_util::FutureExt;
 use items_0::streamitem::StreamItem;
 use items_2::binning::container_bins::ContainerBins;
 use netpod::DtMs;
-use netpod::UseScylla6Workarounds;
 use netpod::ttl::RetentionTime;
+use query::api4::scyllaopts::ScyllaOptsQuery;
 use std::fmt;
 use std::pin::Pin;
 use std::task::Context;
@@ -38,7 +38,7 @@ pub struct BinnedRtMspLsps {
     msp: MspU32,
     lsps: (LspU32, LspU32),
     binlen: DtMs,
-    use_scylla6_workarounds: UseScylla6Workarounds,
+    scylla_opts: ScyllaOptsQuery,
     scyqueue: ScyllaQueue,
     fut: Option<FutW>,
 }
@@ -50,7 +50,7 @@ impl BinnedRtMspLsps {
         msp: MspU32,
         binlen: DtMs,
         lsps: (LspU32, LspU32),
-        use_scylla6_workarounds: UseScylla6Workarounds,
+        scylla_opts: ScyllaOptsQuery,
         scyqueue: ScyllaQueue,
     ) -> Self {
         let mut ret = Self {
@@ -59,7 +59,7 @@ impl BinnedRtMspLsps {
             msp,
             lsps,
             binlen,
-            use_scylla6_workarounds,
+            scylla_opts,
             scyqueue,
             fut: None,
         };
@@ -74,10 +74,10 @@ impl BinnedRtMspLsps {
         let msp = self.msp.to_u64();
         let offs = self.lsps.0.to_u32()..self.lsps.1.to_u32();
         let scyqueue = self.scyqueue.clone();
-        let use_scylla6_workarounds = self.use_scylla6_workarounds.clone();
+        let scylla_opts = self.scylla_opts.clone();
         let fut = async move {
             scyqueue
-                .read_prebinned_f32(rt, series, binlen, msp, offs, use_scylla6_workarounds)
+                .read_prebinned_f32(rt, series, binlen, msp, offs, scylla_opts)
                 .await
         };
         let fut = Box::pin(fut);

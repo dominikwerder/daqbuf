@@ -5,10 +5,10 @@ use daqbuf_series::msp::PrebinnedPartitioning;
 use futures_util::Future;
 use futures_util::Stream;
 use futures_util::StreamExt;
-use netpod::UseScylla6Workarounds;
 use netpod::log;
 use netpod::range::evrange::NanoRange;
 use netpod::ttl::RetentionTime;
+use query::api4::scyllaopts::ScyllaOptsQuery;
 use std::collections::VecDeque;
 use std::fmt;
 use std::pin::Pin;
@@ -44,7 +44,7 @@ enum InpSt {
 #[derive(Debug)]
 pub struct BinWriteIndexStream {
     rtss: VecDeque<InpSt>,
-    use_scylla6_workarounds: UseScylla6Workarounds,
+    scylla_opts: ScyllaOptsQuery,
 }
 
 impl BinWriteIndexStream {
@@ -52,12 +52,7 @@ impl BinWriteIndexStream {
         std::any::type_name::<Self>()
     }
 
-    pub fn new(
-        series: SeriesId,
-        range: NanoRange,
-        use_scylla6_workarounds: UseScylla6Workarounds,
-        scyqueue: ScyllaQueue,
-    ) -> Self {
+    pub fn new(series: SeriesId, range: NanoRange, scylla_opts: ScyllaOptsQuery, scyqueue: ScyllaQueue) -> Self {
         debug!("{}::new", Self::type_name());
         let mut rtss = VecDeque::new();
         let rts = [RetentionTime::Short, RetentionTime::Medium, RetentionTime::Long];
@@ -67,15 +62,12 @@ impl BinWriteIndexStream {
                 series.clone(),
                 PrebinnedPartitioning::Day1,
                 range.clone(),
-                use_scylla6_workarounds.clone(),
+                scylla_opts.clone(),
                 scyqueue.clone(),
             );
             rtss.push_back(InpSt::Polling(s));
         }
-        BinWriteIndexStream {
-            rtss,
-            use_scylla6_workarounds,
-        }
+        BinWriteIndexStream { rtss, scylla_opts }
     }
 
     fn abort(&mut self) {

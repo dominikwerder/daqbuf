@@ -27,7 +27,6 @@ use netpod::Shape;
 use netpod::TsMs;
 use netpod::TsMsVecFmt;
 use netpod::TsNano;
-use netpod::UseScylla6Workarounds;
 use netpod::log;
 use netpod::ttl::RetentionTime;
 use scylla::client::pager::QueryPager;
@@ -41,7 +40,6 @@ use std::task::Context;
 use std::task::Poll;
 use std::time::Duration;
 use std::time::Instant;
-use taskrun::tokio;
 use taskrun::tracing;
 
 macro_rules! error { ($($arg:tt)*) => ( if true { log::error!($($arg)*); } ) }
@@ -70,12 +68,14 @@ macro_rules! log_fetch_result {
 
 macro_rules! log_query { ($($arg:tt)*) => ( if true { log::info!($($arg)*); } ) }
 
+macro_rules! debug_scy6 { ($($arg:tt)*) => { if false { log::debug!($($arg)*); } }; }
+
 #[derive(Debug, Clone)]
 pub struct EventReadOpts {
     with_values: bool,
     one_before: bool,
     qucap: u32,
-    use_scylla6_workarounds: UseScylla6Workarounds,
+    scylla_opts: query::api4::scyllaopts::ScyllaOptsQuery,
 }
 
 impl EventReadOpts {
@@ -83,13 +83,13 @@ impl EventReadOpts {
         one_before: bool,
         with_values: bool,
         qucap: Option<u32>,
-        use_scylla6_workarounds: UseScylla6Workarounds,
+        scylla_opts: query::api4::scyllaopts::ScyllaOptsQuery,
     ) -> Self {
         Self {
             one_before,
             with_values,
             qucap: qucap.unwrap_or(6),
-            use_scylla6_workarounds,
+            scylla_opts,
         }
     }
 
@@ -316,7 +316,7 @@ pub(super) struct ReadNextValuesOpts {
     series: SeriesId,
     ts_msp: TsMs,
     range: ScyllaSeriesRange,
-    fwd: bool,
+    bck: bool,
     readopts: EventReadOpts,
     val_ty_dyn: Box<dyn ValTyDyn>,
 }
@@ -328,7 +328,7 @@ impl Clone for ReadNextValuesOpts {
             series: self.series.clone(),
             ts_msp: self.ts_msp.clone(),
             range: self.range.clone(),
-            fwd: self.fwd.clone(),
+            bck: self.bck.clone(),
             readopts: self.readopts.clone(),
             val_ty_dyn: self.val_ty_dyn.clone_boxed(),
         }
@@ -397,7 +397,7 @@ impl EventsStreamRt {
             rt.clone(),
             series,
             range.clone(),
-            readopts.use_scylla6_workarounds.clone(),
+            readopts.scylla_opts.clone(),
             scyqueue.clone(),
         );
         Self {
@@ -857,6 +857,9 @@ async fn read_next_values_3_fwd(
     jobtrace: &mut ReadJobTrace,
 ) -> Result<(Box<dyn BinningggContainerEventsDyn>,), Error> {
     let selfname = "read_next_values_3_fwd";
+    if opts.bck {
+        return Err(Error::Logic);
+    }
     let val_ty_dyn = &opts.val_ty_dyn;
     trace_fetch!("{selfname}  {:?}  st_name {}", opts, val_ty_dyn.st_name());
     let series = opts.series;
@@ -869,19 +872,6 @@ async fn read_next_values_3_fwd(
     }
     if range.end() > TsNano::from_ns(i64::MAX as u64) {
         return Err(Error::RangeEndOverflow);
-    }
-    {
-        // Original
-        let ts_lsp_min = if range.beg() > ts_msp.ns() {
-            range.beg().delta(ts_msp.ns())
-        } else {
-            DtNano::from_ns(0)
-        };
-        let ts_lsp_max = if range.end() > ts_msp.ns() {
-            range.end().delta(ts_msp.ns())
-        } else {
-            DtNano::from_ns(0)
-        };
     }
     let ts_lsp_min = if range.beg() > ts_msp.ns() {
         range.beg().delta(ts_msp.ns())
@@ -901,9 +891,9 @@ async fn read_next_values_3_fwd(
         table_name
     );
     let qu = stmts
-        .cache_bypass(opts.readopts.use_scylla6_workarounds.get())
+        .cache_bypass(opts.readopts.scylla_opts.order_asc_cache_bypass())
         .rt(&opts.rt)
-        .lsp(!opts.fwd, with_values)
+        .lsp(opts.bck, with_values)
         .shape(val_ty_dyn.is_valueblob())
         .st(val_ty_dyn.st_name())?;
     let qu = {
@@ -921,6 +911,7 @@ async fn read_next_values_3_fwd(
         ts_lsp_min.ns() as i64,
         ts_lsp_max.ns() as i64,
     );
+    debug_scy6!("{selfname}  EXECUTE  {cql}  {params:?}", cql = qu.get_statement());
     trace_fetch!("{selfname} event search  params {:?}", params);
     jobtrace.add_event_now(ReadEventKind::CallExecuteIter);
     let res = scy.execute_iter(qu.clone(), params).await?;
@@ -950,7 +941,7 @@ async fn read_lsp_all(
         opts.range.beg().delta(opts.ts_msp.ns())
     };
     let mut qu = stmts
-        .cache_bypass(opts.readopts.use_scylla6_workarounds.get())
+        .cache_bypass(opts.readopts.scylla_opts.evs_lsp_order_desc_read_all_asc_cache_bypass())
         .rt(&opts.rt)
         .lsp_all()
         .shape(opts.val_ty_dyn.is_valueblob())
@@ -958,6 +949,7 @@ async fn read_lsp_all(
         .clone();
     qu.set_page_size(1024 * 4);
     let params = (opts.series.to_i64(), opts.ts_msp.ms() as i64);
+    debug_scy6!("{selfname}  EXECUTE  {cql}  {params:?}", cql = qu.get_statement());
     trace_fetch!("{selfname}  event search  params {:?}", params);
     jobtrace.add_event_now(ReadEventKind::CallExecuteIter);
     let res = scy.execute_iter(qu.clone(), params).await?;
@@ -1002,9 +994,6 @@ async fn read_next_values_3_bck(
         return Ok((ret,));
     };
     let val_ty_dyn = &opts.val_ty_dyn;
-    if opts.readopts.use_scylla6_workarounds.get() == false {
-        trace_init!("{selfname}  NO WORKAROUND");
-    }
     trace_fetch!("{selfname}  {:?}  st_name {}", opts, val_ty_dyn.st_name());
     let series = opts.series;
     let ts_msp = opts.ts_msp;
@@ -1012,13 +1001,13 @@ async fn read_next_values_3_bck(
     let with_values = opts.readopts.with_values();
     trace_fetch!("{selfname}  ts_msp {}  lsp {}  {}", ts_msp.fmt(), lsp, table_name);
     let qu = stmts
-        .cache_bypass(opts.readopts.use_scylla6_workarounds.get())
+        .cache_bypass(opts.readopts.scylla_opts.evs_val_order_asc_cache_bypass())
         .rt(&opts.rt)
         .lsp(false, with_values)
-        // TODO
         .shape(val_ty_dyn.is_valueblob())
         .st(val_ty_dyn.st_name())?;
     let params = (series.to_i64(), ts_msp.ms() as i64, lsp.to_i64(), lsp.to_i64() + 1);
+    debug_scy6!("{selfname}  EXECUTE  {cql}  {params:?}", cql = qu.get_statement());
     trace_fetch!("{selfname}  event search  params {:?}", params);
     jobtrace.add_event_now(ReadEventKind::CallExecuteIter);
     let res = scy.execute_iter(qu.clone(), params).await?;
@@ -1039,10 +1028,10 @@ async fn read_next_values_3(
     stmts: Arc<StmtsEvents>,
 ) -> Result<(Box<dyn BinningggContainerEventsDyn>, ReadJobTrace), Error> {
     let mut jobtrace = ReadJobTrace::new();
-    let (ret,) = if opts.fwd {
-        read_next_values_3_fwd(opts, stmts, scy, &mut jobtrace).await?
-    } else {
+    let (ret,) = if opts.bck {
         read_next_values_3_bck(opts, stmts, scy, &mut jobtrace).await?
+    } else {
+        read_next_values_3_fwd(opts, stmts, scy, &mut jobtrace).await?
     };
     Ok((ret, jobtrace))
 }
@@ -1067,11 +1056,12 @@ async fn read_events_v02_inner(
                 series: params.series,
                 ts_msp: params.ts_msp,
                 range: params.range.clone(),
-                fwd: params.fwd,
+                bck: !params.fwd,
                 readopts: params.readopts.clone(),
                 val_ty_dyn: val_ty_dyn.clone_boxed(),
             };
-            opts.readopts.use_scylla6_workarounds = UseScylla6Workarounds::no_workarounds();
+            // TODO run same query with workaround on and off.
+            // opts.readopts.use_scylla6_workarounds = UseScylla6Workarounds::with_workarounds();
             let fut = read_next_values_3(opts, scy.clone(), stmts.clone()).with_timeout(Duration::from_millis(5000));
             let res = fut.await.map_err_timeout_job().inspect_err(|e| match e {
                 crate::worker::Error::TimeoutJob => {
@@ -1087,11 +1077,11 @@ async fn read_events_v02_inner(
                 series: params.series,
                 ts_msp: params.ts_msp,
                 range: params.range,
-                fwd: params.fwd,
+                bck: !params.fwd,
                 readopts: params.readopts,
                 val_ty_dyn,
             };
-            opts.readopts.use_scylla6_workarounds = UseScylla6Workarounds::with_workarounds();
+            // opts.readopts.use_scylla6_workarounds = UseScylla6Workarounds::with_workarounds();
             let fut = read_next_values_3(opts, scy, stmts).with_timeout(Duration::from_millis(5000));
             let res = fut.await.map_err_timeout_job().inspect_err(|e| match e {
                 crate::worker::Error::TimeoutJob => {
@@ -1118,7 +1108,7 @@ async fn read_events_v02_inner(
             series: params.series,
             ts_msp: params.ts_msp,
             range: params.range,
-            fwd: params.fwd,
+            bck: !params.fwd,
             readopts: params.readopts,
             val_ty_dyn,
         };

@@ -18,7 +18,7 @@ use taskrun::tokio;
 
 const EARLY_DATA_MAX: u32 = u32::MAX * 0;
 
-macro_rules! debug { ($($arg:expr),*) => ( if true { log::debug!($($arg),*); } ); }
+macro_rules! debug { ($($arg:tt)*) => ( if true { log::info!($($arg)*); } ); }
 
 #[derive(Debug)]
 struct TicketerCustom {}
@@ -46,7 +46,8 @@ autoerr::create_error_v1!(
     enum variants {
         NoRuntime,
         IO(#[from] std::io::Error),
-        H3(#[from] h3::Error),
+        H3Connection(#[from] h3::error::ConnectionError),
+        H3Stream(#[from] h3::error::StreamError),
         Http(#[from] http::Error),
         Pem(#[from] rustls::pki_types::pem::Error),
         Rustls(#[from] rustls::Error),
@@ -68,7 +69,7 @@ impl Http3Support {
         }))
     }
 
-    fn dummy() -> Self {
+    pub fn dummy() -> Self {
         Self { ep: None }
     }
 
@@ -161,7 +162,8 @@ impl Http3Support {
         let conn1 = inc.accept()?.await?;
         let conn2 = h3_quinn::Connection::new(conn1);
         let mut conn3 = h3::server::builder().build::<_, Bytes>(conn2).await?;
-        while let Some((req, mut stream)) = conn3.accept().await? {
+        while let Some(reqres) = conn3.accept().await? {
+            let (req, mut stream) = reqres.resolve_request().await?;
             let (head, _body) = req.into_parts();
             debug!(
                 "see request  {}  {:?}  {:?}  {:?}",
@@ -192,7 +194,8 @@ impl Http3Support {
         // let mut conn3 = h3::server::builder().build::<_, Bytes>(conn2).await?;
         loop {
             break match conn3.accept().await {
-                Ok(Some((req, stream))) => {
+                Ok(Some(reqres)) => {
+                    let (req, mut stream) = reqres.resolve_request().await?;
                     debug!("in h3 loop  req {:?}", req);
                     tokio::spawn(async move {
                         let x = Self::handle_req(req, stream, addr_remote).await;
@@ -223,11 +226,15 @@ impl Http3Support {
         let res = http::Response::builder()
             // .version(http::Version::HTTP_3)
             .status(StatusCode::OK)
-            .header("x-daqbuf-tmp", "8e4b217")
+            .header("x-daqbuf-http3", "1")
+            .header("content-type", "text/plain")
             .body(())?;
         stream.send_response(res).await?;
-        // stream.send_data(Bytes::from_static(b"2025-02-05T16:37:12Z")).await?;
-        // stream.finish().await?;
+        // stream.send_data(res).await?;
+        let s = format!("{:?}", std::time::SystemTime::now());
+        let b = s.as_bytes().to_vec();
+        stream.send_data(Bytes::from(b)).await?;
+        stream.finish().await?;
         debug!("response sent  {}", addr_remote);
         Ok(())
     }

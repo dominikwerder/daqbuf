@@ -11,8 +11,8 @@ use items_2::binning::container_bins::ContainerBins;
 use log::log_item_emit as lg;
 use netpod::BinnedRange;
 use netpod::TsNano;
-use netpod::UseScylla6Workarounds;
 use netpod::ttl::RetentionTime;
+use query::api4::scyllaopts::ScyllaOptsQuery;
 use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
@@ -36,7 +36,7 @@ pub struct BinnedRtPbpStream {
     rt: RetentionTime,
     pbp: PrebinnedPartitioning,
     range: BinnedRange<TsNano>,
-    use_scylla6_workarounds: UseScylla6Workarounds,
+    scylla_opts: ScyllaOptsQuery,
     scyqueue: ScyllaQueue,
     msp_chunker: MspChunker,
     state: State,
@@ -48,7 +48,7 @@ impl BinnedRtPbpStream {
         rt: RetentionTime,
         pbp: PrebinnedPartitioning,
         range: BinnedRange<TsNano>,
-        use_scylla6_workarounds: UseScylla6Workarounds,
+        scylla_opts: ScyllaOptsQuery,
         scyqueue: ScyllaQueue,
     ) -> Self {
         let msp_chunker = MspChunker::from_binned_range(range.clone(), pbp.clone());
@@ -57,7 +57,7 @@ impl BinnedRtPbpStream {
             rt,
             pbp,
             range,
-            use_scylla6_workarounds,
+            scylla_opts,
             scyqueue,
             msp_chunker,
             state: State::Init,
@@ -74,7 +74,7 @@ impl BinnedRtPbpStream {
             msp,
             binlen,
             lsps,
-            self.use_scylla6_workarounds.clone(),
+            self.scylla_opts.clone(),
             self.scyqueue.clone(),
         )
     }

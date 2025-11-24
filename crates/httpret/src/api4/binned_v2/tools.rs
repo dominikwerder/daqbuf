@@ -5,10 +5,10 @@ use netpod::log;
 use netpod::ChannelTypeConfigGen;
 use netpod::NodeConfigCached;
 use netpod::ReqCtx;
-use netpod::UseScylla6Workarounds;
 use nodenet::client::OpenBoxedBytesViaHttp;
 use nodenet::scylla::ScyllaEventReadProvider;
 use query::api4::binned::BinnedQuery;
+use query::api4::scyllaopts::ScyllaOptsQuery;
 use scyllaconn::worker::ScyllaQueue;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -78,7 +78,7 @@ pub struct HandleRes2<'a> {
     pub timeout_provider: Arc<dyn StreamTimeout2>,
     pub pgqueue: &'a PgQueue,
     pub scyqueue: Option<ScyllaQueue>,
-    pub use_scylla6_workarounds: UseScylla6Workarounds,
+    pub scylla_opts: ScyllaOptsQuery,
 }
 
 impl<'a> HandleRes2<'a> {
@@ -91,25 +91,16 @@ impl<'a> HandleRes2<'a> {
         scyqueue: Option<ScyllaQueue>,
         ncc: &NodeConfigCached,
     ) -> Result<Self, Error> {
-        let use_scylla6_workarounds = query
-            .use_scylla6_workarounds()
-            .map(|x| {
-                if x == 0 {
-                    UseScylla6Workarounds::no_workarounds()
-                } else {
-                    UseScylla6Workarounds::with_workarounds()
-                }
-            })
-            .unwrap_or(ncc.node_config.cluster.use_scylla6_workarounds());
-        log_query!("HandleRes2::new  {:?}  {:?}", query, use_scylla6_workarounds);
+        let scylla_opts = query.scylla_opts().clone();
+        log_query!("HandleRes2::new  {:?}  {:?}", query, scylla_opts);
         let ch_conf = ch_conf_from_binned(&query, ctx, pgqueue, ncc)
             .await?
             .ok_or_else(|| Error::ChannelNotFound)?;
         let open_bytes = Arc::pin(OpenBoxedBytesViaHttp::new(ncc.node_config.cluster.clone()));
         let (events_read_provider, cache_read_provider) = make_read_provider(
             ch_conf.name(),
-            use_scylla6_workarounds.clone(),
             scyqueue.clone(),
+            scylla_opts.clone(),
             open_bytes,
             ctx,
             ncc,
@@ -125,7 +116,7 @@ impl<'a> HandleRes2<'a> {
             timeout_provider,
             pgqueue,
             scyqueue,
-            use_scylla6_workarounds,
+            scylla_opts,
         };
         Ok(ret)
     }
@@ -133,8 +124,8 @@ impl<'a> HandleRes2<'a> {
 
 fn make_read_provider(
     chname: &str,
-    use_scylla6_workarounds: UseScylla6Workarounds,
     scyqueue: Option<ScyllaQueue>,
+    scylla_opts: ScyllaOptsQuery,
     open_bytes: Pin<Arc<OpenBoxedBytesViaHttp>>,
     ctx: &ReqCtx,
     ncc: &NodeConfigCached,
@@ -145,7 +136,7 @@ fn make_read_provider(
     } else if ncc.node_config.cluster.scylla_lt().is_some() {
         scyqueue
             .clone()
-            .map(|qu| ScyllaEventReadProvider::new(qu, use_scylla6_workarounds.clone()))
+            .map(|qu| ScyllaEventReadProvider::new(qu, scylla_opts.clone()))
             .map(|x| Arc::new(x) as Arc<dyn EventsReadProvider>)
             .expect("scylla queue")
     } else if ncc.node.sf_databuffer.is_some() {
@@ -158,7 +149,7 @@ fn make_read_provider(
     let cache_read_provider = if ncc.node_config.cluster.scylla_lt().is_some() {
         scyqueue
             .clone()
-            .map(|qu| scyllaconn::bincache::ScyllaPrebinnedReadProvider::new(use_scylla6_workarounds, qu))
+            .map(|qu| scyllaconn::bincache::ScyllaPrebinnedReadProvider::new(scylla_opts, qu))
             .map(|x| Arc::new(x) as Arc<dyn CacheReadProvider>)
             .expect("scylla queue")
     } else if ncc.node.sf_databuffer.is_some() {

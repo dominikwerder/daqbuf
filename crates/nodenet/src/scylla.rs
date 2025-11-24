@@ -12,7 +12,6 @@ use items_2::channelevents::ChannelEvents;
 use netpod::log;
 use netpod::ChConf;
 use netpod::SeriesKind;
-use netpod::UseScylla6Workarounds;
 use query::api4::events::EventsSubQuery;
 use scyllaconn::events2::events::EventReadOpts;
 use scyllaconn::events2::mergert;
@@ -38,7 +37,7 @@ pub async fn scylla_channel_event_stream(
     evq: EventsSubQuery,
     chconf: ChConf,
     scyqueue: &ScyllaQueue,
-    use_scylla6_workarounds: UseScylla6Workarounds,
+    scylla_opts: query::api4::scyllaopts::ScyllaOptsQuery,
 ) -> Result<Pin<Box<dyn Stream<Item = Sitemty<ChannelEvents>> + Send>>, Error> {
     trace!("scylla_channel_event_stream  {evq:?}");
     // TODO depends in general on the query
@@ -48,7 +47,7 @@ pub async fn scylla_channel_event_stream(
         evq.need_one_before_range(),
         evq.need_value_data(),
         evq.settings().scylla_read_queue_len(),
-        use_scylla6_workarounds,
+        scylla_opts,
     );
     let stream: Pin<Box<dyn Stream<Item = _> + Send>> = if let Some(rt) = evq.use_rt() {
         trace!("=========    SOLO {rt:?}   =====================");
@@ -189,15 +188,12 @@ impl Stream for ScyllaEventsReadStream {
 
 pub struct ScyllaEventReadProvider {
     scyqueue: ScyllaQueue,
-    use_scylla6_workarounds: UseScylla6Workarounds,
+    scylla_opts: query::api4::scyllaopts::ScyllaOptsQuery,
 }
 
 impl ScyllaEventReadProvider {
-    pub fn new(scyqueue: ScyllaQueue, use_scylla6_workarounds: UseScylla6Workarounds) -> Self {
-        Self {
-            scyqueue,
-            use_scylla6_workarounds,
-        }
+    pub fn new(scyqueue: ScyllaQueue, scylla_opts: query::api4::scyllaopts::ScyllaOptsQuery) -> Self {
+        Self { scyqueue, scylla_opts }
     }
 }
 
@@ -206,9 +202,9 @@ impl EventsReadProvider for ScyllaEventReadProvider {
         let scyqueue = self.scyqueue.clone();
         match evq.ch_conf().clone() {
             netpod::ChannelTypeConfigGen::Scylla(ch_conf) => {
-                let use_scylla6_workarounds = self.use_scylla6_workarounds.clone();
+                let scylla_opts = self.scylla_opts.clone();
                 let fut1 = async move {
-                    crate::scylla::scylla_channel_event_stream(evq, ch_conf, &scyqueue, use_scylla6_workarounds).await
+                    crate::scylla::scylla_channel_event_stream(evq, ch_conf, &scyqueue, scylla_opts).await
                 };
                 let stream = ScyllaEventsReadStream {
                     fut1: Some(Box::pin(fut1)),

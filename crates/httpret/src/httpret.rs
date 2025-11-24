@@ -358,6 +358,7 @@ async fn http_service_inner(
                     "major": service_version.major,
                     "minor": service_version.minor,
                     "patch": service_version.patch,
+                    "full": service_version.to_string(),
                 },
             });
             Ok(response(StatusCode::OK).body(ToJsonBody::from(&ret).into_body())?)

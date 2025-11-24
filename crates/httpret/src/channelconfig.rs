@@ -32,12 +32,12 @@ use netpod::ScalarType;
 use netpod::SeriesConfigQuery;
 use netpod::SfDbChannel;
 use netpod::Shape;
-use netpod::UseScylla6Workarounds;
 use netpod::ACCEPT_ALL;
 use netpod::APP_JSON;
 use nodenet::configquorum::find_config_basics_quorum;
 use query::api4::binned::BinnedQuery;
 use query::api4::events::PlainEventsQuery;
+use query::api4::scyllaopts::ScyllaOptsQuery;
 use serde::Deserialize;
 use serde::Serialize;
 use series::SeriesId;
@@ -63,6 +63,7 @@ autoerr::create_error_v1!(
         MissingChannelName,
         Uri(#[from] netpod::UriError),
         ChannelConfigQuery(daqbuf_err::Error),
+        ScyllaOpts(#[from] query::api4::scyllaopts::Error),
         ExpectScyllaBackend,
         Pg(#[from] dbconn::pg::Error),
         Scylla(String),
@@ -608,8 +609,7 @@ impl IocForChannel {
 pub struct ScyllaSeriesTsMspQuery {
     channel: SfDbChannel,
     range: SeriesRange,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    use_scylla6_workarounds: Option<u32>,
+    scylla_opts: ScyllaOptsQuery,
 }
 
 impl FromUrl for ScyllaSeriesTsMspQuery {
@@ -632,7 +632,7 @@ impl FromUrl for ScyllaSeriesTsMspQuery {
         Ok(Self {
             channel,
             range,
-            use_scylla6_workarounds: pairs.get("use_scylla6_workarounds").and_then(|x| x.parse().ok()),
+            scylla_opts: ScyllaOptsQuery::from_pairs(pairs)?,
         })
     }
 }
@@ -692,16 +692,7 @@ impl ScyllaSeriesTsMsp {
         ncc: &NodeConfigCached,
     ) -> Result<ScyllaSeriesTsMspResponse, Error> {
         // TODO also use the cluster config default
-        let use_scylla6_workarounds = q
-            .use_scylla6_workarounds
-            .map(|x| {
-                if x == 0 {
-                    UseScylla6Workarounds::no_workarounds()
-                } else {
-                    UseScylla6Workarounds::with_workarounds()
-                }
-            })
-            .unwrap_or(ncc.node_config.cluster.use_scylla6_workarounds());
+        let use_scylla6_workarounds = q.scylla_opts.clone();
         let nano_range = if let SeriesRange::TimeRange(x) = q.range.clone() {
             x
         } else {

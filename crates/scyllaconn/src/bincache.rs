@@ -6,8 +6,8 @@ use items_0::merge::MergeableTy;
 use items_2::binning::container_bins::ContainerBins;
 use netpod::DtMs;
 use netpod::TsNano;
-use netpod::UseScylla6Workarounds;
 use netpod::ttl::RetentionTime;
+use query::api4::scyllaopts::ScyllaOptsQuery;
 use std::ops::Range;
 use streams::timebin::cached::reader::BinsReadRes;
 
@@ -18,14 +18,14 @@ async fn scylla_read_prebinned_f32(
     bin_len: DtMs,
     msp: u64,
     offs: Range<u32>,
-    use_scylla6_workarounds: UseScylla6Workarounds,
+    scylla_opts: ScyllaOptsQuery,
     scyqueue: ScyllaQueue,
 ) -> BinsReadRes {
     let rts = [RetentionTime::Short, RetentionTime::Medium, RetentionTime::Long];
     let mut res = Vec::new();
     for rt in rts {
         let x = scyqueue
-            .read_prebinned_f32(rt, series, bin_len, msp, offs.clone(), use_scylla6_workarounds.clone())
+            .read_prebinned_f32(rt, series, bin_len, msp, offs.clone(), scylla_opts.clone())
             .await?;
         res.push(x);
     }
@@ -70,16 +70,13 @@ async fn scylla_read_prebinned_f32(
 }
 
 pub struct ScyllaPrebinnedReadProvider {
-    use_scylla6_workarounds: UseScylla6Workarounds,
+    scylla_opts: query::api4::scyllaopts::ScyllaOptsQuery,
     scyqueue: ScyllaQueue,
 }
 
 impl ScyllaPrebinnedReadProvider {
-    pub fn new(use_scylla6_workarounds: UseScylla6Workarounds, scyqueue: ScyllaQueue) -> Self {
-        Self {
-            use_scylla6_workarounds,
-            scyqueue,
-        }
+    pub fn new(scylla_opts: query::api4::scyllaopts::ScyllaOptsQuery, scyqueue: ScyllaQueue) -> Self {
+        Self { scylla_opts, scyqueue }
     }
 }
 
@@ -97,7 +94,7 @@ impl streams::timebin::CacheReadProvider for ScyllaPrebinnedReadProvider {
             bin_len,
             msp,
             offs,
-            self.use_scylla6_workarounds.clone(),
+            self.scylla_opts.clone(),
             self.scyqueue.clone(),
         );
         streams::timebin::cached::reader::CacheReading::new(Box::pin(fut))
@@ -111,7 +108,7 @@ pub async fn worker_read(
     bin_len: DtMs,
     msp: u64,
     offs: core::ops::Range<u32>,
-    use_scylla6_workarounds: UseScylla6Workarounds,
+    scylla_opts: ScyllaOptsQuery,
     stmts: &StmtsEvents,
     scy: &ScySession,
 ) -> Result<ContainerBins<f32, f32>, streams::timebin::cached::reader::Error> {
@@ -127,7 +124,7 @@ pub async fn worker_read(
     let res = scy
         .execute_iter(
             stmts
-                .cache_bypass(use_scylla6_workarounds.get())
+                .cache_bypass(scylla_opts.bins_fwd_cache_bypass())
                 .rt(&rt)
                 .prebinned_f32()
                 .clone(),
