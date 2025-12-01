@@ -2,12 +2,15 @@ use super::AcceptMessageResult;
 use crate::ca::conn2::caids::Cid;
 use crate::ca::conn2::caids::Sid;
 use crate::ca::conn2::channel::SharedResources;
+use crate::ca::conn2::synchan;
 use crate::ca::conn2::todoval;
 use crate::conf::ChannelConfig;
-use async_channel::SendError;
 use async_channel::Sender;
 use async_channel::TrySendError;
 use ca_proto::ca::proto;
+use netpod::ScalarType;
+use netpod::Shape;
+use netpod::TsMs;
 use serde::Serialize;
 use series::ChannelStatusSeriesId;
 use std::collections::VecDeque;
@@ -25,6 +28,7 @@ autoerr::create_error_v1!(
     name(Error, "ChannelError"),
     enum variants {
         ChannelSend,
+        Netpod(#[from] netpod::Error),
     },
 );
 
@@ -37,7 +41,6 @@ enum State {
         VecDeque<proto::CaMsg>,
     ),
     OpenRecv,
-    Open,
 }
 
 impl fmt::Debug for State {
@@ -46,7 +49,6 @@ impl fmt::Debug for State {
             State::Init => write!(fmt, "Init"),
             State::OpenSend(_, v) => write!(fmt, "OpenSend({})", v.len()),
             State::OpenRecv => write!(fmt, "OpenRecv"),
-            State::Open => write!(fmt, "Open"),
         }
     }
 }
@@ -80,23 +82,30 @@ pub struct TryOpen {
     conf: ChannelConfig,
     cssid: ChannelStatusSeriesId,
     ress: SharedResources,
-    local_epics_hostname: String,
+    // #[serde(serialize_with = "ser_try_open_msgbuf")]
+    // msgbuf: VecDeque<proto::CaMsg>,
+}
+
+fn ser_try_open_msgbuf<S>(v: &VecDeque<proto::CaMsg>, ser: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    ser.serialize_u32(v.len() as u32)
 }
 
 impl TryOpen {
-    pub fn new(
-        conf: ChannelConfig,
-        cssid: ChannelStatusSeriesId,
-        ress: SharedResources,
-        local_epics_hostname: String,
-    ) -> Self {
+    pub fn new(conf: ChannelConfig, cssid: ChannelStatusSeriesId, ress: SharedResources) -> Self {
         Self {
             state: State::Init,
             conf,
             cssid,
             ress,
-            local_epics_hostname,
+            // msgbuf: VecDeque::new(),
         }
+    }
+
+    pub fn dismantle(self) -> (ChannelConfig, ChannelStatusSeriesId, SharedResources) {
+        (self.conf, self.cssid, self.ress)
     }
 
     pub fn process_ca_msg(
@@ -104,22 +113,143 @@ impl TryOpen {
         cx: Context,
         msg: proto::CaMsg,
     ) -> Result<AcceptMessageResult, Error> {
-        use Poll::*;
-        match msg.ty {
-            proto::CaMsgTy::CreateChanRes(k) => {
-                todo!();
-                // TODO process message
+        // use Poll::*;
+        match &self.state {
+            State::Init | State::OpenSend(..) => {
+                warn!("go message during Init or OpenSend ty {:?}", msg.ty);
                 Ok(AcceptMessageResult::Accepted(()))
             }
-            k => {
-                warn!("got some other unhandled message during handshake: {:?}", k);
+            State::OpenRecv => {
+                // process message right here.
+                // self.msgbuf.push(msg);
+                match &msg.ty {
+                    proto::CaMsgTy::CreateChanRes(x) => {}
+                    proto::CaMsgTy::CreateChanFail(x) => {
+                        // TODO
+                        // Here, must indicate that the address could be wrong!
+                        // The channel status must be "Fail" so that ConnSet can decide to re-search.
+                        // TODO how to transition the channel state? Any invariants or simply write to the map?
+                        let cid = Cid::new(x.cid);
+                        let failinfo = format!("name {}  cid {}", self.conf.name(), cid.to_u32());
+                        // let item = CaConnEvent {
+                        //     ts: tsnow,
+                        //     value: CaConnEventValue::ChannelCreateFail(failinfo),
+                        // };
+                        // TODO push out that status event
+
+                        // TODO return channel state change together with failure type so
+                        // that upstream can act on it.
+                    }
+                    _ => {
+                        warn!("got unexpected message during TryOpen: {:?}", msg.ty);
+                    }
+                }
                 Ok(AcceptMessageResult::Accepted(()))
             }
         }
     }
 
-    pub fn dismantle(self) -> (ChannelConfig, ChannelStatusSeriesId, SharedResources) {
-        (self.conf, self.cssid, self.ress)
+    // fn process_buffered(mut self: Pin<&mut Self>, cx: Context) -> Result<AcceptMessageResult, Error> {}
+
+    fn handle_create_chan_res(&mut self, k: proto::CreateChanRes, tsnow: Instant) -> Result<(), Error> {
+        /*
+        TODO
+        - Remember the server-provided Sid. Need to hand that also to next state.
+        - If it is a enum channel, fetch enum variants.
+            But this could be also the responsibility of the next state.
+        - Also spawn a ChannelInfoQuery to find/register the series.
+            For enum, this can be done in parallel.
+        - Maybe this state can be content without enum variants or series register.
+            We should just cause state change and let next state move on from here.
+        */
+        let cid = Cid::new(k.cid);
+        let sid = Sid::new(k.sid);
+        if k.data_type > 6 {
+            error!("CreateChanRes with unexpected data_type {}", k.data_type);
+        }
+        // Ask for DBR_TIME_...
+        let ca_dbr_type = k.data_type + 14;
+        let scalar_type = ScalarType::from_ca_id(k.data_type)?;
+        let shape = Shape::from_ca_count(k.data_count)?;
+
+        let stnow = std::time::SystemTime::now();
+        let (acc_msp, _) = TsMs::from_system_time(stnow).to_grid_02(netpod::EMIT_ACCOUNTING_SNAP);
+        // let created_state = CreatedState {
+        //     cssid,
+        //     cid,
+        //     sid,
+        //     ca_dbr_type,
+        //     ca_dbr_count: k.data_count,
+        //     ts_created: tsnow,
+        //     ts_alive_last: tsnow,
+        //     ts_activity_last: tsnow,
+        //     st_activity_last: stnow,
+        //     insert_item_ivl_ema: IntervalEma::new(),
+        //     item_recv_ivl_ema: IntervalEma::new(),
+        //     insert_recv_ivl_last: tsnow,
+        //     muted_before: 0,
+        //     recv_count: 0,
+        //     recv_bytes: 0,
+        //     stwin_ts: 0,
+        //     stwin_count: 0,
+        //     stwin_bytes: 0,
+        //     acc_recv: AccountingInfo::new(acc_msp),
+        //     acc_st: AccountingInfo::new(acc_msp),
+        //     acc_mt: AccountingInfo::new(acc_msp),
+        //     acc_lt: AccountingInfo::new(acc_msp),
+        //     dw_st_last: SystemTime::UNIX_EPOCH,
+        //     dw_mt_last: SystemTime::UNIX_EPOCH,
+        //     dw_lt_last: SystemTime::UNIX_EPOCH,
+        //     val_lst_st: serde_json::Value::Null,
+        //     val_lst_mt: serde_json::Value::Null,
+        //     val_lst_lt: serde_json::Value::Null,
+        //     scalar_type: scalar_type.clone(),
+        //     shape: shape.clone(),
+        //     name: conf.conf.name().into(),
+        //     enum_str_table: None,
+        //     ts_recv_value_status_emit_next: Instant::now(),
+        // };
+        // if series::dbg::dbg_chn(created_state.name()) {
+        //     info!(
+        //         "handle_create_chan_res  {:?}  {}",
+        //         created_state.cid,
+        //         created_state.name()
+        //     );
+        // }
+        // match &scalar_type {
+        //     ScalarType::Enum => {
+        //         // TODO channel created, now fetch enum variants, later make writer
+        //         let fut = enumfetch::EnumFetch::new(created_state, self);
+        //         // TODO should always check if the slot is free.
+        //         let ioid = fut.ioid();
+        //         let x = Box::pin(fut);
+        //         self.handler_by_ioid.insert(ioid, Some(x));
+        //     }
+        //     _ => {
+        //         let backend = self.backend.clone();
+        //         let channel_name = created_state.name().into();
+        //         // TODO create a channel for the answer.
+        //         // Keep only a certain max number of channels in-flight because have to poll on them.
+        //         // TODO register the channel for the answer.
+        //         let (tx, rx) = async_channel::bounded(8);
+        //         let item = ChannelInfoQuery {
+        //             backend,
+        //             channel: channel_name,
+        //             kind: SeriesKind::CaStatus,
+        //             scalar_type: ScalarType::I16,
+        //             shape: Shape::Scalar,
+        //             tx: Box::pin(tx),
+        //         };
+        //         self.channel_info_query_qu.push_back(item);
+        //         self.channel_info_query_res_rxs.push_back((Box::pin(rx), cid));
+        //         *chst = ChannelState::FetchCaStatusSeries(MakingSeriesWriterState {
+        //             tsbeg: tsnow,
+        //             channel: created_state,
+        //             series_status: SeriesId::new(0),
+        //         });
+        //     }
+        // }
+        Ok(())
     }
 }
 
@@ -132,7 +262,7 @@ impl Future for TryOpen {
             let this = &mut *self;
             break match &mut this.state {
                 State::Init => {
-                    let hostname = self.local_epics_hostname.clone();
+                    let hostname = this.ress.local_epics_hostname.clone();
                     let mut msgs = VecDeque::new();
                     let tsnow = Instant::now();
                     // TODO generate a cid.
@@ -188,7 +318,6 @@ impl Future for TryOpen {
                     // We do not poll here.
                     Pending
                 }
-                State::Open => Ready(Ok(())),
             };
         }
     }

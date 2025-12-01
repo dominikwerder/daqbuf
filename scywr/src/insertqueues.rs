@@ -19,6 +19,29 @@ autoerr::create_error_v1!(
     },
 );
 
+pub fn make_pair() -> (InsertQueuesTx, InsertQueuesRx) {
+    let (st_rf1_tx, st_rf1_rx) = async_channel::bounded(128);
+    let (st_rf3_tx, st_rf3_rx) = async_channel::bounded(128);
+    let (mt_rf3_tx, mt_rf3_rx) = async_channel::bounded(128);
+    let (lt_rf3_tx, lt_rf3_rx) = async_channel::bounded(128);
+    let (lt_rf3_lat5_tx, lt_rf3_lat5_rx) = async_channel::bounded(128);
+    let iqtx = InsertQueuesTx {
+        st_rf1_tx,
+        st_rf3_tx,
+        mt_rf3_tx,
+        lt_rf3_tx,
+        lt_rf3_lat5_tx,
+    };
+    let iqrx = InsertQueuesRx {
+        st_rf1_rx,
+        st_rf3_rx,
+        mt_rf3_rx,
+        lt_rf3_rx,
+        lt_rf3_lat5_rx,
+    };
+    (iqtx, iqrx)
+}
+
 #[derive(Clone)]
 pub struct InsertQueuesTx {
     pub st_rf1_tx: Sender<VecDeque<QueryItem>>,

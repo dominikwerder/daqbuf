@@ -156,6 +156,21 @@ async fn main_run_inner(opts: DaqIngestOpts) -> Result<(), Error> {
                 Get(_cmd) => todo!(),
             }
         }
+        SubCmd::Test00 => {
+            netfetch::ca::conn2::test_00::test_00().await;
+        }
+        SubCmd::Test01 => {
+            netfetch::ca::conn2::test_00::test_01().await;
+        }
+        SubCmd::Test02 => {
+            netfetch::ca::conn2::test_00::test_02().await;
+        }
+        SubCmd::Test03 => {
+            netfetch::ca::conn2::test_00::test_03().await;
+        }
+        SubCmd::Test04 => {
+            netfetch::ca::conn2::test_00::test_04().await;
+        }
     }
     Ok(())
 }

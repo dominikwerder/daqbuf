@@ -301,14 +301,14 @@ fn binwriter_nest01_00_case(cnt_zero_default: WriteCntZero, do_discard_front: Di
         let pbp = PrebinnedPartitioning::Sec1;
         let x = pbp.msp_lsp(T0);
         let msp_exp = T0.ms() / pbp.bin_len().ms() / pbp.patch_len() as u64;
-        assert_eq!(x.0 as u64, msp_exp);
+        assert_eq!(x.0.to_u64(), msp_exp);
         {
             let (msp, lsp) = if do_discard_front.enabled() {
                 pbp.msp_lsp(sec(40.0).to_ts_ms())
             } else {
                 pbp.msp_lsp(sec(39.0).to_ts_ms())
             };
-            let mut exp = BinsExp::new(pbp.clone(), MspU32(msp), LspU32(lsp), cnt_zero_default);
+            let mut exp = BinsExp::new(pbp.clone(), msp, lsp, cnt_zero_default);
             // exp.push_back_cnt(2);
             if do_discard_front.enabled() {
             } else {
@@ -341,14 +341,14 @@ fn binwriter_nest01_00_case(cnt_zero_default: WriteCntZero, do_discard_front: Di
         let pbp = PrebinnedPartitioning::Sec10;
         let x = pbp.msp_lsp(T0);
         let msp_exp = T0.ms() / pbp.bin_len().ms() / pbp.patch_len() as u64;
-        assert_eq!(x.0 as u64, msp_exp);
+        assert_eq!(x.0.to_u64(), msp_exp);
         {
             let (msp, lsp) = if do_discard_front.enabled() {
                 pbp.msp_lsp(sec(40.0).to_ts_ms())
             } else {
                 pbp.msp_lsp(sec(30.0).to_ts_ms())
             };
-            let mut exp = BinsExp::new(pbp.clone(), MspU32(msp), LspU32(lsp), cnt_zero_default);
+            let mut exp = BinsExp::new(pbp.clone(), msp, lsp, cnt_zero_default);
             if do_discard_front.enabled() {
             } else {
                 exp.push_back_cmm(1, 2.2, 2.2);
@@ -372,7 +372,7 @@ fn binwriter_nest01_00_case(cnt_zero_default: WriteCntZero, do_discard_front: Di
         let pbp = PrebinnedPartitioning::Min1;
         let x = pbp.msp_lsp(T0);
         let msp_exp = T0.ms() / pbp.bin_len().ms() / pbp.patch_len() as u64;
-        assert_eq!(x.0 as u64, msp_exp);
+        assert_eq!(x.0.to_u64(), msp_exp);
     }
 }
 

@@ -538,8 +538,8 @@ impl BinWriter {
                         let item = QueryItem::TimeBinSimpleF32V02(TimeBinSimpleF32V02 {
                             series,
                             binlen: bin_len.ms() as i32,
-                            msp: msp as i64,
-                            off: lsp as i32,
+                            msp: msp.to_db_i32() as i64,
+                            off: lsp.to_db_i32(),
                             cnt: cnt as i64,
                             min,
                             max,
@@ -567,13 +567,13 @@ impl BinWriter {
                             lsp
                         );
                         let iw = iw2.as_mut().unwrap();
-                        if iw.should_write(msp, lsp) {
-                            iw.mark_written(msp, lsp);
+                        if iw.should_write(msp.to_u32(), lsp.to_u32()) {
+                            iw.mark_written(msp.to_u32(), lsp.to_u32());
                             let item = BinWriteIndexV04 {
                                 series: series.id() as i64,
                                 pbp: pbp_ix.db_ix() as i16,
-                                msp: msp as i32,
-                                lsp: lsp as i32,
+                                msp: msp.to_db_i32(),
+                                lsp: lsp.to_db_i32(),
                                 binlen: pbp.bin_len().ms() as i32,
                             };
                             let item = QueryItem::BinWriteIndexV04(item);
@@ -593,13 +593,13 @@ impl BinWriter {
                             msp,
                             lsp
                         );
-                        if iw1.should_write(msp, lsp) {
-                            iw1.mark_written(msp, lsp);
+                        if iw1.should_write(msp.to_u32(), lsp.to_u32()) {
+                            iw1.mark_written(msp.to_u32(), lsp.to_u32());
                             let item = BinWriteIndexV04 {
                                 series: series.id() as i64,
                                 pbp: pbp_ix.db_ix() as i16,
-                                msp: msp as i32,
-                                lsp: lsp as i32,
+                                msp: msp.to_db_i32(),
+                                lsp: lsp.to_db_i32(),
                                 binlen: pbp.bin_len().ms() as i32,
                             };
                             let item = QueryItem::BinWriteIndexV04(item);

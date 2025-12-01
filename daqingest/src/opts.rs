@@ -33,6 +33,11 @@ pub enum SubCmd {
     Version,
     LogTest,
     Ca(Ca),
+    Test00,
+    Test01,
+    Test02,
+    Test03,
+    Test04,
 }
 
 #[derive(Debug, clap::Parser)]

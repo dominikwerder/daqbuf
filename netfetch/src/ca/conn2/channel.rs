@@ -1,6 +1,7 @@
 mod init;
 
 use crate::ca::conn2::proto_channel::ProtoOutChannel;
+use crate::ca::conn2::synchan;
 use crate::conf::ChannelConfig;
 use ca_proto::ca::proto;
 use serde::Serialize;
@@ -39,50 +40,42 @@ pub enum AcceptMessageResult {
     Accepted(()),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Serialize)]
 pub struct SharedResources {
+    local_epics_hostname: String,
+    #[serde(serialize_with = "ser_proto_out")]
     proto_out: Arc<ProtoOutChannel>,
+    #[serde(serialize_with = "ser_msg_rx")]
+    msg_rx: synchan::Receiver<proto::CaMsg>,
 }
 
-impl serde::Serialize for SharedResources {
-    fn serialize<S>(&self, ser: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        ser.serialize_str("TODO_Serialize_for_SharedResources")
-    }
+fn ser_proto_out<S>(v: &Arc<ProtoOutChannel>, ser: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    ser.serialize_str("Arc<ProtoOutChannel>")
+}
+
+fn ser_msg_rx<S>(v: &synchan::Receiver<proto::CaMsg>, ser: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    ser.serialize_str("synchan::Receiver")
 }
 
 pub struct ChannelBasic {
     state: ChannelState,
-    ress: SharedResources,
 }
 
 impl ChannelBasic {
     pub fn new(conf: ChannelConfig, cssid: ChannelStatusSeriesId, ress: SharedResources) -> Self {
-        let local_epics_hostname = String::new();
         Self {
-            state: ChannelState::TryOpen(init::TryOpen::new(conf, cssid, ress.clone(), local_epics_hostname)),
-            ress,
+            state: ChannelState::TryOpen(init::TryOpen::new(conf, cssid, ress)),
         }
     }
 
     fn status(&self) -> Status {
         todo!()
-    }
-
-    pub fn process_ca_msg(
-        mut self: Pin<&mut Self>,
-        cx: Context,
-        msg: proto::CaMsg,
-    ) -> Result<AcceptMessageResult, Error> {
-        match &mut self.state {
-            ChannelState::TryOpen(s) => Pin::new(s).process_ca_msg(cx, msg).map_err(From::from),
-            ChannelState::WaitOpened => todo!(),
-            ChannelState::Open => todo!(),
-            ChannelState::TryClose => todo!(),
-            ChannelState::WaitClosed => todo!(),
-        }
     }
 
     pub fn config_update(mut self: Pin<&mut Self>, cx: Context, conf: ()) -> Result<(), Error> {

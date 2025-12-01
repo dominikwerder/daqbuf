@@ -3204,9 +3204,13 @@ impl CaConn {
                                         value: CaConnEventValue::ChannelCreateFail(failinfo),
                                     };
                                     self.ca_conn_event_out_queue.push_back(item);
-                                    warn!("CreateChanFail  {}  msg {:?}", name, msg);
+                                    if series::dbg::dbg_chn(&name) {
+                                        warn!("----------------------------   CreateChanFail  {}  msg {:?}", name, msg);
+                                    } else {
+                                        warn!("CreateChanFail  {}  msg {:?}", name, msg);
+                                    }
                                     self.log_channel(&name2, format!("CreateChanFail cid {}", msg.cid));
-                                    self.channel_remove_by_cid(cid);
+                                    // self.channel_remove_by_cid(cid);
                                 } else {
                                     let failinfo = format!("unexpected cid {}", cid);
                                     let item = CaConnEvent {

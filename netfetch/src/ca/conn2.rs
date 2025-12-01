@@ -8,9 +8,12 @@ mod connfut;
 mod futstack;
 mod progpend;
 mod proto_channel;
+mod protowrap;
 mod scywritequeue;
 mod statefut;
 mod statetrans;
+mod synchan;
+pub mod test_00;
 #[cfg(test)]
 mod waker_test_a;
 

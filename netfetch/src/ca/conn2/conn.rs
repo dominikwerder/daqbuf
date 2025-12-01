@@ -1,5 +1,6 @@
 mod connected;
 mod connecting;
+mod handshake;
 
 use super::conncmd::ConnCommand;
 use super::connevent::CaConnEvent;
@@ -9,14 +10,16 @@ use crate::ca::conn2::channel::ChannelBasic;
 use crate::ca::conn2::progpend::HaveProgressPending;
 use crate::ca::conn2::statetrans::conn::IocConnStateBase;
 use crate::ca::conn2::statetrans::stateress1::StateRessShr1;
+use crate::ca::conn2::todoval;
 use async_channel::Sender;
 use ca_proto::ca::proto;
 use connected::Connected;
-use connecting::Connecting;
 use dbpg::seriesbychannel::ChannelInfoQuery;
 use futures_util::FutureExt;
 use futures_util::Stream;
 use futures_util::StreamExt;
+use futures_util::TryFutureExt;
+use handshake::Handshake;
 use hashbrown::HashMap;
 use proto::CaProto;
 use scywr::insertqueues::InsertDeques;
@@ -39,11 +42,15 @@ macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
 macro_rules! warn { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
 macro_rules! info { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
 macro_rules! conn_err { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
+macro_rules! trace { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
 
 autoerr::create_error_v1!(
     name(Error, "Conn"),
     enum variants {
         TickerPoll,
+        IO(#[from] std::io::Error),
+        Handshake(#[from] handshake::Error),
+        Connected(#[from] connected::Error),
     },
 );
 
@@ -69,60 +76,91 @@ impl DurationMeasureSteps {
 }
 
 #[derive(Debug)]
-struct CaConnState {
-    ioc_conn_state: IocConnStateBase,
+enum State {
+    Connecting(Connecting),
+    Connected(Connected),
+    Done,
 }
 
-impl CaConnState {
-    fn new(remote_addr: SocketAddrV4, ress_a: StateRessShr1) -> Self {
-        Self {
-            ioc_conn_state: IocConnStateBase::new(remote_addr, ress_a),
-        }
+impl State {
+    fn new(remote_addr: SocketAddrV4) -> Self {
+        let fut = tokio::net::TcpStream::connect(remote_addr).map_err(Error::from);
+        let fut = Box::pin(fut);
+        let fut = ConnectFut(fut);
+        Self::Connecting(Connecting {
+            remote_addr,
+            // ress_a,
+            fut,
+        })
     }
 }
 
-impl Stream for CaConnState {
-    type Item = ();
+struct ConnectFut(Pin<Box<dyn Future<Output = Result<tokio::net::TcpStream, Error>> + Send>>);
 
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
-        use Poll::*;
-        todo!()
+impl fmt::Debug for ConnectFut {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        fmt.debug_tuple("ConnectFut").finish()
     }
 }
+
+#[derive(Debug)]
+struct Connecting {
+    remote_addr: SocketAddrV4,
+    // ress_a: StateRessShr1,
+    fut: ConnectFut,
+}
+
+impl Future for Connecting {
+    type Output = Result<tokio::net::TcpStream, Error>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        self.fut.0.as_mut().poll(cx)
+    }
+}
+
+// impl Stream for State {
+//     type Item = ();
+//     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
+//         use Poll::*;
+//         todo!()
+//     }
+// }
 
 pub struct CaConn {
-    opts: CaConnOpts,
     backend: String,
-    state: CaConnState,
-    iqdqs: InsertDeques,
-    ca_conn_event_out_queue: VecDeque<CaConnEvent>,
-    ca_conn_event_out_queue_max: usize,
+    remote_addr: SocketAddrV4,
+    state: State,
+    // iqdqs: InsertDeques,
+    // ca_conn_event_out_queue: VecDeque<CaConnEvent>,
+    // ca_conn_event_out_queue_max: usize,
     rng: Xoshiro128PlusPlus,
     mett: stats::mett::CaConnMetrics,
+    test_channel_names: Vec<String>,
 }
 
 impl CaConn {
     pub fn new(
-        opts: CaConnOpts,
         backend: String,
         remote_addr: SocketAddrV4,
         local_epics_hostname: String,
-        iqtx: InsertQueuesTx,
-        channel_info_query_tx: Sender<ChannelInfoQuery>,
+        test_channel_names: Vec<String>,
+        // iqtxs: InsertQueuesTx,
+        // channel_info_query_tx: Sender<ChannelInfoQuery>,
     ) -> Self {
-        let tsnow = Instant::now();
-        let (cq_tx, cq_rx) = async_channel::bounded::<ConnCommand>(32);
+        // let tsnow = Instant::now();
+        // let (cq_tx, cq_rx) = async_channel::bounded::<ConnCommand>(32);
         let rng = stats::xoshiro_from_time();
-        let ress_a = todo!();
+        // let ress_a: StateRessShr1 = todoval();
         Self {
-            opts,
             backend,
-            state: CaConnState::new(remote_addr, ress_a),
-            iqdqs: InsertDeques::new(),
-            ca_conn_event_out_queue: VecDeque::new(),
-            ca_conn_event_out_queue_max: 2000,
+            remote_addr,
+            state: State::new(remote_addr),
+            // iqdqs: InsertDeques::new(),
+            // ca_conn_event_out_queue: VecDeque::new(),
+            // ca_conn_event_out_queue_max: 2000,
             rng,
             mett: stats::mett::CaConnMetrics::new(),
+            test_channel_names,
         }
     }
 
@@ -168,32 +206,58 @@ macro_rules! handle_poll_res {
 }
 
 impl Stream for CaConn {
-    type Item = CaConnEvent;
+    type Item = Result<(), Error>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         use Poll::*;
+        trace!("poll_next");
         let mut durs = DurationMeasureSteps::new();
         self.mett.poll_fn_begin().inc();
         let ret = loop {
-            self.mett.poll_loop_begin().inc();
+            let self2 = self.as_mut().get_mut();
+            self2.mett.poll_loop_begin().inc();
+            let tsloop = Instant::now();
 
-            // TODO
-            // Drive the state machine, but in which form.
-            // Relationship between overall connection state and channel state?
-
-            match self.state.poll_next_unpin(cx) {
-                _ => todo!(),
-            }
+            if true {
+                break match &mut self2.state {
+                    State::Connecting(st1) => match st1.poll_unpin(cx) {
+                        Ready(Ok(x)) => {
+                            trace!("CaConn:Connecting:Ready");
+                            let stn = Connected::new(x, self.remote_addr, tsloop);
+                            self.state = State::Connected(stn);
+                            continue;
+                        }
+                        Ready(Err(e)) => {
+                            trace!("CaConn:Connecting:Err:{}", e);
+                            self.state = State::Done;
+                            Ready(Some(Err(e)))
+                        }
+                        Pending => Pending,
+                    },
+                    State::Connected(st1) => match st1.poll_unpin(cx) {
+                        Ready(Ok(x)) => {
+                            trace!("CaConn:Connected:Ready");
+                            self.state = State::Done;
+                            continue;
+                        }
+                        Ready(Err(e)) => {
+                            trace!("CaConn:Connected:Err:{}", e);
+                            self.state = State::Done;
+                            Ready(Some(Err(e.into())))
+                        }
+                        Pending => Pending,
+                    },
+                    State::Done => {
+                        trace!("CaConn:Done");
+                        Ready(None)
+                    }
+                };
+            };
 
             let hpp = &mut HaveProgressPending::new();
-            let are_we_done = false;
-            if are_we_done {
-                break Ready(None);
-            } else if let Some(item) = self.ca_conn_event_out_queue.pop_front() {
-                // TODO get rid of the handling of ca_conn_event_out_queue in here.
-                // The future which pushes to the queue must also trigger the async push if needed.
-                break Ready(Some(item));
-            }
+
+            // TODO get rid of the handling of ca_conn_event_out_queue in here.
+            // The future which pushes to the queue must also trigger the async push if needed.
 
             // TODO add up duration of this scope
             match self.as_mut().poll_own_ticker(cx) {
@@ -288,7 +352,7 @@ impl Stream for CaConn {
             //     }
             // }
 
-            let tsnow4 = Instant::now();
+            // let tsnow4 = Instant::now();
 
             // break if self.is_shutdown() {
             //     if self.queues_out_flushed() {
