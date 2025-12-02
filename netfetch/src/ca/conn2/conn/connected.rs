@@ -39,6 +39,7 @@ autoerr::create_error_v1!(
 
 #[derive(Debug)]
 enum State {
+    Init(synchan::Receiver<CaMsg>),
     Handshake(Handshake),
     ActiveCa(ActiveCa),
     Done,
@@ -81,7 +82,7 @@ impl Connected {
             tsbeg: tsnow,
             addr,
             protowrap,
-            state: State::Handshake(Handshake::new(inp_rx, out_tx.clone(), tsnow, addr)),
+            state: State::Init(inp_rx),
             out_tx,
             inp_buf: VecDeque::with_capacity(32),
             inp_tx_main: inp_tx,
@@ -95,10 +96,6 @@ impl Future for Connected {
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         use Poll::*;
         trace!("poll_next");
-        if false {
-            // check whether this can be useful or not
-            self.inp_tx_main.set_waker(cx.waker());
-        }
         loop {
             let tsnow = Instant::now();
 
@@ -147,6 +144,16 @@ impl Future for Connected {
             }
 
             match &mut self2.state {
+                State::Init(st1) => {
+                    let inp_rx = std::mem::replace(st1, synchan::bounded(1).1);
+                    let stn = Handshake::new(inp_rx, self.out_tx.clone(), tsnow, self.addr.clone());
+                    self.state = State::Handshake(stn);
+                    if true {
+                        // check whether this can be useful or not
+                        self.inp_tx_main.set_waker(cx.waker());
+                    }
+                    hpp.have_progress();
+                }
                 State::Handshake(st1) => match st1.poll_unpin(cx) {
                     Ready(Ok(())) => {
                         trace!("Handshake:Done");
@@ -156,7 +163,6 @@ impl Future for Connected {
                         let stn = ActiveCa::new(rx, tx, tsnow, self2.addr);
                         self.state = State::ActiveCa(stn);
                         hpp.have_progress();
-                        continue;
                     }
                     Ready(Err(e)) => {
                         trace!("Handshake:Error");
@@ -174,7 +180,6 @@ impl Future for Connected {
                         trace!("ActiveCa:Done");
                         self.state = State::Done;
                         hpp.have_progress();
-                        continue;
                     }
                     Ready(Err(e)) => {
                         trace!("ActiveCa:Error");
