@@ -1,8 +1,10 @@
 use super::super::synchan;
 use super::handshake::Handshake;
+use crate::ca::conn2::conn::activeca::ActiveCa;
 use crate::ca::conn2::progpend::HaveProgressPending;
 use crate::ca::conn2::protowrap;
 use ca_proto::ca::proto::CaItem;
+use ca_proto::ca::proto::CaMsg;
 use ca_proto::ca::proto::CaProto;
 use ca_proto_tokio::tcpasyncwriteread::TcpAsyncWriteRead;
 use futures_util::FutureExt;
@@ -20,23 +22,25 @@ use std::time::Duration;
 use std::time::Instant;
 use taskrun::tokio;
 use tokio::net::TcpStream;
-use tokio::time::error::Elapsed;
 
 macro_rules! trace { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
 
 autoerr::create_error_v1!(
     name(Error, "Connected"),
     enum variants {
-        Timeout,
         IO(#[from] std::io::Error),
         Protowrap(#[from] protowrap::Error),
         Handshake(#[from] super::handshake::Error),
+        ActiveCa(#[from] super::activeca::Error),
+        NoProgressNoPending,
+        ProtoOutputClosed,
     },
 );
 
 #[derive(Debug)]
 enum State {
     Handshake(Handshake),
+    ActiveCa(ActiveCa),
     Done,
 }
 
@@ -46,9 +50,9 @@ pub struct Connected {
     addr: SocketAddrV4,
     protowrap: protowrap::ProtoPusher,
     state: State,
-    inp_buf: VecDeque<CaItem>,
-    inp_tx_main: synchan::Sender<CaItem>,
-    inp_tx_main_sending: Option<synchan::Sending<'static, CaItem>>,
+    out_tx: async_channel::Sender<CaMsg>,
+    inp_buf: VecDeque<CaMsg>,
+    inp_tx_main: synchan::Sender<CaMsg>,
 }
 
 impl Connected {
@@ -77,10 +81,10 @@ impl Connected {
             tsbeg: tsnow,
             addr,
             protowrap,
-            state: State::Handshake(Handshake::new(inp_rx, out_tx, tsnow)),
+            state: State::Handshake(Handshake::new(inp_rx, out_tx.clone(), tsnow, addr)),
+            out_tx,
             inp_buf: VecDeque::with_capacity(32),
             inp_tx_main: inp_tx,
-            inp_tx_main_sending: None,
         }
     }
 }
@@ -96,13 +100,20 @@ impl Future for Connected {
             self.inp_tx_main.set_waker(cx.waker());
         }
         loop {
+            let tsnow = Instant::now();
+
             let mut self2 = self.as_mut().get_mut();
             let mut hpp = HaveProgressPending::new();
             if self2.inp_buf.len() < self2.inp_buf.capacity() {
                 match Pin::new(&mut self2).protowrap.poll_next_unpin(cx) {
                     Ready(Some(Ok(x))) => {
                         hpp.have_progress();
-                        self2.inp_buf.push_back(x);
+                        match x {
+                            CaItem::Msg(x) => {
+                                self2.inp_buf.push_back(x);
+                            }
+                            CaItem::Empty => {}
+                        }
                     }
                     Ready(Some(Err(e))) => {
                         hpp.have_progress();
@@ -116,58 +127,78 @@ impl Future for Connected {
                 }
             }
 
-            if let Some(send) = &mut self2.inp_tx_main_sending {
-                match send.poll_unpin(cx) {
-                    Ready(Ok(())) => {
-                        trace!("Connected:InputMain:Send:Poll:Ok");
-                        self2.inp_tx_main_sending = None;
+            if let Some(item) = self2.inp_buf.pop_front() {
+                match self2.inp_tx_main.try_send(item, cx) {
+                    Ok(()) => {
                         hpp.have_progress();
                     }
-                    Ready(Err(_item)) => {
-                        trace!("Connected:InputMain:Send:Poll:Err");
-                        self2.inp_tx_main_sending = None;
-                        trace!("Connected:Input:SendError");
-                        hpp.have_progress();
+                    Err(e) => {
+                        let cl = e.is_closed();
+                        self2.inp_buf.push_front(e.into_inner());
+                        if cl {
+                            hpp.have_progress();
+                            self.state = State::Done;
+                            break Ready(Err(Error::ProtoOutputClosed));
+                        } else {
+                            hpp.have_pending();
+                        }
                     }
-                    Pending => {
-                        trace!("Connected:InputMain:Send:Poll:Pending");
-                        hpp.have_pending();
-                    }
-                }
-            } else {
-                if let Some(item) = self2.inp_buf.pop_front() {
-                    trace!("Connected:InputMain:Send:Make");
-                    let tx: *mut _ = if false {
-                        todo!("choose correct tx")
-                    } else {
-                        &mut self2.inp_tx_main
-                    };
-                    // SAFETY self-referential
-                    let tx = unsafe { &mut *tx };
-                    self2.inp_tx_main_sending = Some(tx.send(item));
-                    hpp.have_progress();
                 }
             }
 
-            todo!("combine handshake with hpp");
-
-            break match &mut self2.state {
+            match &mut self2.state {
                 State::Handshake(st1) => match st1.poll_unpin(cx) {
                     Ready(Ok(())) => {
                         trace!("Handshake:Done");
-                        self.state = State::Done;
+                        let st1 = std::mem::replace(st1, st1.to_dummy());
+                        let tx = self2.out_tx.clone();
+                        let (rx,) = st1.dismantle();
+                        let stn = ActiveCa::new(rx, tx, tsnow, self2.addr);
+                        self.state = State::ActiveCa(stn);
+                        hpp.have_progress();
                         continue;
                     }
                     Ready(Err(e)) => {
                         trace!("Handshake:Error");
-                        Ready(Err(e.into()))
+                        self.state = State::Done;
+                        hpp.have_progress();
+                        break Ready(Err(e.into()));
                     }
                     Pending => {
                         trace!("Handshake:Pending");
-                        Pending
+                        hpp.have_pending();
                     }
                 },
-                State::Done => Ready(Ok(())),
+                State::ActiveCa(st1) => match st1.poll_unpin(cx) {
+                    Ready(Ok(())) => {
+                        trace!("ActiveCa:Done");
+                        self.state = State::Done;
+                        hpp.have_progress();
+                        continue;
+                    }
+                    Ready(Err(e)) => {
+                        trace!("ActiveCa:Error");
+                        self.state = State::Done;
+                        hpp.have_progress();
+                        break Ready(Err(e.into()));
+                    }
+                    Pending => {
+                        trace!("ActiveCa:Pending");
+                        hpp.have_pending();
+                    }
+                },
+                State::Done => break Ready(Ok(())),
+            };
+
+            break if hpp.is_progress() {
+                trace!("HPP:Progress");
+                continue;
+            } else if hpp.is_pending() {
+                trace!("HPP:Pending");
+                Pending
+            } else {
+                trace!("HPP:None");
+                Ready(Err(Error::NoProgressNoPending))
             };
         }
     }

@@ -50,6 +50,37 @@ where
         }
     }
 
+    pub fn try_send(&mut self, item: T, cx: &mut Context) -> Result<(), SendError<T>> {
+        let mut shr = self.shr.try_write().unwrap();
+        if shr.qu_max == 0 {
+            Err(SendError::Closed(item))
+        } else {
+            let ql = shr.qu.len();
+            if ql < shr.qu_max as _ {
+                shr.qu.push_back(item);
+                if ql == 0 {
+                    if let Some(waker) = shr.rx_waker.take() {
+                        trace!("Send:Push:RxWake");
+                        waker.wake();
+                        Ok(())
+                    } else {
+                        trace!("Send:Push:Quiet");
+                        // nothing to do here
+                        Ok(())
+                    }
+                } else {
+                    trace!("Send:Push:More");
+                    // nothing to do here
+                    Ok(())
+                }
+            } else {
+                trace!("Send:Full");
+                shr.tx_waker = Some(cx.waker().clone());
+                Err(SendError::Full(item))
+            }
+        }
+    }
+
     pub fn set_waker(&mut self, waker: &Waker) {
         let mut shr = self.shr.try_write().unwrap();
         if shr.tx_waker.is_none() {
@@ -84,7 +115,7 @@ where
                 Ready(Err(SendError::Closed(item)))
             } else {
                 trace!("Send:Closed:Nothing");
-                Ready(Err(SendError::AlreadyDone))
+                panic!("logic")
             }
         } else {
             let ql = shr.qu.len();
@@ -96,21 +127,19 @@ where
                             if let Some(waker) = shr.rx_waker.take() {
                                 trace!("Send:Push:RxWake");
                                 waker.wake();
-                                Ready(Ok(()))
                             } else {
                                 trace!("Send:Push:Quiet");
                                 // nothing to do here
-                                Ready(Ok(()))
                             }
                         } else {
                             trace!("Send:Push:More");
                             // nothing to do here
-                            Ready(Ok(()))
                         }
+                        Ready(Ok(()))
                     }
                     None => {
                         trace!("Send:Push:Nothing");
-                        Ready(Err(SendError::AlreadyDone))
+                        panic!("logic")
                     }
                 }
             } else {
@@ -123,15 +152,31 @@ where
 }
 
 pub enum SendError<T> {
+    Full(T),
     Closed(T),
-    AlreadyDone,
+}
+
+impl<T> SendError<T> {
+    pub fn is_closed(&self) -> bool {
+        match self {
+            SendError::Full(_) => false,
+            SendError::Closed(_) => true,
+        }
+    }
+
+    pub fn into_inner(self) -> T {
+        match self {
+            SendError::Full(x) => x,
+            SendError::Closed(x) => x,
+        }
+    }
 }
 
 impl<T> fmt::Debug for SendError<T> {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            SendError::Closed(_) => write!(fmt, "SendError::Closed(...)"),
-            SendError::AlreadyDone => write!(fmt, "SendError::AlreadyDone"),
+            SendError::Full(_) => write!(fmt, "SendError::Full"),
+            SendError::Closed(_) => write!(fmt, "SendError::Closed"),
         }
     }
 }

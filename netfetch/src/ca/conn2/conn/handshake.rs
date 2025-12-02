@@ -1,31 +1,28 @@
 use crate::ca::conn2::synchan;
-use ca_proto::ca::proto::CaItem;
 use ca_proto::ca::proto::CaMsg;
 use ca_proto::ca::proto::CaMsgTy;
-use ca_proto::ca::proto::CaProto;
-use ca_proto_tokio::tcpasyncwriteread::TcpAsyncWriteRead;
 use futures_util::FutureExt;
 use futures_util::Stream;
 use std::collections::VecDeque;
 use std::fmt;
 use std::future::Future;
 use std::net::SocketAddrV4;
-use std::os::fd::AsRawFd;
 use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
-use std::time::Duration;
 use std::time::Instant;
 use taskrun::tokio;
-use tokio::net::TcpStream;
-use tokio::time::error::Elapsed;
 
+macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
+macro_rules! warn { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
 macro_rules! trace { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
 
 autoerr::create_error_v1!(
     name(Error, "Connected"),
     enum variants {
         IO(#[from] std::io::Error),
+        ProtoTxClosed,
+        EpicsVersion(u16),
     },
 );
 
@@ -65,23 +62,40 @@ impl State {
 #[derive(Debug)]
 pub struct Handshake {
     tsbeg: Instant,
+    addr: SocketAddrV4,
     state: State,
     tx: async_channel::Sender<CaMsg>,
-    rx: synchan::Receiver<CaItem>,
+    rx: synchan::Receiver<CaMsg>,
 }
 
 impl Handshake {
-    pub fn new(rx: synchan::Receiver<CaItem>, tx: async_channel::Sender<CaMsg>, tsnow: Instant) -> Self {
+    pub fn new(
+        rx: synchan::Receiver<CaMsg>,
+        tx: async_channel::Sender<CaMsg>,
+        tsnow: Instant,
+        addr: SocketAddrV4,
+    ) -> Self {
         Self {
             tsbeg: tsnow,
+            addr,
             state: State::new(),
             tx,
             rx,
         }
     }
 
-    pub fn dismantle(self) -> (synchan::Receiver<CaItem>,) {
+    pub fn dismantle(self) -> (synchan::Receiver<CaMsg>,) {
         (self.rx,)
+    }
+
+    pub fn to_dummy(&self) -> Self {
+        Self {
+            tsbeg: self.tsbeg.clone(),
+            addr: self.addr.clone(),
+            state: State::Done,
+            tx: async_channel::bounded(1).0,
+            rx: synchan::bounded(1).1,
+        }
     }
 }
 
@@ -109,7 +123,8 @@ impl Future for Handshake {
                                 }
                                 async_channel::TrySendError::Closed(_) => {
                                     trace!("Tx:Closed");
-                                    panic!("todo")
+                                    self.state = State::Done;
+                                    Ready(Err(Error::ProtoTxClosed))
                                 }
                             },
                         }
@@ -123,7 +138,34 @@ impl Future for Handshake {
                     break match self.rx.poll_unpin(cx) {
                         Ready(Ok(item)) => {
                             trace!("Rx:Ready:Item:{item:?}");
-                            continue;
+                            match &item.ty {
+                                CaMsgTy::VersionRes(n) => {
+                                    let n = *n;
+                                    if n < 12 || n > 13 {
+                                        error!("unexpected channel access version {} from {}", n, self.addr);
+                                        self.state = State::Done;
+                                        Ready(Err(Error::EpicsVersion(n)))
+                                    } else {
+                                        if n != 13 {
+                                            warn!("received peer channel access version {} from {}", n, self.addr);
+                                        }
+                                        self.state = State::Done;
+                                        Ready(Ok(()))
+                                    }
+                                }
+                                CaMsgTy::CreateChanRes(k) => {
+                                    warn!("got unexpected {:?}", k);
+                                    Ready(Ok(()))
+                                }
+                                CaMsgTy::AccessRightsRes(k) => {
+                                    warn!("got unexpected {:?}", k);
+                                    Ready(Ok(()))
+                                }
+                                _ => {
+                                    warn!("got some other unhandled message: {item:?}");
+                                    Ready(Ok(()))
+                                }
+                            }
                         }
                         Ready(Err(_)) => {
                             trace!("Rx:Done");
