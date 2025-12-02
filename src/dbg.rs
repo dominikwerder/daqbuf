@@ -1,25 +1,16 @@
 use crate::SeriesId;
 
+const CHNS: [(u64, &'static str); 3] = [
+    (1001110436017869811, "SF-STAT-AR-USER:UT"),
+    (4244984666146442200, "X06DA-ES-BS:TRX1.OFF"),
+    (7055133662199761613, "X06DA-ES-HFM:TRYDW.RBV"),
+];
+
 pub fn dbg_chn(chn: &str) -> bool {
     if chn.contains("daqbuftest") {
         true
     } else if true {
-        let chns = [
-            // "SATUN21-MQUA080:I-SET",
-            // "SATUN21-MQUA080:I-SET-ARCH",
-            // "SATUN21-MQUA080:I-READ",
-            // "ARS05-RAMP-0060:COUNTER",
-            // "SSL2-LENC-MF05:H_SCALE",
-            // "SINEG01:QE-B1-OP",
-            // "STSRD01-TCWL-STX02:AMP1CURR",
-            // "SATMA01-DBPM150:EST-Q1-SUM",
-            "TEST:SLOW:SCALAR:F32:000000",
-            // "TEST:SLOWPAUSE:SCALAR:F32:000000",
-            // "TEST:SLOWPAUSE:SCALAR:F32:000001",
-            // "ALWAYS:MISSING",
-            // "SARES10-CPPS-01:CURRENT",
-        ];
-        chns.contains(&chn)
+        CHNS.iter().any(|x| x.1 == chn)
     } else {
         false
     }
@@ -30,22 +21,12 @@ pub fn dbg_series(series: SeriesId) -> bool {
         // unit test series
         true
     } else if true {
-        let seriess = [
-            // SATMA01-DBPM150:EST-Q1-SUM
-            // 2968634857399905951,
-            // "SARES10-CPPS-01:CURRENT",
-            // 5975660678251320717,
-        ];
-        seriess.contains(&series.id())
+        CHNS.iter().any(|x| x.0 == series.id())
     } else {
         false
     }
 }
 
 pub fn dbg_check_scy6(series: SeriesId) -> bool {
-    let seriess = [
-        // SF-STAT-AR-USER:UT
-        // 1001110436017869811,
-    ];
-    seriess.contains(&series.id())
+    CHNS.iter().any(|x| x.0 == series.id())
 }
