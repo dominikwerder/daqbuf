@@ -10,7 +10,8 @@ pub async fn test_00() {
     // let (iqtxs, iqrxs) = scywr::insertqueues::make_pair();
     let test_channel_names = ["TEST:SLOW:SCALAR:F32:000000"];
     let test_channel_names = test_channel_names.into_iter().map(From::from).collect();
-    let mut conn = conn2::conn::CaConn::new(backend, remote_addr, local_epics_hostname, test_channel_names);
+    let conn = conn2::conn::CaConn::new(backend, remote_addr, local_epics_hostname, test_channel_names);
+    let mut conn = Box::pin(conn);
     while let Some(x) = conn.next().await {
         trace!("{x:?}");
     }

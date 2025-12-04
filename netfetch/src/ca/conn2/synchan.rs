@@ -1,7 +1,12 @@
+use hashbrown::HashMap;
+use stats::rand_xoshiro::Xoshiro128PlusPlus;
+use stats::rand_xoshiro::rand_core::SeedableRng;
 use std::collections::VecDeque;
 use std::fmt;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::LazyLock;
+use std::sync::Mutex;
 use std::sync::RwLock;
 use std::task::Context;
 use std::task::Poll;
@@ -9,13 +14,39 @@ use std::task::Waker;
 
 macro_rules! trace { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
 
+static ID_REG: LazyLock<Mutex<(HashMap<u32, u32>, Xoshiro128PlusPlus, u32)>> =
+    LazyLock::new(|| Mutex::new((HashMap::new(), Xoshiro128PlusPlus::from_os_rng(), 0)));
+
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct IdOwned(u32);
+
+impl IdOwned {
+    pub fn new() -> Self {
+        let mut g = ID_REG.lock().unwrap();
+        loop {
+            use stats::rand_xoshiro::rand_core::RngCore;
+            let k = g.1.next_u32() & 0x7fffffff;
+            break if g.0.try_insert(k, k).is_err() {
+                continue;
+            } else {
+                g.2 += 1;
+                Self(g.2)
+            };
+        }
+    }
+
+    pub fn to_u32(&self) -> u32 {
+        self.0
+    }
+}
+
 // Want to pass a Receiver for proto message specific to each Cid/Sid.
 // Therefore, CaConn needs to hold a registry of all Sender by Cid/Sid.
 // Everything should be non-Scync.
 
 // Allow some buffering to improve flow.
 
-pub fn bounded<T>(n: u32) -> (Sender<T>, Receiver<T>)
+pub fn bounded<T, S: Into<String>>(n: u32, tag: S) -> (Sender<T>, Receiver<T>)
 where
     T: Unpin + std::marker::Send,
 {
@@ -24,6 +55,8 @@ where
         rx_waker: None,
         tx_waker: None,
         qu_max: n,
+        id: IdOwned::new(),
+        tag: tag.into(),
     };
     let shr = Arc::new(RwLock::new(shr));
     let tx = Sender { shr: shr.clone() };
@@ -44,6 +77,7 @@ where
     T: std::marker::Send,
 {
     pub fn send(&mut self, item: T) -> Sending<'_, T> {
+        panic!("unused");
         Sending {
             tx: self,
             item: Some(item),
@@ -52,6 +86,7 @@ where
 
     pub fn try_send(&mut self, item: T, cx: &mut Context) -> Result<(), SendError<T>> {
         let mut shr = self.shr.try_write().unwrap();
+        let id = shr.id.to_u32();
         if shr.qu_max == 0 {
             Err(SendError::Closed(item))
         } else {
@@ -60,21 +95,26 @@ where
                 shr.qu.push_back(item);
                 if ql == 0 {
                     if let Some(waker) = shr.rx_waker.take() {
-                        trace!("Send:Push:RxWake");
+                        trace!("Send:Push:RxWake  shr-id {} {}", id, shr.tag);
                         waker.wake();
                         Ok(())
                     } else {
-                        trace!("Send:Push:Quiet");
+                        trace!("Send:Push:Quiet  shr-id {} {}", id, shr.tag);
                         // nothing to do here
                         Ok(())
                     }
                 } else {
-                    trace!("Send:Push:More");
+                    trace!(
+                        "Send:Push:More  shr-id {} {}  {ql} {ql2}",
+                        id,
+                        shr.tag,
+                        ql2 = shr.qu.len()
+                    );
                     // nothing to do here
                     Ok(())
                 }
             } else {
-                trace!("Send:Full");
+                trace!("Send:Full  shr-id {} {}", id, shr.tag);
                 shr.tx_waker = Some(cx.waker().clone());
                 Err(SendError::Full(item))
             }
@@ -106,15 +146,16 @@ where
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         use Poll::*;
-        trace!("Sending:poll_next");
         let self2 = self.get_mut();
         let mut shr = self2.tx.shr.try_write().unwrap();
+        let id = shr.id.to_u32();
+        trace!("Sending:poll_next  shr-id {} {}", id, shr.tag);
         if shr.qu_max == 0 {
             if let Some(item) = self2.item.take() {
-                trace!("Send:Closed:Item");
+                trace!("Send:Closed:Item  shr-id {} {}", id, shr.tag);
                 Ready(Err(SendError::Closed(item)))
             } else {
-                trace!("Send:Closed:Nothing");
+                trace!("Send:Closed:Nothing  shr-id {} {}", id, shr.tag);
                 panic!("logic")
             }
         } else {
@@ -125,25 +166,25 @@ where
                         shr.qu.push_back(item);
                         if ql == 0 {
                             if let Some(waker) = shr.rx_waker.take() {
-                                trace!("Send:Push:RxWake");
+                                trace!("Send:Push:RxWake  shr-id {} {}", id, shr.tag);
                                 waker.wake();
                             } else {
-                                trace!("Send:Push:Quiet");
+                                trace!("Send:Push:Quiet  shr-id {} {}", id, shr.tag);
                                 // nothing to do here
                             }
                         } else {
-                            trace!("Send:Push:More");
+                            trace!("Send:Push:More  shr-id {} {}", id, shr.tag);
                             // nothing to do here
                         }
                         Ready(Ok(()))
                     }
                     None => {
-                        trace!("Send:Push:Nothing");
+                        trace!("Send:Push:Nothing  shr-id {} {}", id, shr.tag);
                         panic!("logic")
                     }
                 }
             } else {
-                trace!("Send:Full");
+                trace!("Send:Full  shr-id {} {}", id, shr.tag);
                 shr.tx_waker = Some(cx.waker().clone());
                 Pending
             }
@@ -188,6 +229,7 @@ pub struct Receiver<T> {
 
 impl<T> Receiver<T> {
     pub fn recv(&mut self) -> Recv<'_, T> {
+        panic!("unused");
         Recv { rx: self }
     }
 }
@@ -197,19 +239,20 @@ impl<T> Future for Receiver<T> {
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         use Poll::*;
-        trace!("Receiver:poll");
         let mut shr = self.shr.try_write().unwrap();
+        let id = shr.id.to_u32();
+        trace!("Receiver:poll  shr-id {} {}", id, shr.tag);
         if let Some(x) = shr.qu.pop_front() {
-            trace!("Receiver:PopQueue");
+            trace!("Receiver:PopQueue  shr-id {} {}", id, shr.tag);
             Ready(Ok(x))
         } else {
             shr.rx_waker = Some(cx.waker().clone());
             if let Some(x) = shr.tx_waker.take() {
-                trace!("Receiver:Pending:TxWake");
+                trace!("Receiver:Pending:TxWake  shr-id {} {}", id, shr.tag);
                 x.wake();
                 Pending
             } else {
-                trace!("Receiver:Pending:Idle");
+                trace!("Receiver:Pending:Idle  shr-id {} {}", id, shr.tag);
                 // Sender is not waiting.
                 Pending
             }
@@ -251,10 +294,18 @@ pub enum RecvError {
     Closed,
 }
 
+impl fmt::Display for RecvError {
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(self, fmt)
+    }
+}
+
 #[derive(Debug)]
 struct Shared<T> {
     qu: VecDeque<T>,
     rx_waker: Option<Waker>,
     tx_waker: Option<Waker>,
     qu_max: u32,
+    id: IdOwned,
+    tag: String,
 }

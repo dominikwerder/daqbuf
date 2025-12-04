@@ -1,4 +1,5 @@
 mod activeca;
+mod channelheap;
 mod connected;
 mod connecting;
 mod handshake;
@@ -263,10 +264,10 @@ impl Stream for CaConn {
             // TODO add up duration of this scope
             match self.as_mut().poll_own_ticker(cx) {
                 Ok(Ready(())) => {
-                    hpp.have_progress();
+                    hpp.mark_progress();
                 }
                 Ok(Pending) => {
-                    hpp.have_pending();
+                    hpp.mark_pending();
                 }
                 Err(e) => {
                     self.shutdown_on_error(e);
@@ -403,9 +404,9 @@ impl Stream for CaConn {
             //     }
             // };
 
-            break if hpp.is_progress() {
+            break if hpp.have_progress() {
                 continue;
-            } else if hpp.is_pending() {
+            } else if hpp.have_pending() {
                 Pending
             } else {
                 Ready(None)

@@ -1,3 +1,4 @@
+mod asynchan;
 mod caids;
 mod channel;
 mod channelstateinfo;

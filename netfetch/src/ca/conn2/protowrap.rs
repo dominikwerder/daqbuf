@@ -1,3 +1,4 @@
+use crate::ca::conn2::asynchan;
 use crate::ca::conn2::progpend::HaveProgressPending;
 use ca_proto::ca::proto::CaItem;
 use ca_proto::ca::proto::CaMsg;
@@ -28,19 +29,16 @@ enum State {
 pub struct ProtoPusher {
     state: State,
     proto: CaProto,
-    out_rx: Option<Pin<Box<async_channel::Receiver<CaMsg>>>>,
+    out_rx: Option<asynchan::Receiver<CaMsg>>,
     alt: u16,
 }
 
 impl ProtoPusher {
-    pub fn new(proto: CaProto, out_rx: async_channel::Receiver<CaMsg>) -> Self {
-        // let (out_tx, out_rx) = async_channel::bounded(120);
+    pub fn new(proto: CaProto, out_rx: asynchan::Receiver<CaMsg>) -> Self {
         Self {
             state: State::Running,
             proto,
-            out_rx: Some(Box::pin(out_rx)),
-            // out_tx,
-            // inp_tx,
+            out_rx: Some(out_rx),
             alt: 0,
         }
     }
@@ -53,20 +51,20 @@ impl ProtoPusher {
         use Poll::*;
         match self.as_mut().proto.poll_next_unpin(cx) {
             Ready(Some(Ok(x))) => {
-                hpp.have_progress();
+                hpp.mark_progress();
                 Some(Ok(x))
             }
             Ready(Some(Err(e))) => {
-                hpp.have_progress();
+                hpp.mark_progress();
                 Some(Err(e.into()))
             }
             Ready(None) => {
                 self.state = State::Done;
-                hpp.have_progress();
+                hpp.mark_progress();
                 None
             }
             Pending => {
-                hpp.have_pending();
+                hpp.mark_pending();
                 None
             }
         }
@@ -78,17 +76,17 @@ impl ProtoPusher {
             if let Some(rx) = &mut self.out_rx {
                 match rx.poll_next_unpin(cx) {
                     Ready(Some(x)) => {
-                        hpp.have_progress();
+                        hpp.mark_progress();
                         self.as_mut().proto.push_out(x);
                         None
                     }
                     Ready(None) => {
-                        hpp.have_progress();
+                        hpp.mark_progress();
                         self.out_rx = None;
                         None
                     }
                     Pending => {
-                        hpp.have_pending();
+                        hpp.mark_pending();
                         None
                     }
                 }
@@ -123,9 +121,9 @@ impl Stream for ProtoPusher {
                             break Ready(Some(item));
                         }
                     }
-                    if hpp.is_progress() {
+                    if hpp.have_progress() {
                         continue;
-                    } else if hpp.is_pending() {
+                    } else if hpp.have_pending() {
                         Pending
                     } else {
                         Ready(None)

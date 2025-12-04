@@ -1,4 +1,12 @@
+use crate::ca::conn2::asynchan;
+use crate::ca::conn2::asynchan::Receiver;
+use crate::ca::conn2::asynchan::Sender;
+use crate::ca::conn2::caids::Cid;
+use crate::ca::conn2::conn::channelheap;
+use crate::ca::conn2::conn::channelheap::ChannelHeap;
+use crate::ca::conn2::progpend::HaveProgressPending;
 use crate::ca::conn2::synchan;
+use crate::conf::ChannelConfig;
 use ca_proto::ca::proto::CaItem;
 use ca_proto::ca::proto::CaMsg;
 use ca_proto::ca::proto::CaMsgTy;
@@ -6,12 +14,15 @@ use ca_proto::ca::proto::CaProto;
 use ca_proto_tokio::tcpasyncwriteread::TcpAsyncWriteRead;
 use futures_util::FutureExt;
 use futures_util::Stream;
+use futures_util::StreamExt;
+use netpod::extltref;
 use std::collections::VecDeque;
 use std::fmt;
 use std::future::Future;
 use std::net::SocketAddrV4;
 use std::os::fd::AsRawFd;
 use std::pin::Pin;
+use std::task;
 use std::task::Context;
 use std::task::Poll;
 use std::time::Duration;
@@ -25,12 +36,37 @@ macro_rules! warn { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
 macro_rules! trace { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
 
 autoerr::create_error_v1!(
-    name(Error, "Connected"),
+    name(Error, "ActiveCa"),
     enum variants {
         IO(#[from] std::io::Error),
         ProtoTxClosed,
+        ChannelHeap(#[from] channelheap::Error),
     },
 );
+
+#[derive(Debug)]
+pub struct CaCommand {
+    kind: CaCommandKind,
+}
+
+impl CaCommand {
+    pub fn channel_add(conf: ChannelConfig) -> Self {
+        Self {
+            kind: CaCommandKind::ChannelAdd(conf),
+        }
+    }
+    pub fn channel_remove<S: Into<String>>(name: S) -> Self {
+        Self {
+            kind: CaCommandKind::ChannelRemove(name.into()),
+        }
+    }
+}
+
+#[derive(Debug)]
+enum CaCommandKind {
+    ChannelAdd(ChannelConfig),
+    ChannelRemove(String),
+}
 
 #[derive(Debug)]
 enum State {
@@ -44,33 +80,112 @@ impl State {
     }
 }
 
+struct CommandFut(Pin<Box<dyn Future<Output = Result<(), Error>> + Send>>);
+
+impl fmt::Debug for CommandFut {
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt.debug_struct("CommandFut").finish()
+    }
+}
+
 #[derive(Debug)]
 pub struct ActiveCa {
     tsbeg: Instant,
     addr: SocketAddrV4,
     state: State,
-    tx: async_channel::Sender<CaMsg>,
-    rx: synchan::Receiver<CaMsg>,
+    chanheap: ChannelHeap,
+    proto_tx: Sender<CaMsg>,
+    proto_rx: synchan::Receiver<CaMsg>,
+    proto_rx_buf: VecDeque<CaMsg>,
+    proto_2_tx: synchan::Sender<CaMsg>,
+    cmd_tx: Sender<CaCommand>,
+    cmd_rx: Receiver<CaCommand>,
+    cmd_fut: Option<CommandFut>,
 }
 
 impl ActiveCa {
     pub fn new(
-        rx: synchan::Receiver<CaMsg>,
-        tx: async_channel::Sender<CaMsg>,
+        proto_rx: synchan::Receiver<CaMsg>,
+        proto_tx: Sender<CaMsg>,
         tsnow: Instant,
         addr: SocketAddrV4,
     ) -> Self {
+        let (mut cmd_tx, cmd_rx) = asynchan::bounded(16);
+        {
+            let conf = ChannelConfig::st_monitor("TEST:SLOW:SCALAR:F32:000000", "test");
+            let cmd = CaCommand::channel_add(conf);
+            cmd_tx.try_send(cmd).unwrap();
+        }
+        let (proto_2_tx, proto_2_rx) = synchan::bounded(120, "ActiveCa-proto2");
         Self {
             tsbeg: tsnow,
             addr,
             state: State::new(),
-            tx,
-            rx,
+            chanheap: ChannelHeap::new(proto_tx.clone(), proto_2_rx),
+            proto_tx,
+            proto_rx,
+            proto_rx_buf: VecDeque::with_capacity(16),
+            proto_2_tx,
+            cmd_tx,
+            cmd_rx,
+            cmd_fut: None,
         }
     }
 
     pub fn dismantle(self) -> (synchan::Receiver<CaMsg>,) {
-        (self.rx,)
+        (self.proto_rx,)
+    }
+
+    fn handle_command(&mut self, cmd: CaCommand, cx: &mut Context) -> CommandFut {
+        match cmd.kind {
+            CaCommandKind::ChannelAdd(conf) => {
+                self.chanheap.channel_add(conf, cx);
+                let fut = async { Ok(()) }.boxed();
+                CommandFut(Box::pin(fut))
+            }
+            CaCommandKind::ChannelRemove(_) => todo!(),
+        }
+    }
+
+    fn poll_command_input(mut self: Pin<&mut Self>, cx: &mut Context, hpp: &mut HaveProgressPending) -> Option<Error> {
+        use Poll::*;
+        let self2 = self.as_mut().get_mut();
+        if let Some(fut) = self2.cmd_fut.as_mut() {
+            match fut.0.as_mut().poll(cx) {
+                Ready(Ok(())) => {
+                    trace!("CmdFut:Ready:Ok");
+                    self2.cmd_fut = None;
+                    hpp.mark_progress();
+                    None
+                }
+                Ready(Err(e)) => {
+                    trace!("CmdFut:Ready:Err {e}");
+                    hpp.mark_progress();
+                    Some(e)
+                }
+                Pending => {
+                    trace!("CmdFut:Pending");
+                    hpp.mark_pending();
+                    None
+                }
+            }
+        } else {
+            match self2.cmd_rx.poll_next_unpin(cx) {
+                Ready(Some(cmd)) => {
+                    trace!("CmdRx:Some");
+                    let fut = self2.handle_command(cmd, cx);
+                    self2.cmd_fut = Some(fut);
+                    hpp.mark_progress();
+                    None
+                }
+                Ready(None) => None,
+                Pending => {
+                    trace!("CmdRx:Pending");
+                    hpp.mark_pending();
+                    None
+                }
+            }
+        }
     }
 }
 
@@ -81,33 +196,119 @@ impl Future for ActiveCa {
         use Poll::*;
         trace!("poll_next");
         loop {
+            let mut hpp = HaveProgressPending::new();
+            match self.as_mut().poll_command_input(cx, &mut hpp) {
+                Some(e) => {
+                    hpp.mark_progress();
+                    break Ready(Err(e));
+                }
+                None => {}
+            }
             let self2 = self.as_mut().get_mut();
-            break match &mut self2.state {
+            match &mut self2.state {
                 State::Running => {
-                    break match self.rx.poll_unpin(cx) {
-                        Ready(Ok(item)) => {
-                            trace!("Rx:Ready:Item:{item:?}");
-                            match &item.ty {
-                                _ => {
-                                    warn!("got some other unhandled message: {item:?}");
-                                    Ready(Ok(()))
+                    // TODO add a input buffer.
+                    // Attempt poll only when space.
+                    // Also, always attempt to deliver.
+                    // In ChannelHeap, for now also attempt to deliver all buffered messages.
+                    // Add waker drop check that it never goes above N or below 0.
+
+                    if self2.proto_rx_buf.len() < self2.proto_rx_buf.capacity() {
+                        match self2.proto_rx.poll_unpin(cx) {
+                            Ready(Ok(item)) => {
+                                trace!("Rx:Ready:Item:{item:?}");
+                                match &item.ty {
+                                    _ => {
+                                        warn!("received message: {item:?}");
+                                        hpp.mark_progress();
+                                    }
                                 }
+                                self.proto_rx_buf.push_back(item);
+                            }
+                            Ready(Err(_)) => {
+                                trace!("Rx:Error");
+                                error!("TODO clean shutdown");
+                                self.state = State::Done;
+                                hpp.mark_progress();
+                            }
+                            Pending => {
+                                trace!("Rx:Pending");
+                                hpp.mark_pending();
                             }
                         }
-                        Ready(Err(_)) => {
-                            trace!("Rx:Done");
-                            Ready(Ok(()))
+                    } else {
+                    }
+                    loop {
+                        if let Some(item) = self.proto_rx_buf.pop_front() {
+                            let dispatch = if let Some(_) = item.cid() {
+                                true
+                            } else if item.subid().is_some() {
+                                true
+                            } else if item.ioid().is_some() {
+                                true
+                            } else {
+                                false
+                            };
+                            if dispatch {
+                                match self.proto_2_tx.try_send(item, cx) {
+                                    Ok(()) => {
+                                        trace!("Proto2Tx:Sent");
+                                        hpp.mark_progress();
+                                    }
+                                    Err(e) => {
+                                        use synchan::SendError;
+                                        match e {
+                                            SendError::Full(item) => {
+                                                trace!("Proto2Tx:Full");
+                                                self.proto_rx_buf.push_front(item);
+                                                hpp.mark_pending();
+                                            }
+                                            SendError::Closed(item) => {
+                                                trace!("Proto2Tx:Closed");
+                                                self.proto_rx_buf.push_front(item);
+                                                error!("TODO handle Proto2Tx:Closed");
+                                            }
+                                        }
+                                    }
+                                }
+                            } else {
+                                error!("TODO handle incoming item internally: {item:?}");
+                                hpp.mark_progress();
+                            }
+                        } else {
+                            break;
+                        }
+                    }
+                    let self2 = self.as_mut().get_mut();
+                    match self2.chanheap.poll_unpin(cx) {
+                        Ready(Ok(())) => {
+                            trace!("ChannelHeap:Done");
+                            hpp.mark_progress();
+                        }
+                        Ready(Err(e)) => {
+                            trace!("ChannelHeap:Error {e}");
+                            error!("TODO clean shutdown");
+                            self.state = State::Done;
+                            hpp.mark_progress();
+                            break Ready(Err(e.into()));
                         }
                         Pending => {
-                            trace!("Rx:Pending");
-                            Pending
+                            trace!("ChannelHeap:Pending");
+                            hpp.mark_pending();
                         }
-                    };
+                    }
                 }
-                State::Done => {
-                    trace!("Done");
-                    Ready(Ok(()))
-                }
+                State::Done => {}
+            }
+            break if hpp.have_progress() {
+                trace!("HPP:Progress");
+                continue;
+            } else if hpp.have_pending() {
+                trace!("HPP:Pending");
+                Pending
+            } else {
+                trace!("HPP:Done");
+                Ready(Ok(()))
             };
         }
     }

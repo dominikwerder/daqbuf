@@ -1,3 +1,4 @@
+use crate::ca::conn2::asynchan;
 use crate::ca::conn2::synchan;
 use ca_proto::ca::proto::CaMsg;
 use ca_proto::ca::proto::CaMsgTy;
@@ -18,7 +19,7 @@ macro_rules! warn { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
 macro_rules! trace { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
 
 autoerr::create_error_v1!(
-    name(Error, "Connected"),
+    name(Error, "Handshake"),
     enum variants {
         IO(#[from] std::io::Error),
         ProtoTxClosed,
@@ -64,17 +65,12 @@ pub struct Handshake {
     tsbeg: Instant,
     addr: SocketAddrV4,
     state: State,
-    tx: async_channel::Sender<CaMsg>,
+    tx: asynchan::Sender<CaMsg>,
     rx: synchan::Receiver<CaMsg>,
 }
 
 impl Handshake {
-    pub fn new(
-        rx: synchan::Receiver<CaMsg>,
-        tx: async_channel::Sender<CaMsg>,
-        tsnow: Instant,
-        addr: SocketAddrV4,
-    ) -> Self {
+    pub fn new(rx: synchan::Receiver<CaMsg>, tx: asynchan::Sender<CaMsg>, tsnow: Instant, addr: SocketAddrV4) -> Self {
         Self {
             tsbeg: tsnow,
             addr,
@@ -93,8 +89,8 @@ impl Handshake {
             tsbeg: self.tsbeg.clone(),
             addr: self.addr.clone(),
             state: State::Done,
-            tx: async_channel::bounded(1).0,
-            rx: synchan::bounded(1).1,
+            tx: asynchan::bounded(1).0,
+            rx: synchan::bounded(1, "handshake-dummy").1,
         }
     }
 }
@@ -116,12 +112,12 @@ impl Future for Handshake {
                                 continue;
                             }
                             Err(e) => match e {
-                                async_channel::TrySendError::Full(e) => {
+                                asynchan::TrySendError::Full(e) => {
                                     trace!("Tx:Pending");
                                     st1.msgs.push_front(e);
                                     Pending
                                 }
-                                async_channel::TrySendError::Closed(_) => {
+                                asynchan::TrySendError::Closed(_) => {
                                     trace!("Tx:Closed");
                                     self.state = State::Done;
                                     Ready(Err(Error::ProtoTxClosed))

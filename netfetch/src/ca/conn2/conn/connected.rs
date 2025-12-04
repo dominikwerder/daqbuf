@@ -1,8 +1,10 @@
 use super::super::synchan;
 use super::handshake::Handshake;
+use crate::ca::conn2::asynchan;
 use crate::ca::conn2::conn::activeca::ActiveCa;
 use crate::ca::conn2::progpend::HaveProgressPending;
 use crate::ca::conn2::protowrap;
+use crate::ca::conn2::todoval;
 use ca_proto::ca::proto::CaItem;
 use ca_proto::ca::proto::CaMsg;
 use ca_proto::ca::proto::CaProto;
@@ -51,7 +53,7 @@ pub struct Connected {
     addr: SocketAddrV4,
     protowrap: protowrap::ProtoPusher,
     state: State,
-    out_tx: async_channel::Sender<CaMsg>,
+    out_tx: asynchan::Sender<CaMsg>,
     inp_buf: VecDeque<CaMsg>,
     inp_tx_main: synchan::Sender<CaMsg>,
 }
@@ -67,8 +69,8 @@ impl Connected {
             addr.to_string(),
             array_truncate,
         );
-        let (inp_tx, inp_rx) = synchan::bounded(16);
-        let (out_tx, out_rx) = async_channel::bounded(16);
+        let (inp_tx, inp_rx) = synchan::bounded(16, "Connected-inp");
+        let (out_tx, out_rx) = asynchan::bounded(16);
         let protowrap = protowrap::ProtoPusher::new(proto, out_rx);
 
         // TODO poll the protowrap input and distribute to sub state.
@@ -99,12 +101,13 @@ impl Future for Connected {
         loop {
             let tsnow = Instant::now();
 
-            let mut self2 = self.as_mut().get_mut();
+            let mut self2 = self.as_mut();
+
             let mut hpp = HaveProgressPending::new();
             if self2.inp_buf.len() < self2.inp_buf.capacity() {
                 match Pin::new(&mut self2).protowrap.poll_next_unpin(cx) {
                     Ready(Some(Ok(x))) => {
-                        hpp.have_progress();
+                        hpp.mark_progress();
                         match x {
                             CaItem::Msg(x) => {
                                 self2.inp_buf.push_back(x);
@@ -113,13 +116,13 @@ impl Future for Connected {
                         }
                     }
                     Ready(Some(Err(e))) => {
-                        hpp.have_progress();
+                        hpp.mark_progress();
                         self2.state = State::Done;
                         break Ready(Err(e.into()));
                     }
                     Ready(None) => {}
                     Pending => {
-                        hpp.have_pending();
+                        hpp.mark_pending();
                     }
                 }
             }
@@ -127,17 +130,17 @@ impl Future for Connected {
             if let Some(item) = self2.inp_buf.pop_front() {
                 match self2.inp_tx_main.try_send(item, cx) {
                     Ok(()) => {
-                        hpp.have_progress();
+                        hpp.mark_progress();
                     }
                     Err(e) => {
                         let cl = e.is_closed();
                         self2.inp_buf.push_front(e.into_inner());
                         if cl {
-                            hpp.have_progress();
+                            hpp.mark_progress();
                             self.state = State::Done;
                             break Ready(Err(Error::ProtoOutputClosed));
                         } else {
-                            hpp.have_pending();
+                            hpp.mark_pending();
                         }
                     }
                 }
@@ -145,14 +148,14 @@ impl Future for Connected {
 
             match &mut self2.state {
                 State::Init(st1) => {
-                    let inp_rx = std::mem::replace(st1, synchan::bounded(1).1);
+                    let inp_rx = std::mem::replace(st1, synchan::bounded(1, "Connected-dummy").1);
                     let stn = Handshake::new(inp_rx, self.out_tx.clone(), tsnow, self.addr.clone());
                     self.state = State::Handshake(stn);
                     if true {
                         // check whether this can be useful or not
                         self.inp_tx_main.set_waker(cx.waker());
                     }
-                    hpp.have_progress();
+                    hpp.mark_progress();
                 }
                 State::Handshake(st1) => match st1.poll_unpin(cx) {
                     Ready(Ok(())) => {
@@ -162,43 +165,43 @@ impl Future for Connected {
                         let (rx,) = st1.dismantle();
                         let stn = ActiveCa::new(rx, tx, tsnow, self2.addr);
                         self.state = State::ActiveCa(stn);
-                        hpp.have_progress();
+                        hpp.mark_progress();
                     }
                     Ready(Err(e)) => {
                         trace!("Handshake:Error");
                         self.state = State::Done;
-                        hpp.have_progress();
+                        hpp.mark_progress();
                         break Ready(Err(e.into()));
                     }
                     Pending => {
                         trace!("Handshake:Pending");
-                        hpp.have_pending();
+                        hpp.mark_pending();
                     }
                 },
                 State::ActiveCa(st1) => match st1.poll_unpin(cx) {
                     Ready(Ok(())) => {
                         trace!("ActiveCa:Done");
                         self.state = State::Done;
-                        hpp.have_progress();
+                        hpp.mark_progress();
                     }
                     Ready(Err(e)) => {
                         trace!("ActiveCa:Error");
                         self.state = State::Done;
-                        hpp.have_progress();
+                        hpp.mark_progress();
                         break Ready(Err(e.into()));
                     }
                     Pending => {
                         trace!("ActiveCa:Pending");
-                        hpp.have_pending();
+                        hpp.mark_pending();
                     }
                 },
                 State::Done => break Ready(Ok(())),
             };
 
-            break if hpp.is_progress() {
+            break if hpp.have_progress() {
                 trace!("HPP:Progress");
                 continue;
-            } else if hpp.is_pending() {
+            } else if hpp.have_pending() {
                 trace!("HPP:Pending");
                 Pending
             } else {

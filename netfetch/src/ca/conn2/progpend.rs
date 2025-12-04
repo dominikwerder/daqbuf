@@ -11,19 +11,19 @@ impl HaveProgressPending {
         }
     }
 
-    pub fn have_progress(&mut self) {
+    pub fn mark_progress(&mut self) {
         self.have_progress = true;
     }
 
-    pub fn have_pending(&mut self) {
+    pub fn mark_pending(&mut self) {
         self.have_pending = true;
     }
 
-    pub fn is_progress(&self) -> bool {
+    pub fn have_progress(&self) -> bool {
         self.have_progress
     }
 
-    pub fn is_pending(&self) -> bool {
+    pub fn have_pending(&self) -> bool {
         self.have_pending
     }
 }
