@@ -4,7 +4,6 @@ use super::onebeforeandbulk::OneBeforeAndBulk;
 use crate::events2::onebeforeandbulk;
 use crate::range::ScyllaSeriesRange;
 use crate::worker::ScyllaQueue;
-use daqbuf_err as err;
 use futures_util::Future;
 use futures_util::FutureExt;
 use futures_util::Stream;
@@ -12,6 +11,9 @@ use futures_util::StreamExt;
 use items_0::WithLen;
 use items_0::merge::DrainIntoNewResult;
 use items_0::merge::MergeableTy;
+use items_0::streamitem::RangeCompletableItem;
+use items_0::streamitem::Sitemty2;
+use items_0::streamitem::StreamItem;
 use items_2::channelevents::ChannelEvents;
 use netpod::ChConf;
 use netpod::TsNano;
@@ -111,7 +113,7 @@ where
 }
 
 type TI = OneBeforeAndBulk<EventsStreamRt, ChannelEvents>;
-type INPI = Result<crate::events2::onebeforeandbulk::Output<ChannelEvents>, crate::events2::onebeforeandbulk::Error>;
+type INPI = Sitemty2<crate::events2::onebeforeandbulk::Output<ChannelEvents>, crate::events2::onebeforeandbulk::Error>;
 
 struct ReadEvents {
     fut: Pin<Box<dyn Future<Output = Option<INPI>> + Send>>,
@@ -349,7 +351,7 @@ impl MergeRtsChained {
 }
 
 impl Stream for MergeRtsChained {
-    type Item = Result<ChannelEvents, Error>;
+    type Item = Sitemty2<ChannelEvents, Error>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         use Poll::*;
@@ -392,7 +394,7 @@ impl Stream for MergeRtsChained {
                 if let Some(ix) = item.find_highest_index_lt(self.range.beg()) {
                     trace_fetch!("see item before range  ix {ix}");
                 }
-                break Ready(Some(Ok(item)));
+                break Ready(Some(Ok(StreamItem::DataItem(RangeCompletableItem::Data(item)))));
             }
             break match &mut self.state {
                 State::Begin => {
@@ -402,14 +404,30 @@ impl Stream for MergeRtsChained {
                 }
                 State::FetchFirstSt(st2) => match st2.fut.poll_unpin(cx) {
                     Ready(Some(Ok(x))) => match x {
-                        onebeforeandbulk::Output::Before(before) => {
-                            trace_fetch!("have first from ST");
-                            self.handle_first_st(Some(before), None);
-                            continue;
+                        StreamItem::DataItem(x) => match x {
+                            RangeCompletableItem::Data(x) => match x {
+                                onebeforeandbulk::Output::Before(before) => {
+                                    trace_fetch!("have first from ST");
+                                    self.handle_first_st(Some(before), None);
+                                    continue;
+                                }
+                                onebeforeandbulk::Output::Bulk(item) => {
+                                    self.handle_first_st(None, Some(item));
+                                    continue;
+                                }
+                            },
+                            RangeCompletableItem::RangeComplete => {
+                                log::info!("mark range complete for all inputs");
+                                continue;
+                            }
+                        },
+                        StreamItem::Log(x) => {
+                            let item = StreamItem::Log(x);
+                            Ready(Some(Ok(item)))
                         }
-                        onebeforeandbulk::Output::Bulk(item) => {
-                            self.handle_first_st(None, Some(item));
-                            continue;
+                        StreamItem::Stats(x) => {
+                            let item = StreamItem::Stats(x);
+                            Ready(Some(Ok(item)))
                         }
                     },
                     Ready(Some(Err(e))) => {
@@ -427,14 +445,30 @@ impl Stream for MergeRtsChained {
                 },
                 State::FetchFirstMt(st2) => match st2.fut.poll_unpin(cx) {
                     Ready(Some(Ok(x))) => match x {
-                        onebeforeandbulk::Output::Before(before) => {
-                            trace_fetch!("have first from MT");
-                            self.handle_first_mt(Some(before), None);
-                            continue;
+                        StreamItem::DataItem(x) => match x {
+                            RangeCompletableItem::Data(x) => match x {
+                                onebeforeandbulk::Output::Before(before) => {
+                                    trace_fetch!("have first from MT");
+                                    self.handle_first_mt(Some(before), None);
+                                    continue;
+                                }
+                                onebeforeandbulk::Output::Bulk(item) => {
+                                    self.handle_first_mt(None, Some(item));
+                                    continue;
+                                }
+                            },
+                            RangeCompletableItem::RangeComplete => {
+                                log::info!("mark range complete for all inputs");
+                                continue;
+                            }
+                        },
+                        StreamItem::Log(x) => {
+                            let item = StreamItem::Log(x);
+                            Ready(Some(Ok(item)))
                         }
-                        onebeforeandbulk::Output::Bulk(item) => {
-                            self.handle_first_mt(None, Some(item));
-                            continue;
+                        StreamItem::Stats(x) => {
+                            let item = StreamItem::Stats(x);
+                            Ready(Some(Ok(item)))
                         }
                     },
                     Ready(Some(Err(e))) => {
@@ -452,16 +486,32 @@ impl Stream for MergeRtsChained {
                 },
                 State::FetchFirstLt(st2) => match st2.fut.poll_unpin(cx) {
                     Ready(Some(Ok(x))) => match x {
-                        onebeforeandbulk::Output::Before(before) => {
-                            trace_fetch!("have first from LT");
-                            self.handle_first_lt(Some(before), None);
-                            self.handle_all_firsts_done();
-                            continue;
+                        StreamItem::DataItem(x) => match x {
+                            RangeCompletableItem::Data(x) => match x {
+                                onebeforeandbulk::Output::Before(before) => {
+                                    trace_fetch!("have first from LT");
+                                    self.handle_first_lt(Some(before), None);
+                                    self.handle_all_firsts_done();
+                                    continue;
+                                }
+                                onebeforeandbulk::Output::Bulk(item) => {
+                                    self.handle_first_lt(None, Some(item));
+                                    self.handle_all_firsts_done();
+                                    continue;
+                                }
+                            },
+                            RangeCompletableItem::RangeComplete => {
+                                log::info!("TODO mark range complete for all inputs");
+                                continue;
+                            }
+                        },
+                        StreamItem::Log(x) => {
+                            let item = StreamItem::Log(x);
+                            Ready(Some(Ok(item)))
                         }
-                        onebeforeandbulk::Output::Bulk(item) => {
-                            self.handle_first_lt(None, Some(item));
-                            self.handle_all_firsts_done();
-                            continue;
+                        StreamItem::Stats(x) => {
+                            let item = StreamItem::Stats(x);
+                            Ready(Some(Ok(item)))
                         }
                     },
                     Ready(Some(Err(e))) => {
@@ -485,14 +535,30 @@ impl Stream for MergeRtsChained {
                             Ready(Some(Ok(x))) => {
                                 *fut = None;
                                 match x {
-                                    onebeforeandbulk::Output::Bulk(x) => {
-                                        buf.push_back(x);
-                                        continue;
+                                    StreamItem::DataItem(x) => match x {
+                                        RangeCompletableItem::Data(x) => match x {
+                                            onebeforeandbulk::Output::Bulk(x) => {
+                                                buf.push_back(x);
+                                                continue;
+                                            }
+                                            onebeforeandbulk::Output::Before(_) => {
+                                                self.state = State::Done;
+                                                let e = Error::Logic;
+                                                Ready(Some(Err(e)))
+                                            }
+                                        },
+                                        RangeCompletableItem::RangeComplete => {
+                                            log::info!("TODO mark range complete for all inputs");
+                                            continue;
+                                        }
+                                    },
+                                    StreamItem::Log(x) => {
+                                        let item = StreamItem::Log(x);
+                                        Ready(Some(Ok(item)))
                                     }
-                                    onebeforeandbulk::Output::Before(_) => {
-                                        self.state = State::Done;
-                                        let e = Error::Logic;
-                                        Ready(Some(Err(e)))
+                                    StreamItem::Stats(x) => {
+                                        let item = StreamItem::Stats(x);
+                                        Ready(Some(Ok(item)))
                                     }
                                 }
                             }
@@ -528,14 +594,30 @@ impl Stream for MergeRtsChained {
                             Ready(Some(Ok(x))) => {
                                 *fut = None;
                                 match x {
-                                    onebeforeandbulk::Output::Bulk(x) => {
-                                        buf.push_back(x);
-                                        continue;
+                                    StreamItem::DataItem(x) => match x {
+                                        RangeCompletableItem::Data(x) => match x {
+                                            onebeforeandbulk::Output::Bulk(x) => {
+                                                buf.push_back(x);
+                                                continue;
+                                            }
+                                            onebeforeandbulk::Output::Before(_) => {
+                                                self.state = State::Done;
+                                                let e = Error::Logic;
+                                                Ready(Some(Err(e)))
+                                            }
+                                        },
+                                        RangeCompletableItem::RangeComplete => {
+                                            log::info!("TODO mark range complete for all inputs");
+                                            continue;
+                                        }
+                                    },
+                                    StreamItem::Log(x) => {
+                                        let item = StreamItem::Log(x);
+                                        Ready(Some(Ok(item)))
                                     }
-                                    onebeforeandbulk::Output::Before(_) => {
-                                        self.state = State::Done;
-                                        let e = Error::Logic;
-                                        Ready(Some(Err(e)))
+                                    StreamItem::Stats(x) => {
+                                        let item = StreamItem::Stats(x);
+                                        Ready(Some(Ok(item)))
                                     }
                                 }
                             }
@@ -571,14 +653,30 @@ impl Stream for MergeRtsChained {
                             Ready(Some(Ok(x))) => {
                                 *fut = None;
                                 match x {
-                                    onebeforeandbulk::Output::Bulk(x) => {
-                                        buf.push_back(x);
-                                        continue;
+                                    StreamItem::DataItem(x) => match x {
+                                        RangeCompletableItem::Data(x) => match x {
+                                            onebeforeandbulk::Output::Bulk(x) => {
+                                                buf.push_back(x);
+                                                continue;
+                                            }
+                                            onebeforeandbulk::Output::Before(_) => {
+                                                self.state = State::Done;
+                                                let e = Error::Logic;
+                                                Ready(Some(Err(e)))
+                                            }
+                                        },
+                                        RangeCompletableItem::RangeComplete => {
+                                            log::info!("TODO mark range complete for all inputs");
+                                            continue;
+                                        }
+                                    },
+                                    StreamItem::Log(x) => {
+                                        let item = StreamItem::Log(x);
+                                        Ready(Some(Ok(item)))
                                     }
-                                    onebeforeandbulk::Output::Before(_) => {
-                                        self.state = State::Done;
-                                        let e = Error::Logic;
-                                        Ready(Some(Err(e)))
+                                    StreamItem::Stats(x) => {
+                                        let item = StreamItem::Stats(x);
+                                        Ready(Some(Ok(item)))
                                     }
                                 }
                             }

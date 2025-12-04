@@ -11,11 +11,12 @@ use futures_util::StreamExt;
 use futures_util::TryStreamExt;
 use items_0::Appendable;
 use items_0::Empty;
-use items_0::WithLen;
-use items_0::container::ByteEstimate;
 use items_0::merge::DrainIntoNewDynResult;
 use items_0::merge::MergeableDyn;
 use items_0::scalar_ops::ScalarOps;
+use items_0::streamitem::RangeCompletableItem;
+use items_0::streamitem::Sitemty2;
+use items_0::streamitem::StreamItem;
 use items_0::timebin::BinningggContainerEventsDyn;
 use items_2::binning::container_events::ContainerEvents;
 use items_2::channelevents::ChannelEvents;
@@ -378,6 +379,7 @@ pub struct EventsStreamRt {
     msp_buf: VecDeque<TsMs>,
     msp_buf_bck: VecDeque<TsMs>,
     out: VecDeque<Box<dyn BinningggContainerEventsDyn>>,
+    outbuf2: VecDeque<Sitemty2<ChannelEvents, Error>>,
     out_cnt: u64,
     ts_seen_max: TsNano,
     qucap: usize,
@@ -413,6 +415,7 @@ impl EventsStreamRt {
             msp_buf: VecDeque::new(),
             msp_buf_bck: VecDeque::new(),
             out: VecDeque::new(),
+            outbuf2: VecDeque::new(),
             out_cnt: 0,
             ts_seen_max: TsNano::from_ns(0),
         }
@@ -452,6 +455,7 @@ impl EventsStreamRt {
         ts_msp: TsMs,
         bck: bool,
         mfi: MakeFutInfo,
+        outbuf2: &mut VecDeque<Sitemty2<ChannelEvents, Error>>,
     ) -> Pin<Box<dyn Future<Output = Result<(Box<dyn BinningggContainerEventsDyn>, ReadJobTrace), Error>> + Send>> {
         let scyqueue = mfi.scyqueue.clone();
         let rt = mfi.rt.clone();
@@ -459,6 +463,12 @@ impl EventsStreamRt {
         let range = mfi.range.clone();
         let readopts = mfi.readopts.clone();
         let ch_conf = mfi.ch_conf.clone();
+        {
+            let dir = if bck { "BCK" } else { "FWD" };
+            let msg = format!("make_read_events_fut  {dir}  msp {ts_msp:?}");
+            let item = items_0::streamitem::LogItem::info(msg);
+            outbuf2.push_back(Ok(StreamItem::Log(item)));
+        }
         let params = ReadEventsJobParams {
             series,
             rt,
@@ -497,7 +507,7 @@ impl EventsStreamRt {
         if let Some(ts) = self.msp_buf_bck.pop_back() {
             trace_fetch!("setup_bck_read  {}", ts.fmt());
             let mfi = MakeFutInfo::new(self);
-            let fut = Self::make_read_events_fut(ts, true, mfi);
+            let fut = Self::make_read_events_fut(ts, true, mfi, &mut self.outbuf2);
             self.state = State::ReadingBck(ReadingBck {
                 reading_state: ReadingState::FetchEvents(FetchEvents::from_fut(fut)),
             });
@@ -520,7 +530,11 @@ impl EventsStreamRt {
         self.state = State::ReadingFwd(ReadingFwd::new(self));
     }
 
-    fn redo_fwd_read(st: &mut ReadingFwd, msp_buf: &mut VecDeque<TsMs>) {
+    fn redo_fwd_read(
+        st: &mut ReadingFwd,
+        msp_buf: &mut VecDeque<TsMs>,
+        outbuf2: &mut VecDeque<Sitemty2<ChannelEvents, Error>>,
+    ) {
         let selfname = "redo_fwd_read";
         let qu = &mut st.qu;
         trace_redo_fwd_read!("{selfname}  {}  {}  BEFORE", msp_buf.len(), qu.len());
@@ -528,7 +542,7 @@ impl EventsStreamRt {
             if let Some(ts) = msp_buf.pop_front() {
                 trace_fetch!("{selfname}  {}  FILL A SLOT", ts.fmt());
                 let mfi = st.make_fut_info.clone();
-                let fut = Self::make_read_events_fut(ts, false, mfi);
+                let fut = Self::make_read_events_fut(ts, false, mfi, outbuf2);
                 qu.push(fut);
             } else {
                 break;
@@ -539,12 +553,14 @@ impl EventsStreamRt {
 }
 
 impl Stream for EventsStreamRt {
-    type Item = Result<ChannelEvents, Error>;
+    type Item = Sitemty2<ChannelEvents, Error>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         use Poll::*;
         loop {
-            if let Some(mut item) = self.out.pop_front() {
+            if let Some(x) = self.outbuf2.pop_front() {
+                break Ready(Some(x));
+            } else if let Some(mut item) = self.out.pop_front() {
                 if item.is_consistent() == false {
                     warn_item!("{}bad item {:?}", "\n\n--------------------------\n", item);
                     self.state = State::Done;
@@ -615,7 +631,10 @@ impl Stream for EventsStreamRt {
                 }
                 trace_emit!("deliver item  {:?}", item);
                 self.out_cnt += item.len() as u64;
-                break Ready(Some(Ok(ChannelEvents::Events(item))));
+                let item = ChannelEvents::Events(item);
+                let item = RangeCompletableItem::Data(item);
+                let item = StreamItem::DataItem(item);
+                break Ready(Some(Ok(item)));
             }
             let self2 = self.as_mut().get_mut();
             let (state, msp_buf) = (&mut self2.state, &mut self2.msp_buf);
@@ -736,7 +755,7 @@ impl Stream for EventsStreamRt {
                         dbg_have_new_msp_fut = true;
                     }
                     if st.qu.has_space() {
-                        Self::redo_fwd_read(st, msp_buf);
+                        Self::redo_fwd_read(st, msp_buf, &mut self2.outbuf2);
                     }
                     match st.qu.poll_next_unpin(cx) {
                         Ready(Some(x)) => match x {
@@ -783,6 +802,8 @@ impl Stream for EventsStreamRt {
                             match d {
                                 Ok(empty) => {
                                     let item = items_2::channelevents::ChannelEvents::Events(empty);
+                                    let item = RangeCompletableItem::Data(item);
+                                    let item = StreamItem::DataItem(item);
                                     Ready(Some(Ok(item)))
                                 }
                                 Err(_) => {

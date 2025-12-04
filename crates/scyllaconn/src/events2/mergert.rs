@@ -7,6 +7,7 @@ use futures_util::Stream;
 use futures_util::StreamExt;
 use items_0::streamitem::RangeCompletableItem;
 use items_0::streamitem::SitemErrTy;
+use items_0::streamitem::Sitemty2;
 use items_0::streamitem::StreamItem;
 use items_0::streamitem::sitem_err2_from_string;
 use items_2::channelevents::ChannelEvents;
@@ -28,7 +29,7 @@ autoerr::create_error_v1!(
 );
 
 pub struct MergeRts {
-    inp: Pin<Box<dyn Stream<Item = Result<ChannelEvents, SitemErrTy>> + Send>>,
+    inp: Pin<Box<dyn Stream<Item = Sitemty2<ChannelEvents, SitemErrTy>> + Send>>,
 }
 
 impl MergeRts {
@@ -42,12 +43,13 @@ impl MergeRts {
             scyqueue.clone(),
         )
         .map(|x| {
-            use RangeCompletableItem::*;
-            use StreamItem::*;
-            match x {
-                Ok(x) => Ok(DataItem(Data(x))),
-                Err(e) => Err(daqbuf_err::Error::from_string(e)),
-            }
+            // use RangeCompletableItem::*;
+            // use StreamItem::*;
+            // match x {
+            //     Ok(x) => Ok(DataItem(Data(x))),
+            //     Err(e) => Err(daqbuf_err::Error::from_string(e)),
+            // }
+            x.map_err(|e| daqbuf_err::Error::from_string(e))
         });
         let inp_mt = EventsStreamRt::new(
             RetentionTime::Medium,
@@ -57,12 +59,13 @@ impl MergeRts {
             scyqueue.clone(),
         )
         .map(|x| {
-            use RangeCompletableItem::*;
-            use StreamItem::*;
-            match x {
-                Ok(x) => Ok(DataItem(Data(x))),
-                Err(e) => Err(daqbuf_err::Error::from_string(e)),
-            }
+            // use RangeCompletableItem::*;
+            // use StreamItem::*;
+            // match x {
+            //     Ok(x) => Ok(DataItem(Data(x))),
+            //     Err(e) => Err(daqbuf_err::Error::from_string(e)),
+            // }
+            x.map_err(|e| daqbuf_err::Error::from_string(e))
         });
         let inp_lt = EventsStreamRt::new(
             RetentionTime::Long,
@@ -72,36 +75,34 @@ impl MergeRts {
             scyqueue.clone(),
         )
         .map(|x| {
-            use RangeCompletableItem::*;
-            use StreamItem::*;
-            match x {
-                Ok(x) => Ok(DataItem(Data(x))),
-                Err(e) => Err(daqbuf_err::Error::from_string(e)),
-            }
+            // use RangeCompletableItem::*;
+            // use StreamItem::*;
+            // match x {
+            //     Ok(x) => Ok(DataItem(Data(x))),
+            //     Err(e) => Err(daqbuf_err::Error::from_string(e)),
+            // }
+            x.map_err(|e| daqbuf_err::Error::from_string(e))
         });
         let merger: Merger<ChannelEvents> =
             Merger::new(vec![Box::pin(inp_st), Box::pin(inp_mt), Box::pin(inp_lt)], None);
-        let stream = merger.filter_map(|x| {
-            // TODO all stream adapters must support Sitemty, otherwise range-final item gets dropped.
-            use RangeCompletableItem::*;
-            use StreamItem::*;
-            let x = match x {
-                Ok(x) => match x {
-                    DataItem(x) => match x {
-                        Data(x) => Some(Ok(x)),
-                        _ => None,
-                    },
-                    _ => None,
-                },
-                Err(e) => Some(Err(e)),
-            };
-            futures_util::future::ready(x)
-        });
+        let stream = merger;
         let stream = OneBeforeAndBulk::<_, ChannelEvents>::new(stream, range.beg(), "after-rt-merged".into());
         let stream = stream.map(|x| match x {
             Ok(x) => match x {
-                crate::events2::onebeforeandbulk::Output::Before(x) => Ok(x),
-                crate::events2::onebeforeandbulk::Output::Bulk(x) => Ok(x),
+                StreamItem::DataItem(x) => match x {
+                    RangeCompletableItem::Data(x) => {
+                        use crate::events2::onebeforeandbulk::Output;
+                        match x {
+                            Output::Before(x) => Ok(StreamItem::DataItem(RangeCompletableItem::Data(x))),
+                            Output::Bulk(x) => Ok(StreamItem::DataItem(RangeCompletableItem::Data(x))),
+                        }
+                    }
+                    RangeCompletableItem::RangeComplete => {
+                        Ok(StreamItem::DataItem(RangeCompletableItem::RangeComplete))
+                    }
+                },
+                StreamItem::Log(x) => Ok(StreamItem::Log(x)),
+                StreamItem::Stats(x) => Ok(StreamItem::Stats(x)),
             },
             Err(e) => Err(sitem_err2_from_string(e)),
         });
@@ -111,7 +112,7 @@ impl MergeRts {
 }
 
 impl Stream for MergeRts {
-    type Item = Result<ChannelEvents, Error>;
+    type Item = Sitemty2<ChannelEvents, Error>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         use Poll::*;

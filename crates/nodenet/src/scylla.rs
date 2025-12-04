@@ -68,45 +68,73 @@ pub async fn scylla_channel_event_stream(
     };
     let stream = stream
         .map(move |item| match item {
-            Ok(k) => match k {
-                ChannelEvents::Events(mut k) => {
-                    if true {
-                        Ok(ChannelEvents::Events(k))
-                    } else if let SeriesKind::ChannelStatus = chconf.kind() {
-                        type C1 = ContainerEvents<u64>;
-                        type C2 = ContainerEvents<String>;
-                        if let Some(j) = k.as_any_mut().downcast_mut::<C1>() {
-                            let mut g = C2::new();
-                            for (ts, val) in j.iter_zip() {
-                                use netpod::channelstatus as cs2;
-                                let val = match cs2::ChannelStatus::from_kind(val as _) {
-                                    Ok(x) => x.to_user_variant_string(),
-                                    Err(_) => format!("{}", val),
-                                };
-                                if val.len() != 0 {
-                                    g.push_back(ts, val);
+            Ok(x) => match x {
+                StreamItem::DataItem(x) => match x {
+                    RangeCompletableItem::Data(k) => match k {
+                        ChannelEvents::Events(mut k) => {
+                            if true {
+                                let item = ChannelEvents::Events(k);
+                                let item = StreamItem::DataItem(RangeCompletableItem::Data(item));
+                                Ok(item)
+                            } else if let SeriesKind::ChannelStatus = chconf.kind() {
+                                type C1 = ContainerEvents<u64>;
+                                type C2 = ContainerEvents<String>;
+                                if let Some(j) = k.as_any_mut().downcast_mut::<C1>() {
+                                    let mut g = C2::new();
+                                    for (ts, val) in j.iter_zip() {
+                                        use netpod::channelstatus as cs2;
+                                        let val = match cs2::ChannelStatus::from_kind(val as _) {
+                                            Ok(x) => x.to_user_variant_string(),
+                                            Err(_) => format!("{}", val),
+                                        };
+                                        if val.len() != 0 {
+                                            g.push_back(ts, val);
+                                        }
+                                    }
+                                    let item = ChannelEvents::Events(Box::new(g));
+                                    let item = StreamItem::DataItem(RangeCompletableItem::Data(item));
+                                    Ok(item)
+                                } else {
+                                    let item = ChannelEvents::Events(k);
+                                    let item = StreamItem::DataItem(RangeCompletableItem::Data(item));
+                                    Ok(item)
                                 }
+                            } else {
+                                let item = ChannelEvents::Events(k);
+                                let item = StreamItem::DataItem(RangeCompletableItem::Data(item));
+                                Ok(item)
                             }
-                            Ok(ChannelEvents::Events(Box::new(g)))
-                        } else {
-                            Ok(ChannelEvents::Events(k))
                         }
-                    } else {
-                        Ok(ChannelEvents::Events(k))
+                        ChannelEvents::Status(k) => {
+                            let item = ChannelEvents::Status(k);
+                            let item = StreamItem::DataItem(RangeCompletableItem::Data(item));
+                            Ok(item)
+                        }
+                    },
+                    RangeCompletableItem::RangeComplete => {
+                        let item = StreamItem::DataItem(RangeCompletableItem::RangeComplete);
+                        Ok(item)
                     }
-                }
-                ChannelEvents::Status(k) => Ok(ChannelEvents::Status(k)),
+                },
+                StreamItem::Log(x) => Ok(StreamItem::Log(x)),
+                StreamItem::Stats(x) => Ok(StreamItem::Stats(x)),
             },
             _ => item,
         })
         .map(move |item| match &item {
-            Ok(k) => match k {
-                ChannelEvents::Events(k) => {
-                    let n = k.len();
-                    let d = evq.event_delay();
-                    (item, n, d.clone())
-                }
-                ChannelEvents::Status(_) => (item, 1, None),
+            Ok(x) => match x {
+                StreamItem::DataItem(x) => match x {
+                    RangeCompletableItem::Data(k) => match k {
+                        ChannelEvents::Events(k) => {
+                            let n = k.len();
+                            let d = evq.event_delay();
+                            (item, n, d.clone())
+                        }
+                        ChannelEvents::Status(_) => (item, 1, None),
+                    },
+                    RangeCompletableItem::RangeComplete => (item, 1, None),
+                },
+                StreamItem::Log(_) | StreamItem::Stats(_) => (item, 1, None),
             },
             Err(_) => (item, 1, None),
         })
@@ -119,18 +147,7 @@ pub async fn scylla_channel_event_stream(
         })
         .map(|item| {
             let item = match item {
-                Ok(item) => match item {
-                    ChannelEvents::Events(item) => {
-                        let item = ChannelEvents::Events(item);
-                        let item = Ok(StreamItem::DataItem(RangeCompletableItem::Data(item)));
-                        item
-                    }
-                    ChannelEvents::Status(item) => {
-                        let item = ChannelEvents::Status(item);
-                        let item = Ok(StreamItem::DataItem(RangeCompletableItem::Data(item)));
-                        item
-                    }
-                },
+                Ok(x) => Ok(x),
                 Err(e) => Err(err::Error::with_msg_no_trace(format!(
                     "{}::scylla_channel_event_stream  {e}",
                     module_path!()
