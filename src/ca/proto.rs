@@ -1,6 +1,7 @@
 use futures_util::AsyncRead;
 use futures_util::AsyncWrite;
 use futures_util::Stream;
+use netpod::log;
 use netpod::log::*;
 use netpod::timeunits::*;
 use serde::Serialize;
@@ -12,6 +13,8 @@ use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
 use std::time::Instant;
+
+macro_rules! trace_in_out { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
 
 autoerr::create_error_v1!(
     name(Error, "CaProto"),
@@ -734,6 +737,34 @@ impl CaMsgTy {
             Echo => {}
         }
     }
+
+    pub fn cmd_title(&self) -> &str {
+        match self {
+            CaMsgTy::Version => "Version",
+            CaMsgTy::VersionRes(_) => "VersionRes",
+            CaMsgTy::Error(_) => "Error",
+            CaMsgTy::ClientName => "ClientName",
+            CaMsgTy::ClientNameRes(_) => "ClientNameRes",
+            CaMsgTy::HostName(_) => "HostName",
+            CaMsgTy::Search(_) => "Search",
+            CaMsgTy::SearchRes(_) => "SearchRes",
+            CaMsgTy::CreateChan(_) => "CreateChan",
+            CaMsgTy::CreateChanRes(_) => "CreateChanRes",
+            CaMsgTy::CreateChanFail(_) => "CreateChanFail",
+            CaMsgTy::AccessRightsRes(_) => "AccessRightsRes",
+            CaMsgTy::EventAdd(_) => "EventAdd",
+            CaMsgTy::EventAddRes(_) => "EventAddRes",
+            CaMsgTy::EventAddResEmpty(_) => "EventAddResEmpty",
+            CaMsgTy::EventCancel(_) => "EventCancel",
+            CaMsgTy::EventCancelRes(_) => "EventCancelRes",
+            CaMsgTy::ReadNotify(_) => "ReadNotify",
+            CaMsgTy::ReadNotifyRes(_) => "ReadNotifyRes",
+            CaMsgTy::ChannelClose(_) => "ChannelClose",
+            CaMsgTy::ChannelCloseRes(_) => "ChannelCloseRes",
+            CaMsgTy::ChannelDisconnect(_) => "ChannelDisconnect",
+            CaMsgTy::Echo => "Echo",
+        }
+    }
 }
 
 macro_rules! convert_scalar_value {
@@ -815,6 +846,7 @@ impl CaMsg {
     }
 
     fn place_into(&self, buf: &mut [u8]) {
+        trace_in_out!("CaMsg place_into {}", self.ty.cmd_title());
         if self.ty.payload_len() <= 0x3ff0 && self.ty.data_count() <= 0xffff {
             let pls = self.ty.payload_len() as u16;
             let cnt = self.ty.data_count() as u16;
@@ -978,28 +1010,30 @@ impl CaMsg {
                         if hi.data_count() != 0 {
                             // TODO according to protocol, this should not happen. Count for metrics.
                         }
-                        let ty = CaMsgTy::EventAddResEmpty(EventAddResEmpty {
+                        let d = EventAddResEmpty {
                             data_type: hi.data_type,
                             sid: hi.param1,
                             subid: hi.param2,
-                        });
-                        return Ok(CaMsg::from_ty_ts(ty, tsnow));
+                        };
+                        let ty = CaMsgTy::EventAddResEmpty(d);
+                        CaMsg::from_ty_ts(ty, tsnow)
                     } else {
                         error!("EventAddRes but bad header {hi:?}");
                         return Err(Error::NotEnoughPayloadTimeMetadata(payload.len()));
                     }
+                } else {
+                    let value = Self::extract_ca_data_value(hi, payload, array_truncate)?;
+                    let d = EventAddRes {
+                        data_type: hi.data_type,
+                        data_count: hi.data_count() as _,
+                        status: hi.param1,
+                        subid: hi.param2,
+                        payload_len: hi.payload_len() as u32,
+                        value,
+                    };
+                    let ty = CaMsgTy::EventAddRes(d);
+                    CaMsg::from_ty_ts(ty, tsnow)
                 }
-                let value = Self::extract_ca_data_value(hi, payload, array_truncate)?;
-                let d = EventAddRes {
-                    data_type: hi.data_type,
-                    data_count: hi.data_count() as _,
-                    status: hi.param1,
-                    subid: hi.param2,
-                    payload_len: hi.payload_len() as u32,
-                    value,
-                };
-                let ty = CaMsgTy::EventAddRes(d);
-                CaMsg::from_ty_ts(ty, tsnow)
             }
             0x0c => {
                 if payload.len() != 0 {
@@ -1067,6 +1101,7 @@ impl CaMsg {
             0x15 => CaMsg::from_ty_ts(CaMsgTy::HostName("TODOx5288".into()), tsnow),
             x => return Err(Error::CaCommandNotSupported(x)),
         };
+        trace_in_out!("CaMsg from_proto_infos {}", msg.ty.cmd_title());
         Ok(msg)
     }
 
@@ -1180,6 +1215,43 @@ impl CaMsg {
         };
         let value = CaEventValue { data: value, meta };
         Ok(value)
+    }
+
+    pub fn cid(&self) -> Option<u32> {
+        use CaMsgTy::*;
+        let ret = match &self.ty {
+            Error(x) => x.cid,
+            CreateChan(x) => x.cid,
+            CreateChanRes(x) => x.cid,
+            CreateChanFail(x) => x.cid,
+            AccessRightsRes(x) => x.cid,
+            ChannelDisconnect(x) => x.cid,
+            _ => return None,
+        };
+        Some(ret)
+    }
+
+    pub fn subid(&self) -> Option<u32> {
+        use CaMsgTy::*;
+        let ret = match &self.ty {
+            EventAdd(x) => x.subid,
+            EventAddRes(x) => x.subid,
+            EventAddResEmpty(x) => x.subid,
+            EventCancel(x) => x.subid,
+            EventCancelRes(x) => x.subid,
+            _ => return None,
+        };
+        Some(ret)
+    }
+
+    pub fn ioid(&self) -> Option<u32> {
+        use CaMsgTy::*;
+        let ret = match &self.ty {
+            ReadNotify(x) => x.ioid,
+            ReadNotifyRes(x) => x.ioid,
+            _ => return None,
+        };
+        Some(ret)
     }
 }
 
