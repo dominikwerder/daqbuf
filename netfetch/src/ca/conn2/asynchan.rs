@@ -9,7 +9,7 @@ pub struct Sender<T>(Pin<Box<async_channel::Sender<T>>>);
 
 pub struct Receiver<T>(Pin<Box<async_channel::Receiver<T>>>);
 
-pub fn bounded<T>(n: usize) -> (Sender<T>, Receiver<T>) {
+pub fn bounded<T, S: Into<String>>(n: usize, tag: S) -> (Sender<T>, Receiver<T>) {
     let (tx, rx) = async_channel::bounded(n);
     (Sender(Box::pin(tx)), Receiver(Box::pin(rx)))
 }
@@ -62,5 +62,9 @@ impl<T> Sender<T> {
 impl<T> Receiver<T> {
     pub fn try_send(&mut self) -> Result<T, TryRecvError> {
         self.0.try_recv()
+    }
+
+    pub fn recv(&self) -> async_channel::Recv<'_, T> {
+        self.0.recv()
     }
 }

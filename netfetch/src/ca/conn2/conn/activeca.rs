@@ -89,15 +89,27 @@ impl fmt::Debug for CommandFut {
 }
 
 #[derive(Debug)]
+pub enum ItemInner {
+    ScyllaWrite,
+}
+
+#[derive(Debug)]
+pub struct ActiveCaItem {
+    // Only for performance measurement:
+    pub ts_create: Instant,
+    pub inner: ItemInner,
+}
+
+#[derive(Debug)]
 pub struct ActiveCa {
     tsbeg: Instant,
     addr: SocketAddrV4,
     state: State,
     chanheap: ChannelHeap,
     proto_tx: Sender<CaMsg>,
-    proto_rx: synchan::Receiver<CaMsg>,
+    proto_rx: asynchan::Receiver<CaMsg>,
     proto_rx_buf: VecDeque<CaMsg>,
-    proto_2_tx: synchan::Sender<CaMsg>,
+    proto_2_tx: asynchan::Sender<CaMsg>,
     cmd_tx: Sender<CaCommand>,
     cmd_rx: Receiver<CaCommand>,
     cmd_fut: Option<CommandFut>,
@@ -105,18 +117,18 @@ pub struct ActiveCa {
 
 impl ActiveCa {
     pub fn new(
-        proto_rx: synchan::Receiver<CaMsg>,
+        proto_rx: asynchan::Receiver<CaMsg>,
         proto_tx: Sender<CaMsg>,
         tsnow: Instant,
         addr: SocketAddrV4,
     ) -> Self {
-        let (mut cmd_tx, cmd_rx) = asynchan::bounded(16);
+        let (mut cmd_tx, cmd_rx) = asynchan::bounded(16, "ActiveCa-cmd");
         {
             let conf = ChannelConfig::st_monitor("TEST:SLOW:SCALAR:F32:000000", "test");
             let cmd = CaCommand::channel_add(conf);
             cmd_tx.try_send(cmd).unwrap();
         }
-        let (proto_2_tx, proto_2_rx) = synchan::bounded(120, "ActiveCa-proto2");
+        let (proto_2_tx, proto_2_rx) = asynchan::bounded(120, "ActiveCa-proto2");
         Self {
             tsbeg: tsnow,
             addr,
@@ -132,7 +144,7 @@ impl ActiveCa {
         }
     }
 
-    pub fn dismantle(self) -> (synchan::Receiver<CaMsg>,) {
+    pub fn dismantle(self) -> (asynchan::Receiver<CaMsg>,) {
         (self.proto_rx,)
     }
 
@@ -189,18 +201,18 @@ impl ActiveCa {
     }
 }
 
-impl Future for ActiveCa {
-    type Output = Result<(), Error>;
+impl Stream for ActiveCa {
+    type Item = Result<ActiveCaItem, Error>;
 
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         use Poll::*;
-        trace!("poll_next");
+        trace!("ActiveCa:poll_next");
         loop {
             let mut hpp = HaveProgressPending::new();
             match self.as_mut().poll_command_input(cx, &mut hpp) {
                 Some(e) => {
                     hpp.mark_progress();
-                    break Ready(Err(e));
+                    break Ready(Some(Err(e)));
                 }
                 None => {}
             }
@@ -237,6 +249,7 @@ impl Future for ActiveCa {
                             }
                         }
                     } else {
+                        // TODO maybe count for metrics?
                     }
                     loop {
                         if let Some(item) = self.proto_rx_buf.pop_front() {
@@ -280,20 +293,28 @@ impl Future for ActiveCa {
                         }
                     }
                     let self2 = self.as_mut().get_mut();
-                    match self2.chanheap.poll_unpin(cx) {
-                        Ready(Ok(())) => {
-                            trace!("ChannelHeap:Done");
-                            hpp.mark_progress();
-                        }
-                        Ready(Err(e)) => {
-                            trace!("ChannelHeap:Error {e}");
-                            error!("TODO clean shutdown");
+                    match self2.chanheap.poll_next_unpin(cx) {
+                        Ready(Some(x)) => match x {
+                            Ok(item) => {
+                                trace!("ActiveCa:ChannelHeap:Done");
+                                trace!("ActiveCa:ChannelHeap:Done  TODO do something with item");
+                                hpp.mark_progress();
+                            }
+                            Err(e) => {
+                                trace!("ActiveCa:ChannelHeap:Error {e}");
+                                error!("ActiveCa:ChannelHeap:Error  TODO clean shutdown");
+                                self.state = State::Done;
+                                hpp.mark_progress();
+                                break Ready(Some(Err(e.into())));
+                            }
+                        },
+                        Ready(None) => {
+                            trace!("ActiveCa:ChannelHeap:Done  TODO clean shutdown");
                             self.state = State::Done;
                             hpp.mark_progress();
-                            break Ready(Err(e.into()));
                         }
                         Pending => {
-                            trace!("ChannelHeap:Pending");
+                            trace!("ActiveCa:ChannelHeap:Pending");
                             hpp.mark_pending();
                         }
                     }
@@ -308,7 +329,7 @@ impl Future for ActiveCa {
                 Pending
             } else {
                 trace!("HPP:Done");
-                Ready(Ok(()))
+                Ready(None)
             };
         }
     }

@@ -42,6 +42,42 @@ impl Drop for CidOwned {
     }
 }
 
+static SUBID_REG: LazyLock<Mutex<(HashMap<u32, u32>, Xoshiro128PlusPlus)>> =
+    LazyLock::new(|| Mutex::new((HashMap::new(), Xoshiro128PlusPlus::from_os_rng())));
+
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+pub struct SubidOwned(u32);
+
+impl SubidOwned {
+    pub fn new() -> Self {
+        let mut g = SUBID_REG.lock().unwrap();
+        loop {
+            use stats::rand_xoshiro::rand_core::RngCore;
+            let k = g.1.next_u32() & 0x7fffffff;
+            break if g.0.try_insert(k, k).is_err() {
+                continue;
+            } else {
+                Self(k)
+            };
+        }
+    }
+
+    pub fn to_subid(&self) -> Subid {
+        Subid(self.0)
+    }
+
+    pub fn to_u32(&self) -> u32 {
+        self.0
+    }
+}
+
+impl Drop for SubidOwned {
+    fn drop(&mut self) {
+        let mut g = CID_REG.lock().unwrap();
+        g.0.remove(&self.0);
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 pub struct Cid(u32);
 
@@ -94,6 +130,12 @@ impl Ioid {
     }
 }
 
+impl fmt::Display for CidOwned {
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(fmt, "CidOwned({})", self.0)
+    }
+}
+
 impl fmt::Display for Cid {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(fmt, "Cid({})", self.0)
@@ -103,6 +145,12 @@ impl fmt::Display for Cid {
 impl fmt::Display for Sid {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(fmt, "Sid({})", self.0)
+    }
+}
+
+impl fmt::Display for SubidOwned {
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(fmt, "SubidOwned({})", self.0)
     }
 }
 

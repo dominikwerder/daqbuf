@@ -173,9 +173,9 @@ impl CaConn {
         ch1pin.config_update(cx, todo!());
     }
 
-    fn poll_own_ticker(mut self: Pin<&mut Self>, cx: &mut Context) -> Result<Poll<()>, Error> {
+    fn poll_own_ticker(mut self: Pin<&mut Self>, cx: &mut Context) -> Result<(), Error> {
         // TODO nothing taken yet
-        todo!()
+        Ok(())
     }
 
     // call this only from the main fn poll
@@ -212,66 +212,71 @@ impl Stream for CaConn {
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         use Poll::*;
-        trace!("poll_next");
+        trace!("CaConn:poll_next");
         let mut durs = DurationMeasureSteps::new();
         self.mett.poll_fn_begin().inc();
         let ret = loop {
             let self2 = self.as_mut().get_mut();
             self2.mett.poll_loop_begin().inc();
             let tsloop = Instant::now();
-
+            let hpp = &mut HaveProgressPending::new();
             if true {
-                break match &mut self2.state {
+                match &mut self2.state {
                     State::Connecting(st1) => match st1.poll_unpin(cx) {
                         Ready(Ok(x)) => {
                             trace!("CaConn:Connecting:Ready");
                             let stn = Connected::new(x, self.remote_addr, tsloop);
                             self.state = State::Connected(stn);
-                            continue;
+                            hpp.mark_progress();
                         }
                         Ready(Err(e)) => {
                             trace!("CaConn:Connecting:Err:{}", e);
                             self.state = State::Done;
-                            Ready(Some(Err(e)))
+                            hpp.mark_progress();
+                            break Ready(Some(Err(e)));
                         }
-                        Pending => Pending,
+                        Pending => {
+                            hpp.mark_pending();
+                        }
                     },
-                    State::Connected(st1) => match st1.poll_unpin(cx) {
-                        Ready(Ok(x)) => {
-                            trace!("CaConn:Connected:Ready");
+                    State::Connected(st1) => match st1.poll_next_unpin(cx) {
+                        Ready(Some(x)) => match x {
+                            Ok(x) => {
+                                trace!("CaConn:Connected:Ready");
+                                error!("CaConn:Connected:Ready  TODO handle the item");
+                                hpp.mark_progress();
+                            }
+                            Err(e) => {
+                                trace!("CaConn:Connected:Err:{}", e);
+                                error!("CaConn:Connected:Err:  TODO handle error and shutdown");
+                                self.state = State::Done;
+                                hpp.mark_progress();
+                                break Ready(Some(Err(e.into())));
+                            }
+                        },
+                        Ready(None) => {
+                            trace!("CaConn:Connected:Done");
+                            error!("CaConn:Connected:Done  TODO handle shutdown");
                             self.state = State::Done;
-                            continue;
+                            hpp.mark_progress();
                         }
-                        Ready(Err(e)) => {
-                            trace!("CaConn:Connected:Err:{}", e);
-                            self.state = State::Done;
-                            Ready(Some(Err(e.into())))
+                        Pending => {
+                            hpp.mark_pending();
                         }
-                        Pending => Pending,
                     },
-                    State::Done => {
-                        trace!("CaConn:Done");
-                        Ready(None)
-                    }
+                    State::Done => {}
                 };
             };
-
-            let hpp = &mut HaveProgressPending::new();
 
             // TODO get rid of the handling of ca_conn_event_out_queue in here.
             // The future which pushes to the queue must also trigger the async push if needed.
 
             // TODO add up duration of this scope
             match self.as_mut().poll_own_ticker(cx) {
-                Ok(Ready(())) => {
-                    hpp.mark_progress();
-                }
-                Ok(Pending) => {
-                    hpp.mark_pending();
-                }
+                Ok(()) => {}
                 Err(e) => {
                     self.shutdown_on_error(e);
-                    continue;
+                    hpp.mark_progress();
                 }
             }
 
@@ -405,10 +410,13 @@ impl Stream for CaConn {
             // };
 
             break if hpp.have_progress() {
+                trace!("HPP:Progress");
                 continue;
             } else if hpp.have_pending() {
+                trace!("HPP:Pending");
                 Pending
             } else {
+                trace!("HPP:Done");
                 Ready(None)
             };
         };

@@ -1,6 +1,7 @@
 use super::super::synchan;
 use super::handshake::Handshake;
 use crate::ca::conn2::asynchan;
+use crate::ca::conn2::conn::activeca;
 use crate::ca::conn2::conn::activeca::ActiveCa;
 use crate::ca::conn2::progpend::HaveProgressPending;
 use crate::ca::conn2::protowrap;
@@ -25,6 +26,7 @@ use std::time::Instant;
 use taskrun::tokio;
 use tokio::net::TcpStream;
 
+macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
 macro_rules! trace { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
 
 autoerr::create_error_v1!(
@@ -45,6 +47,18 @@ enum State {
     Handshake(Handshake),
     ActiveCa(ActiveCa),
     Done,
+}
+
+#[derive(Debug)]
+pub enum ItemInner {
+    ScyllaWrite,
+}
+
+#[derive(Debug)]
+pub struct ConnectedItem {
+    // Only for performance measurement:
+    ts_create: Instant,
+    inner: ItemInner,
 }
 
 #[derive(Debug)]
@@ -92,17 +106,15 @@ impl Connected {
     }
 }
 
-impl Future for Connected {
-    type Output = Result<(), Error>;
+impl Stream for Connected {
+    type Item = Result<ConnectedItem, Error>;
 
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         use Poll::*;
-        trace!("poll_next");
+        trace!("Connected:poll_next");
         loop {
             let tsnow = Instant::now();
-
             let mut self2 = self.as_mut();
-
             let mut hpp = HaveProgressPending::new();
             if self2.inp_buf.len() < self2.inp_buf.capacity() {
                 match Pin::new(&mut self2).protowrap.poll_next_unpin(cx) {
@@ -118,7 +130,7 @@ impl Future for Connected {
                     Ready(Some(Err(e))) => {
                         hpp.mark_progress();
                         self2.state = State::Done;
-                        break Ready(Err(e.into()));
+                        break Ready(Some(Err(e.into())));
                     }
                     Ready(None) => {}
                     Pending => {
@@ -126,7 +138,6 @@ impl Future for Connected {
                     }
                 }
             }
-
             if let Some(item) = self2.inp_buf.pop_front() {
                 match self2.inp_tx_main.try_send(item, cx) {
                     Ok(()) => {
@@ -138,14 +149,13 @@ impl Future for Connected {
                         if cl {
                             hpp.mark_progress();
                             self.state = State::Done;
-                            break Ready(Err(Error::ProtoOutputClosed));
+                            break Ready(Some(Err(Error::ProtoOutputClosed)));
                         } else {
                             hpp.mark_pending();
                         }
                     }
                 }
             }
-
             match &mut self2.state {
                 State::Init(st1) => {
                     let inp_rx = std::mem::replace(st1, synchan::bounded(1, "Connected-dummy").1);
@@ -171,33 +181,46 @@ impl Future for Connected {
                         trace!("Handshake:Error");
                         self.state = State::Done;
                         hpp.mark_progress();
-                        break Ready(Err(e.into()));
+                        break Ready(Some(Err(e.into())));
                     }
                     Pending => {
                         trace!("Handshake:Pending");
                         hpp.mark_pending();
                     }
                 },
-                State::ActiveCa(st1) => match st1.poll_unpin(cx) {
-                    Ready(Ok(())) => {
+                State::ActiveCa(st1) => match st1.poll_next_unpin(cx) {
+                    Ready(Some(x)) => match x {
+                        Ok(item) => {
+                            trace!("ActiveCa:Ready");
+                            error!("ActiveCa:Ready  TODO do something with item");
+                            let item = match item.inner {
+                                activeca::ItemInner::ScyllaWrite => ConnectedItem {
+                                    ts_create: item.ts_create,
+                                    inner: ItemInner::ScyllaWrite,
+                                },
+                            };
+                            hpp.mark_progress();
+                            break Ready(Some(Ok(item)));
+                        }
+                        Err(e) => {
+                            trace!("ActiveCa:Error");
+                            self.state = State::Done;
+                            hpp.mark_progress();
+                            break Ready(Some(Err(e.into())));
+                        }
+                    },
+                    Ready(None) => {
                         trace!("ActiveCa:Done");
                         self.state = State::Done;
                         hpp.mark_progress();
-                    }
-                    Ready(Err(e)) => {
-                        trace!("ActiveCa:Error");
-                        self.state = State::Done;
-                        hpp.mark_progress();
-                        break Ready(Err(e.into()));
                     }
                     Pending => {
                         trace!("ActiveCa:Pending");
                         hpp.mark_pending();
                     }
                 },
-                State::Done => break Ready(Ok(())),
-            };
-
+                State::Done => {}
+            }
             break if hpp.have_progress() {
                 trace!("HPP:Progress");
                 continue;
@@ -205,8 +228,8 @@ impl Future for Connected {
                 trace!("HPP:Pending");
                 Pending
             } else {
-                trace!("HPP:None");
-                Ready(Err(Error::NoProgressNoPending))
+                trace!("HPP:Done");
+                Ready(None)
             };
         }
     }

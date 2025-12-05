@@ -3,16 +3,13 @@ use crate::ca::conn2::synchan;
 use ca_proto::ca::proto::CaMsg;
 use ca_proto::ca::proto::CaMsgTy;
 use futures_util::FutureExt;
-use futures_util::Stream;
 use std::collections::VecDeque;
-use std::fmt;
 use std::future::Future;
 use std::net::SocketAddrV4;
 use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
 use std::time::Instant;
-use taskrun::tokio;
 
 macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
 macro_rules! warn { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
@@ -89,8 +86,8 @@ impl Handshake {
             tsbeg: self.tsbeg.clone(),
             addr: self.addr.clone(),
             state: State::Done,
-            tx: asynchan::bounded(1).0,
-            rx: synchan::bounded(1, "handshake-dummy").1,
+            tx: asynchan::bounded(1, "handshake-dummy-A").0,
+            rx: asynchan::bounded(1, "handshake-dummy-B").1,
         }
     }
 }

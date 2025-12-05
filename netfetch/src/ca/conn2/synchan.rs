@@ -229,8 +229,13 @@ pub struct Receiver<T> {
 
 impl<T> Receiver<T> {
     pub fn recv(&mut self) -> Recv<'_, T> {
-        panic!("unused");
         Recv { rx: self }
+    }
+}
+
+impl<T> Clone for Receiver<T> {
+    fn clone(&self) -> Self {
+        Self { shr: self.shr.clone() }
     }
 }
 
@@ -269,20 +274,20 @@ impl<'a, T> Future for Recv<'a, T> {
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         use Poll::*;
-        trace!("Recv:poll");
         let mut shr = self.rx.shr.try_write().unwrap();
+        let id = shr.id.to_u32();
+        trace!("Recv:poll  shr-id {} {}", id, shr.tag);
         if let Some(x) = shr.qu.pop_front() {
-            trace!("Recv:PopQueue");
+            trace!("Recv:PopQueue  shr-id {} {}", id, shr.tag);
             Ready(Ok(x))
         } else {
             shr.rx_waker = Some(cx.waker().clone());
             if let Some(x) = shr.tx_waker.take() {
-                trace!("Recv:Pending:TxWake");
+                trace!("Recv:Pending:TxWake  shr-id {} {}", id, shr.tag);
                 x.wake();
                 Pending
             } else {
-                trace!("Recv:Pending:Idle");
-                // Sender is not waiting.
+                trace!("Recv:Pending:Idle  shr-id {} {}", id, shr.tag);
                 Pending
             }
         }
