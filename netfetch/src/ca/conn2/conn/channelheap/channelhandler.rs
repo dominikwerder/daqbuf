@@ -10,10 +10,12 @@ use crate::ca::conn2::futwrap::FutDbgBox;
 use crate::ca::conn2::progpend::HaveProgressPending;
 use crate::ca::conn2::synchan;
 use crate::conf::ChannelConfig;
+use asynchan::TrySendError;
 use ca_proto::ca::proto;
 use ca_proto::ca::proto::CaMsg;
 use futures_util::FutureExt;
 use futures_util::Stream;
+use futures_util::StreamExt;
 use std::fmt;
 use std::pin::Pin;
 use std::task::Context;
@@ -28,7 +30,10 @@ autoerr::create_error_v1!(
     name(Error, "ChannelHandler"),
     enum variants {
         ProtoTxClosed,
+        ProtoRxClosed,
         SynRecv(#[from] synchan::RecvError),
+        RecvTry(#[from] asynchan::TryRecvError),
+        Recv(#[from] asynchan::RecvError),
         CreateMonitorUnexpectedMessage,
     },
 );
@@ -41,7 +46,7 @@ struct Creating {
 #[derive(Debug)]
 struct CreateMonitor {
     out_tx: asynchan::Sender<CaMsg>,
-    inp_tx: synchan::Sender<CaMsg>,
+    inp_tx: asynchan::Sender<CaMsg>,
     fut: FutDbg<Result<(), Error>>,
 }
 
@@ -50,8 +55,8 @@ impl CreateMonitor {
         cid: Cid,
         sid: Sid,
         out_tx: asynchan::Sender<CaMsg>,
-        inp_tx: synchan::Sender<CaMsg>,
-        mut inp_rx: synchan::Receiver<CaMsg>,
+        inp_tx: asynchan::Sender<CaMsg>,
+        mut inp_rx: asynchan::Receiver<CaMsg>,
         ch_hp_tx: asynchan::Sender<ChHeapCmd>,
     ) -> Self {
         let fut = {
@@ -59,7 +64,7 @@ impl CreateMonitor {
             async move {
                 let subid = SubidOwned::new();
                 {
-                    let (reg_tx, reg_rx) = asynchan::bounded(4);
+                    let (reg_tx, reg_rx) = asynchan::bounded(4, "RegisterSubidResp");
                     ch_hp_tx
                         .send(ChHeapCmd::RegisterSubid(cid.clone(), subid.to_subid(), reg_tx))
                         .await
@@ -145,7 +150,7 @@ async fn channel_create(
     cid: u32,
     name: String,
     tx: asynchan::Sender<CaMsg>,
-    mut inp_rx: synchan::Receiver<CaMsg>,
+    mut inp_rx: asynchan::Receiver<CaMsg>,
     tsnow: Instant,
 ) -> Result<(Sid,), Error> {
     let msg = CaMsg::from_ty_ts(
@@ -201,7 +206,7 @@ pub struct ChannelHandler {
     cid: CidOwned,
     conf: ChannelConfig,
     proto_tx: asynchan::Sender<CaMsg>,
-    proto_rx: synchan::Receiver<CaMsg>,
+    proto_rx: asynchan::Receiver<CaMsg>,
     ch_hp_tx: asynchan::Sender<ChHeapCmd>,
 }
 
@@ -209,7 +214,7 @@ impl ChannelHandler {
     pub fn new(
         conf: ChannelConfig,
         proto_tx: asynchan::Sender<CaMsg>,
-        proto_rx: synchan::Receiver<CaMsg>,
+        proto_rx: asynchan::Receiver<CaMsg>,
         ch_hp_tx: asynchan::Sender<ChHeapCmd>,
     ) -> Self {
         let cid = CidOwned::new();
@@ -262,6 +267,7 @@ impl Stream for ChannelHandler {
             let self2 = self.as_mut().get_mut();
             match &mut self2.state {
                 State::Init => {
+                    trace!("ChannelHandler:Init");
                     let fut = channel_create(
                         self2.cid.to_u32(),
                         self2.conf.name().into(),
@@ -294,9 +300,11 @@ impl Stream for ChannelHandler {
                     }
                 }
                 State::Running(st1) => {
+                    trace!("ChannelHandler:Running");
                     match &mut st1.fetch_method {
                         FetchMethod::None => {
-                            let (inp_tx, inp_rx) = synchan::bounded(4, "MonitorCreate");
+                            trace!("ChannelHandler:Running:FetchMethod:None");
+                            let (inp_tx, inp_rx) = asynchan::bounded(4, "MonitorCreate");
                             let create_monitor = CreateMonitor::new(
                                 self2.cid.to_cid(),
                                 st1.sid.clone(),
@@ -308,78 +316,109 @@ impl Stream for ChannelHandler {
                             st1.fetch_method = FetchMethod::CreateMonitor(create_monitor);
                             hpp.mark_progress();
                         }
-                        FetchMethod::CreateMonitor(st2) => match st2.fut.poll_unpin(cx) {
-                            Ready(Ok(())) => {
-                                trace!("ChannelHandler:Running:CreateMonitor:Ready:Ok");
-                                trace!(
-                                    "ChannelHandler:Running:CreateMonitor:Ready:Ok  TODO implement monitor handling"
-                                );
-                                st1.fetch_method = FetchMethod::Monitor;
-                                hpp.mark_progress();
-                            }
-                            Ready(Err(e)) => {
-                                error!("ChannelHandler:Running:CreateMonitor:Ready:Err  TODO  handle  {e}");
-                                self2.state = State::Done;
-                                hpp.mark_progress();
-                                break Ready(Some(Err(e)));
-                            }
-                            Pending => {
-                                hpp.mark_pending();
-                            }
-                        },
-                        FetchMethod::Monitor => {}
-                    }
-                    match self2.proto_rx.poll_unpin(cx) {
-                        Ready(Ok(item)) => {
-                            // TODO process item
-                            match &item.ty {
-                                proto::CaMsgTy::EventAddRes(_) | proto::CaMsgTy::EventAddResEmpty(_) => {
-                                    // TODO send down channel must be async poll!
-                                    match &mut st1.fetch_method {
-                                        FetchMethod::CreateMonitor(st2) => match st2.inp_tx.try_send(item, cx) {
-                                            Ok(()) => {
-                                                trace!("ChannelHandler:Running:Ready:Ok  sent to CreateMonitor");
-                                                hpp.mark_progress();
-                                            }
-                                            Err(e) => match e {
-                                                synchan::SendError::Full(item) => {
-                                                    error!("TODO must handle SendError::Full");
-                                                    hpp.mark_progress();
-                                                }
-                                                synchan::SendError::Closed(item) => {
-                                                    error!("TODO must handle SendError::Closed");
-                                                    hpp.mark_progress();
-                                                }
-                                            },
-                                        },
-                                        _ => {
-                                            trace!(
-                                                "ChannelHandler:Running:Ready:Ok  TODO no create monitor ongoing {item:?}"
-                                            );
-                                            hpp.mark_progress();
-                                        }
-                                    }
-                                }
-                                _ => {
-                                    trace!("ChannelHandler:Running:Ready:Ok  TODO handle {item:?}");
+                        FetchMethod::CreateMonitor(st2) => {
+                            trace!("ChannelHandler:Running:FetchMethod:CreateMonitor");
+                            match st2.fut.poll_unpin(cx) {
+                                Ready(Ok(())) => {
+                                    trace!("ChannelHandler:Running:FetchMethod:CreateMonitor:Ready:Ok");
+                                    trace!(
+                                        "ChannelHandler:Running:FetchMethod:CreateMonitor:Ready:Ok  TODO implement monitor handling"
+                                    );
+                                    st1.fetch_method = FetchMethod::Monitor;
                                     hpp.mark_progress();
                                 }
+                                Ready(Err(e)) => {
+                                    error!(
+                                        "ChannelHandler:Running:FetchMethod:CreateMonitor:Ready:Err  TODO  handle  {e}"
+                                    );
+                                    self2.state = State::Done;
+                                    hpp.mark_progress();
+                                    break Ready(Some(Err(e)));
+                                }
+                                Pending => {
+                                    trace!("ChannelHandler:Running:FetchMethod:CreateMonitor:Pending");
+                                    hpp.mark_pending();
+                                }
                             }
                         }
-                        Ready(Err(e)) => {
-                            trace!("ChannelHandler:Running:Ready:Err {e}");
-                            // TODO handle closed channel
-                            self2.state = State::Done;
-                            hpp.mark_progress();
-                            break Ready(Some(Err(e.into())));
+                        FetchMethod::Monitor => {
+                            trace!("ChannelHandler:Running:FetchMethod:Monitor  TODO");
                         }
+                    }
+                    match self2.proto_rx.poll_next_unpin(cx) {
+                        Ready(x) => match x {
+                            Some(item) => {
+                                trace!("ChannelHandler:Running:ProtoRx:Ready:Some");
+                                // TODO process item
+                                match &item.ty {
+                                    proto::CaMsgTy::EventAddRes(_) | proto::CaMsgTy::EventAddResEmpty(_) => {
+                                        trace!("ChannelHandler:Running:ProtoRx:Ready:Some  EventAdd kind of item");
+                                        // TODO send down channel must be async poll!
+                                        match &mut st1.fetch_method {
+                                            FetchMethod::CreateMonitor(st2) => {
+                                                trace!(
+                                                    "ChannelHandler:Running:ProtoRx:Ready:Some:CreateMonitor  try_send"
+                                                );
+                                                let ee = st2.inp_tx.try_send(item, cx);
+                                                trace!(
+                                                    "ChannelHandler:Running:ProtoRx:Ready:Some:CreateMonitor  try_send matching"
+                                                );
+                                                match ee {
+                                                    Ok(()) => {
+                                                        trace!(
+                                                            "ChannelHandler:Running:ProtoRx:Ready:Some:CreateMonitor  sent to CreateMonitor"
+                                                        );
+                                                        hpp.mark_progress();
+                                                    }
+                                                    Err(e) => match e {
+                                                        TrySendError::Full(item) => {
+                                                            error!(
+                                                                "ChannelHandler:Running:ProtoRx:Ready:Some:CreateMonitor  TODO must handle SendError::Full"
+                                                            );
+                                                            // TODO keep item in another buffer?
+                                                            hpp.mark_pending();
+                                                        }
+                                                        TrySendError::Closed(item) => {
+                                                            error!(
+                                                                "ChannelHandler:Running:ProtoRx:Ready:Some:CreateMonitor  TODO must handle SendError::Closed"
+                                                            );
+                                                            hpp.mark_progress();
+                                                        }
+                                                    },
+                                                }
+                                            }
+                                            _ => {
+                                                trace!(
+                                                    "ChannelHandler:Running:Ready:Ok  TODO no create monitor ongoing {item:?}"
+                                                );
+                                                hpp.mark_progress();
+                                            }
+                                        }
+                                    }
+                                    _ => {
+                                        trace!("ChannelHandler:Running:ProtoRx:Ready:Some  TODO handle {item:?}");
+                                        hpp.mark_progress();
+                                    }
+                                }
+                            }
+                            None => {
+                                trace!("ChannelHandler:Running:ProtoRx:Ready:None");
+                                error!("ChannelHandler:Running:ProtoRx:Ready:None  TODO handle closed");
+                                // TODO handle closed channel
+                                self2.state = State::Done;
+                                hpp.mark_progress();
+                                break Ready(Some(Err(Error::ProtoRxClosed)));
+                            }
+                        },
                         Pending => {
-                            trace!("ChannelHandler:Running:Pending");
+                            trace!("ChannelHandler:Running:ProtoRx:Pending");
                             hpp.mark_pending();
                         }
                     }
                 }
-                State::Done => {}
+                State::Done => {
+                    trace!("ChannelHandler:Done");
+                }
             }
             break if hpp.have_progress() {
                 trace!("HPP:Progress");

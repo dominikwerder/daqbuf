@@ -43,7 +43,7 @@ autoerr::create_error_v1!(
 
 #[derive(Debug)]
 enum State {
-    Init(synchan::Receiver<CaMsg>),
+    Init(asynchan::Receiver<CaMsg>),
     Handshake(Handshake),
     ActiveCa(ActiveCa),
     Done,
@@ -69,7 +69,7 @@ pub struct Connected {
     state: State,
     out_tx: asynchan::Sender<CaMsg>,
     inp_buf: VecDeque<CaMsg>,
-    inp_tx_main: synchan::Sender<CaMsg>,
+    inp_tx_main: asynchan::Sender<CaMsg>,
 }
 
 impl Connected {
@@ -83,8 +83,8 @@ impl Connected {
             addr.to_string(),
             array_truncate,
         );
-        let (inp_tx, inp_rx) = synchan::bounded(16, "Connected-inp");
-        let (out_tx, out_rx) = asynchan::bounded(16);
+        let (inp_tx, inp_rx) = asynchan::bounded(16, "Connected-inp");
+        let (out_tx, out_rx) = asynchan::bounded(16, "Connected-out");
         let protowrap = protowrap::ProtoPusher::new(proto, out_rx);
 
         // TODO poll the protowrap input and distribute to sub state.
@@ -158,7 +158,7 @@ impl Stream for Connected {
             }
             match &mut self2.state {
                 State::Init(st1) => {
-                    let inp_rx = std::mem::replace(st1, synchan::bounded(1, "Connected-dummy").1);
+                    let inp_rx = std::mem::replace(st1, asynchan::bounded(1, "Connected-dummy").1);
                     let stn = Handshake::new(inp_rx, self.out_tx.clone(), tsnow, self.addr.clone());
                     self.state = State::Handshake(stn);
                     if true {
@@ -173,7 +173,7 @@ impl Stream for Connected {
                         let st1 = std::mem::replace(st1, st1.to_dummy());
                         let tx = self2.out_tx.clone();
                         let (rx,) = st1.dismantle();
-                        let stn = ActiveCa::new(rx, tx, tsnow, self2.addr);
+                        let stn = ActiveCa::new(rx, tx, tsnow, self2.addr, cx);
                         self.state = State::ActiveCa(stn);
                         hpp.mark_progress();
                     }

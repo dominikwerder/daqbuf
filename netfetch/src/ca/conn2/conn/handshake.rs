@@ -1,8 +1,7 @@
 use crate::ca::conn2::asynchan;
-use crate::ca::conn2::synchan;
 use ca_proto::ca::proto::CaMsg;
 use ca_proto::ca::proto::CaMsgTy;
-use futures_util::FutureExt;
+use futures_util::StreamExt;
 use std::collections::VecDeque;
 use std::future::Future;
 use std::net::SocketAddrV4;
@@ -63,11 +62,11 @@ pub struct Handshake {
     addr: SocketAddrV4,
     state: State,
     tx: asynchan::Sender<CaMsg>,
-    rx: synchan::Receiver<CaMsg>,
+    rx: asynchan::Receiver<CaMsg>,
 }
 
 impl Handshake {
-    pub fn new(rx: synchan::Receiver<CaMsg>, tx: asynchan::Sender<CaMsg>, tsnow: Instant, addr: SocketAddrV4) -> Self {
+    pub fn new(rx: asynchan::Receiver<CaMsg>, tx: asynchan::Sender<CaMsg>, tsnow: Instant, addr: SocketAddrV4) -> Self {
         Self {
             tsbeg: tsnow,
             addr,
@@ -77,7 +76,7 @@ impl Handshake {
         }
     }
 
-    pub fn dismantle(self) -> (synchan::Receiver<CaMsg>,) {
+    pub fn dismantle(self) -> (asynchan::Receiver<CaMsg>,) {
         (self.rx,)
     }
 
@@ -103,7 +102,7 @@ impl Future for Handshake {
             break match &mut self2.state {
                 State::HelloSend(st1) => {
                     if let Some(msg) = st1.msgs.pop_front() {
-                        match self2.tx.try_send(msg) {
+                        match self2.tx.try_send(msg, cx) {
                             Ok(()) => {
                                 trace!("Tx:Sent");
                                 continue;
@@ -128,42 +127,44 @@ impl Future for Handshake {
                     }
                 }
                 State::HelloRecv => {
-                    break match self.rx.poll_unpin(cx) {
-                        Ready(Ok(item)) => {
-                            trace!("Rx:Ready:Item:{item:?}");
-                            match &item.ty {
-                                CaMsgTy::VersionRes(n) => {
-                                    let n = *n;
-                                    if n < 12 || n > 13 {
-                                        error!("unexpected channel access version {} from {}", n, self.addr);
-                                        self.state = State::Done;
-                                        Ready(Err(Error::EpicsVersion(n)))
-                                    } else {
-                                        if n != 13 {
-                                            warn!("received peer channel access version {} from {}", n, self.addr);
+                    break match self.rx.poll_next_unpin(cx) {
+                        Ready(x) => match x {
+                            Some(item) => {
+                                trace!("Rx:Ready:Item:{item:?}");
+                                match &item.ty {
+                                    CaMsgTy::VersionRes(n) => {
+                                        let n = *n;
+                                        if n < 12 || n > 13 {
+                                            error!("unexpected channel access version {} from {}", n, self.addr);
+                                            self.state = State::Done;
+                                            Ready(Err(Error::EpicsVersion(n)))
+                                        } else {
+                                            if n != 13 {
+                                                warn!("received peer channel access version {} from {}", n, self.addr);
+                                            }
+                                            self.state = State::Done;
+                                            Ready(Ok(()))
                                         }
-                                        self.state = State::Done;
+                                    }
+                                    CaMsgTy::CreateChanRes(k) => {
+                                        warn!("got unexpected {:?}", k);
+                                        Ready(Ok(()))
+                                    }
+                                    CaMsgTy::AccessRightsRes(k) => {
+                                        warn!("got unexpected {:?}", k);
+                                        Ready(Ok(()))
+                                    }
+                                    _ => {
+                                        warn!("got some other unhandled message: {item:?}");
                                         Ready(Ok(()))
                                     }
                                 }
-                                CaMsgTy::CreateChanRes(k) => {
-                                    warn!("got unexpected {:?}", k);
-                                    Ready(Ok(()))
-                                }
-                                CaMsgTy::AccessRightsRes(k) => {
-                                    warn!("got unexpected {:?}", k);
-                                    Ready(Ok(()))
-                                }
-                                _ => {
-                                    warn!("got some other unhandled message: {item:?}");
-                                    Ready(Ok(()))
-                                }
                             }
-                        }
-                        Ready(Err(_)) => {
-                            trace!("Rx:Done");
-                            Ready(Ok(()))
-                        }
+                            None => {
+                                trace!("Rx:Done");
+                                Ready(Ok(()))
+                            }
+                        },
                         Pending => {
                             trace!("Rx:Pending");
                             Pending

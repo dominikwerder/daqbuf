@@ -1,11 +1,11 @@
 use crate::ca::conn2::asynchan;
 use crate::ca::conn2::asynchan::Receiver;
 use crate::ca::conn2::asynchan::Sender;
+use crate::ca::conn2::asynchan::TrySendError;
 use crate::ca::conn2::caids::Cid;
 use crate::ca::conn2::conn::channelheap;
 use crate::ca::conn2::conn::channelheap::ChannelHeap;
 use crate::ca::conn2::progpend::HaveProgressPending;
-use crate::ca::conn2::synchan;
 use crate::conf::ChannelConfig;
 use ca_proto::ca::proto::CaItem;
 use ca_proto::ca::proto::CaMsg;
@@ -15,12 +15,10 @@ use ca_proto_tokio::tcpasyncwriteread::TcpAsyncWriteRead;
 use futures_util::FutureExt;
 use futures_util::Stream;
 use futures_util::StreamExt;
-use netpod::extltref;
 use std::collections::VecDeque;
 use std::fmt;
 use std::future::Future;
 use std::net::SocketAddrV4;
-use std::os::fd::AsRawFd;
 use std::pin::Pin;
 use std::task;
 use std::task::Context;
@@ -121,12 +119,13 @@ impl ActiveCa {
         proto_tx: Sender<CaMsg>,
         tsnow: Instant,
         addr: SocketAddrV4,
+        cx: &mut Context,
     ) -> Self {
         let (mut cmd_tx, cmd_rx) = asynchan::bounded(16, "ActiveCa-cmd");
         {
             let conf = ChannelConfig::st_monitor("TEST:SLOW:SCALAR:F32:000000", "test");
             let cmd = CaCommand::channel_add(conf);
-            cmd_tx.try_send(cmd).unwrap();
+            cmd_tx.try_send(cmd, cx).unwrap();
         }
         let (proto_2_tx, proto_2_rx) = asynchan::bounded(120, "ActiveCa-proto2");
         Self {
@@ -226,23 +225,25 @@ impl Stream for ActiveCa {
                     // Add waker drop check that it never goes above N or below 0.
 
                     if self2.proto_rx_buf.len() < self2.proto_rx_buf.capacity() {
-                        match self2.proto_rx.poll_unpin(cx) {
-                            Ready(Ok(item)) => {
-                                trace!("Rx:Ready:Item:{item:?}");
-                                match &item.ty {
-                                    _ => {
-                                        warn!("received message: {item:?}");
-                                        hpp.mark_progress();
+                        match self2.proto_rx.poll_next_unpin(cx) {
+                            Ready(x) => match x {
+                                Some(item) => {
+                                    trace!("Rx:Ready:Item:{item:?}");
+                                    match &item.ty {
+                                        _ => {
+                                            warn!("received message: {item:?}");
+                                            hpp.mark_progress();
+                                        }
                                     }
+                                    self.proto_rx_buf.push_back(item);
                                 }
-                                self.proto_rx_buf.push_back(item);
-                            }
-                            Ready(Err(_)) => {
-                                trace!("Rx:Error");
-                                error!("TODO clean shutdown");
-                                self.state = State::Done;
-                                hpp.mark_progress();
-                            }
+                                None => {
+                                    trace!("Rx:Error");
+                                    error!("TODO clean shutdown");
+                                    self.state = State::Done;
+                                    hpp.mark_progress();
+                                }
+                            },
                             Pending => {
                                 trace!("Rx:Pending");
                                 hpp.mark_pending();
@@ -268,21 +269,18 @@ impl Stream for ActiveCa {
                                         trace!("Proto2Tx:Sent");
                                         hpp.mark_progress();
                                     }
-                                    Err(e) => {
-                                        use synchan::SendError;
-                                        match e {
-                                            SendError::Full(item) => {
-                                                trace!("Proto2Tx:Full");
-                                                self.proto_rx_buf.push_front(item);
-                                                hpp.mark_pending();
-                                            }
-                                            SendError::Closed(item) => {
-                                                trace!("Proto2Tx:Closed");
-                                                self.proto_rx_buf.push_front(item);
-                                                error!("TODO handle Proto2Tx:Closed");
-                                            }
+                                    Err(e) => match e {
+                                        TrySendError::Full(item) => {
+                                            trace!("Proto2Tx:Full");
+                                            self.proto_rx_buf.push_front(item);
+                                            hpp.mark_pending();
                                         }
-                                    }
+                                        TrySendError::Closed(item) => {
+                                            trace!("Proto2Tx:Closed");
+                                            self.proto_rx_buf.push_front(item);
+                                            error!("TODO handle Proto2Tx:Closed");
+                                        }
+                                    },
                                 }
                             } else {
                                 error!("TODO handle incoming item internally: {item:?}");

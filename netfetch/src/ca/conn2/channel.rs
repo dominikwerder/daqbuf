@@ -1,5 +1,6 @@
 mod init;
 
+use crate::ca::conn2::asynchan;
 use crate::ca::conn2::proto_channel::ProtoOutChannel;
 use crate::ca::conn2::synchan;
 use crate::conf::ChannelConfig;
@@ -46,7 +47,7 @@ pub struct SharedResources {
     #[serde(serialize_with = "ser_proto_out")]
     proto_out: Arc<ProtoOutChannel>,
     #[serde(serialize_with = "ser_msg_rx")]
-    msg_rx: synchan::Receiver<proto::CaMsg>,
+    msg_rx: asynchan::Receiver<proto::CaMsg>,
 }
 
 fn ser_proto_out<S>(v: &Arc<ProtoOutChannel>, ser: S) -> Result<S::Ok, S::Error>
@@ -56,7 +57,7 @@ where
     ser.serialize_str("Arc<ProtoOutChannel>")
 }
 
-fn ser_msg_rx<S>(v: &synchan::Receiver<proto::CaMsg>, ser: S) -> Result<S::Ok, S::Error>
+fn ser_msg_rx<S>(v: &asynchan::Receiver<proto::CaMsg>, ser: S) -> Result<S::Ok, S::Error>
 where
     S: serde::Serializer,
 {

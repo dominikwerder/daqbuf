@@ -17,22 +17,27 @@ macro_rules! trace { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
 static ID_REG: LazyLock<Mutex<(HashMap<u32, u32>, Xoshiro128PlusPlus, u32)>> =
     LazyLock::new(|| Mutex::new((HashMap::new(), Xoshiro128PlusPlus::from_os_rng(), 0)));
 
+fn gen_next(reg: &LazyLock<Mutex<(HashMap<u32, u32>, Xoshiro128PlusPlus, u32)>>) -> (u32, u32) {
+    let mut g = reg.lock().unwrap();
+    loop {
+        use stats::rand_xoshiro::rand_core::RngCore;
+        let k = g.1.next_u32() & 0x7fffffff;
+        break if g.0.try_insert(k, k).is_err() {
+            continue;
+        } else {
+            g.2 += 1;
+            (k, g.2)
+        };
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct IdOwned(u32);
 
 impl IdOwned {
     pub fn new() -> Self {
-        let mut g = ID_REG.lock().unwrap();
-        loop {
-            use stats::rand_xoshiro::rand_core::RngCore;
-            let k = g.1.next_u32() & 0x7fffffff;
-            break if g.0.try_insert(k, k).is_err() {
-                continue;
-            } else {
-                g.2 += 1;
-                Self(g.2)
-            };
-        }
+        let (_a, b) = gen_next(&ID_REG);
+        Self(b)
     }
 
     pub fn to_u32(&self) -> u32 {

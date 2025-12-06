@@ -6,8 +6,8 @@ use crate::ca::conn2::caids::Sid;
 use crate::ca::conn2::caids::Subid;
 use crate::ca::conn2::conn::channelheap::channelhandler::ChannelHandler;
 use crate::ca::conn2::progpend::HaveProgressPending;
-use crate::ca::conn2::synchan;
 use crate::conf::ChannelConfig;
+use asynchan::TrySendError;
 use ca_proto::ca::proto::CaMsg;
 use futures_util::FutureExt;
 use futures_util::Stream;
@@ -29,15 +29,17 @@ autoerr::create_error_v1!(
     name(Error, "ChannelHeap"),
     enum variants {
         ChannelHandler(#[from] channelhandler::Error),
-        CaInput(#[from] synchan::RecvError),
+        Recv(#[from] asynchan::RecvError),
+        RecvTry(#[from] asynchan::TryRecvError),
         Msg(String),
+        ProtoRxClosed,
     },
 );
 
 #[derive(Debug)]
 struct ChannelEntry {
     handler: ChannelHandler,
-    tx: synchan::Sender<CaMsg>,
+    tx: asynchan::Sender<CaMsg>,
     waker: task::Waker,
 }
 
@@ -83,7 +85,9 @@ mod waker1 {
     fn wake(d: *const ()) {
         let data = unsafe { Arc::<WakeData>::from_raw(d as _) };
         trace!("waker1:wake  {}", data.cid());
-        data.wakeup_cids.insert(data.cid(), ());
+        {
+            data.wakeup_cids.insert(data.cid(), ());
+        }
         data.wk1.wake_by_ref();
         let _ = Arc::into_raw(data);
     }
@@ -91,7 +95,9 @@ mod waker1 {
     fn wake_by_ref(d: *const ()) {
         let data = unsafe { Arc::<WakeData>::from_raw(d as _) };
         trace!("waker1:wake_by_ref  {}", data.cid());
-        data.wakeup_cids.insert(data.cid(), ());
+        {
+            data.wakeup_cids.insert(data.cid(), ());
+        }
         data.wk1.wake_by_ref();
         let _ = Arc::into_raw(data);
     }
@@ -151,7 +157,7 @@ pub struct ChannelHeap {
 
 impl ChannelHeap {
     pub fn new(proto_tx: asynchan::Sender<CaMsg>, proto_rx: asynchan::Receiver<CaMsg>) -> Self {
-        let (ch_hp_tx, ch_hp_rx) = asynchan::bounded(12);
+        let (ch_hp_tx, ch_hp_rx) = asynchan::bounded(12, "ChannelHandler-to-ChannelHeap");
         Self {
             state: State::Running,
             proto_tx,
@@ -217,6 +223,7 @@ impl Stream for ChannelHeap {
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         use Poll::*;
+        trace!("ChannelHeap  poll_next");
         'main: loop {
             let mut hpp = HaveProgressPending::new();
             match &self.state {
@@ -241,7 +248,7 @@ impl Stream for ChannelHeap {
                                         );
                                     } else {
                                         trace!("ChannelHeap:ChHpCmd:RegisterSubid:Ok  {subid}");
-                                        match resp_tx.try_send(1) {
+                                        match resp_tx.try_send(1, cx) {
                                             Ok(()) => {}
                                             Err(_) => {
                                                 // TODO should never happen
@@ -262,18 +269,20 @@ impl Stream for ChannelHeap {
                         }
                     }
                     if self.inp_buf.len() < self.inp_buf.capacity() {
-                        match self.proto_rx.poll_unpin(cx) {
-                            Ready(Ok(item)) => {
-                                trace!("ChannelHeap:CaInp:Rx:Ok");
-                                hpp.mark_progress();
-                                self.inp_buf.push_back(item);
-                            }
-                            Ready(Err(e)) => {
-                                trace!("ChannelHeap:CaInp:Rx:Err");
-                                hpp.mark_progress();
-                                self.state = State::Done;
-                                break Ready(Some(Err(e.into())));
-                            }
+                        match self.proto_rx.poll_next_unpin(cx) {
+                            Ready(x) => match x {
+                                Some(item) => {
+                                    trace!("ChannelHeap:CaInp:Rx:Ok");
+                                    hpp.mark_progress();
+                                    self.inp_buf.push_back(item);
+                                }
+                                None => {
+                                    trace!("ChannelHeap:CaInp:Rx:Err");
+                                    hpp.mark_progress();
+                                    self.state = State::Done;
+                                    break Ready(Some(Err(Error::ProtoRxClosed)));
+                                }
+                            },
                             Pending => {
                                 trace!("ChannelHeap:CaInp:Rx:Pending");
                                 hpp.mark_pending();
@@ -296,20 +305,22 @@ impl Stream for ChannelHeap {
                                             trace!("ChannelHeap:Dispatch:Sent {cid}");
                                             hpp.mark_progress();
                                         }
-                                        Err(synchan::SendError::Full(item)) => {
-                                            trace!("ChannelHeap:Dispatch:Pending {cid}");
-                                            self2.inp_buf.push_front(item);
-                                            hpp.mark_pending();
-                                        }
-                                        Err(synchan::SendError::Closed(item)) => {
-                                            trace!("ChannelHeap:Dispatch:Closed {cid}");
-                                            self2.inp_buf.push_front(item);
-                                            hpp.mark_progress();
-                                            self2.state = State::Done;
-                                            warn!("TODO handle closed channel handler gracefully");
-                                            let msg = format!("ChannelHeap: channel handler for cid {cid} closed");
-                                            break 'main Ready(Some(Err(Error::Msg(msg))));
-                                        }
+                                        Err(e) => match e {
+                                            TrySendError::Full(item) => {
+                                                trace!("ChannelHeap:Dispatch:Pending {cid}");
+                                                self2.inp_buf.push_front(item);
+                                                hpp.mark_pending();
+                                            }
+                                            TrySendError::Closed(item) => {
+                                                trace!("ChannelHeap:Dispatch:Closed {cid}");
+                                                self2.inp_buf.push_front(item);
+                                                hpp.mark_progress();
+                                                self2.state = State::Done;
+                                                warn!("TODO handle closed channel handler gracefully");
+                                                let msg = format!("ChannelHeap: channel handler for cid {cid} closed");
+                                                break 'main Ready(Some(Err(Error::Msg(msg))));
+                                            }
+                                        },
                                     }
                                 } else {
                                     hpp.mark_progress();
@@ -323,20 +334,22 @@ impl Stream for ChannelHeap {
                                                 trace!("ChannelHeap:Dispatch:Sent {cid}");
                                                 hpp.mark_progress();
                                             }
-                                            Err(synchan::SendError::Full(item)) => {
-                                                trace!("ChannelHeap:Dispatch:Pending {cid}");
-                                                self2.inp_buf.push_front(item);
-                                                hpp.mark_pending();
-                                            }
-                                            Err(synchan::SendError::Closed(item)) => {
-                                                trace!("ChannelHeap:Dispatch:Closed {cid}");
-                                                self2.inp_buf.push_front(item);
-                                                hpp.mark_progress();
-                                                self2.state = State::Done;
-                                                warn!("TODO handle closed channel handler gracefully");
-                                                let msg = format!("ChannelHeap: channel handler for cid closed");
-                                                break 'main Ready(Some(Err(Error::Msg(msg))));
-                                            }
+                                            Err(e) => match e {
+                                                TrySendError::Full(item) => {
+                                                    trace!("ChannelHeap:Dispatch:Pending {cid}");
+                                                    self2.inp_buf.push_front(item);
+                                                    hpp.mark_pending();
+                                                }
+                                                TrySendError::Closed(item) => {
+                                                    trace!("ChannelHeap:Dispatch:Closed {cid}");
+                                                    self2.inp_buf.push_front(item);
+                                                    hpp.mark_progress();
+                                                    self2.state = State::Done;
+                                                    warn!("TODO handle closed channel handler gracefully");
+                                                    let msg = format!("ChannelHeap: channel handler for cid closed");
+                                                    break 'main Ready(Some(Err(Error::Msg(msg))));
+                                                }
+                                            },
                                         }
                                     } else {
                                         hpp.mark_progress();
@@ -355,11 +368,12 @@ impl Stream for ChannelHeap {
                     // TODO also wake up those for which we just discovered input.
                     let self2 = self.as_mut().get_mut();
                     for e in self2.wakeup_cids.iter() {
-                        trace!("ChannelHeap: waking cid {}", e.key());
+                        trace!("ChannelHeap  waking cid {}", e.key());
                     }
-                    for e in self2.wakeup_cids.iter() {
-                        let cid = e.key();
-                        // trace!("ChannelHeap: waking cid {}", e.key());
+                    let cids_for_wakeup: Vec<_> = self2.wakeup_cids.iter().map(|x| x.key().clone()).collect();
+                    for cid in cids_for_wakeup {
+                        let cid = &cid;
+                        trace!("ChannelHeap  waking  {cid}");
                         if let Some(h) = self2.by_cid.get_mut(cid) {
                             let cx2 = &mut Context::from_waker(&h.waker);
                             match h.handler.poll_next_unpin(cx2) {
