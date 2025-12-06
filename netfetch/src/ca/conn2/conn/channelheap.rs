@@ -24,6 +24,14 @@ use std::time::Instant;
 macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
 macro_rules! warn { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
 macro_rules! trace { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
+macro_rules! trace2 { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
+macro_rules! trace3 { ($($arg:tt)*) => { if false { log::info!($($arg)*); } }; }
+macro_rules! trace4 { ($($arg:tt)*) => { if false { log::info!($($arg)*); } }; }
+macro_rules! trace_pending { ($($arg:tt)*) => { if false { trace!("{}  Pending", format_args!($($arg)*)); } }; }
+
+fn _dffdg() {
+    format_args!("");
+}
 
 autoerr::create_error_v1!(
     name(Error, "ChannelHeap"),
@@ -54,6 +62,7 @@ mod waker1 {
     use std::sync::Arc;
     use std::sync::atomic::AtomicU32;
     use std::sync::atomic::Ordering::AcqRel;
+    use std::sync::atomic::Ordering::Acquire;
     use std::task;
 
     struct WakeData {
@@ -71,7 +80,13 @@ mod waker1 {
 
     fn clone(d: *const ()) -> task::RawWaker {
         let data = unsafe { Arc::<WakeData>::from_raw(d as _) };
-        trace!("waker1:clone  {}", data.cid());
+        trace!(
+            "waker1:clone  {}  {}  {}  {}",
+            data.cid(),
+            data.cnt.load(Acquire),
+            Arc::strong_count(&data),
+            Arc::weak_count(&data)
+        );
         let rw = {
             let data = data.clone();
             data.cnt.fetch_add(1, AcqRel);
@@ -84,7 +99,13 @@ mod waker1 {
 
     fn wake(d: *const ()) {
         let data = unsafe { Arc::<WakeData>::from_raw(d as _) };
-        trace!("waker1:wake  {}", data.cid());
+        trace!(
+            "waker1:wake  {}  {}  {}  {}",
+            data.cid(),
+            data.cnt.load(Acquire),
+            Arc::strong_count(&data),
+            Arc::weak_count(&data)
+        );
         {
             data.wakeup_cids.insert(data.cid(), ());
         }
@@ -94,7 +115,13 @@ mod waker1 {
 
     fn wake_by_ref(d: *const ()) {
         let data = unsafe { Arc::<WakeData>::from_raw(d as _) };
-        trace!("waker1:wake_by_ref  {}", data.cid());
+        trace!(
+            "waker1:wake_by_ref  {}  {}  {}  {}",
+            data.cid(),
+            data.cnt.load(Acquire),
+            Arc::strong_count(&data),
+            Arc::weak_count(&data)
+        );
         {
             data.wakeup_cids.insert(data.cid(), ());
         }
@@ -104,7 +131,13 @@ mod waker1 {
 
     fn drop(d: *const ()) {
         let data = unsafe { Arc::<WakeData>::from_raw(d as _) };
-        trace!("waker1:drop  {}", data.cid());
+        trace!(
+            "waker1:drop  {}  {}  {}  {}",
+            data.cid(),
+            data.cnt.load(Acquire),
+            Arc::strong_count(&data),
+            Arc::weak_count(&data)
+        );
         data.cnt.fetch_sub(1, AcqRel);
         std::mem::drop(data);
     }
@@ -151,6 +184,7 @@ pub struct ChannelHeap {
     by_subid: HashMap<Subid, Cid>,
     inp_buf: VecDeque<CaMsg>,
     wakeup_cids: Arc<dashmap::DashMap<Cid, ()>>,
+    wakeup_cids_tmp: Vec<Cid>,
     ch_hp_tx: asynchan::Sender<ChHeapCmd>,
     ch_hp_rx: asynchan::Receiver<ChHeapCmd>,
 }
@@ -166,6 +200,7 @@ impl ChannelHeap {
             by_subid: HashMap::new(),
             inp_buf: VecDeque::with_capacity(8),
             wakeup_cids: Arc::new(dashmap::DashMap::new()),
+            wakeup_cids_tmp: Vec::new(),
             ch_hp_tx,
             ch_hp_rx,
         }
@@ -208,7 +243,7 @@ impl ChannelHeap {
                     error!("ChannelHeap:channel_add:Poll:Done  TODO must handle ChannelHandler finish");
                 }
                 Pending => {
-                    trace!("ChannelHeap:channel_add:Poll:Pending");
+                    trace_pending!("ChannelHeap:channel_add:Poll:Pending");
                     error!("ChannelHeap:channel_add:Poll:Pending  TODO must mark Pending");
                 }
             };
@@ -223,7 +258,7 @@ impl Stream for ChannelHeap {
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         use Poll::*;
-        trace!("ChannelHeap  poll_next");
+        trace4!("ChannelHeap  poll_next");
         'main: loop {
             let mut hpp = HaveProgressPending::new();
             match &self.state {
@@ -264,7 +299,7 @@ impl Stream for ChannelHeap {
                             // TODO handle closed command channel
                         }
                         Pending => {
-                            trace!("ChannelHeap:ChHpCmd:Pending");
+                            trace_pending!("ChannelHeap:ChHpCmd");
                             hpp.mark_pending();
                         }
                     }
@@ -284,7 +319,7 @@ impl Stream for ChannelHeap {
                                 }
                             },
                             Pending => {
-                                trace!("ChannelHeap:CaInp:Rx:Pending");
+                                trace_pending!("ChannelHeap:CaInp:Rx");
                                 hpp.mark_pending();
                             }
                         }
@@ -307,7 +342,7 @@ impl Stream for ChannelHeap {
                                         }
                                         Err(e) => match e {
                                             TrySendError::Full(item) => {
-                                                trace!("ChannelHeap:Dispatch:Pending {cid}");
+                                                trace_pending!("ChannelHeap:Dispatch  {cid}");
                                                 self2.inp_buf.push_front(item);
                                                 hpp.mark_pending();
                                             }
@@ -336,7 +371,7 @@ impl Stream for ChannelHeap {
                                             }
                                             Err(e) => match e {
                                                 TrySendError::Full(item) => {
-                                                    trace!("ChannelHeap:Dispatch:Pending {cid}");
+                                                    trace_pending!("ChannelHeap:Dispatch  {cid}");
                                                     self2.inp_buf.push_front(item);
                                                     hpp.mark_pending();
                                                 }
@@ -367,12 +402,12 @@ impl Stream for ChannelHeap {
                     }
                     // TODO also wake up those for which we just discovered input.
                     let self2 = self.as_mut().get_mut();
-                    for e in self2.wakeup_cids.iter() {
-                        trace!("ChannelHeap  waking cid {}", e.key());
-                    }
-                    let cids_for_wakeup: Vec<_> = self2.wakeup_cids.iter().map(|x| x.key().clone()).collect();
-                    for cid in cids_for_wakeup {
-                        let cid = &cid;
+                    self2.wakeup_cids_tmp.clear();
+                    self2
+                        .wakeup_cids_tmp
+                        .extend(self2.wakeup_cids.iter().map(|x| x.key().clone()));
+                    for cid in self2.wakeup_cids_tmp.iter() {
+                        // let cid = &cid;
                         trace!("ChannelHeap  waking  {cid}");
                         if let Some(h) = self2.by_cid.get_mut(cid) {
                             let cx2 = &mut Context::from_waker(&h.waker);
@@ -412,7 +447,7 @@ impl Stream for ChannelHeap {
                                 }
                                 Pending => {
                                     hpp.mark_pending();
-                                    trace!("ChannelHeap:Handler:Pending {cid}");
+                                    trace_pending!("ChannelHeap:Handler  {cid}");
                                 }
                             }
                         } else {
@@ -427,7 +462,7 @@ impl Stream for ChannelHeap {
                 trace!("HPP:Progress");
                 continue;
             } else if hpp.have_pending() {
-                trace!("HPP:Pending");
+                trace_pending!("HPP");
                 Pending
             } else {
                 trace!("HPP:Done");

@@ -25,6 +25,10 @@ use std::time::Instant;
 macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
 macro_rules! warn { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
 macro_rules! trace { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
+macro_rules! trace2 { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
+macro_rules! trace3 { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
+macro_rules! trace4 { ($($arg:tt)*) => { if false { log::info!($($arg)*); } }; }
+macro_rules! trace_pending { ($($arg:tt)*) => { if false { trace!("{}  Pending", format_args!($($arg)*)); } }; }
 
 autoerr::create_error_v1!(
     name(Error, "ChannelHandler"),
@@ -260,7 +264,7 @@ impl Stream for ChannelHandler {
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         use Poll::*;
-        trace!("ChannelHandler:poll_next  {}", self.cid);
+        trace4!("ChannelHandler:poll_next  {}", self.cid);
         loop {
             let tsnow = Instant::now();
             let mut hpp = HaveProgressPending::new();
@@ -294,13 +298,12 @@ impl Stream for ChannelHandler {
                             break Ready(Some(Err(e)));
                         }
                         Pending => {
-                            trace!("ChannelHandler:Creating:Pending");
+                            trace_pending!("ChannelHandler:Creating");
                             hpp.mark_pending();
                         }
                     }
                 }
                 State::Running(st1) => {
-                    trace!("ChannelHandler:Running");
                     match &mut st1.fetch_method {
                         FetchMethod::None => {
                             trace!("ChannelHandler:Running:FetchMethod:None");
@@ -336,7 +339,7 @@ impl Stream for ChannelHandler {
                                     break Ready(Some(Err(e)));
                                 }
                                 Pending => {
-                                    trace!("ChannelHandler:Running:FetchMethod:CreateMonitor:Pending");
+                                    trace_pending!("ChannelHandler:Running:FetchMethod:CreateMonitor");
                                     hpp.mark_pending();
                                 }
                             }
@@ -348,21 +351,16 @@ impl Stream for ChannelHandler {
                     match self2.proto_rx.poll_next_unpin(cx) {
                         Ready(x) => match x {
                             Some(item) => {
-                                trace!("ChannelHandler:Running:ProtoRx:Ready:Some");
                                 // TODO process item
                                 match &item.ty {
                                     proto::CaMsgTy::EventAddRes(_) | proto::CaMsgTy::EventAddResEmpty(_) => {
-                                        trace!("ChannelHandler:Running:ProtoRx:Ready:Some  EventAdd kind of item");
-                                        // TODO send down channel must be async poll!
                                         match &mut st1.fetch_method {
                                             FetchMethod::CreateMonitor(st2) => {
                                                 trace!(
                                                     "ChannelHandler:Running:ProtoRx:Ready:Some:CreateMonitor  try_send"
                                                 );
+                                                // TODO send down channel must be async poll!
                                                 let ee = st2.inp_tx.try_send(item, cx);
-                                                trace!(
-                                                    "ChannelHandler:Running:ProtoRx:Ready:Some:CreateMonitor  try_send matching"
-                                                );
                                                 match ee {
                                                     Ok(()) => {
                                                         trace!(
@@ -387,10 +385,14 @@ impl Stream for ChannelHandler {
                                                     },
                                                 }
                                             }
-                                            _ => {
+                                            FetchMethod::Monitor => {
                                                 trace!(
-                                                    "ChannelHandler:Running:Ready:Ok  TODO no create monitor ongoing {item:?}"
+                                                    "ChannelHandler:Running:ProtoRx:Ready:Some:Monitor    TODO handle monitor update{item:?}"
                                                 );
+                                                hpp.mark_progress();
+                                            }
+                                            _ => {
+                                                trace!("ChannelHandler:Running:Ready:Ok  TODO handle {item:?}");
                                                 hpp.mark_progress();
                                             }
                                         }
@@ -411,7 +413,7 @@ impl Stream for ChannelHandler {
                             }
                         },
                         Pending => {
-                            trace!("ChannelHandler:Running:ProtoRx:Pending");
+                            trace_pending!("ChannelHandler:Running:ProtoRx");
                             hpp.mark_pending();
                         }
                     }
@@ -424,7 +426,7 @@ impl Stream for ChannelHandler {
                 trace!("HPP:Progress");
                 continue;
             } else if hpp.have_pending() {
-                trace!("HPP:Pending");
+                trace_pending!("HPP");
                 Pending
             } else {
                 trace!("HPP:Done");

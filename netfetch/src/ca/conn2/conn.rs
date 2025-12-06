@@ -45,6 +45,10 @@ macro_rules! warn { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
 macro_rules! info { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
 macro_rules! conn_err { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
 macro_rules! trace { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
+macro_rules! trace2 { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
+macro_rules! trace3 { ($($arg:tt)*) => { if false { log::info!($($arg)*); } }; }
+macro_rules! trace4 { ($($arg:tt)*) => { if false { log::info!($($arg)*); } }; }
+macro_rules! trace_pending { ($($arg:tt)*) => { if false { trace!("{}  Pending", format_args!($($arg)*)); } }; }
 
 autoerr::create_error_v1!(
     name(Error, "Conn"),
@@ -212,7 +216,7 @@ impl Stream for CaConn {
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         use Poll::*;
-        trace!("CaConn:poll_next");
+        trace4!("CaConn  poll_next");
         let mut durs = DurationMeasureSteps::new();
         self.mett.poll_fn_begin().inc();
         let ret = loop {
@@ -413,7 +417,7 @@ impl Stream for CaConn {
                 trace!("HPP:Progress");
                 continue;
             } else if hpp.have_pending() {
-                trace!("HPP:Pending");
+                trace_pending!("HPP");
                 Pending
             } else {
                 trace!("HPP:Done");

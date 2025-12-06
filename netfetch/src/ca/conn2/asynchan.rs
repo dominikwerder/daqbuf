@@ -56,9 +56,9 @@ use std::task::Waker;
 
 impl<T> Sender<T> {
     pub fn try_send(&mut self, msg: T, cx: &mut Context) -> Result<(), TrySendError<T>> {
-        trace!("Receiver:try_send  A  n {n}", n = self.0.len());
+        // trace!("Receiver:try_send  A  n {n}", n = self.0.len());
         let ret = self.0.try_send(msg);
-        trace!("Receiver:try_send  B  n {n}", n = self.0.len());
+        // trace!("Receiver:try_send  B  n {n}", n = self.0.len());
         ret
     }
 
@@ -71,9 +71,9 @@ impl<T> Sender<T> {
 
 impl<T> Receiver<T> {
     pub fn try_recv(&mut self, cx: &mut Context) -> Result<T, TryRecvError> {
-        trace!("Receiver:try_recv  A  n {n}", n = self.0.len());
+        // trace!("Receiver:try_recv  A  n {n}", n = self.0.len());
         let ret = self.0.try_recv();
-        trace!("Receiver:try_recv  B  n {n}", n = self.0.len());
+        // trace!("Receiver:try_recv  B  n {n}", n = self.0.len());
         ret
     }
 

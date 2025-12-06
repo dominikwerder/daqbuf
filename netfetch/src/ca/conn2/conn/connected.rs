@@ -28,6 +28,10 @@ use tokio::net::TcpStream;
 
 macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
 macro_rules! trace { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
+macro_rules! trace2 { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
+macro_rules! trace3 { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
+macro_rules! trace4 { ($($arg:tt)*) => { if false { log::info!($($arg)*); } }; }
+macro_rules! trace_pending { ($($arg:tt)*) => { if false { trace!("{}  Pending", format_args!($($arg)*)); } }; }
 
 autoerr::create_error_v1!(
     name(Error, "Connected"),
@@ -111,7 +115,7 @@ impl Stream for Connected {
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         use Poll::*;
-        trace!("Connected:poll_next");
+        trace4!("Connected:poll_next");
         loop {
             let tsnow = Instant::now();
             let mut self2 = self.as_mut();
@@ -184,7 +188,7 @@ impl Stream for Connected {
                         break Ready(Some(Err(e.into())));
                     }
                     Pending => {
-                        trace!("Handshake:Pending");
+                        trace_pending!("Handshake");
                         hpp.mark_pending();
                     }
                 },
@@ -215,7 +219,7 @@ impl Stream for Connected {
                         hpp.mark_progress();
                     }
                     Pending => {
-                        trace!("ActiveCa:Pending");
+                        trace_pending!("ActiveCa");
                         hpp.mark_pending();
                     }
                 },
@@ -225,7 +229,7 @@ impl Stream for Connected {
                 trace!("HPP:Progress");
                 continue;
             } else if hpp.have_pending() {
-                trace!("HPP:Pending");
+                trace_pending!("HPP");
                 Pending
             } else {
                 trace!("HPP:Done");

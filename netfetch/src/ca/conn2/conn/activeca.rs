@@ -32,6 +32,10 @@ use tokio::time::error::Elapsed;
 macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
 macro_rules! warn { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
 macro_rules! trace { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
+macro_rules! trace2 { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
+macro_rules! trace3 { ($($arg:tt)*) => { if false { log::info!($($arg)*); } }; }
+macro_rules! trace4 { ($($arg:tt)*) => { if false { log::info!($($arg)*); } }; }
+macro_rules! trace_pending { ($($arg:tt)*) => { if false { trace!("{}  Pending", format_args!($($arg)*)); } }; }
 
 autoerr::create_error_v1!(
     name(Error, "ActiveCa"),
@@ -175,7 +179,7 @@ impl ActiveCa {
                     Some(e)
                 }
                 Pending => {
-                    trace!("CmdFut:Pending");
+                    trace_pending!("CmdFut");
                     hpp.mark_pending();
                     None
                 }
@@ -191,7 +195,7 @@ impl ActiveCa {
                 }
                 Ready(None) => None,
                 Pending => {
-                    trace!("CmdRx:Pending");
+                    trace_pending!("CmdRx");
                     hpp.mark_pending();
                     None
                 }
@@ -205,7 +209,7 @@ impl Stream for ActiveCa {
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         use Poll::*;
-        trace!("ActiveCa:poll_next");
+        trace4!("ActiveCa:poll_next");
         loop {
             let mut hpp = HaveProgressPending::new();
             match self.as_mut().poll_command_input(cx, &mut hpp) {
@@ -218,34 +222,23 @@ impl Stream for ActiveCa {
             let self2 = self.as_mut().get_mut();
             match &mut self2.state {
                 State::Running => {
-                    // TODO add a input buffer.
-                    // Attempt poll only when space.
-                    // Also, always attempt to deliver.
-                    // In ChannelHeap, for now also attempt to deliver all buffered messages.
-                    // Add waker drop check that it never goes above N or below 0.
-
                     if self2.proto_rx_buf.len() < self2.proto_rx_buf.capacity() {
                         match self2.proto_rx.poll_next_unpin(cx) {
                             Ready(x) => match x {
                                 Some(item) => {
-                                    trace!("Rx:Ready:Item:{item:?}");
-                                    match &item.ty {
-                                        _ => {
-                                            warn!("received message: {item:?}");
-                                            hpp.mark_progress();
-                                        }
-                                    }
+                                    trace!("ActiveCa:ProtoRx:Some");
                                     self.proto_rx_buf.push_back(item);
+                                    hpp.mark_progress();
                                 }
                                 None => {
-                                    trace!("Rx:Error");
+                                    trace!("ActiveCa:ProtoRx:Error");
                                     error!("TODO clean shutdown");
                                     self.state = State::Done;
                                     hpp.mark_progress();
                                 }
                             },
                             Pending => {
-                                trace!("Rx:Pending");
+                                trace_pending!("ActiveCa:ProtoRx");
                                 hpp.mark_pending();
                             }
                         }
@@ -271,7 +264,7 @@ impl Stream for ActiveCa {
                                     }
                                     Err(e) => match e {
                                         TrySendError::Full(item) => {
-                                            trace!("Proto2Tx:Full");
+                                            trace_pending!("Proto2Tx");
                                             self.proto_rx_buf.push_front(item);
                                             hpp.mark_pending();
                                         }
@@ -312,7 +305,7 @@ impl Stream for ActiveCa {
                             hpp.mark_progress();
                         }
                         Pending => {
-                            trace!("ActiveCa:ChannelHeap:Pending");
+                            trace_pending!("ActiveCa:ChannelHeap");
                             hpp.mark_pending();
                         }
                     }
@@ -323,7 +316,7 @@ impl Stream for ActiveCa {
                 trace!("HPP:Progress");
                 continue;
             } else if hpp.have_pending() {
-                trace!("HPP:Pending");
+                trace_pending!("HPP");
                 Pending
             } else {
                 trace!("HPP:Done");
