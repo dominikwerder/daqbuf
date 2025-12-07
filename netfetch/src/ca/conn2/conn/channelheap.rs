@@ -7,7 +7,6 @@ use crate::ca::conn2::caids::Subid;
 use crate::ca::conn2::conn::channelheap::channelhandler::ChannelHandler;
 use crate::ca::conn2::progpend::HaveProgressPending;
 use crate::conf::ChannelConfig;
-use asynchan::TrySendError;
 use ca_proto::ca::proto::CaMsg;
 use futures_util::FutureExt;
 use futures_util::Stream;
@@ -38,7 +37,6 @@ autoerr::create_error_v1!(
     enum variants {
         ChannelHandler(#[from] channelhandler::Error),
         Recv(#[from] asynchan::RecvError),
-        RecvTry(#[from] asynchan::TryRecvError),
         Msg(String),
         ProtoRxClosed,
     },
@@ -283,10 +281,15 @@ impl Stream for ChannelHeap {
                                         );
                                     } else {
                                         trace!("ChannelHeap:ChHpCmd:RegisterSubid:Ok  {subid}");
-                                        match resp_tx.try_send(1, cx) {
+                                        use asynchan::SendPoll;
+                                        use asynchan::SendPollError;
+                                        match resp_tx.poll_send_unpin(1, cx) {
                                             Ok(()) => {}
                                             Err(_) => {
                                                 // TODO should never happen
+                                                error!(
+                                                    "ChannelHeap:ChHpCmd:RegisterSubid  TODO  response channel unavailable"
+                                                );
                                             }
                                         }
                                     }
@@ -335,18 +338,20 @@ impl Stream for ChannelHeap {
                             if let Some(cid) = item.cid() {
                                 let cid = Cid::new(cid);
                                 if let Some(e) = self2.by_cid.get_mut(&cid) {
-                                    match e.tx.try_send(item, cx) {
+                                    use asynchan::SendPoll;
+                                    use asynchan::SendPollError;
+                                    match e.tx.poll_send_unpin(item, cx) {
                                         Ok(()) => {
                                             trace!("ChannelHeap:Dispatch:Sent {cid}");
                                             hpp.mark_progress();
                                         }
                                         Err(e) => match e {
-                                            TrySendError::Full(item) => {
+                                            SendPollError::Full(item) => {
                                                 trace_pending!("ChannelHeap:Dispatch  {cid}");
                                                 self2.inp_buf.push_front(item);
                                                 hpp.mark_pending();
                                             }
-                                            TrySendError::Closed(item) => {
+                                            SendPollError::Closed(item) => {
                                                 trace!("ChannelHeap:Dispatch:Closed {cid}");
                                                 self2.inp_buf.push_front(item);
                                                 hpp.mark_progress();
@@ -364,18 +369,20 @@ impl Stream for ChannelHeap {
                             } else if let Some(subid) = item.subid() {
                                 if let Some(cid) = self2.by_subid.get(&Subid::new(subid)) {
                                     if let Some(e) = self2.by_cid.get_mut(cid) {
-                                        match e.tx.try_send(item, cx) {
+                                        use asynchan::SendPoll;
+                                        use asynchan::SendPollError;
+                                        match e.tx.poll_send_unpin(item, cx) {
                                             Ok(()) => {
                                                 trace!("ChannelHeap:Dispatch:Sent {cid}");
                                                 hpp.mark_progress();
                                             }
                                             Err(e) => match e {
-                                                TrySendError::Full(item) => {
+                                                SendPollError::Full(item) => {
                                                     trace_pending!("ChannelHeap:Dispatch  {cid}");
                                                     self2.inp_buf.push_front(item);
                                                     hpp.mark_pending();
                                                 }
-                                                TrySendError::Closed(item) => {
+                                                SendPollError::Closed(item) => {
                                                     trace!("ChannelHeap:Dispatch:Closed {cid}");
                                                     self2.inp_buf.push_front(item);
                                                     hpp.mark_progress();

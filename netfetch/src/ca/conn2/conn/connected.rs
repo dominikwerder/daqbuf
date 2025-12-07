@@ -1,11 +1,9 @@
-use super::super::synchan;
 use super::handshake::Handshake;
 use crate::ca::conn2::asynchan;
 use crate::ca::conn2::conn::activeca;
 use crate::ca::conn2::conn::activeca::ActiveCa;
 use crate::ca::conn2::progpend::HaveProgressPending;
 use crate::ca::conn2::protowrap;
-use crate::ca::conn2::todoval;
 use ca_proto::ca::proto::CaItem;
 use ca_proto::ca::proto::CaMsg;
 use ca_proto::ca::proto::CaProto;
@@ -143,21 +141,24 @@ impl Stream for Connected {
                 }
             }
             if let Some(item) = self2.inp_buf.pop_front() {
-                match self2.inp_tx_main.try_send(item, cx) {
+                use asynchan::SendPoll;
+                use asynchan::SendPollError;
+                match self2.inp_tx_main.poll_send_unpin(item, cx) {
                     Ok(()) => {
                         hpp.mark_progress();
                     }
-                    Err(e) => {
-                        let cl = e.is_closed();
-                        self2.inp_buf.push_front(e.into_inner());
-                        if cl {
+                    Err(e) => match e {
+                        SendPollError::Full(item) => {
+                            self2.inp_buf.push_front(item);
+                            hpp.mark_pending();
+                        }
+                        SendPollError::Closed(item) => {
+                            self2.inp_buf.push_front(item);
                             hpp.mark_progress();
                             self.state = State::Done;
                             break Ready(Some(Err(Error::ProtoOutputClosed)));
-                        } else {
-                            hpp.mark_pending();
                         }
-                    }
+                    },
                 }
             }
             match &mut self2.state {
@@ -165,9 +166,9 @@ impl Stream for Connected {
                     let inp_rx = std::mem::replace(st1, asynchan::bounded(1, "Connected-dummy").1);
                     let stn = Handshake::new(inp_rx, self.out_tx.clone(), tsnow, self.addr.clone());
                     self.state = State::Handshake(stn);
-                    if true {
+                    if false {
                         // check whether this can be useful or not
-                        self.inp_tx_main.set_waker(cx.waker());
+                        // self.inp_tx_main.set_waker(cx.waker());
                     }
                     hpp.mark_progress();
                 }

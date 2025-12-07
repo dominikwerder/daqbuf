@@ -1,7 +1,7 @@
 use crate::ca::conn2::asynchan;
 use crate::ca::conn2::asynchan::Receiver;
+use crate::ca::conn2::asynchan::SendPoll;
 use crate::ca::conn2::asynchan::Sender;
-use crate::ca::conn2::asynchan::TrySendError;
 use crate::ca::conn2::caids::Cid;
 use crate::ca::conn2::conn::channelheap;
 use crate::ca::conn2::conn::channelheap::ChannelHeap;
@@ -129,7 +129,12 @@ impl ActiveCa {
         {
             let conf = ChannelConfig::st_monitor("TEST:SLOW:SCALAR:F32:000000", "test");
             let cmd = CaCommand::channel_add(conf);
-            cmd_tx.try_send(cmd, cx).unwrap();
+            match cmd_tx.poll_send_unpin(cmd, cx) {
+                Ok(()) => {}
+                Err(e) => {
+                    panic!("ActiveCa: new: initial cmd_tx send failed: {e}");
+                }
+            }
         }
         let (proto_2_tx, proto_2_rx) = asynchan::bounded(120, "ActiveCa-proto2");
         Self {
@@ -257,18 +262,20 @@ impl Stream for ActiveCa {
                                 false
                             };
                             if dispatch {
-                                match self.proto_2_tx.try_send(item, cx) {
+                                use asynchan::SendPoll;
+                                use asynchan::SendPollError;
+                                match self.proto_2_tx.poll_send_unpin(item, cx) {
                                     Ok(()) => {
                                         trace!("Proto2Tx:Sent");
                                         hpp.mark_progress();
                                     }
                                     Err(e) => match e {
-                                        TrySendError::Full(item) => {
+                                        SendPollError::Full(item) => {
                                             trace_pending!("Proto2Tx");
                                             self.proto_rx_buf.push_front(item);
                                             hpp.mark_pending();
                                         }
-                                        TrySendError::Closed(item) => {
+                                        SendPollError::Closed(item) => {
                                             trace!("Proto2Tx:Closed");
                                             self.proto_rx_buf.push_front(item);
                                             error!("TODO handle Proto2Tx:Closed");

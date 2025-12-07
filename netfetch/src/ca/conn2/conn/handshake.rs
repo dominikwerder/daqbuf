@@ -102,18 +102,20 @@ impl Future for Handshake {
             break match &mut self2.state {
                 State::HelloSend(st1) => {
                     if let Some(msg) = st1.msgs.pop_front() {
-                        match self2.tx.try_send(msg, cx) {
+                        use asynchan::SendPoll;
+                        use asynchan::SendPollError;
+                        match self2.tx.poll_send_unpin(msg, cx) {
                             Ok(()) => {
                                 trace!("Tx:Sent");
                                 continue;
                             }
                             Err(e) => match e {
-                                asynchan::TrySendError::Full(e) => {
+                                SendPollError::Full(e) => {
                                     trace!("Tx:Pending");
                                     st1.msgs.push_front(e);
                                     Pending
                                 }
-                                asynchan::TrySendError::Closed(_) => {
+                                SendPollError::Closed(_) => {
                                     trace!("Tx:Closed");
                                     self.state = State::Done;
                                     Ready(Err(Error::ProtoTxClosed))
