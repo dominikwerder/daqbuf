@@ -24,9 +24,9 @@ macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
 macro_rules! warn { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
 macro_rules! trace { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
 macro_rules! trace2 { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
-macro_rules! trace3 { ($($arg:tt)*) => { if false { log::info!($($arg)*); } }; }
-macro_rules! trace4 { ($($arg:tt)*) => { if false { log::info!($($arg)*); } }; }
-macro_rules! trace_pending { ($($arg:tt)*) => { if false { trace!("{}  Pending", format_args!($($arg)*)); } }; }
+macro_rules! trace3 { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
+macro_rules! trace4 { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
+macro_rules! trace_pending { ($($arg:tt)*) => { if true { trace!("{}  Pending", format_args!($($arg)*)); } }; }
 
 fn _dffdg() {
     format_args!("");
@@ -85,14 +85,11 @@ mod waker1 {
             Arc::strong_count(&data),
             Arc::weak_count(&data)
         );
-        let rw = {
-            let data = data.clone();
-            data.cnt.fetch_add(1, AcqRel);
-            let data = Arc::into_raw(data) as *const ();
-            task::RawWaker::new(data, &VTABLE)
-        };
+        let data2 = data.clone();
         let _ = Arc::into_raw(data);
-        rw
+        data2.cnt.fetch_add(1, AcqRel);
+        let data2 = Arc::into_raw(data2) as *const ();
+        task::RawWaker::new(data2, &VTABLE)
     }
 
     fn wake(d: *const ()) {

@@ -26,14 +26,15 @@ macro_rules! warn { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
 macro_rules! trace { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
 macro_rules! trace2 { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
 macro_rules! trace3 { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
-macro_rules! trace4 { ($($arg:tt)*) => { if false { log::info!($($arg)*); } }; }
-macro_rules! trace_pending { ($($arg:tt)*) => { if false { trace!("{}  Pending", format_args!($($arg)*)); } }; }
+macro_rules! trace4 { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
+macro_rules! trace_pending { ($($arg:tt)*) => { if true { trace!("{}  Pending", format_args!($($arg)*)); } }; }
 
 autoerr::create_error_v1!(
     name(Error, "ChannelHandler"),
     enum variants {
         ProtoTxClosed,
         ProtoRxClosed,
+        ChannelHandlerRxClosed,
         CreateMonitorUnexpectedMessage,
         Recv(#[from] asynchan::RecvError),
     },
@@ -260,15 +261,14 @@ impl ChannelHandler {
     fn proto_rx_poll(
         proto_rx: &mut asynchan::Receiver<CaMsg>,
         proto_rx_dispatch: &mut Option<CaMsg>,
-        hpp: &mut HaveProgressPending,
         cx: &mut Context<'_>,
-    ) -> Result<(), Error> {
+    ) -> Result<Poll<()>, Error> {
         use Poll::*;
         match proto_rx.poll_next_unpin(cx) {
             Ready(x) => match x {
                 Some(item) => {
                     *proto_rx_dispatch = Some(item);
-                    Ok(())
+                    Ok(Ready(()))
                 }
                 None => {
                     trace!("ChannelHandler:Running:ProtoRx:Ready:None");
@@ -279,14 +279,12 @@ impl ChannelHandler {
             },
             Pending => {
                 trace_pending!("ChannelHandler:Running:ProtoRx");
-                hpp.mark_pending();
-                Ok(())
+                Ok(Pending)
             }
         }
     }
 
-    fn proto_rx_handle_dispatch(st1: &mut Running, item: CaMsg, hpp: &mut HaveProgressPending, cx: &mut Context<'_>) {
-        // let self2 = self.as_mut().get_mut();
+    fn proto_rx_handle_dispatch(st1: &mut Running, item: CaMsg, cx: &mut Context<'_>) -> Result<Option<CaMsg>, Error> {
         match &item.ty {
             proto::CaMsgTy::EventAddRes(_) | proto::CaMsgTy::EventAddResEmpty(_) => {
                 match &mut st1.fetch_method {
@@ -300,7 +298,7 @@ impl ChannelHandler {
                                 trace!(
                                     "ChannelHandler:Running:ProtoRx:Ready:Some:CreateMonitor  sent to CreateMonitor"
                                 );
-                                hpp.mark_progress();
+                                Ok(None)
                             }
                             Err(e) => match e {
                                 SendPollError::Full(item) => {
@@ -308,13 +306,13 @@ impl ChannelHandler {
                                         "ChannelHandler:Running:ProtoRx:Ready:Some:CreateMonitor  TODO must handle SendError::Full"
                                     );
                                     // TODO keep item in another buffer?
-                                    hpp.mark_pending();
+                                    Ok(Some(item))
                                 }
                                 SendPollError::Closed(item) => {
                                     error!(
                                         "ChannelHandler:Running:ProtoRx:Ready:Some:CreateMonitor  TODO must handle SendError::Closed"
                                     );
-                                    hpp.mark_progress();
+                                    Err(Error::ChannelHandlerRxClosed)
                                 }
                             },
                         }
@@ -323,17 +321,17 @@ impl ChannelHandler {
                         trace!(
                             "ChannelHandler:Running:ProtoRx:Ready:Some:Monitor    TODO handle monitor update{item:?}"
                         );
-                        hpp.mark_progress();
+                        Ok(None)
                     }
                     _ => {
                         trace!("ChannelHandler:Running:Ready:Ok  TODO handle {item:?}");
-                        hpp.mark_progress();
+                        Ok(None)
                     }
                 }
             }
             _ => {
                 trace!("ChannelHandler:Running:ProtoRx:Ready:Some  TODO handle {item:?}");
-                hpp.mark_progress();
+                Ok(None)
             }
         }
     }
@@ -429,18 +427,49 @@ impl Stream for ChannelHandler {
                         }
                     }
                     loop {
+                        let hpp2 = &mut hpp;
+                        let mut hpp = HaveProgressPending::new();
                         if let Some(item) = self2.proto_rx_dispatch.take() {
-                            // TODO handle undispatched item
-                            Self::proto_rx_handle_dispatch(st1, item, &mut hpp, cx);
-                        } else {
-                            match Self::proto_rx_poll(&mut self2.proto_rx, &mut self2.proto_rx_dispatch, &mut hpp, cx) {
-                                Ok(()) => {}
+                            match Self::proto_rx_handle_dispatch(st1, item, cx) {
+                                Ok(x) => match x {
+                                    Some(item) => {
+                                        self2.proto_rx_dispatch = Some(item);
+                                        hpp.mark_pending();
+                                    }
+                                    None => {
+                                        hpp.mark_progress();
+                                    }
+                                },
                                 Err(e) => {
                                     self2.state = State::Done;
                                     hpp.mark_progress();
                                     break 'main Ready(Some(Err(e)));
                                 }
                             }
+                        } else {
+                            match Self::proto_rx_poll(&mut self2.proto_rx, &mut self2.proto_rx_dispatch, cx) {
+                                Ok(Ready(())) => {}
+                                Ok(Pending) => {
+                                    hpp.mark_pending();
+                                    break;
+                                }
+                                Err(e) => {
+                                    self2.state = State::Done;
+                                    hpp.mark_progress();
+                                    break 'main Ready(Some(Err(e)));
+                                }
+                            }
+                        }
+                        if hpp.have_progress() {
+                            trace!("ChannelHandler:Running:ProtoRx:loop:HPP:Progress");
+                            continue;
+                        } else if hpp.have_pending() {
+                            trace_pending!("ChannelHandler:Running:ProtoRx:loop:HPP");
+                            hpp2.mark_pending();
+                            break;
+                        } else {
+                            trace!("ChannelHandler:Running:ProtoRx:loop:HPP:Done");
+                            break;
                         }
                     }
                 }
