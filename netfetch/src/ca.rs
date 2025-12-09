@@ -2,15 +2,17 @@ pub mod beacons;
 pub mod conn;
 pub mod conn2;
 pub mod connset;
+pub mod connset2;
 pub mod connset_input_merge;
 pub mod finder;
 pub mod findioc;
+mod futstack;
 pub mod search;
 pub mod statemap;
 
 use futures_util::Future;
 use futures_util::FutureExt;
-use log::*;
+use log;
 use std::pin::Pin;
 use std::sync::atomic::AtomicU32;
 use std::task::Poll;
@@ -64,7 +66,7 @@ where
             Ready(x) => {
                 if let Some(None) = &self.timeout {
                     let dt = self.first_poll.take().unwrap().elapsed();
-                    warn!("---------   Completed in {}ms   ----------", dt.as_secs_f32());
+                    log::warn!("---------   Completed in {}ms   ----------", dt.as_secs_f32());
                 }
                 Ready(x)
             }
@@ -89,7 +91,7 @@ where
             Some(x) => match x {
                 Some(x) => match x.poll_unpin(cx) {
                     Ready(()) => {
-                        warn!("----------------   SlowWarn   ---------------------");
+                        log::warn!("----------------   SlowWarn   ---------------------");
                         self.timeout = Some(None);
                         Self::poll_fut(self, cx)
                     }

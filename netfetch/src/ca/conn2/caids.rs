@@ -9,21 +9,29 @@ use std::sync::Mutex;
 static CID_REG: LazyLock<Mutex<(HashMap<u32, u32>, Xoshiro128PlusPlus)>> =
     LazyLock::new(|| Mutex::new((HashMap::new(), Xoshiro128PlusPlus::from_os_rng())));
 
+fn _maybe() {
+    stats::xoshiro_from_time();
+}
+
+fn gen_next(reg: &LazyLock<Mutex<(HashMap<u32, u32>, Xoshiro128PlusPlus)>>) -> u32 {
+    let mut g = reg.lock().unwrap();
+    loop {
+        use stats::rand_xoshiro::rand_core::RngCore;
+        let k = g.1.next_u32() & 0x7fffffff;
+        break if g.0.try_insert(k, k).is_err() {
+            continue;
+        } else {
+            k
+        };
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 pub struct CidOwned(u32);
 
 impl CidOwned {
     pub fn new() -> Self {
-        let mut g = CID_REG.lock().unwrap();
-        loop {
-            use stats::rand_xoshiro::rand_core::RngCore;
-            let k = g.1.next_u32() & 0x7fffffff;
-            break if g.0.try_insert(k, k).is_err() {
-                continue;
-            } else {
-                Self(k)
-            };
-        }
+        Self(gen_next(&CID_REG))
     }
 
     pub fn to_cid(&self) -> Cid {
@@ -50,16 +58,7 @@ pub struct SubidOwned(u32);
 
 impl SubidOwned {
     pub fn new() -> Self {
-        let mut g = SUBID_REG.lock().unwrap();
-        loop {
-            use stats::rand_xoshiro::rand_core::RngCore;
-            let k = g.1.next_u32() & 0x7fffffff;
-            break if g.0.try_insert(k, k).is_err() {
-                continue;
-            } else {
-                Self(k)
-            };
-        }
+        Self(gen_next(&SUBID_REG))
     }
 
     pub fn to_subid(&self) -> Subid {

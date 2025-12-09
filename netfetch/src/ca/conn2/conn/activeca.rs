@@ -2,16 +2,11 @@ use crate::ca::conn2::asynchan;
 use crate::ca::conn2::asynchan::Receiver;
 use crate::ca::conn2::asynchan::SendPoll;
 use crate::ca::conn2::asynchan::Sender;
-use crate::ca::conn2::caids::Cid;
 use crate::ca::conn2::conn::channelheap;
 use crate::ca::conn2::conn::channelheap::ChannelHeap;
 use crate::ca::conn2::progpend::HaveProgressPending;
 use crate::conf::ChannelConfig;
-use ca_proto::ca::proto::CaItem;
 use ca_proto::ca::proto::CaMsg;
-use ca_proto::ca::proto::CaMsgTy;
-use ca_proto::ca::proto::CaProto;
-use ca_proto_tokio::tcpasyncwriteread::TcpAsyncWriteRead;
 use futures_util::FutureExt;
 use futures_util::Stream;
 use futures_util::StreamExt;
@@ -20,13 +15,10 @@ use std::fmt;
 use std::future::Future;
 use std::net::SocketAddrV4;
 use std::pin::Pin;
-use std::task;
 use std::task::Context;
 use std::task::Poll;
-use std::time::Duration;
 use std::time::Instant;
 use taskrun::tokio;
-use tokio::net::TcpStream;
 use tokio::time::error::Elapsed;
 
 macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
@@ -34,8 +26,8 @@ macro_rules! warn { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
 macro_rules! trace { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
 macro_rules! trace2 { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
 macro_rules! trace3 { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
-macro_rules! trace4 { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
-macro_rules! trace_pending { ($($arg:tt)*) => { if true { trace!("{}  Pending", format_args!($($arg)*)); } }; }
+macro_rules! trace4 { ($($arg:tt)*) => { if false { log::info!($($arg)*); } }; }
+macro_rules! trace_pending { ($($arg:tt)*) => { if false { trace!("{}  Pending", format_args!($($arg)*)); } }; }
 
 autoerr::create_error_v1!(
     name(Error, "ActiveCa"),

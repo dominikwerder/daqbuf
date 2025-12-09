@@ -26,11 +26,7 @@ macro_rules! trace { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
 macro_rules! trace2 { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
 macro_rules! trace3 { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
 macro_rules! trace4 { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
-macro_rules! trace_pending { ($($arg:tt)*) => { if true { trace!("{}  Pending", format_args!($($arg)*)); } }; }
-
-fn _dffdg() {
-    format_args!("");
-}
+macro_rules! trace_pending { ($($arg:tt)*) => { if false { trace!("{}  Pending", format_args!($($arg)*)); } }; }
 
 autoerr::create_error_v1!(
     name(Error, "ChannelHeap"),
@@ -43,10 +39,21 @@ autoerr::create_error_v1!(
 );
 
 #[derive(Debug)]
-struct ChannelEntry {
+struct ChHandlerActive {
     handler: ChannelHandler,
     tx: asynchan::Sender<CaMsg>,
     waker: task::Waker,
+}
+
+#[derive(Debug)]
+enum ChHandler {
+    ChHandlerActive(ChHandlerActive),
+    Done,
+}
+
+#[derive(Debug)]
+struct ChannelEntry {
+    ch_handler: ChHandler,
 }
 
 #[derive(Debug)]
@@ -243,7 +250,9 @@ impl ChannelHeap {
                 }
             };
         }
-        let e = ChannelEntry { handler, tx, waker };
+        let e = ChannelEntry {
+            ch_handler: ChHandler::ChHandlerActive(ChHandlerActive { handler, tx, waker }),
+        };
         self.by_cid.insert(cid, e);
     }
 }
@@ -332,75 +341,61 @@ impl Stream for ChannelHeap {
                         while let Some(item) = self2.inp_buf.pop_front() {
                             // Some message can be dispatched by Cid.
                             // Others need translation from Subid.
-                            if let Some(cid) = item.cid() {
-                                let cid = Cid::new(cid);
+                            let disp_cid = if let Some(cid) = item.cid() {
+                                Some(Cid::new(cid))
+                            } else if let Some(subid) = item.subid() {
+                                if let Some(cid) = self2.by_subid.get(&Subid::new(subid)) {
+                                    Some(cid.clone())
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            };
+                            if let Some(cid) = disp_cid {
                                 if let Some(e) = self2.by_cid.get_mut(&cid) {
-                                    use asynchan::SendPoll;
-                                    use asynchan::SendPollError;
-                                    match e.tx.poll_send_unpin(item, cx) {
-                                        Ok(()) => {
-                                            trace!("ChannelHeap:Dispatch:Sent {cid}");
+                                    match &mut e.ch_handler {
+                                        ChHandler::ChHandlerActive(st2) => {
+                                            use asynchan::SendPoll;
+                                            use asynchan::SendPollError;
+                                            match st2.tx.poll_send_unpin(item, cx) {
+                                                Ok(()) => {
+                                                    trace!("ChannelHeap:Dispatch:Sent {cid}");
+                                                    hpp.mark_progress();
+                                                }
+                                                Err(e) => match e {
+                                                    SendPollError::Full(item) => {
+                                                        trace_pending!("ChannelHeap:Dispatch  {cid}");
+                                                        self2.inp_buf.push_front(item);
+                                                        hpp.mark_pending();
+                                                    }
+                                                    SendPollError::Closed(item) => {
+                                                        trace!("ChannelHeap:Dispatch:Closed {cid}");
+                                                        self2.inp_buf.push_front(item);
+                                                        hpp.mark_progress();
+                                                        self2.state = State::Done;
+                                                        warn!("TODO handle closed channel handler gracefully");
+                                                        let e = Error::Msg(format!(
+                                                            "ChannelHeap: channel handler for {cid} closed"
+                                                        ));
+                                                        break 'main Ready(Some(Err(e)));
+                                                    }
+                                                },
+                                            }
+                                        }
+                                        ChHandler::Done => {
+                                            // Can not handle this msg.
+                                            // TODO count for metrics.
                                             hpp.mark_progress();
                                         }
-                                        Err(e) => match e {
-                                            SendPollError::Full(item) => {
-                                                trace_pending!("ChannelHeap:Dispatch  {cid}");
-                                                self2.inp_buf.push_front(item);
-                                                hpp.mark_pending();
-                                            }
-                                            SendPollError::Closed(item) => {
-                                                trace!("ChannelHeap:Dispatch:Closed {cid}");
-                                                self2.inp_buf.push_front(item);
-                                                hpp.mark_progress();
-                                                self2.state = State::Done;
-                                                warn!("TODO handle closed channel handler gracefully");
-                                                let msg = format!("ChannelHeap: channel handler for cid {cid} closed");
-                                                break 'main Ready(Some(Err(Error::Msg(msg))));
-                                            }
-                                        },
                                     }
                                 } else {
                                     hpp.mark_progress();
-                                    warn!("ChannelHeap: no channel handler for cid {cid}");
-                                }
-                            } else if let Some(subid) = item.subid() {
-                                if let Some(cid) = self2.by_subid.get(&Subid::new(subid)) {
-                                    if let Some(e) = self2.by_cid.get_mut(cid) {
-                                        use asynchan::SendPoll;
-                                        use asynchan::SendPollError;
-                                        match e.tx.poll_send_unpin(item, cx) {
-                                            Ok(()) => {
-                                                trace!("ChannelHeap:Dispatch:Sent {cid}");
-                                                hpp.mark_progress();
-                                            }
-                                            Err(e) => match e {
-                                                SendPollError::Full(item) => {
-                                                    trace_pending!("ChannelHeap:Dispatch  {cid}");
-                                                    self2.inp_buf.push_front(item);
-                                                    hpp.mark_pending();
-                                                }
-                                                SendPollError::Closed(item) => {
-                                                    trace!("ChannelHeap:Dispatch:Closed {cid}");
-                                                    self2.inp_buf.push_front(item);
-                                                    hpp.mark_progress();
-                                                    self2.state = State::Done;
-                                                    warn!("TODO handle closed channel handler gracefully");
-                                                    let msg = format!("ChannelHeap: channel handler for cid closed");
-                                                    break 'main Ready(Some(Err(Error::Msg(msg))));
-                                                }
-                                            },
-                                        }
-                                    } else {
-                                        hpp.mark_progress();
-                                        warn!("ChannelHeap: no channel handler for cid");
-                                    }
-                                } else {
-                                    warn!("ChannelHeap: no cid found for subid");
+                                    warn!("ChannelHeap: no channel handler  {cid}  {item:?}");
                                 }
                             } else {
                                 hpp.mark_progress();
-                                warn!("ChannelHeap: message without cid: {item:?}");
-                                warn!("TODO check for subid and ioid");
+                                warn!("TODO not idea how to handle this  {item:?}");
                             }
                         }
                     }
@@ -413,45 +408,57 @@ impl Stream for ChannelHeap {
                     for cid in self2.wakeup_cids_tmp.iter() {
                         // let cid = &cid;
                         trace!("ChannelHeap  waking  {cid}");
-                        if let Some(h) = self2.by_cid.get_mut(cid) {
-                            let cx2 = &mut Context::from_waker(&h.waker);
-                            match h.handler.poll_next_unpin(cx2) {
-                                Ready(Some(x)) => match x {
-                                    Ok(item) => {
-                                        trace!("ChannelHeap:Handler:Some {cid}");
-                                        let item = match item.inner {
-                                            channelhandler::ItemInner::ScyllaWrite => ChannelHeapItem {
-                                                ts_create: item.ts_create,
-                                                inner: ItemInner::ScyllaWrite,
-                                            },
-                                        };
-                                        hpp.mark_progress();
-                                        break 'main Ready(Some(Ok(item)));
+                        if let Some(st1) = self2.by_cid.get_mut(cid) {
+                            match &mut st1.ch_handler {
+                                ChHandler::ChHandlerActive(st2) => {
+                                    let cx2 = &mut Context::from_waker(&st2.waker);
+                                    match st2.handler.poll_next_unpin(cx2) {
+                                        Ready(Some(x)) => match x {
+                                            Ok(item) => {
+                                                trace!("ChannelHeap:Handler:Some {cid}");
+                                                let item = match item.inner {
+                                                    channelhandler::ItemInner::ScyllaWrite => ChannelHeapItem {
+                                                        ts_create: item.ts_create,
+                                                        inner: ItemInner::ScyllaWrite,
+                                                    },
+                                                };
+                                                hpp.mark_progress();
+                                                break 'main Ready(Some(Ok(item)));
+                                            }
+                                            Err(e) => {
+                                                hpp.mark_progress();
+                                                // TODO must not go into error state.
+                                                // TODO clean up this channel handler.
+                                                // TODO report upstream about failed channel.
+                                                // TODO upstream should try to remove and re-add the channel a few times.
+                                                // TODO if that does not work, remove the connection, invalidate
+                                                // all those channels, and try again all channels.
+                                                self2.state = State::Done;
+                                                warn!(
+                                                    "ChannelHeap:Handler:Done  TODO handle closed channel handler gracefully {cid}"
+                                                );
+                                                let msg = format!("ChannelHeap:Handler error {cid} {e}");
+                                                break 'main Ready(Some(Err(Error::Msg(msg))));
+                                            }
+                                        },
+                                        Ready(None) => {
+                                            trace!("ChannelHeap:Handler:Finished {cid}");
+                                            error!("TODO handle finished channel handler gracefully {cid}");
+                                            // TODO remove it? No, then it would be less observable.
+                                            // Instead, move it to Done, otherwise we continue polling all the time.
+                                            // TODO after Ready(None), anything else to clean up or reuse?
+                                            st1.ch_handler = ChHandler::Done;
+                                            hpp.mark_progress();
+                                        }
+                                        Pending => {
+                                            hpp.mark_pending();
+                                            trace_pending!("ChannelHeap:Handler  {cid}");
+                                        }
                                     }
-                                    Err(e) => {
-                                        hpp.mark_progress();
-                                        // TODO must not go into error state.
-                                        // TODO clean up this channel handler.
-                                        // TODO report upstream about failed channel.
-                                        // TODO upstream should try to remove and re-add the channel a few times.
-                                        // TODO if that does not work, remove the connection, invalidate
-                                        // all those channels, and try again all channels.
-                                        self2.state = State::Done;
-                                        warn!(
-                                            "ChannelHeap:Handler:Done  TODO handle closed channel handler gracefully {cid}"
-                                        );
-                                        let msg = format!("ChannelHeap:Handler error {cid} {e}");
-                                        break 'main Ready(Some(Err(Error::Msg(msg))));
-                                    }
-                                },
-                                Ready(None) => {
-                                    trace!("ChannelHeap:Handler:Finished {cid}");
-                                    error!("TODO handle finished channel handler gracefully {cid}");
-                                    hpp.mark_progress();
                                 }
-                                Pending => {
-                                    hpp.mark_pending();
-                                    trace_pending!("ChannelHeap:Handler  {cid}");
+                                ChHandler::Done => {
+                                    // Wakeup marker for no longer served cid.
+                                    // TODO count for metrics
                                 }
                             }
                         } else {

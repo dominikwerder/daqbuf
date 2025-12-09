@@ -1,8 +1,4 @@
-pub mod ioc_conn;
-
 use super::super::connfut::ConnFutResource;
-use crate::ca::conn2::statetrans::stateress1::StateRessShr1;
-use ioc_conn::IocConn;
 use std::net::SocketAddrV4;
 use std::time::Instant;
 
@@ -51,14 +47,12 @@ fn use_go() {
 pub struct IocConnStateBase {
     ts_beg: Instant,
     remote_addr: SocketAddrV4,
-    conn: IocConn,
 }
 
 impl IocConnStateBase {
-    pub fn new(remote_addr: SocketAddrV4, ress_a: StateRessShr1) -> Self {
+    pub fn new(remote_addr: SocketAddrV4) -> Self {
         Self {
             ts_beg: Instant::now(),
-            conn: IocConn::init(remote_addr.clone(), ress_a),
             remote_addr,
         }
     }

@@ -1,20 +1,15 @@
 mod activeca;
 mod channelheap;
 mod connected;
-mod connecting;
 mod handshake;
 
 use super::conncmd::ConnCommand;
 use super::connevent::CaConnEvent;
 use super::connevent::EndOfStreamReason;
 use crate::ca::conn::CaConnOpts;
-use crate::ca::conn2::channel::ChannelBasic;
+use crate::ca::conn2::asynchan;
 use crate::ca::conn2::progpend::HaveProgressPending;
 use crate::ca::conn2::statetrans::conn::IocConnStateBase;
-use crate::ca::conn2::statetrans::stateress1::StateRessShr1;
-use crate::ca::conn2::todoval;
-use async_channel::Sender;
-use ca_proto::ca::proto;
 use connected::Connected;
 use dbpg::seriesbychannel::ChannelInfoQuery;
 use futures_util::FutureExt;
@@ -23,22 +18,18 @@ use futures_util::StreamExt;
 use futures_util::TryFutureExt;
 use handshake::Handshake;
 use hashbrown::HashMap;
-use proto::CaProto;
 use scywr::insertqueues::InsertDeques;
 use scywr::insertqueues::InsertQueuesTx;
 use scywr::iteminsertqueue::QueryItem;
-use stats::rand_xoshiro::Xoshiro128PlusPlus;
 use std::collections::VecDeque;
 use std::fmt;
 use std::net::SocketAddrV4;
 use std::pin::Pin;
-use std::sync::Arc;
 use std::task::Context;
 use std::task::Poll;
 use std::time::Duration;
 use std::time::Instant;
 use taskrun::tokio;
-use tokio::net::TcpStream;
 
 macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
 macro_rules! warn { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
@@ -124,24 +115,37 @@ impl Future for Connecting {
     }
 }
 
-// impl Stream for State {
-//     type Item = ();
-//     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
-//         use Poll::*;
-//         todo!()
-//     }
-// }
+#[derive(Debug)]
+enum CaConnCmdKind {
+    Shutdown,
+}
 
+#[derive(Debug)]
+pub struct CaConnCmd {
+    kind: CaConnCmdKind,
+}
+
+impl CaConnCmd {
+    /// Does not offer a confirmation. Shutdown done the CaConn Stream has ended.
+    fn shutdown() -> Self {
+        Self {
+            kind: CaConnCmdKind::Shutdown,
+        }
+    }
+}
+
+#[derive(Debug)]
 pub struct CaConn {
     backend: String,
     remote_addr: SocketAddrV4,
+    local_epics_hostname: String,
     state: State,
     // iqdqs: InsertDeques,
     // ca_conn_event_out_queue: VecDeque<CaConnEvent>,
     // ca_conn_event_out_queue_max: usize,
-    rng: Xoshiro128PlusPlus,
     mett: stats::mett::CaConnMetrics,
     test_channel_names: Vec<String>,
+    cmd_rx: asynchan::Receiver<CaConnCmd>,
 }
 
 impl CaConn {
@@ -153,28 +157,21 @@ impl CaConn {
         // iqtxs: InsertQueuesTx,
         // channel_info_query_tx: Sender<ChannelInfoQuery>,
     ) -> Self {
-        // let tsnow = Instant::now();
-        // let (cq_tx, cq_rx) = async_channel::bounded::<ConnCommand>(32);
         let rng = stats::xoshiro_from_time();
         // let ress_a: StateRessShr1 = todoval();
+        let (cmd_tx, cmd_rx) = asynchan::bounded(32, "CaConn-cmd");
         Self {
             backend,
             remote_addr,
+            local_epics_hostname,
             state: State::new(remote_addr),
             // iqdqs: InsertDeques::new(),
             // ca_conn_event_out_queue: VecDeque::new(),
             // ca_conn_event_out_queue_max: 2000,
-            rng,
             mett: stats::mett::CaConnMetrics::new(),
             test_channel_names,
+            cmd_rx,
         }
-    }
-
-    fn __test_channel(mut self: Pin<&mut Self>, cx: &mut Context, ch1: &mut ChannelBasic) {
-        // let mut ch1 = ChannelBasic::new();
-        let ch1pin = Pin::new(ch1);
-        let cx = todo!();
-        ch1pin.config_update(cx, todo!());
     }
 
     fn poll_own_ticker(mut self: Pin<&mut Self>, cx: &mut Context) -> Result<(), Error> {
@@ -224,6 +221,27 @@ impl Stream for CaConn {
             self2.mett.poll_loop_begin().inc();
             let tsloop = Instant::now();
             let hpp = &mut HaveProgressPending::new();
+            match self2.cmd_rx.poll_next_unpin(cx) {
+                Ready(x) => match x {
+                    Some(cmd) => {
+                        hpp.mark_progress();
+                        match cmd.kind {
+                            CaConnCmdKind::Shutdown => {
+                                trace!("CaConn:Received:Shutdown");
+                                error!("TODO trigger shutdown in inner");
+                                error!("TODO wait until inner is done");
+                                self2.state = State::Done;
+                            }
+                        }
+                    }
+                    None => {
+                        // TODO
+                    }
+                },
+                Pending => {
+                    hpp.mark_pending();
+                }
+            }
             if true {
                 match &mut self2.state {
                     State::Connecting(st1) => match st1.poll_unpin(cx) {
@@ -270,7 +288,7 @@ impl Stream for CaConn {
                     },
                     State::Done => {}
                 };
-            };
+            }
 
             // TODO get rid of the handling of ca_conn_event_out_queue in here.
             // The future which pushes to the queue must also trigger the async push if needed.

@@ -2018,7 +2018,7 @@ impl Stream for CaConnSet {
         let ret = loop {
             trace4!("CaConnSet  poll  loop");
             {
-                let mut self2 = self.as_mut().get_mut();
+                let self2 = self.as_mut().get_mut();
                 self2.mett.poll_loop_begin().inc();
                 self2
                     .mett
