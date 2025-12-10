@@ -133,6 +133,45 @@ impl RegisteredSeries {
     }
 }
 
+#[derive(Debug)]
+pub struct ChannelInfoQuerySender {
+    tx: async_channel::Sender<ChannelInfoQuery>,
+}
+
+impl ChannelInfoQuerySender {
+    pub fn new(tx: async_channel::Sender<ChannelInfoQuery>) -> Self {
+        Self { tx }
+    }
+
+    pub async fn query(
+        &mut self,
+        backend: String,
+        channel: String,
+        kind: SeriesKind,
+        scalar_type: ScalarType,
+        shape: Shape,
+    ) -> Result<ChannelInfoResult, Error> {
+        let (tx, rx) = async_channel::bounded(1);
+        let job = ChannelInfoQuery {
+            backend,
+            channel,
+            kind,
+            scalar_type,
+            shape,
+            tx: Box::pin(tx),
+        };
+        self.tx.send(job).await.map_err(|_| Error::ChannelError)?;
+        let res = rx.recv().await.map_err(|_| Error::ChannelError)??;
+        Ok(res)
+    }
+}
+
+impl Clone for ChannelInfoQuerySender {
+    fn clone(&self) -> Self {
+        Self { tx: self.tx.clone() }
+    }
+}
+
 struct Worker {
     pg: PgClient,
     qu_select: PgStatement,
