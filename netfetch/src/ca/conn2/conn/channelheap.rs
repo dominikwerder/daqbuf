@@ -5,7 +5,7 @@ use crate::ca::conn2::caids::Cid;
 use crate::ca::conn2::caids::Sid;
 use crate::ca::conn2::caids::Subid;
 use crate::ca::conn2::conn::channelheap::channelhandler::ChannelHandler;
-use crate::ca::conn2::progpend::HaveProgressPending;
+use crate::ca::progpend::HaveProgressPending;
 use crate::conf::ChannelConfig;
 use ca_proto::ca::proto::CaMsg;
 use futures_util::FutureExt;

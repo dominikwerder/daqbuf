@@ -5,7 +5,6 @@ pub(super) mod conn;
 mod conncmd;
 mod connevent;
 mod connfut;
-mod progpend;
 mod protowrap;
 mod scywritequeue;
 mod statefut;

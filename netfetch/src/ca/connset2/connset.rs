@@ -1,13 +1,19 @@
+mod channels;
 mod cmder;
 mod futs;
 mod streamtask;
 
 use crate::ca::conn2::asynchan;
+use crate::ca::connset2::connset::cmder::ConnSetCmder;
+use crate::ca::futstack::ErasedFuture;
+use crate::ca::progpend::HaveProgressPending;
 use crate::conf::CaIngestOpts;
 use dbpg::seriesbychannel::ChannelInfoQuery;
 use dbpg::seriesbychannel::ChannelInfoQuerySender;
 pub use futs::FutShutdown;
+use futures_util::FutureExt;
 use futures_util::Stream;
+use futures_util::StreamExt;
 use scywr::insertqueues::InsertQueuesTx;
 use std::pin::Pin;
 use std::task::Context;
@@ -55,8 +61,9 @@ impl ConnSetCmd {
 pub struct ConnSet {
     backend: String,
     local_epics_hostname: String,
-    cmd_tx: asynchan::Sender<ConnSetCmd>,
+    cmder: ConnSetCmder,
     cmd_rx: asynchan::Receiver<ConnSetCmd>,
+    cmd_fut: Option<ErasedFuture<(), 4>>,
 }
 
 impl ConnSet {
@@ -73,11 +80,14 @@ impl ConnSet {
         let (find_ioc_res_tx, find_ioc_res_rx) = async_channel::bounded(400);
         let (find_ioc_query_tx, ioc_finder_jh) =
             crate::ca::finder::start_finder(find_ioc_res_tx.clone(), backend.clone(), ingest_opts).unwrap();
+        let (cmd_tx, cmd_rx) = asynchan::bounded(100, "ConnSetCmder");
+        let cmder = ConnSetCmder::new(cmd_tx);
         ConnSet {
             backend,
             local_epics_hostname,
-            cmd_tx,
+            cmder,
             cmd_rx,
+            cmd_fut: None,
         }
     }
 
@@ -85,15 +95,77 @@ impl ConnSet {
         todo!()
     }
 
-    pub fn create_cmder(&self) -> cmder::ConnSetCmder {
-        cmder::ConnSetCmder::new(self.cmd_tx.clone())
+    pub fn cmder(&self) -> &ConnSetCmder {
+        &self.cmder
     }
+}
+
+macro_rules! poll_next_mark {
+    ($fut:expr, $cx:expr, $hpp:expr) => {{
+        let fut = $fut;
+        let cx = $cx;
+        let hpp = $hpp;
+        match fut {
+            Some(fut) => match fut.poll_unpin(cx) {
+                Ready(()) => {
+                    self.cmd_fut = None;
+                    hpp.mark_progress();
+                }
+                Pending => {
+                    hpp.mark_pending();
+                }
+            },
+            None => match self.cmd_rx.poll_next_unpin(cx) {
+                Ready(x) => match x {
+                    Some(x) => {
+                        hpp.mark_progress();
+                    }
+                    None => {}
+                },
+                Pending => {
+                    hpp.mark_pending();
+                }
+            },
+        }
+    }};
 }
 
 impl Stream for ConnSet {
     type Item = Result<(), Error>;
 
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        todo!()
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        use Poll::*;
+        loop {
+            let mut hpp = HaveProgressPending::new();
+            match &mut self.cmd_fut {
+                Some(fut) => match fut.poll_unpin(cx) {
+                    Ready(()) => {
+                        self.cmd_fut = None;
+                        hpp.mark_progress();
+                    }
+                    Pending => {
+                        hpp.mark_pending();
+                    }
+                },
+                None => match self.cmd_rx.poll_next_unpin(cx) {
+                    Ready(x) => match x {
+                        Some(x) => {
+                            hpp.mark_progress();
+                        }
+                        None => {}
+                    },
+                    Pending => {
+                        hpp.mark_pending();
+                    }
+                },
+            }
+            break if hpp.have_progress() {
+                continue;
+            } else if hpp.have_pending() {
+                Pending
+            } else {
+                Ready(None)
+            };
+        }
     }
 }

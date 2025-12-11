@@ -4,7 +4,7 @@ use crate::ca::conn2::asynchan::SendPoll;
 use crate::ca::conn2::asynchan::Sender;
 use crate::ca::conn2::conn::channelheap;
 use crate::ca::conn2::conn::channelheap::ChannelHeap;
-use crate::ca::conn2::progpend::HaveProgressPending;
+use crate::ca::progpend::HaveProgressPending;
 use crate::conf::ChannelConfig;
 use ca_proto::ca::proto::CaMsg;
 use futures_util::FutureExt;

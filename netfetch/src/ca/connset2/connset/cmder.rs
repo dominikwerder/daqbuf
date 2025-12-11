@@ -6,11 +6,17 @@ use crate::ca::conn2::asynchan;
 autoerr::create_error_v1!(
     name(Error, "ConnSetCmder"),
     enum variants {
-        Logic,
+        Send,
+        Recv(#[from] asynchan::RecvError),
+        ConnSet(#[from] super::Error),
     },
 );
 
-impl<T> From<asynchan::SendError<T>>
+impl<T> From<asynchan::SendError<T>> for Error {
+    fn from(_value: asynchan::SendError<T>) -> Self {
+        Error::Send
+    }
+}
 
 #[derive(Debug)]
 pub struct ConnSetCmder {
@@ -22,14 +28,14 @@ impl ConnSetCmder {
         Self { tx: cmd_tx }
     }
 
-    pub async fn channel_add(&self, ch_cfg: crate::conf::ChannelConfig) -> Result<(), Error> {
-        let (restx, rx) = async_channel::bounded(1);
+    pub async fn channel_add(&mut self, ch_cfg: crate::conf::ChannelConfig) -> Result<(), Error> {
+        let (restx, mut rx) = asynchan::bounded(1, "ConnSetCmder-channel_add-resp");
         let add = ChannelAdd { ch_cfg, restx };
         let cmd = ConnSetCmd {
             kind: ConnSetCmdKind::ChannelAdd(add),
         };
         self.tx.send(cmd).await?;
-        let res = rx.recv().await?;
-        res
+        let res = rx.recv().await??;
+        Ok(res)
     }
 }
