@@ -23,7 +23,7 @@ use axum::response::Response;
 use bytes::Bytes;
 use dbpg::seriesbychannel::ChannelInfoQuery;
 use err::Error;
-use futures_util::future::ready;
+use futures::future::ready;
 use http::Request;
 use http::StatusCode;
 use http_body::Body;

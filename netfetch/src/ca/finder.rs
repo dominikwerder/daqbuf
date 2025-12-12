@@ -3,6 +3,7 @@ use super::connset::IocAddrQuery;
 use super::connset::SEARCH_BATCH_MAX;
 use super::search::ca_search_workers_start;
 use crate::ca::findioc::FindIocRes;
+use crate::ca::findioc::OptResTx;
 use crate::conf::CaIngestOpts;
 use async_channel::Receiver;
 use async_channel::Sender;
@@ -10,6 +11,8 @@ use dbpg::conn::make_pg_client;
 use dbpg::iocindex::IocItem;
 use dbpg::iocindex::IocSearchIndexWorker;
 use dbpg::postgres::Row as PgRow;
+use futures::Stream;
+use futures::StreamExt;
 use log::*;
 use netpod::Database;
 use std::collections::VecDeque;
@@ -20,7 +23,7 @@ use tokio::task::JoinHandle;
 
 const SEARCH_DB_WORKER_CNT: usize = 2;
 
-macro_rules! debug_batch { ($($arg:expr),*) => ( if false { debug!($($arg),*); } ); }
+macro_rules! debug_batch { ($($arg:tt)*) => ( if false { debug!($($arg)*); } ); }
 
 autoerr::create_error_v1!(
     name(Error, "Finder"),
@@ -32,9 +35,9 @@ autoerr::create_error_v1!(
     },
 );
 
-fn transform_pgres(rows: Vec<PgRow>) -> VecDeque<FindIocRes> {
+fn transform_pgres(rows: Vec<PgRow>, txs: Vec<OptResTx>) -> VecDeque<FindIocRes> {
     let mut ret = VecDeque::new();
-    for row in rows {
+    for (row, tx) in rows.into_iter().zip(txs) {
         let n: Result<i32, _> = row.try_get(0);
         let ch: Result<String, _> = row.try_get(1);
         match (n, ch) {
@@ -46,6 +49,7 @@ fn transform_pgres(rows: Vec<PgRow>) -> VecDeque<FindIocRes> {
                         response_addr: None,
                         addr,
                         dt: Duration::from_millis(0),
+                        tx,
                     };
                     ret.push_back(item);
                 } else {
@@ -54,6 +58,7 @@ fn transform_pgres(rows: Vec<PgRow>) -> VecDeque<FindIocRes> {
                         response_addr: None,
                         addr: None,
                         dt: Duration::from_millis(0),
+                        tx,
                     };
                     ret.push_back(item);
                 }
@@ -69,6 +74,44 @@ fn transform_pgres(rows: Vec<PgRow>) -> VecDeque<FindIocRes> {
     ret
 }
 
+#[derive(Debug, Clone)]
+pub struct FinderHandleV02 {
+    qtx: Sender<IocAddrQuery>,
+}
+
+impl FinderHandleV02 {
+    pub async fn find(&mut self, query: IocAddrQuery) -> Result<FindIocRes, Error> {
+        todo!()
+    }
+}
+
+pub fn start_finder_handle_v02(
+    backend: String,
+    opts: CaIngestOpts,
+) -> (FinderHandleV02, JoinHandle<Result<(), Error>>) {
+    let map = dashmap::DashMap::<u32, u32>::new();
+    let (qtx, qrx) = async_channel::bounded(CURRENT_SEARCH_PENDING_MAX);
+    let qrx = qrx.map(|e| {
+        //
+        // map.ge
+        e
+    });
+    let (rtx, rrx) = async_channel::bounded(CURRENT_SEARCH_PENDING_MAX);
+    let jh = taskrun::spawn(finder_full(qrx, rtx, backend, opts));
+    {
+        let fut = async move {
+            let mut rrx = std::pin::pin!(rrx);
+            while let Some(a) = rrx.next().await {
+                for x in a {}
+            }
+        };
+        // TODO await also this handle
+        let jh = tokio::spawn(fut);
+    }
+    let fh = FinderHandleV02 { qtx };
+    (fh, jh)
+}
+
 pub fn start_finder(
     tx: Sender<VecDeque<FindIocRes>>,
     backend: String,
@@ -79,12 +122,15 @@ pub fn start_finder(
     Ok((qtx, jh))
 }
 
-async fn finder_full(
-    qrx: Receiver<IocAddrQuery>,
+async fn finder_full<S>(
+    qrx: S,
     tx: Sender<VecDeque<FindIocRes>>,
     backend: String,
     opts: CaIngestOpts,
-) -> Result<(), Error> {
+) -> Result<(), Error>
+where
+    S: Stream<Item = IocAddrQuery> + Send + 'static,
+{
     let (tx1, rx1) = async_channel::bounded(20);
     let jh1 = taskrun::spawn(finder_worker(qrx, tx1, backend, opts.postgresql_config().clone()));
     let jh2 = taskrun::spawn(finder_network_if_not_found(rx1, tx, opts.clone()));
@@ -96,19 +142,33 @@ async fn finder_full(
     Ok(())
 }
 
-async fn finder_worker(
-    qrx: Receiver<IocAddrQuery>,
-    tx: Sender<VecDeque<FindIocRes>>,
-    backend: String,
-    db: Database,
-) -> Result<(), Error> {
-    // TODO do something with join handle
-    let (batch_rx, jh_batch) =
-        batchtools::batcher::batch(SEARCH_BATCH_MAX, Duration::from_millis(200), SEARCH_DB_WORKER_CNT, qrx);
+async fn finder_worker<S>(qrx: S, tx: Sender<VecDeque<FindIocRes>>, backend: String, db: Database) -> Result<(), Error>
+where
+    S: Stream<Item = IocAddrQuery> + Send + 'static,
+{
+    let batched = batchtools::batcher::Batcher2::new(qrx, Duration::from_millis(200), SEARCH_BATCH_MAX);
+    let (batched_rx, jh_batch) = {
+        let (batched_tx, batched_rx) = async_channel::bounded(SEARCH_DB_WORKER_CNT);
+        let fut = async move {
+            use futures::StreamExt;
+            let mut batched = std::pin::pin!(batched);
+            while let Some(item) = batched.next().await {
+                match batched_tx.send(item).await {
+                    Ok(()) => {}
+                    Err(e) => {
+                        error!("finder_worker  batched send error: {}", e);
+                        break;
+                    }
+                }
+            }
+        };
+        let jh = tokio::spawn(fut);
+        (batched_rx, jh)
+    };
     let mut jhs = Vec::new();
     for _ in 0..SEARCH_DB_WORKER_CNT {
         let jh = tokio::spawn(finder_worker_single(
-            batch_rx.clone(),
+            batched_rx.clone(),
             tx.clone(),
             backend.clone(),
             db.clone(),
@@ -125,7 +185,7 @@ async fn finder_worker(
 }
 
 async fn finder_worker_single(
-    inp: Receiver<Vec<IocAddrQuery>>,
+    inp: Receiver<VecDeque<IocAddrQuery>>,
     tx: Sender<VecDeque<FindIocRes>>,
     backend: String,
     db: Database,
@@ -184,19 +244,22 @@ async fn finder_worker_single(
                             tokio::time::sleep(Duration::from_millis(1000)).await;
                             continue;
                         }
-                        let items = transform_pgres(rows);
+                        let mut batch = batch;
+                        let txs: Vec<_> = batch.iter_mut().map(|x| x.tx_take()).collect();
+                        let items = transform_pgres(rows, txs);
                         for e in items.iter() {
                             if series::dbg::dbg_chn(&e.channel) {
                                 info!("found in database {:?}", e);
                             }
                         }
                         let mut items = items;
-                        for e in pass_through {
+                        for mut e in pass_through {
                             let x = FindIocRes {
                                 channel: e.name().into(),
                                 response_addr: None,
                                 addr: None,
                                 dt: Duration::from_millis(0),
+                                tx: e.tx_take(),
                             };
                             items.push_back(x);
                         }
@@ -242,7 +305,8 @@ async fn finder_network_if_not_found(
         for e in item {
             trace!("{}  sees {:?}", self_name, e);
             if e.addr.is_none() {
-                net.push_back(e.channel);
+                // net.push_back((e.channel, e.tx.takeit()));
+                net.push_back(e);
             } else {
                 res.push_back(e);
             }
@@ -251,8 +315,8 @@ async fn finder_network_if_not_found(
             debug!("{}  res send error, break", self_name);
             break;
         }
-        for ch in net {
-            if let Err(_) = net_tx.send(ch).await {
+        for e in net {
+            if let Err(_) = net_tx.send((e.channel, e.tx)).await {
                 debug!("{}  net ch send error, break", self_name);
                 break 'outer;
             }
@@ -288,15 +352,19 @@ async fn process_net_result(
     while let Ok(item) = net_rx.recv().await {
         match item {
             Ok(item) => {
+                let mut cacheitems = Vec::new();
                 for e in item.iter() {
                     let cacheitem =
                         IocItem::new(e.channel.clone(), e.response_addr.clone(), e.addr.clone(), e.dt.clone());
-                    if let Err(_) = dbtx.send(cacheitem).await {
-                        break;
-                    }
+                    cacheitems.push(cacheitem);
                 }
                 if let Err(_) = tx.send(item).await {
                     break;
+                }
+                for e in cacheitems {
+                    if let Err(_) = dbtx.send(e).await {
+                        break;
+                    }
                 }
             }
             Err(e) => {

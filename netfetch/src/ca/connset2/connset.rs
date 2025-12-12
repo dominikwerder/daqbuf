@@ -5,16 +5,18 @@ mod streamtask;
 
 use crate::ca::conn2::asynchan;
 use crate::ca::connset2::connset::cmder::ConnSetCmder;
+use crate::ca::findioc::FindIocRes;
 use crate::ca::futstack::ErasedFuture;
 use crate::ca::progpend::HaveProgressPending;
 use crate::conf::CaIngestOpts;
 use dbpg::seriesbychannel::ChannelInfoQuery;
 use dbpg::seriesbychannel::ChannelInfoQuerySender;
 pub use futs::FutShutdown;
-use futures_util::FutureExt;
-use futures_util::Stream;
-use futures_util::StreamExt;
+use futures::FutureExt;
+use futures::Stream;
+use futures::StreamExt;
 use scywr::insertqueues::InsertQueuesTx;
+use std::collections::VecDeque;
 use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
@@ -64,6 +66,7 @@ pub struct ConnSet {
     cmder: ConnSetCmder,
     cmd_rx: asynchan::Receiver<ConnSetCmd>,
     cmd_fut: Option<ErasedFuture<(), 4>>,
+    find_ioc_res_rx: Pin<Box<async_channel::Receiver<VecDeque<FindIocRes>>>>,
 }
 
 impl ConnSet {
@@ -88,6 +91,7 @@ impl ConnSet {
             cmder,
             cmd_rx,
             cmd_fut: None,
+            find_ioc_res_rx: Box::pin(find_ioc_res_rx),
         }
     }
 

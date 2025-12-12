@@ -11,8 +11,8 @@ pub mod progpend;
 pub mod search;
 pub mod statemap;
 
-use futures_util::Future;
-use futures_util::FutureExt;
+use futures::Future;
+use futures::FutureExt;
 use log;
 use std::pin::Pin;
 use std::sync::atomic::AtomicU32;

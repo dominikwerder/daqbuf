@@ -1,7 +1,7 @@
 use crate::ca::conn2::asynchan;
 use ca_proto::ca::proto::CaMsg;
 use ca_proto::ca::proto::CaMsgTy;
-use futures_util::StreamExt;
+use futures::StreamExt;
 use std::collections::VecDeque;
 use std::future::Future;
 use std::net::SocketAddrV4;

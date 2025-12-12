@@ -1,4 +1,4 @@
-use futures_util::Future;
+use futures::Future;
 use std::fmt;
 use std::marker::PhantomData;
 use std::mem::MaybeUninit;

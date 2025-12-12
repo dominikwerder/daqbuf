@@ -22,7 +22,7 @@ crossfire = { version = "2.1.8", features = [] }
 bytes = "1.10"
 arrayref = "0.3"
 byteorder = "1.5"
-futures-util = "0.3"
+futures = "0.3.31"
 md-5 = "0.10.5"
 hex = "0.4.3"
 regex = "1.11.2"

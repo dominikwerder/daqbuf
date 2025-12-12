@@ -1,9 +1,10 @@
+use crate::ca::conn2::asynchan;
 use crate::throttletrace::ThrottleTrace;
 use async_channel::Receiver;
 use ca_proto::ca::proto;
-use futures_util::Future;
-use futures_util::FutureExt;
-use futures_util::Stream;
+use futures::Future;
+use futures::FutureExt;
+use futures::Stream;
 use libc::c_int;
 use log::*;
 use proto::CaMsg;
@@ -11,6 +12,7 @@ use proto::CaMsgTy;
 use proto::HeadInfo;
 use std::collections::BTreeMap;
 use std::collections::VecDeque;
+use std::fmt;
 use std::net::Ipv4Addr;
 use std::net::SocketAddrV4;
 use std::pin::Pin;
@@ -81,6 +83,33 @@ struct SearchBatch {
     channels: Vec<String>,
     sids: Vec<SearchId>,
     done: Vec<bool>,
+    txs: Vec<OptResTx>,
+}
+
+pub struct OptResTx(Option<Pin<Box<asynchan::Sender<FindIocRes>>>>);
+
+impl fmt::Debug for OptResTx {
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt.debug_tuple("OptResTx").field(&self.0.is_some()).finish()
+    }
+}
+
+impl OptResTx {
+    pub fn new_empty() -> Self {
+        Self(None)
+    }
+
+    pub fn new_tx(tx: asynchan::Sender<FindIocRes>) -> Self {
+        Self(Some(Box::pin(tx)))
+    }
+
+    pub fn takeit(&mut self) -> OptResTx {
+        OptResTx(self.0.take())
+    }
+
+    pub fn into_inner(self) -> Option<Pin<Box<asynchan::Sender<FindIocRes>>>> {
+        self.0
+    }
 }
 
 #[derive(Debug)]
@@ -89,11 +118,22 @@ pub struct FindIocRes {
     pub response_addr: Option<SocketAddrV4>,
     pub addr: Option<SocketAddrV4>,
     pub dt: Duration,
+    pub tx: OptResTx,
+}
+
+fn _assert_traits() {
+    fn _assert_send<T: Send>() {}
+    fn _assert_sync<T: Sync>() {}
+    _assert_send::<FindIocRes>();
+    _assert_send::<asynchan::Sender<u32>>();
+    _assert_send::<asynchan::Sender<FindIocRes>>();
+    // _assert_send::<asynchan::Sender<std::rc::Rc<u32>>>();
+    // _assert_sync::<FindIocRes>();
 }
 
 pub struct FindIocStream {
     tgts: Vec<SocketAddrV4>,
-    channels_input: Pin<Box<Receiver<String>>>,
+    channels_input: Pin<Box<Receiver<(String, OptResTx)>>>,
     in_flight: BTreeMap<BatchId, SearchBatch>,
     in_flight_max: usize,
     bid_by_sid: BTreeMap<SearchId, BatchId>,
@@ -122,7 +162,7 @@ pub struct FindIocStream {
 
 impl FindIocStream {
     pub fn new(
-        channels_input: Receiver<String>,
+        channels_input: Receiver<(String, OptResTx)>,
         tgts: Vec<SocketAddrV4>,
         #[allow(unused)] blacklist: Vec<SocketAddrV4>,
         batch_run_max: Duration,
@@ -421,15 +461,17 @@ impl FindIocStream {
         }
     }
 
-    fn create_in_flight(&mut self, chns: Vec<String>) {
+    fn create_in_flight(&mut self, chns: Vec<(String, OptResTx)>) {
         let bid = BatchId::next();
         let mut sids = Vec::new();
         let mut chs = Vec::new();
-        for ch in chns {
+        let mut txs = Vec::new();
+        for (ch, tx) in chns {
             let sid = SearchId::next();
             self.bid_by_sid.insert(sid.clone(), bid.clone());
             sids.push(sid);
             chs.push(ch);
+            txs.push(tx);
         }
         let n = chs.len();
         let batch = SearchBatch {
@@ -438,6 +480,7 @@ impl FindIocStream {
             tgts: self.tgts.iter().enumerate().map(|x| x.0).collect(),
             sids,
             done: vec![false; n],
+            txs,
         };
         self.in_flight.insert(bid.clone(), batch);
         self.batch_send_queue.push_back(bid);
@@ -461,12 +504,14 @@ impl FindIocStream {
                                     batch.done[i2] = true;
                                     match batch.channels.get(i2) {
                                         Some(ch) => {
+                                            let tx = batch.txs.get_mut(i2).unwrap().takeit();
                                             let dt = tsnow.saturating_duration_since(batch.ts_beg);
                                             let res = FindIocRes {
                                                 channel: ch.into(),
                                                 response_addr: Some(src.clone()),
                                                 addr: Some(addr),
                                                 dt,
+                                                tx,
                                             };
                                             // trace!("udp search response {res:?}");
                                             // stats.ca_udp_recv_result().inc();
@@ -519,6 +564,7 @@ impl FindIocStream {
         let mut sids = Vec::new();
         let mut chns = Vec::new();
         let mut dts = Vec::new();
+        let mut txs = Vec::new();
         for (bid, batch) in &mut self.in_flight {
             let dt = tsnow.saturating_duration_since(batch.ts_beg);
             if dt > self.batch_run_max {
@@ -529,18 +575,20 @@ impl FindIocStream {
                         sids.push(sid.clone());
                         chns.push(batch.channels[i2].clone());
                         dts.push(dt);
+                        txs.push(batch.txs.get_mut(i2).unwrap().takeit());
                         // stats.ca_udp_recv_timeout().inc();
                     }
                 }
                 bids.push(bid.clone());
             }
         }
-        for ((sid, ch), dt) in sids.into_iter().zip(chns).zip(dts) {
+        for (((sid, ch), dt), tx) in sids.into_iter().zip(chns).zip(dts).zip(txs) {
             let res = FindIocRes {
                 response_addr: None,
                 channel: ch,
                 addr: None,
                 dt,
+                tx,
             };
             self.out_queue.push_back(res);
             self.bid_by_sid.remove(&sid);
@@ -550,7 +598,7 @@ impl FindIocStream {
         }
     }
 
-    fn get_input_up_to_batch_max(&mut self, cx: &mut Context) -> Vec<String> {
+    fn get_input_up_to_batch_max(&mut self, cx: &mut Context) -> Vec<(String, OptResTx)> {
         use Poll::*;
         let mut ret = Vec::new();
         loop {
@@ -749,7 +797,7 @@ impl Stream for FindIocStream {
     }
 }
 
-impl futures_util::stream::FusedStream for FindIocStream {
+impl futures::stream::FusedStream for FindIocStream {
     fn is_terminated(&self) -> bool {
         false
     }

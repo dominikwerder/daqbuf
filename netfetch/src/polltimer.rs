@@ -1,5 +1,5 @@
-use futures_util::Stream;
-use futures_util::StreamExt;
+use futures::Stream;
+use futures::StreamExt;
 use log::*;
 use std::pin::Pin;
 use std::task::Context;

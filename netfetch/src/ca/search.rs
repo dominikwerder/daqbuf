@@ -1,8 +1,9 @@
 use crate::ca::findioc::FindIocStream;
+use crate::ca::findioc::OptResTx;
 use crate::conf::CaIngestOpts;
 use async_channel::Receiver;
 use async_channel::Sender;
-use futures_util::StreamExt;
+use futures::StreamExt;
 use log::*;
 use std::collections::VecDeque;
 use std::net::IpAddr;
@@ -59,7 +60,7 @@ pub async fn ca_search_workers_start(
     opts: &CaIngestOpts,
 ) -> Result<
     (
-        Sender<String>,
+        Sender<(String, OptResTx)>,
         Receiver<Result<VecDeque<crate::ca::findioc::FindIocRes>, crate::ca::findioc::Error>>,
         JoinHandle<Result<(), Error>>,
     ),

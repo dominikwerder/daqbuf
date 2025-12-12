@@ -1,6 +1,11 @@
 use async_channel::Receiver;
 use async_channel::Sender;
-use log::*;
+use futures::Future;
+use futures::Stream;
+use std::collections::VecDeque;
+use std::pin::Pin;
+use std::task::Context;
+use std::task::Poll;
 use std::time::Duration;
 use taskrun::tokio;
 
@@ -25,14 +30,14 @@ async fn run_batcher<T>(rx: Receiver<T>, batch_tx: Sender<Vec<T>>, batch_limit: 
         if do_emit {
             do_emit = false;
             let batch = std::mem::replace(&mut all, Vec::new());
-            match tokio::time::timeout(Duration::from_millis(1000), batch_tx.send(batch)).await {
+            match tokio::time::timeout(Duration::from_millis(8000), batch_tx.send(batch)).await {
                 Ok(Ok(_)) => {}
                 Ok(Err(e)) => {
-                    error!("can not send batch");
-                    all = e.0;
+                    log::error!("can not send batch");
+                    all = e.into_inner();
                 }
-                Err(_) => {
-                    trace!("--------------------------   send timeout")
+                Err(e) => {
+                    log::error!("send timeout");
                 }
             }
         }
@@ -57,5 +62,86 @@ async fn run_batcher<T>(rx: Receiver<T>, batch_tx: Sender<Vec<T>>, batch_limit: 
             }
         }
     }
-    debug!("--------   batcher is done   --------------");
+    log::debug!("batcher done");
+}
+
+pub struct Batcher2<S, T> {
+    inp: S,
+    buf: VecDeque<T>,
+    interval: Duration,
+    timeout_fut: tokio::time::Sleep,
+}
+
+impl<S, T> Batcher2<S, T> {
+    pub fn new(inp: S, interval: Duration, limit_len: usize) -> Self {
+        let timeout_fut = tokio::time::sleep(interval);
+        Self {
+            inp,
+            buf: VecDeque::with_capacity(limit_len),
+            interval,
+            timeout_fut,
+        }
+    }
+}
+
+impl<S, T> Stream for Batcher2<S, T>
+where
+    S: Stream<Item = T>,
+{
+    type Item = VecDeque<T>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        use Poll::*;
+        loop {
+            let mut prog = false;
+            let mut pend = false;
+            let mut timeout_fut = unsafe { Pin::new_unchecked(&mut self.as_mut().get_unchecked_mut().timeout_fut) };
+            match timeout_fut.as_mut().poll(cx) {
+                Ready(()) => {
+                    let self2 = unsafe { self.as_mut().get_unchecked_mut() };
+                    self2.timeout_fut = tokio::time::sleep(self2.interval);
+                    if self2.buf.len() == 0 {
+                        prog = true;
+                    } else {
+                        let buf = std::mem::replace(&mut self2.buf, VecDeque::new());
+                        break Ready(Some(buf));
+                    }
+                }
+                Pending => {
+                    pend = true;
+                }
+            }
+            let inp = unsafe { Pin::new_unchecked(&mut self.as_mut().get_unchecked_mut().inp) };
+            match inp.poll_next(cx) {
+                Ready(x) => match x {
+                    Some(item) => {
+                        let self2 = unsafe { self.as_mut().get_unchecked_mut() };
+                        self2.buf.push_back(item);
+                        prog = true;
+                        if self2.buf.len() >= self2.buf.capacity() {
+                            let buf = std::mem::replace(&mut self2.buf, VecDeque::new());
+                            break Ready(Some(buf));
+                        }
+                    }
+                    None => {
+                        let self2 = unsafe { self.as_mut().get_unchecked_mut() };
+                        if self2.buf.len() > 0 {
+                            let buf = std::mem::replace(&mut self2.buf, VecDeque::new());
+                            break Ready(Some(buf));
+                        }
+                    }
+                },
+                Pending => {
+                    pend = true;
+                }
+            }
+            break if prog {
+                continue;
+            } else if pend {
+                Pending
+            } else {
+                Ready(None)
+            };
+        }
+    }
 }

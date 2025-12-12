@@ -1,7 +1,7 @@
 use crate::ca::conn2::asynchan;
-use futures_util::FutureExt;
-use futures_util::Stream;
-use futures_util::StreamExt;
+use futures::FutureExt;
+use futures::Stream;
+use futures::StreamExt;
 use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;

@@ -1,6 +1,8 @@
 use super::conn::EndOfStreamReason;
 use super::findioc::FindIocRes;
 use crate::ca::conn;
+use crate::ca::conn2::asynchan;
+use crate::ca::findioc::OptResTx;
 use crate::ca::statemap;
 use crate::ca::statemap::MaybeWrongAddressState;
 use crate::ca::statemap::UnknownAddressState;
@@ -25,9 +27,9 @@ use dbpg::seriesbychannel::BoxedSend;
 use dbpg::seriesbychannel::CanSendChannelInfoResult;
 use dbpg::seriesbychannel::ChannelInfoQuery;
 use dbpg::seriesbychannel::ChannelInfoResult;
-use futures_util::FutureExt;
-use futures_util::Stream;
-use futures_util::StreamExt;
+use futures::FutureExt;
+use futures::Stream;
+use futures::StreamExt;
 use hashbrown::HashMap;
 use log;
 use netpod::OnDrop;
@@ -347,15 +349,24 @@ impl CaConnSetCtrl {
 pub struct IocAddrQuery {
     name: String,
     use_cache: bool,
+    tx: OptResTx,
 }
 
 impl IocAddrQuery {
     pub fn cached(name: String) -> Self {
-        Self { name, use_cache: true }
+        Self {
+            name,
+            use_cache: true,
+            tx: OptResTx::new_empty(),
+        }
     }
 
     pub fn uncached(name: String) -> Self {
-        Self { name, use_cache: false }
+        Self {
+            name,
+            use_cache: false,
+            tx: OptResTx::new_empty(),
+        }
     }
 
     pub fn name(&self) -> &str {
@@ -368,6 +379,10 @@ impl IocAddrQuery {
 
     pub fn use_cache(&self) -> bool {
         self.use_cache
+    }
+
+    pub fn tx_take(&mut self) -> OptResTx {
+        self.tx.takeit()
     }
 }
 

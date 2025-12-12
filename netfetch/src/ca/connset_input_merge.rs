@@ -3,7 +3,7 @@ use super::findioc::FindIocRes;
 use async_channel::Receiver;
 use dbpg::seriesbychannel::ChannelInfoResult;
 use err::Error;
-use futures_util::Stream;
+use futures::Stream;
 use pin_project::pin_project;
 use std::collections::VecDeque;
 use std::pin::Pin;

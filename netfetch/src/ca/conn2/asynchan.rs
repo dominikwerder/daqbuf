@@ -1,6 +1,6 @@
-use futures_util::Sink;
-use futures_util::Stream;
-use futures_util::StreamExt;
+use futures::Sink;
+use futures::Stream;
+use futures::StreamExt;
 use std::fmt;
 use std::pin::Pin;
 use std::task::Context;

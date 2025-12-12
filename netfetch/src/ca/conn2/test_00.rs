@@ -1,5 +1,5 @@
 use super::super::conn2;
-use futures_util::StreamExt;
+use futures::StreamExt;
 
 macro_rules! trace { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
 
