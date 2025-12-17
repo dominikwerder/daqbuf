@@ -13,7 +13,7 @@ use dbpg::iocindex::IocSearchIndexWorker;
 use dbpg::postgres::Row as PgRow;
 use futures::Stream;
 use futures::StreamExt;
-use log::*;
+use log;
 use netpod::Database;
 use std::collections::VecDeque;
 use std::time::Duration;
@@ -23,7 +23,12 @@ use tokio::task::JoinHandle;
 
 const SEARCH_DB_WORKER_CNT: usize = 2;
 
-macro_rules! debug_batch { ($($arg:tt)*) => ( if false { debug!($($arg)*); } ); }
+macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
+macro_rules! warn { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
+macro_rules! info { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
+macro_rules! debug { ($($arg:tt)*) => { if true { log::debug!($($arg)*); } }; }
+macro_rules! debug_batch { ($($arg:tt)*) => { if false { log::debug!($($arg)*); } }; }
+macro_rules! trace { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
 
 autoerr::create_error_v1!(
     name(Error, "Finder"),
@@ -32,8 +37,16 @@ autoerr::create_error_v1!(
         DbPg(#[from] dbpg::err::Error),
         Postgres(#[from] dbpg::postgres::Error),
         IocSearch(#[from] crate::ca::search::Error),
+        AddrSearchSend,
+        AddrSearchResultTx,
     },
 );
+
+impl From<async_channel::SendError<IocAddrQuery>> for Error {
+    fn from(value: async_channel::SendError<IocAddrQuery>) -> Self {
+        Self::AddrSearchSend
+    }
+}
 
 fn transform_pgres(rows: Vec<PgRow>, txs: Vec<OptResTx>) -> VecDeque<FindIocRes> {
     let mut ret = VecDeque::new();
@@ -80,8 +93,21 @@ pub struct FinderHandleV02 {
 }
 
 impl FinderHandleV02 {
-    pub async fn find(&mut self, query: IocAddrQuery) -> Result<FindIocRes, Error> {
-        todo!()
+    async fn find(&mut self, query: IocAddrQuery) -> Result<FindIocRes, Error> {
+        let (query, mut rx) = query.with_rx();
+        self.qtx.send(query).await?;
+        let ret = rx.recv().await.map_err(|_| Error::AddrSearchResultTx)?;
+        Ok(ret)
+    }
+
+    pub async fn find_uncached(&mut self, name: String) -> Result<FindIocRes, Error> {
+        let query = IocAddrQuery::uncached(name);
+        self.find(query).await
+    }
+
+    pub async fn find_cached(&mut self, name: String) -> Result<FindIocRes, Error> {
+        let query = IocAddrQuery::cached(name);
+        self.find(query).await
     }
 }
 
@@ -89,20 +115,23 @@ pub fn start_finder_handle_v02(
     backend: String,
     opts: CaIngestOpts,
 ) -> (FinderHandleV02, JoinHandle<Result<(), Error>>) {
-    let map = dashmap::DashMap::<u32, u32>::new();
+    let selfname = "start_finder_handle_v02";
     let (qtx, qrx) = async_channel::bounded(CURRENT_SEARCH_PENDING_MAX);
-    let qrx = qrx.map(|e| {
-        //
-        // map.ge
-        e
-    });
     let (rtx, rrx) = async_channel::bounded(CURRENT_SEARCH_PENDING_MAX);
     let jh = taskrun::spawn(finder_full(qrx, rtx, backend, opts));
     {
         let fut = async move {
             let mut rrx = std::pin::pin!(rrx);
             while let Some(a) = rrx.next().await {
-                for x in a {}
+                for mut x in a {
+                    if let Some(mut tx) = x.tx.takeit().into_inner() {
+                        if let Err(e) = tx.send(x).await {
+                            warn!("{selfname}  response send error");
+                        }
+                    } else {
+                        warn!("{selfname}  missing tx for response");
+                    }
+                }
             }
         };
         // TODO await also this handle
@@ -203,14 +232,14 @@ async fn finder_worker_single(
     loop {
         match inp.recv().await {
             Ok(batch) => {
-                for e in batch.iter().filter(|x| series::dbg::dbg_chn(x.name())) {
-                    info!("searching database for  {:?}", e);
-                }
                 // TODO
                 // stats.dbsearcher_batch_recv().inc();
                 // stats.dbsearcher_item_recv().add(batch.len() as _);
                 let ts1 = Instant::now();
                 let (batch, pass_through) = batch.into_iter().fold((Vec::new(), Vec::new()), |(mut a, mut b), x| {
+                    if series::dbg::dbg_chn(x.name()) {
+                        trace!("searching database for  {:?}", x.name());
+                    }
                     if x.use_cache() {
                         a.push(x);
                     } else {
@@ -227,7 +256,7 @@ async fn finder_worker_single(
                 let qres = pg.query(&qu_select_multi, &[&backend, &ns, &names]).await;
                 let dt = ts1.elapsed();
                 debug_batch!(
-                    "done query batch  len {}: {}  {:.3}ms",
+                    "done query batch  len {}: {}  {:.3} ms",
                     batch.len(),
                     qres.is_ok(),
                     dt.as_secs_f32() * 1e3
@@ -249,7 +278,7 @@ async fn finder_worker_single(
                         let items = transform_pgres(rows, txs);
                         for e in items.iter() {
                             if series::dbg::dbg_chn(&e.channel) {
-                                info!("found in database {:?}", e);
+                                trace!("found in database {:?}", e);
                             }
                         }
                         let mut items = items;
@@ -271,6 +300,7 @@ async fn finder_worker_single(
                                 // stats.dbsearcher_item_send().add(items_len as _);
                             }
                             Err(e) => {
+                                // TODO metrics
                                 error!("finder sees: {}", e);
                                 break;
                             }
@@ -296,38 +326,42 @@ async fn finder_network_if_not_found(
     tx: Sender<VecDeque<FindIocRes>>,
     opts: CaIngestOpts,
 ) -> Result<(), Error> {
-    let self_name = "finder_network_if_not_found";
+    let selfname = "finder_network_if_not_found";
     let (net_tx, net_rx, jh_ca_search) = ca_search_workers_start(&opts).await?;
     let jh2 = taskrun::spawn(process_net_result(net_rx, tx.clone(), opts.clone()));
     'outer: while let Ok(item) = rx.recv().await {
         let mut res = VecDeque::new();
         let mut net = VecDeque::new();
         for e in item {
-            trace!("{}  sees {:?}", self_name, e);
             if e.addr.is_none() {
-                // net.push_back((e.channel, e.tx.takeit()));
+                if series::dbg::dbg_chn(&e.channel) {
+                    trace!("{selfname}  push to network lookup {:?}", e);
+                }
                 net.push_back(e);
             } else {
+                if series::dbg::dbg_chn(&e.channel) {
+                    trace!("{selfname}  push to result set {:?}", e);
+                }
                 res.push_back(e);
             }
         }
         if let Err(_) = tx.send(res).await {
-            debug!("{}  res send error, break", self_name);
+            debug!("{selfname}  res send error, break");
             break;
         }
         for e in net {
             if let Err(_) = net_tx.send((e.channel, e.tx)).await {
-                debug!("{}  net ch send error, break", self_name);
+                debug!("{selfname}  net ch send error, break");
                 break 'outer;
             }
         }
     }
     drop(net_tx);
-    trace!("{}  loop end", self_name);
+    trace!("{selfname}  loop end");
     jh_ca_search.await??;
-    trace!("{}  jh_ca_search  awaited", self_name);
+    trace!("{selfname}  jh_ca_search  awaited");
     jh2.await??;
-    trace!("{}  process_net_result  awaited", self_name);
+    trace!("{selfname}  process_net_result  awaited");
     Ok(())
 }
 
@@ -336,6 +370,7 @@ async fn process_net_result(
     tx: Sender<VecDeque<FindIocRes>>,
     opts: CaIngestOpts,
 ) -> Result<(), Error> {
+    let selfname = "process_net_result";
     const IOC_SEARCH_INDEX_WORKER_COUNT: usize = 1;
     let (dbtx, dbrx) = async_channel::bounded(64);
     let mut ioc_search_index_worker_jhs = Vec::new();
@@ -354,6 +389,9 @@ async fn process_net_result(
             Ok(item) => {
                 let mut cacheitems = Vec::new();
                 for e in item.iter() {
+                    if series::dbg::dbg_chn(&e.channel) {
+                        trace!("{selfname}  push to cacheitems {:?}", e);
+                    }
                     let cacheitem =
                         IocItem::new(e.channel.clone(), e.response_addr.clone(), e.addr.clone(), e.dt.clone());
                     cacheitems.push(cacheitem);
@@ -362,8 +400,14 @@ async fn process_net_result(
                     break;
                 }
                 for e in cacheitems {
+                    let chn = e.channel.clone();
                     if let Err(_) = dbtx.send(e).await {
+                        warn!("{selfname}  dbtx send error");
                         break;
+                    } else {
+                        if series::dbg::dbg_chn(&chn) {
+                            trace!("{selfname}  sent to cache dbtx  {chn}");
+                        }
                     }
                 }
             }

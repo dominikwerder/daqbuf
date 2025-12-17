@@ -72,10 +72,16 @@ pub struct Connected {
     out_tx: asynchan::Sender<CaMsg>,
     inp_buf: VecDeque<CaMsg>,
     inp_tx_main: asynchan::Sender<CaMsg>,
+    ca_cmd_rx: asynchan::Receiver<activeca::CaCommand>,
 }
 
 impl Connected {
-    pub fn new(tcp: TcpStream, addr: SocketAddrV4, tsnow: Instant) -> Self {
+    pub fn new(
+        tcp: TcpStream,
+        addr: SocketAddrV4,
+        tsnow: Instant,
+        ca_cmd_rx: asynchan::Receiver<activeca::CaCommand>,
+    ) -> Self {
         let raw_socket_fd = tcp.as_raw_fd();
         // TODO take from options
         let array_truncate = 1024 * 1024 * 10;
@@ -104,6 +110,7 @@ impl Connected {
             out_tx,
             inp_buf: VecDeque::with_capacity(32),
             inp_tx_main: inp_tx,
+            ca_cmd_rx,
         }
     }
 }
@@ -178,7 +185,7 @@ impl Stream for Connected {
                         let st1 = std::mem::replace(st1, st1.to_dummy());
                         let tx = self2.out_tx.clone();
                         let (rx,) = st1.dismantle();
-                        let stn = ActiveCa::new(rx, tx, tsnow, self2.addr, cx);
+                        let stn = ActiveCa::new(rx, tx, self2.ca_cmd_rx.clone(), tsnow, self2.addr, cx);
                         self.state = State::ActiveCa(stn);
                         hpp.mark_progress();
                     }

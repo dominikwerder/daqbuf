@@ -1,4 +1,5 @@
 use crate::ca::connset::IocAddrQuery;
+use crate::ca::finder::FinderHandleV02;
 use crate::ca::findioc::FindIocRes;
 use dbpg::seriesbychannel::ChannelInfoQuerySender;
 use std::pin::Pin;
@@ -17,13 +18,15 @@ pub enum Cmd {
     Remove,
 }
 
+// #[derive(Clone)]
 pub struct PollRess<'a> {
     pub ch_info: &'a ChannelInfoQuerySender,
+    pub finder_handle: &'a FinderHandleV02,
 }
 
 impl<'a> PollRess<'a> {
-    pub fn new(ch_info: &'a ChannelInfoQuerySender) -> Self {
-        Self { ch_info }
+    pub fn new(ch_info: &'a ChannelInfoQuerySender, finder_handle: &'a FinderHandleV02) -> Self {
+        Self { ch_info, finder_handle }
     }
 
     pub fn ioc_search(&mut self, query: IocAddrQuery) -> Result<FindIocRes, Error> {

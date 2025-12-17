@@ -27,7 +27,7 @@ impl From<NewSessionError> for Error {
 
 pub async fn create_session_no_ks(scyconf: &ScyllaIngestConfig) -> Result<Arc<Session>, Error> {
     let profile = ExecutionProfileBuilder::default()
-        .consistency(Consistency::One)
+        .consistency(Consistency::Quorum)
         .build()
         .into_handle();
     let port_range: RangeInclusive<u16> = 32000u16..=36000u16;

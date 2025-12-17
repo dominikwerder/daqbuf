@@ -104,7 +104,6 @@ pub struct ActiveCa {
     proto_rx: asynchan::Receiver<CaMsg>,
     proto_rx_buf: VecDeque<CaMsg>,
     proto_2_tx: asynchan::Sender<CaMsg>,
-    cmd_tx: Sender<CaCommand>,
     cmd_rx: Receiver<CaCommand>,
     cmd_fut: Option<CommandFut>,
 }
@@ -113,21 +112,11 @@ impl ActiveCa {
     pub fn new(
         proto_rx: asynchan::Receiver<CaMsg>,
         proto_tx: Sender<CaMsg>,
+        cmd_rx: Receiver<CaCommand>,
         tsnow: Instant,
         addr: SocketAddrV4,
         cx: &mut Context,
     ) -> Self {
-        let (mut cmd_tx, cmd_rx) = asynchan::bounded(16, "ActiveCa-cmd");
-        {
-            let conf = ChannelConfig::st_monitor("TEST:SLOW:SCALAR:F32:000000", "test");
-            let cmd = CaCommand::channel_add(conf);
-            match cmd_tx.poll_send_unpin(cmd, cx) {
-                Ok(()) => {}
-                Err(e) => {
-                    panic!("ActiveCa: new: initial cmd_tx send failed: {e}");
-                }
-            }
-        }
         let (proto_2_tx, proto_2_rx) = asynchan::bounded(120, "ActiveCa-proto2");
         Self {
             tsbeg: tsnow,
@@ -138,7 +127,6 @@ impl ActiveCa {
             proto_rx,
             proto_rx_buf: VecDeque::with_capacity(16),
             proto_2_tx,
-            cmd_tx,
             cmd_rx,
             cmd_fut: None,
         }
