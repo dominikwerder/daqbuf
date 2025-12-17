@@ -177,6 +177,11 @@ pub enum ChHeapCmd {
     RegisterSubid(Cid, Subid, asynchan::Sender<u32>),
 }
 
+enum PollHandlerItem {
+    ChannelHeapItem(ChannelHeapItem),
+    ChHandlerMod,
+}
+
 #[derive(Debug)]
 pub struct ChannelHeap {
     state: State,
@@ -218,42 +223,69 @@ impl ChannelHeap {
             return;
         }
         let waker = waker1::waker(cid.clone(), cx.waker().clone(), self.wakeup_cids.clone());
-        let mut cx2 = task::Context::from_waker(&waker);
+        // let mut cx2 = task::Context::from_waker(&waker);
         // TODO factor out polling into struct fn and call same from poll_next and channel_add.
         // That is, because also here so many possibilities can occur.
-        loop {
-            use Poll::*;
-            break match Pin::new(&mut handler).poll_next_unpin(&mut cx2) {
-                Ready(Some(x)) => {
-                    trace!("ChannelHeap:channel_add:Poll:Done");
-                    match x {
-                        Ok(item) => {
-                            trace!("ChannelHeap:channel_add:Poll:Ok");
-                            error!(
-                                "ChannelHeap:channel_add:Poll:Ok  TODO ChannelHeap:channel_add:Poll:Ok must here do something with item"
-                            );
-                            continue;
-                        }
-                        Err(e) => {
-                            trace!("ChannelHeap:channel_add:Poll:Err {e}");
-                            // TODO
-                        }
-                    }
-                }
-                Ready(None) => {
-                    trace!("ChannelHeap:channel_add:Poll:Done");
-                    error!("ChannelHeap:channel_add:Poll:Done  TODO must handle ChannelHandler finish");
-                }
-                Pending => {
-                    trace_pending!("ChannelHeap:channel_add:Poll:Pending");
-                    error!("ChannelHeap:channel_add:Poll:Pending  TODO must mark Pending");
-                }
-            };
-        }
+        // Just put the handler into the by_cid.
+        // Then make sure that we poll it: probably need to return some indication to the caller.
         let e = ChannelEntry {
             ch_handler: ChHandler::ChHandlerActive(ChHandlerActive { handler, tx, waker }),
         };
         self.by_cid.insert(cid, e);
+    }
+
+    fn poll_handler(
+        mut handler: Pin<&mut ChannelHandler>,
+        cx: &mut Context,
+        cid: Cid,
+        // st1: &mut ChannelEntry,
+    ) -> Poll<Option<Result<PollHandlerItem, Error>>> {
+        use Poll::*;
+        loop {
+            let mut hpp = HaveProgressPending::new();
+            match handler.poll_next_unpin(cx) {
+                Ready(Some(x)) => match x {
+                    Ok(item) => {
+                        trace!("ChannelHeap:Handler:Some {cid}");
+                        let item = match item.inner {
+                            channelhandler::ItemInner::ScyllaWrite => ChannelHeapItem {
+                                ts_create: item.ts_create,
+                                inner: ItemInner::ScyllaWrite,
+                            },
+                        };
+                        break Ready(Some(Ok(PollHandlerItem::ChannelHeapItem(item))));
+                    }
+                    Err(e) => {
+                        hpp.mark_progress();
+                        // TODO must not go into error state.
+                        // TODO clean up this channel handler.
+                        // TODO report upstream about failed channel.
+                        // TODO upstream should try to remove and re-add the channel a few times.
+                        // TODO if that does not work, remove the connection, invalidate
+                        // all those channels, and try again all channels.
+                        // self2.state = State::Done;
+                        warn!("ChannelHeap:Handler:Done  TODO handle closed channel handler gracefully {cid}");
+                        let msg = format!("ChannelHeap:Handler error {cid} {e}");
+                        break Ready(Some(Err(Error::Msg(msg))));
+                    }
+                },
+                Ready(None) => {}
+                Pending => {
+                    hpp.mark_pending();
+                    trace_pending!("ChannelHeap:Handler  {cid}");
+                }
+            }
+            break if hpp.have_progress() {
+                trace!("poll_handler:HPP:Progress");
+                continue;
+            } else if hpp.have_pending() {
+                trace_pending!("poll_handler:HPP");
+                Pending
+            } else {
+                trace!("poll_handler:HPP:Done");
+                Ready(None)
+            };
+        }
     }
 }
 
@@ -412,34 +444,14 @@ impl Stream for ChannelHeap {
                             match &mut st1.ch_handler {
                                 ChHandler::ChHandlerActive(st2) => {
                                     let cx2 = &mut Context::from_waker(&st2.waker);
-                                    match st2.handler.poll_next_unpin(cx2) {
+                                    let handler = Pin::new(&mut st2.handler);
+                                    match Self::poll_handler(handler, cx2, cid.clone()) {
                                         Ready(Some(x)) => match x {
-                                            Ok(item) => {
-                                                trace!("ChannelHeap:Handler:Some {cid}");
-                                                let item = match item.inner {
-                                                    channelhandler::ItemInner::ScyllaWrite => ChannelHeapItem {
-                                                        ts_create: item.ts_create,
-                                                        inner: ItemInner::ScyllaWrite,
-                                                    },
-                                                };
-                                                hpp.mark_progress();
-                                                break 'main Ready(Some(Ok(item)));
-                                            }
-                                            Err(e) => {
-                                                hpp.mark_progress();
-                                                // TODO must not go into error state.
-                                                // TODO clean up this channel handler.
-                                                // TODO report upstream about failed channel.
-                                                // TODO upstream should try to remove and re-add the channel a few times.
-                                                // TODO if that does not work, remove the connection, invalidate
-                                                // all those channels, and try again all channels.
-                                                self2.state = State::Done;
-                                                warn!(
-                                                    "ChannelHeap:Handler:Done  TODO handle closed channel handler gracefully {cid}"
-                                                );
-                                                let msg = format!("ChannelHeap:Handler error {cid} {e}");
-                                                break 'main Ready(Some(Err(Error::Msg(msg))));
-                                            }
+                                            Ok(x) => match x {
+                                                PollHandlerItem::ChannelHeapItem(item) => todo!(),
+                                                PollHandlerItem::ChHandlerMod => todo!(),
+                                            },
+                                            Err(e) => todo!(),
                                         },
                                         Ready(None) => {
                                             trace!("ChannelHeap:Handler:Finished {cid}");
@@ -451,10 +463,12 @@ impl Stream for ChannelHeap {
                                             hpp.mark_progress();
                                         }
                                         Pending => {
-                                            hpp.mark_pending();
                                             trace_pending!("ChannelHeap:Handler  {cid}");
+                                            hpp.mark_pending();
                                         }
                                     }
+                                    // TODO handle result
+                                    // TODO;
                                 }
                                 ChHandler::Done => {
                                     // Wakeup marker for no longer served cid.

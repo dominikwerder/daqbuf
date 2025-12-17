@@ -53,12 +53,13 @@ enum State {
     Init,
     CssidReq(ErasedFuture<Result<ChannelInfoResult, Error>, 0x150>),
     AddrSearch(ChannelStatusSeriesId, ErasedFuture<Result<SocketAddrV4, Error>, 0x200>),
+    Observing,
     Removed,
 }
 
 #[derive(Debug)]
 pub enum ChannelActionItem {
-    AddToCaConn(String, SocketAddrV4),
+    AddToCaConn(ChannelConfig, SocketAddrV4),
 }
 
 #[derive(Debug)]
@@ -144,8 +145,11 @@ impl PollCstm for Channel {
                     Ready(x) => match x {
                         Ok(x) => {
                             trace!("State::AddrSearch  found {x}");
-                            self.state = State::Removed;
+                            trace!("State::AddrSearch  TODO  issue channel-add and then monitor for status updates");
+                            self.state = State::Observing;
+                            let item = ChannelActionItem::AddToCaConn(self.conf.clone(), x);
                             hpp.mark_progress();
+                            break Ready(Some(Ok(item)));
                         }
                         Err(e) => {
                             match e {
@@ -166,6 +170,9 @@ impl PollCstm for Channel {
                         hpp.mark_pending();
                     }
                 },
+                State::Observing => {
+                    // TODO listen to status update of this channel from the CaConn output.
+                }
                 State::Removed => {}
             }
             break if hpp.have_progress() {

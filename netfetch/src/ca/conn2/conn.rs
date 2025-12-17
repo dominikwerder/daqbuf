@@ -145,7 +145,7 @@ impl CaConnCmd {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct CaConnComm {
     cmd_tx: asynchan::Sender<CaConnCmd>,
 }

@@ -3,8 +3,10 @@ mod cmder;
 mod futs;
 mod streamtask;
 
+use crate::ca::conn2;
 use crate::ca::conn2::asynchan;
 use crate::ca::conn2::conn::CaConn;
+use crate::ca::conn2::conn::CaConnComm;
 use crate::ca::connset2::connset::channels::pollcstm;
 use crate::ca::connset2::connset::channels::pollcstm::PollCstm;
 use crate::ca::connset2::connset::channels::pollcstm::PollRess;
@@ -29,6 +31,8 @@ use std::net::SocketAddrV4;
 use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
+use taskrun::tokio;
+use taskrun::tokio::task::JoinHandle;
 
 macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
 macro_rules! warn { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
@@ -43,6 +47,7 @@ autoerr::create_error_v1!(
     enum variants {
         DbPgSeriesByChannel(#[from] dbpg::seriesbychannel::Error),
         Channel(#[from] channels::channel::Error),
+        Conn(#[from] conn2::conn::Error),
     },
 );
 
@@ -89,11 +94,11 @@ pub struct ConnSet {
     local_epics_hostname: String,
     cmder: ConnSetCmder,
     cmd_rx: asynchan::Receiver<ConnSetCmd>,
-    cmd_fut: Option<ErasedFuture<(), 4>>,
+    cmd_fut: Option<ErasedFuture<Result<(), Error>, 0x200>>,
     finder_handle: FinderHandleV02,
     channels: VecDeque<ChannelCat>,
     ch_info_tx: ChannelInfoQuerySender,
-    ca_conns: BTreeMap<SocketAddrV4, CaConn>,
+    ca_conns: BTreeMap<SocketAddrV4, (CaConnComm, JoinHandle<Result<(), Error>>)>,
 }
 
 impl ConnSet {
@@ -152,7 +157,7 @@ impl ConnSet {
         &self.cmder
     }
 
-    fn poll_channels(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Error>> {
+    fn poll_channels(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Error>> {
         use Poll::*;
         // TODO rework return type
         let self2 = self.get_mut();
@@ -163,10 +168,34 @@ impl ConnSet {
                     Ok(x) => {
                         use channels::channel::ChannelActionItem;
                         match x {
-                            ChannelActionItem::AddToCaConn(name, addr) => {
-                                if let Some(conn) = self2.ca_conns.get_mut(&addr) {
-                                    // TODO actually, we can not hold the CaConn itself, but only the comm interface.
+                            ChannelActionItem::AddToCaConn(conf, addr) => {
+                                trace!("poll_channels  ChannelActionItem::AddToCaConn  {addr}  {conf:?}");
+                                if let Some((comm, jh)) = self2.ca_conns.get_mut(&addr) {
+                                    let fut = async move {
+                                        comm.channel_add(conf).await?;
+                                        Ok(())
+                                    };
+                                    self2.cmd_fut = Some(ErasedFuture::new(fut));
                                 } else {
+                                    let conn =
+                                        CaConn::new(self2.backend.clone(), addr, self2.local_epics_hostname.clone());
+                                    let mut comm = conn.comm();
+                                    let jh = {
+                                        let fut = async move {
+                                            let mut conn = conn;
+                                            while let Some(x) = conn.next().await {
+                                                trace!("ConnSet CaConn item {x:?}");
+                                            }
+                                            Ok::<_, Error>(())
+                                        };
+                                        tokio::spawn(fut)
+                                    };
+                                    self2.ca_conns.insert(addr, (comm.clone(), jh));
+                                    let fut = async move {
+                                        comm.channel_add(conf).await?;
+                                        Ok(())
+                                    };
+                                    self2.cmd_fut = Some(ErasedFuture::new(fut));
                                 }
                             }
                         }
@@ -225,9 +254,15 @@ impl Stream for ConnSet {
             let mut hpp = HaveProgressPending::new();
             match &mut self.cmd_fut {
                 Some(fut) => match fut.poll_unpin(cx) {
-                    Ready(()) => {
+                    Ready(x) => {
                         self.cmd_fut = None;
                         hpp.mark_progress();
+                        match x {
+                            Ok(()) => {}
+                            Err(e) => {
+                                break Ready(Some(Err(e)));
+                            }
+                        }
                     }
                     Pending => {
                         hpp.mark_pending();
