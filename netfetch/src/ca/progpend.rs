@@ -26,4 +26,9 @@ impl HaveProgressPending {
     pub fn have_pending(&self) -> bool {
         self.have_pending
     }
+
+    pub fn merge(&mut self, other: Self) {
+        self.have_progress |= other.have_progress;
+        self.have_pending |= other.have_pending;
+    }
 }

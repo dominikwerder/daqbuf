@@ -64,6 +64,22 @@ pub struct ConnectedItem {
 }
 
 #[derive(Debug)]
+pub struct StatusChannel {
+    pub name: String,
+    pub test_monitor_recv_cnt: u64,
+}
+
+#[derive(Debug)]
+pub struct StatusChannels {
+    pub status_channels: Vec<StatusChannel>,
+}
+
+#[derive(Debug)]
+pub struct StatusInfo {
+    pub channels: StatusChannels,
+}
+
+#[derive(Debug)]
 pub struct Connected {
     tsbeg: Instant,
     addr: SocketAddrV4,
@@ -111,6 +127,15 @@ impl Connected {
             inp_buf: VecDeque::with_capacity(32),
             inp_tx_main: inp_tx,
             ca_cmd_rx,
+        }
+    }
+
+    pub fn status_info(&self) -> StatusInfo {
+        match &self.state {
+            State::Init(st1) => todo!(),
+            State::Handshake(st1) => todo!(),
+            State::ActiveCa(st1) => todo!(),
+            State::Done => todo!(),
         }
     }
 }

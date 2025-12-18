@@ -202,6 +202,9 @@ pub struct ChannelHandlerItem {
 }
 
 #[derive(Debug)]
+pub struct StatusInfo {}
+
+#[derive(Debug)]
 pub struct ChannelHandler {
     state: State,
     cid: CidOwned,
@@ -237,6 +240,10 @@ impl ChannelHandler {
             ch_hp_tx,
             proto_rx_dispatch: None,
         }
+    }
+
+    pub fn status_info(&self) -> StatusInfo {
+        todo!()
     }
 
     pub fn cid(&self) -> Cid {

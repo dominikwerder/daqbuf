@@ -291,3 +291,8 @@ pub fn xoshiro_from_time() -> rand_xoshiro::Xoshiro128PlusPlus {
         .subsec_nanos() as u64;
     rand_xoshiro::Xoshiro128PlusPlus::seed_from_u64(a << 32 ^ b)
 }
+
+pub fn xoshiro_from_os_rng() -> rand_xoshiro::Xoshiro128PlusPlus {
+    use rand_xoshiro::rand_core::SeedableRng;
+    rand_xoshiro::Xoshiro128PlusPlus::from_os_rng()
+}

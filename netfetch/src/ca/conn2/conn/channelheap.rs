@@ -183,6 +183,9 @@ enum PollHandlerItem {
 }
 
 #[derive(Debug)]
+pub struct StatusInfo {}
+
+#[derive(Debug)]
 pub struct ChannelHeap {
     state: State,
     proto_tx: asynchan::Sender<CaMsg>,
@@ -213,21 +216,20 @@ impl ChannelHeap {
         }
     }
 
+    pub fn status_info(&self) -> StatusInfo {
+        todo!()
+    }
+
     pub fn channel_add(&mut self, conf: ChannelConfig, cx: &mut Context) {
         trace!("channel_add {conf:?}");
         let (tx, rx) = asynchan::bounded(12, "ChannelHeap-channeladd");
-        let mut handler = ChannelHandler::new(conf, self.proto_tx.clone(), rx, self.ch_hp_tx.clone());
+        let handler = ChannelHandler::new(conf, self.proto_tx.clone(), rx, self.ch_hp_tx.clone());
         let cid = handler.cid();
         if self.by_cid.contains_key(&cid) {
             error!("ChannelHeap::channel_add: channel with cid {cid:?} already in map");
             return;
         }
         let waker = waker1::waker(cid.clone(), cx.waker().clone(), self.wakeup_cids.clone());
-        // let mut cx2 = task::Context::from_waker(&waker);
-        // TODO factor out polling into struct fn and call same from poll_next and channel_add.
-        // That is, because also here so many possibilities can occur.
-        // Just put the handler into the by_cid.
-        // Then make sure that we poll it: probably need to return some indication to the caller.
         let e = ChannelEntry {
             ch_handler: ChHandler::ChHandlerActive(ChHandlerActive { handler, tx, waker }),
         };

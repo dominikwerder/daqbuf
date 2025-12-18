@@ -95,6 +95,9 @@ pub struct ActiveCaItem {
 }
 
 #[derive(Debug)]
+pub struct StatusInfo {}
+
+#[derive(Debug)]
 pub struct ActiveCa {
     tsbeg: Instant,
     addr: SocketAddrV4,
@@ -136,10 +139,18 @@ impl ActiveCa {
         (self.proto_rx,)
     }
 
+    pub fn status_info(&self) -> StatusInfo {
+        match &self.state {
+            State::Running => todo!(),
+            State::Done => todo!(),
+        }
+    }
+
     fn handle_command(&mut self, cmd: CaCommand, cx: &mut Context) -> CommandFut {
         match cmd.kind {
             CaCommandKind::ChannelAdd(conf) => {
                 self.chanheap.channel_add(conf, cx);
+                trace!("ActiveCa:handle_command  TODO anything to put into this future here?");
                 let fut = async { Ok(()) }.boxed();
                 CommandFut(Box::pin(fut))
             }

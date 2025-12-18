@@ -8,6 +8,7 @@ use super::connevent::CaConnEvent;
 use super::connevent::EndOfStreamReason;
 use crate::ca::conn::CaConnOpts;
 use crate::ca::conn2::asynchan;
+use crate::ca::conn2::asynchan::SendPoll;
 use crate::ca::conn2::statetrans::conn::IocConnStateBase;
 use crate::ca::futstack::ErasedFuture;
 use crate::ca::progpend::HaveProgressPending;
@@ -24,6 +25,8 @@ use hashbrown::HashMap;
 use scywr::insertqueues::InsertDeques;
 use scywr::insertqueues::InsertQueuesTx;
 use scywr::iteminsertqueue::QueryItem;
+use serde::Serialize;
+use stats::rand_xoshiro::Xoshiro128PlusPlus;
 use std::collections::VecDeque;
 use std::fmt;
 use std::net::SocketAddrV4;
@@ -61,6 +64,54 @@ impl<T> From<asynchan::SendError<T>> for Error {
     }
 }
 
+#[derive(Debug)]
+struct JitterTicker {
+    ivl: Duration,
+    ticker: Pin<Box<tokio::time::Sleep>>,
+    rng: Xoshiro128PlusPlus,
+}
+
+impl JitterTicker {
+    fn new(ivl: Duration) -> Self {
+        let rng = stats::xoshiro_from_os_rng();
+        let ticker = tokio::time::sleep(ivl);
+        let mut ret = Self {
+            ivl,
+            ticker: Box::pin(ticker),
+            rng,
+        };
+        let ticker = ret.make_ticker();
+        ret.ticker.set(ticker);
+        ret
+    }
+
+    fn make_ticker(&mut self) -> tokio::time::Sleep {
+        use stats::rand_xoshiro::rand_core::RngCore;
+        let b = self.ivl;
+        let t = b + b * (self.rng.next_u32() & 0x1f) / 0xff;
+        tokio::time::sleep(t)
+    }
+}
+
+impl Stream for JitterTicker {
+    type Item = ();
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        use Poll::*;
+        loop {
+            break match self.ticker.poll_unpin(cx) {
+                Ready(()) => {
+                    let ticker = self.make_ticker();
+                    self.ticker.set(ticker);
+                    continue;
+                }
+                Pending => Pending,
+            };
+        }
+    }
+}
+
+#[derive(Debug)]
 struct DurationMeasureSteps {
     ts: Instant,
     durs: smallvec::SmallVec<[Duration; 8]>,
@@ -148,6 +199,7 @@ impl CaConnCmd {
 #[derive(Debug, Clone)]
 pub struct CaConnComm {
     cmd_tx: asynchan::Sender<CaConnCmd>,
+    rx: asynchan::Receiver<Result<CaConnItem, Error>>,
 }
 
 impl CaConnComm {
@@ -158,6 +210,29 @@ impl CaConnComm {
         self.cmd_tx.send(cmd).await?;
         Ok(())
     }
+
+    pub fn poll_next_unpin(&mut self, cx: &mut Context) -> Poll<Option<Result<CaConnItem, Error>>> {
+        self.rx.poll_next_unpin(cx)
+    }
+}
+
+#[derive(Debug)]
+pub enum StatusState {
+    Connecting,
+    Connected(connected::StatusInfo),
+    Done,
+}
+
+#[derive(Debug)]
+pub struct StatusInfo {
+    pub ts: time::UtcDateTime,
+    pub addr: SocketAddrV4,
+    pub state: StatusState,
+}
+
+#[derive(Debug)]
+pub enum CaConnItem {
+    StatusInfo(StatusInfo),
 }
 
 #[derive(Debug)]
@@ -169,12 +244,15 @@ pub struct CaConn {
     // iqdqs: InsertDeques,
     // ca_conn_event_out_queue: VecDeque<CaConnEvent>,
     // ca_conn_event_out_queue_max: usize,
+    ticker: JitterTicker,
     mett: stats::mett::CaConnMetrics,
     cmd_tx: asynchan::Sender<CaConnCmd>,
     cmd_rx: asynchan::Receiver<CaConnCmd>,
     ca_cmd_tx: asynchan::Sender<activeca::CaCommand>,
     ca_cmd_rx: asynchan::Receiver<activeca::CaCommand>,
     ca_cmd_tx_fut: Option<ErasedFuture<Result<(), Error>, 0x200>>,
+    out_tx: asynchan::Sender<Result<CaConnItem, Error>>,
+    out_rx: asynchan::Receiver<Result<CaConnItem, Error>>,
 }
 
 impl CaConn {
@@ -187,6 +265,7 @@ impl CaConn {
     ) -> Self {
         // let ress_a: StateRessShr1 = todoval();
         let (cmd_tx, cmd_rx) = asynchan::bounded(32, "CaConn-cmd");
+        let (out_tx, out_rx) = asynchan::bounded(32, "CaConn-out");
         let (ca_cmd_tx, ca_cmd_rx) = asynchan::bounded(16, "ActiveCa-cmd");
         Self {
             backend,
@@ -196,29 +275,73 @@ impl CaConn {
             // iqdqs: InsertDeques::new(),
             // ca_conn_event_out_queue: VecDeque::new(),
             // ca_conn_event_out_queue_max: 2000,
+            ticker: JitterTicker::new(Duration::from_millis(2000)),
             mett: stats::mett::CaConnMetrics::new(),
             cmd_tx,
             cmd_rx,
             ca_cmd_tx,
             ca_cmd_rx,
             ca_cmd_tx_fut: None,
+            out_tx,
+            out_rx,
         }
     }
 
     pub fn comm(&self) -> CaConnComm {
         CaConnComm {
             cmd_tx: self.cmd_tx.clone(),
+            rx: self.out_rx.clone(),
         }
     }
 
-    fn poll_own_ticker(mut self: Pin<&mut Self>, cx: &mut Context) -> Result<(), Error> {
-        // TODO nothing taken yet
-        Ok(())
+    pub fn into_task(self) -> CaConnTask {
+        CaConnTask::new(self)
     }
 
     // call this only from the main fn poll
     fn shutdown_on_error(&mut self, e: Error) {
         todo!()
+    }
+
+    fn make_status_info(mut self: Pin<&mut Self>) -> StatusInfo {
+        // We only consider state which is sync available here.
+        // For other information, we take the last known values.
+        match &self.state {
+            State::Connecting(connecting) => StatusInfo {
+                ts: time::UtcDateTime::now(),
+                addr: self.remote_addr,
+                state: StatusState::Connecting,
+            },
+            State::Connected(connected) => StatusInfo {
+                ts: time::UtcDateTime::now(),
+                addr: self.remote_addr,
+                state: StatusState::Connected(connected.status_info()),
+            },
+            State::Done => StatusInfo {
+                ts: time::UtcDateTime::now(),
+                addr: self.remote_addr,
+                state: StatusState::Done,
+            },
+        }
+    }
+
+    fn poll_own_ticker(mut self: Pin<&mut Self>, cx: &mut Context) -> Result<HaveProgressPending, Error> {
+        use Poll::*;
+        let mut hpp = HaveProgressPending::new();
+        match self.ticker.poll_next_unpin(cx) {
+            Ready(Some(())) => {
+                trace!("CaConn:Ticker fired");
+                hpp.mark_progress();
+                // TODO emit channel status.
+                trace!("TODO  poll_own_ticker  emit status info");
+                self.make_status_info();
+            }
+            Ready(None) => {}
+            Pending => {
+                hpp.mark_pending();
+            }
+        }
+        Ok(hpp)
     }
 }
 
@@ -246,7 +369,7 @@ macro_rules! handle_poll_res {
 }
 
 impl Stream for CaConn {
-    type Item = Result<(), Error>;
+    type Item = Result<CaConnItem, Error>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         use Poll::*;
@@ -361,7 +484,9 @@ impl Stream for CaConn {
 
             // TODO add up duration of this scope
             match self.as_mut().poll_own_ticker(cx) {
-                Ok(()) => {}
+                Ok(hpp2) => {
+                    hpp.merge(hpp2);
+                }
                 Err(e) => {
                     self.shutdown_on_error(e);
                     hpp.mark_progress();
@@ -528,5 +653,53 @@ impl Stream for CaConn {
         // self.stats.proto_out_len().set(n);
         // self.stats.poll_reloops().ingest(reloops);
         ret
+    }
+}
+
+#[derive(Debug)]
+pub struct CaConnTask {
+    conn: CaConn,
+    t1: Option<Result<CaConnItem, Error>>,
+}
+
+impl CaConnTask {
+    fn new(conn: CaConn) -> Self {
+        Self { conn, t1: None }
+    }
+}
+
+impl Future for CaConnTask {
+    type Output = Result<(), Error>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        use Poll::*;
+        loop {
+            break if let Some(x) = self.t1.take() {
+                match self.conn.out_tx.poll_send_unpin(x, cx) {
+                    Ok(()) => continue,
+                    Err(e) => match e {
+                        asynchan::SendPollError::Full(x) => {
+                            self.t1 = Some(x);
+                            Pending
+                        }
+                        asynchan::SendPollError::Closed(x) => {
+                            error!("CaConnTask: output channel closed");
+                            Ready(Ok(()))
+                        }
+                    },
+                }
+            } else {
+                match self.conn.poll_next_unpin(cx) {
+                    Ready(x) => match x {
+                        Some(x) => {
+                            self.t1 = Some(x);
+                            continue;
+                        }
+                        None => Ready(Ok(())),
+                    },
+                    Pending => Pending,
+                }
+            };
+        }
     }
 }

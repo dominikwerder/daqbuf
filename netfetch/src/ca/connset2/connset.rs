@@ -24,6 +24,7 @@ pub use futs::FutShutdown;
 use futures::FutureExt;
 use futures::Stream;
 use futures::StreamExt;
+use futures::TryFutureExt;
 use scywr::insertqueues::InsertQueuesTx;
 use std::collections::BTreeMap;
 use std::collections::VecDeque;
@@ -180,16 +181,7 @@ impl ConnSet {
                                     let conn =
                                         CaConn::new(self2.backend.clone(), addr, self2.local_epics_hostname.clone());
                                     let mut comm = conn.comm();
-                                    let jh = {
-                                        let fut = async move {
-                                            let mut conn = conn;
-                                            while let Some(x) = conn.next().await {
-                                                trace!("ConnSet CaConn item {x:?}");
-                                            }
-                                            Ok::<_, Error>(())
-                                        };
-                                        tokio::spawn(fut)
-                                    };
+                                    let jh = tokio::spawn(conn.into_task().map_err(Error::from));
                                     self2.ca_conns.insert(addr, (comm.clone(), jh));
                                     let fut = async move {
                                         comm.channel_add(conf).await?;
@@ -208,6 +200,27 @@ impl ConnSet {
                 Ready(None) => {
                     trace!("Channel is done  TODO status event, clean up");
                 }
+                Pending => {}
+            }
+        }
+        Pending
+    }
+
+    fn poll_conn_comm(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Result<(), Error>>> {
+        use Poll::*;
+        for (_, (comm, _)) in self.ca_conns.iter_mut() {
+            match comm.poll_next_unpin(cx) {
+                Ready(x) => match x {
+                    Some(x) => match x {
+                        Ok(x) => {
+                            //
+                            trace!("TODO handle item from CaConn {x:?}");
+                            return Ready(Some(Ok(())));
+                        }
+                        Err(e) => todoval(),
+                    },
+                    None => {}
+                },
                 Pending => {}
             }
         }
@@ -271,6 +284,7 @@ impl Stream for ConnSet {
                 None => match self.cmd_rx.poll_next_unpin(cx) {
                     Ready(x) => match x {
                         Some(x) => {
+                            trace!("TODO handle ConnSetCmd {x:?}");
                             hpp.mark_progress();
                         }
                         None => {}
