@@ -7,6 +7,8 @@ use crate::ca::connset2::connset::channels::pollcstm;
 use crate::ca::futstack::ErasedFuture;
 use crate::ca::progpend::HaveProgressPending;
 use crate::conf::ChannelConfig;
+use crate::futwrap::FutDbg;
+use crate::futwrap::FutDbgBox;
 use crate::misc::todoval;
 use channels::pollcstm::Cmd;
 use channels::pollcstm::PollCstm;
@@ -49,17 +51,32 @@ async fn addr_search(conf: ChannelConfig, ress: &mut PollRess<'_>) -> Result<Soc
 }
 
 #[derive(Debug)]
+struct Observing {
+    addr: SocketAddrV4,
+}
+
+#[derive(Debug, Clone)]
+pub struct RemovingInfo {
+    pub addr: Option<SocketAddrV4>,
+}
+
+#[derive(Debug)]
 enum State {
     Init,
     CssidReq(ErasedFuture<Result<ChannelInfoResult, Error>, 0x150>),
     AddrSearch(ChannelStatusSeriesId, ErasedFuture<Result<SocketAddrV4, Error>, 0x200>),
-    Observing,
+    Observing(Observing),
+    Removing0(RemovingInfo),
+    Removing1(RemovingInfo, FutDbg<Result<(), Error>>),
+    Removing2(RemovingInfo, FutDbg<Result<(), Error>>),
     Removed,
+    Done,
 }
 
 #[derive(Debug)]
 pub enum ChannelActionItem {
     AddToCaConn(ChannelConfig, SocketAddrV4),
+    RemoveFromCaConn(ChannelConfig, RemovingInfo, asynchan::Sender<u32>),
 }
 
 #[derive(Debug)]
@@ -80,6 +97,21 @@ impl Channel {
             cmd_rx,
         }
     }
+
+    pub fn name(&self) -> &str {
+        self.conf.name()
+    }
+
+    fn transition_to_removing(&mut self) {
+        // TODO
+        // Correct? More to do?
+        // Must be safe to be called in any state.
+        let addr = match &self.state {
+            State::Observing(obs) => Some(obs.addr),
+            _ => None,
+        };
+        self.state = State::Removing0(RemovingInfo { addr });
+    }
 }
 
 impl PollCstm for Channel {
@@ -93,7 +125,10 @@ impl PollCstm for Channel {
                 Ready(Some(x)) => {
                     hpp.mark_progress();
                     match x {
-                        Cmd::Remove => todo!(),
+                        Cmd::Remove => {
+                            trace!("Channel  received Cmd::Remove");
+                            self.transition_to_removing();
+                        }
                     }
                 }
                 Ready(None) => {}
@@ -146,9 +181,9 @@ impl PollCstm for Channel {
                         Ok(x) => {
                             trace!("State::AddrSearch  found {x}");
                             trace!("State::AddrSearch  TODO  issue channel-add and then monitor for status updates");
-                            self.state = State::Observing;
-                            let item = ChannelActionItem::AddToCaConn(self.conf.clone(), x);
                             hpp.mark_progress();
+                            self.state = State::Observing(Observing { addr: x });
+                            let item = ChannelActionItem::AddToCaConn(self.conf.clone(), x);
                             break Ready(Some(Ok(item)));
                         }
                         Err(e) => {
@@ -170,10 +205,78 @@ impl PollCstm for Channel {
                         hpp.mark_pending();
                     }
                 },
-                State::Observing => {
+                State::Observing(_) => {
                     // TODO listen to status update of this channel from the CaConn output.
                 }
+                State::Removing0(reminfo) => {
+                    let fut = async move {
+                        // TODO do I need to care at this point about any sub-state to finish?
+                        // If yes, then maybe move that future into some box here with a strict timeout?
+                        // TODO metrics to flush?
+                        Ok(())
+                    };
+                    hpp.mark_progress();
+                    self.state = State::Removing1(reminfo.clone(), fut.box2());
+                }
+                State::Removing1(reminfo, fut) => {
+                    match fut.poll_unpin(cx) {
+                        Ready(x) => match x {
+                            Ok(()) => {
+                                let (removed_from_conn_tx, mut removed_from_conn_rx) =
+                                    asynchan::bounded(1, "ConnSet-remove-from-caconn");
+                                let fut = async move {
+                                    warn!("TODO emit a channel status event write");
+                                    // TODO we are letting ConnSet remove this channel from the actual CaConn.
+                                    // This is an async operation and we have to wait here for it to finish.
+                                    let _ = removed_from_conn_rx.next().await;
+                                    // TODO emit another channel status event write.
+                                    Ok(())
+                                };
+                                hpp.mark_progress();
+                                // TODO take instead of clone
+                                let reminfo = reminfo.clone();
+                                let item = ChannelActionItem::RemoveFromCaConn(
+                                    self.conf.clone(),
+                                    reminfo.clone(),
+                                    removed_from_conn_tx,
+                                );
+                                // TODO take instead of clone
+                                self.state = State::Removing2(reminfo, fut.box2());
+                                break Ready(Some(Ok(item)));
+                            }
+                            Err(e) => {
+                                self.state = State::Done;
+                                break Ready(Some(Err(e)));
+                            }
+                        },
+                        Pending => {
+                            hpp.mark_pending();
+                        }
+                    }
+                }
+                State::Removing2(reminfo, fut) => {
+                    match fut.poll_unpin(cx) {
+                        Ready(x) => match x {
+                            Ok(()) => {
+                                let fut = async move {
+                                    // TODO emit another channel status event write?
+                                    // Ok(())
+                                };
+                                hpp.mark_progress();
+                                self.state = State::Removed;
+                            }
+                            Err(e) => {
+                                self.state = State::Done;
+                                break Ready(Some(Err(e)));
+                            }
+                        },
+                        Pending => {
+                            hpp.mark_pending();
+                        }
+                    }
+                }
                 State::Removed => {}
+                State::Done => {}
             }
             break if hpp.have_progress() {
                 continue;

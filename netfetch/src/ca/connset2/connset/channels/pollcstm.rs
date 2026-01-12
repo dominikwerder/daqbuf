@@ -28,13 +28,6 @@ impl<'a> PollRess<'a> {
     pub fn new(ch_info: &'a ChannelInfoQuerySender, finder_handle: &'a FinderHandleV02) -> Self {
         Self { ch_info, finder_handle }
     }
-
-    pub fn ioc_search(&mut self, query: IocAddrQuery) -> Result<FindIocRes, Error> {
-        // TODO
-        // Search is currently batched.
-        // Rework this: factor out batching logic, use individual single-use channels on outer api layer.
-        todo!()
-    }
 }
 
 pub trait PollCstm {

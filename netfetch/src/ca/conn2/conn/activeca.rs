@@ -44,22 +44,22 @@ pub struct CaCommand {
 }
 
 impl CaCommand {
-    pub fn channel_add(conf: ChannelConfig) -> Self {
+    pub fn channel_add(conf: ChannelConfig, done_tx: asynchan::Sender<u32>) -> Self {
         Self {
-            kind: CaCommandKind::ChannelAdd(conf),
+            kind: CaCommandKind::ChannelAdd(conf, done_tx),
         }
     }
-    pub fn channel_remove<S: Into<String>>(name: S) -> Self {
+    pub fn channel_remove<S: Into<String>>(name: S, done_tx: asynchan::Sender<u32>) -> Self {
         Self {
-            kind: CaCommandKind::ChannelRemove(name.into()),
+            kind: CaCommandKind::ChannelRemove(name.into(), done_tx),
         }
     }
 }
 
 #[derive(Debug)]
 enum CaCommandKind {
-    ChannelAdd(ChannelConfig),
-    ChannelRemove(String),
+    ChannelAdd(ChannelConfig, asynchan::Sender<u32>),
+    ChannelRemove(String, asynchan::Sender<u32>),
 }
 
 #[derive(Debug)]
@@ -95,7 +95,15 @@ pub struct ActiveCaItem {
 }
 
 #[derive(Debug)]
-pub struct StatusInfo {}
+pub enum StatusInfoState {
+    Running(channelheap::StatusInfo),
+    Done,
+}
+
+#[derive(Debug)]
+pub struct StatusInfo {
+    pub state: StatusInfoState,
+}
 
 #[derive(Debug)]
 pub struct ActiveCa {
@@ -141,20 +149,35 @@ impl ActiveCa {
 
     pub fn status_info(&self) -> StatusInfo {
         match &self.state {
-            State::Running => todo!(),
-            State::Done => todo!(),
+            State::Running => StatusInfo {
+                state: StatusInfoState::Running(self.chanheap.status_info()),
+            },
+            State::Done => StatusInfo {
+                state: StatusInfoState::Done,
+            },
         }
     }
 
     fn handle_command(&mut self, cmd: CaCommand, cx: &mut Context) -> CommandFut {
         match cmd.kind {
-            CaCommandKind::ChannelAdd(conf) => {
+            CaCommandKind::ChannelAdd(conf, mut done_tx) => {
                 self.chanheap.channel_add(conf, cx);
-                trace!("ActiveCa:handle_command  TODO anything to put into this future here?");
-                let fut = async { Ok(()) }.boxed();
+                let fut = async move {
+                    let _ = done_tx.send(0).await;
+                    Ok(())
+                }
+                .boxed();
                 CommandFut(Box::pin(fut))
             }
-            CaCommandKind::ChannelRemove(_) => todo!(),
+            CaCommandKind::ChannelRemove(name, mut done_tx) => {
+                let fut = async move {
+                    let _ = done_tx.send(0).await;
+                    Ok(())
+                }
+                .boxed();
+                todo!("TODO trigger remove of channel, clean up");
+                CommandFut(Box::pin(fut))
+            }
         }
     }
 

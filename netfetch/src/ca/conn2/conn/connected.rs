@@ -75,8 +75,16 @@ pub struct StatusChannels {
 }
 
 #[derive(Debug)]
+pub enum StatusInfoState {
+    Init,
+    Handshake,
+    ActiveCa(activeca::StatusInfo),
+    Done,
+}
+
+#[derive(Debug)]
 pub struct StatusInfo {
-    pub channels: StatusChannels,
+    pub status: StatusInfoState,
 }
 
 #[derive(Debug)]
@@ -132,10 +140,18 @@ impl Connected {
 
     pub fn status_info(&self) -> StatusInfo {
         match &self.state {
-            State::Init(st1) => todo!(),
-            State::Handshake(st1) => todo!(),
-            State::ActiveCa(st1) => todo!(),
-            State::Done => todo!(),
+            State::Init(st) => StatusInfo {
+                status: StatusInfoState::Init,
+            },
+            State::Handshake(st) => StatusInfo {
+                status: StatusInfoState::Handshake,
+            },
+            State::ActiveCa(st) => StatusInfo {
+                status: StatusInfoState::ActiveCa(st.status_info()),
+            },
+            State::Done => StatusInfo {
+                status: StatusInfoState::Done,
+            },
         }
     }
 }

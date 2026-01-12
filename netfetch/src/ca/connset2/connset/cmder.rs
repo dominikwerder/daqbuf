@@ -28,13 +28,13 @@ impl ConnSetCmder {
         Self { tx: cmd_tx }
     }
 
-    pub async fn channel_add(&mut self, ch_cfg: crate::conf::ChannelConfig) -> Result<(), Error> {
+    pub async fn channel_add(&self, ch_cfg: crate::conf::ChannelConfig) -> Result<(), Error> {
         let (restx, mut rx) = asynchan::bounded(1, "ConnSetCmder-channel_add-resp");
         let add = ChannelAdd { ch_cfg, restx };
         let cmd = ConnSetCmd {
             kind: ConnSetCmdKind::ChannelAdd(add),
         };
-        self.tx.send(cmd).await?;
+        self.tx.clone().send(cmd).await?;
         let res = rx.recv().await??;
         Ok(res)
     }

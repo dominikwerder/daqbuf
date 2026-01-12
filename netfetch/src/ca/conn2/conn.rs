@@ -1,7 +1,7 @@
-mod activeca;
-mod channelheap;
-mod connected;
-mod handshake;
+pub mod activeca;
+pub mod channelheap;
+pub mod connected;
+pub mod handshake;
 
 use super::conncmd::ConnCommand;
 use super::connevent::CaConnEvent;
@@ -36,6 +36,8 @@ use std::task::Poll;
 use std::time::Duration;
 use std::time::Instant;
 use taskrun::tokio;
+
+const OUT_QUEUE_LEN_MAX: usize = 64;
 
 macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
 macro_rules! warn { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
@@ -89,6 +91,7 @@ impl JitterTicker {
         use stats::rand_xoshiro::rand_core::RngCore;
         let b = self.ivl;
         let t = b + b * (self.rng.next_u32() & 0x1f) / 0xff;
+        trace!("TODO  make_ticker  {:.0} ms", 1e3 * t.as_secs_f32());
         tokio::time::sleep(t)
     }
 }
@@ -103,7 +106,13 @@ impl Stream for JitterTicker {
                 Ready(()) => {
                     let ticker = self.make_ticker();
                     self.ticker.set(ticker);
-                    continue;
+                    match self.ticker.poll_unpin(cx) {
+                        Ready(()) => {
+                            error!("JitterTicker: immediate re-fire  TODO handle");
+                        }
+                        Pending => {}
+                    }
+                    Ready(Some(()))
                 }
                 Pending => Pending,
             };
@@ -178,7 +187,8 @@ impl Future for Connecting {
 
 #[derive(Debug)]
 enum CaConnCmdKind {
-    ChannelAdd(ChannelConfig),
+    ChannelAdd(ChannelConfig, asynchan::Sender<u32>),
+    ChannelRemove(ChannelConfig, asynchan::Sender<u32>),
     Shutdown,
 }
 
@@ -204,10 +214,22 @@ pub struct CaConnComm {
 
 impl CaConnComm {
     pub async fn channel_add(&mut self, conf: ChannelConfig) -> Result<(), Error> {
+        let (done_tx, mut done_rx) = asynchan::bounded(1, "CaConnComm-channel_add-done");
         let cmd = CaConnCmd {
-            kind: CaConnCmdKind::ChannelAdd(conf),
+            kind: CaConnCmdKind::ChannelAdd(conf, done_tx),
         };
         self.cmd_tx.send(cmd).await?;
+        let _ = done_rx.next().await;
+        Ok(())
+    }
+
+    pub async fn channel_remove(&mut self, conf: ChannelConfig) -> Result<(), Error> {
+        let (done_tx, mut done_rx) = asynchan::bounded(1, "CaConnComm-channel_add-done");
+        let cmd = CaConnCmd {
+            kind: CaConnCmdKind::ChannelRemove(conf, done_tx),
+        };
+        self.cmd_tx.send(cmd).await?;
+        let _ = done_rx.next().await;
         Ok(())
     }
 
@@ -251,6 +273,7 @@ pub struct CaConn {
     ca_cmd_tx: asynchan::Sender<activeca::CaCommand>,
     ca_cmd_rx: asynchan::Receiver<activeca::CaCommand>,
     ca_cmd_tx_fut: Option<ErasedFuture<Result<(), Error>, 0x200>>,
+    out_qu: VecDeque<Result<CaConnItem, Error>>,
     out_tx: asynchan::Sender<Result<CaConnItem, Error>>,
     out_rx: asynchan::Receiver<Result<CaConnItem, Error>>,
 }
@@ -282,6 +305,7 @@ impl CaConn {
             ca_cmd_tx,
             ca_cmd_rx,
             ca_cmd_tx_fut: None,
+            out_qu: VecDeque::new(),
             out_tx,
             out_rx,
         }
@@ -303,7 +327,7 @@ impl CaConn {
         todo!()
     }
 
-    fn make_status_info(mut self: Pin<&mut Self>) -> StatusInfo {
+    fn make_status_info(self: Pin<&mut Self>) -> StatusInfo {
         // We only consider state which is sync available here.
         // For other information, we take the last known values.
         match &self.state {
@@ -325,16 +349,36 @@ impl CaConn {
         }
     }
 
+    fn on_ticker_fired(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<()>> {
+        use Poll::*;
+        if self.out_qu.len() < OUT_QUEUE_LEN_MAX {
+            trace!("TODO  poll_own_ticker  emit status info");
+            let v = self.as_mut().make_status_info();
+            let item = CaConnItem::StatusInfo(v);
+            self.out_qu.push_back(Ok(item));
+            Ready(Some(()))
+        } else {
+            // TODO count in stats
+            Ready(None)
+        }
+    }
+
     fn poll_own_ticker(mut self: Pin<&mut Self>, cx: &mut Context) -> Result<HaveProgressPending, Error> {
         use Poll::*;
         let mut hpp = HaveProgressPending::new();
         match self.ticker.poll_next_unpin(cx) {
             Ready(Some(())) => {
-                trace!("CaConn:Ticker fired");
+                trace!("TODO  CaConn:Ticker fired");
                 hpp.mark_progress();
-                // TODO emit channel status.
-                trace!("TODO  poll_own_ticker  emit status info");
-                self.make_status_info();
+                match self.on_ticker_fired(cx) {
+                    Ready(Some(())) => {
+                        hpp.mark_progress();
+                    }
+                    Ready(None) => {}
+                    Pending => {
+                        hpp.mark_pending();
+                    }
+                }
             }
             Ready(None) => {}
             Pending => {
@@ -381,7 +425,9 @@ impl Stream for CaConn {
             self2.mett.poll_loop_begin().inc();
             let tsloop = Instant::now();
             let hpp = &mut HaveProgressPending::new();
-            if let Some(fut) = self2.ca_cmd_tx_fut.as_mut() {
+            if let Some(item) = self2.out_qu.pop_front() {
+                break Ready(Some(item));
+            } else if let Some(fut) = self2.ca_cmd_tx_fut.as_mut() {
                 match fut.poll_unpin(cx) {
                     Ready(Ok(())) => {
                         self2.ca_cmd_tx_fut = None;
@@ -404,12 +450,25 @@ impl Stream for CaConn {
                         Some(cmd) => {
                             hpp.mark_progress();
                             match cmd.kind {
-                                CaConnCmdKind::ChannelAdd(conf) => {
+                                CaConnCmdKind::ChannelAdd(conf, done_tx) => {
                                     trace!("CaConn:Received:ChannelAdd  {conf:?}");
-                                    let cmd = activeca::CaCommand::channel_add(conf);
+                                    let cmd = activeca::CaCommand::channel_add(conf, done_tx);
                                     let mut tx = self2.ca_cmd_tx.clone();
                                     let fut = async move {
                                         tx.send(cmd).await?;
+                                        // The is-done-sender is already passed to inner handler.
+                                        Ok(())
+                                    };
+                                    self2.ca_cmd_tx_fut = Some(ErasedFuture::new(fut));
+                                    hpp.mark_progress();
+                                }
+                                CaConnCmdKind::ChannelRemove(conf, done_tx) => {
+                                    trace!("CaConn:Received:ChannelRemove  {conf:?}");
+                                    let cmd = activeca::CaCommand::channel_remove(conf.name(), done_tx);
+                                    let mut tx = self2.ca_cmd_tx.clone();
+                                    let fut = async move {
+                                        tx.send(cmd).await?;
+                                        // The is-done-sender is already passed to inner handler.
                                         Ok(())
                                     };
                                     self2.ca_cmd_tx_fut = Some(ErasedFuture::new(fut));
@@ -488,8 +547,8 @@ impl Stream for CaConn {
                     hpp.merge(hpp2);
                 }
                 Err(e) => {
-                    self.shutdown_on_error(e);
                     hpp.mark_progress();
+                    break Ready(Some(Err(e)));
                 }
             }
 

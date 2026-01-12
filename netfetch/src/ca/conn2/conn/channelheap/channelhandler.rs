@@ -202,7 +202,20 @@ pub struct ChannelHandlerItem {
 }
 
 #[derive(Debug)]
-pub struct StatusInfo {}
+pub struct StatusInfo {
+    pub counters: Counters,
+}
+
+#[derive(Debug, Clone)]
+pub struct Counters {
+    pub event_add_res_cnt: u64,
+}
+
+impl Counters {
+    fn new() -> Self {
+        Self { event_add_res_cnt: 0 }
+    }
+}
 
 #[derive(Debug)]
 pub struct ChannelHandler {
@@ -213,6 +226,7 @@ pub struct ChannelHandler {
     proto_rx: asynchan::Receiver<CaMsg>,
     ch_hp_tx: asynchan::Sender<ChHeapCmd>,
     proto_rx_dispatch: Option<CaMsg>,
+    counters: Counters,
 }
 
 impl ChannelHandler {
@@ -239,11 +253,14 @@ impl ChannelHandler {
             proto_rx,
             ch_hp_tx,
             proto_rx_dispatch: None,
+            counters: Counters::new(),
         }
     }
 
     pub fn status_info(&self) -> StatusInfo {
-        todo!()
+        StatusInfo {
+            counters: self.counters.clone(),
+        }
     }
 
     pub fn cid(&self) -> Cid {
@@ -290,7 +307,12 @@ impl ChannelHandler {
         }
     }
 
-    fn proto_rx_handle_dispatch(st1: &mut Running, item: CaMsg, cx: &mut Context<'_>) -> Result<Option<CaMsg>, Error> {
+    fn proto_rx_handle_dispatch(
+        st1: &mut Running,
+        item: CaMsg,
+        cx: &mut Context<'_>,
+        counters: &mut Counters,
+    ) -> Result<Option<CaMsg>, Error> {
         match &item.ty {
             proto::CaMsgTy::EventAddRes(_) | proto::CaMsgTy::EventAddResEmpty(_) => {
                 match &mut st1.fetch_method {
@@ -327,6 +349,7 @@ impl ChannelHandler {
                         trace!(
                             "ChannelHandler:Running:ProtoDispatch:Ready:Some:Monitor    TODO handle monitor update  {item:?}"
                         );
+                        counters.event_add_res_cnt += 1;
                         Ok(None)
                     }
                     _ => {
@@ -436,7 +459,7 @@ impl Stream for ChannelHandler {
                         let hpp2 = &mut hpp;
                         let mut hpp = HaveProgressPending::new();
                         if let Some(item) = self2.proto_rx_dispatch.take() {
-                            match Self::proto_rx_handle_dispatch(st1, item, cx) {
+                            match Self::proto_rx_handle_dispatch(st1, item, cx, &mut self2.counters) {
                                 Ok(x) => match x {
                                     Some(item) => {
                                         trace2!("ChannelHandler:Running:ProtoDispatch  item came back");

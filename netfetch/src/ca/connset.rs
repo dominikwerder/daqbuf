@@ -32,6 +32,7 @@ use futures::Stream;
 use futures::StreamExt;
 use hashbrown::HashMap;
 use log;
+use md5::digest::consts::False;
 use netpod::OnDrop;
 use netpod::ScalarType;
 use netpod::SeriesKind;
@@ -1518,10 +1519,15 @@ impl CaConnSet {
         let (eos_check_tx, eos_check_rx) = async_channel::bounded::<Instant>(7);
         while let Some(item) = conn.next().await {
             if let Some(x) = &eos_reason {
-                info!(
-                    "{selfn}  {addr}  item after EOS reason [{x:?}]  {item}",
-                    item = item.desc_short()
-                );
+                match &item.value {
+                    CaConnEventValue::Metrics(..) => {}
+                    _ => {
+                        info!(
+                            "{selfn}  {addr}  item after EOS reason [{x:?}]  {item}",
+                            item = item.desc_short()
+                        );
+                    }
+                }
             }
             match item.value {
                 CaConnEventValue::None
@@ -1661,8 +1667,11 @@ impl CaConnSet {
                                         trace!("health timeout  channel {:?}  ~~~~~~~~~~~~~~~~~~~", ch);
                                         // TODO probably kill the whole CaConn?
                                         error!("TODO  health timeout  channel {:?}  ~~~~~~~~~~~~~~~~~~~", ch);
-                                        if true {
-                                            std::process::exit(1);
+
+                                        // TODO("kill CaConn");
+
+                                        if false {
+                                            std::process::exit(14);
                                         }
                                         let addr = SocketAddr::V4(*addr_v4);
                                         cmd_remove_channel.push((addr, ch.clone()));

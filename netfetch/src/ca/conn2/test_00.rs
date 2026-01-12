@@ -27,6 +27,11 @@ pub async fn test_01() {
     let mut connset = ConnSet::new("sf-archiver".into(), "".into(), ingest_opts)
         .await
         .unwrap();
+    {
+        let chname = "TEST:SLOW:SCALAR:F32:000000";
+        let conf = crate::conf::ChannelConfig::st_monitor(chname, "TEST");
+        connset.cmder().channel_add(conf).await.unwrap();
+    }
     while let Some(e) = connset.next().await {
         trace!("test_01 connset item {e:?}");
     }

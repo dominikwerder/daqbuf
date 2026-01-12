@@ -2362,14 +2362,14 @@ impl CaConn {
                         // TODO count for metrics
                         if st2.tsbeg + Duration::from_millis(2000) < tsnow {
                             error!("TODO  {selfn}  handle StopMonitoringForPolling");
-                            std::process::exit(1);
+                            std::process::exit(12);
                         }
                     }
                     ReadingState::Polling(st2) => {
                         // TODO count for metrics
                         if st2.tsbeg + Duration::from_millis(2000) < tsnow {
                             error!("TODO  {selfn}  handle Polling");
-                            std::process::exit(1);
+                            std::process::exit(13);
                         }
                     }
                 }

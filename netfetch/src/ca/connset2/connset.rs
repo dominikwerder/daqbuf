@@ -49,8 +49,16 @@ autoerr::create_error_v1!(
         DbPgSeriesByChannel(#[from] dbpg::seriesbychannel::Error),
         Channel(#[from] channels::channel::Error),
         Conn(#[from] conn2::conn::Error),
+        Send,
+        Logic,
     },
 );
+
+impl<T> From<asynchan::SendError<T>> for Error {
+    fn from(_value: asynchan::SendError<T>) -> Self {
+        Self::Send
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct ChannelAdd {
@@ -96,6 +104,8 @@ pub struct ConnSet {
     cmder: ConnSetCmder,
     cmd_rx: asynchan::Receiver<ConnSetCmd>,
     cmd_fut: Option<ErasedFuture<Result<(), Error>, 0x200>>,
+    cmd_fut_channel: Option<ErasedFuture<Result<(), Error>, 0x200>>,
+    cmd_fut_comm: Option<ErasedFuture<Result<(), Error>, 0x200>>,
     finder_handle: FinderHandleV02,
     channels: VecDeque<ChannelCat>,
     ch_info_tx: ChannelInfoQuerySender,
@@ -120,15 +130,6 @@ impl ConnSet {
             crate::ca::finder::start_finder_handle_v02(backend.clone(), ingest_opts.clone());
         let (cmd_tx, cmd_rx) = asynchan::bounded(100, "ConnSetCmder");
         let cmder = ConnSetCmder::new(cmd_tx);
-        let conf = ChannelConfig::st_monitor("TEST:SLOW:SCALAR:F32:000000", "TEST");
-        let channels = {
-            let (cmd_tx, cmd_rx) = asynchan::bounded(16, "ChannelCmd");
-            let e = ChannelCat {
-                channel: channels::channel::Channel::new(backend.clone(), conf, cmd_rx),
-                cmd_tx,
-            };
-            [e].into()
-        };
         let ch_info_tx = {
             let (channel_info_query_tx, jhs, jh) = dbpg::seriesbychannel::start_lookup_workers::<
                 dbpg::seriesbychannel::SalterRandom,
@@ -142,11 +143,17 @@ impl ConnSet {
             cmder,
             cmd_rx,
             cmd_fut: None,
+            cmd_fut_channel: None,
+            cmd_fut_comm: None,
             finder_handle,
-            channels,
+            channels: VecDeque::new(),
             ch_info_tx,
             ca_conns: BTreeMap::new(),
         };
+        {
+            let chname = "TEST:SLOW:SCALAR:F32:000000";
+            warn!("SETTING UP A FIXED CHANNEL");
+        }
         Ok(ret)
     }
 
@@ -158,9 +165,38 @@ impl ConnSet {
         &self.cmder
     }
 
-    fn poll_channels(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Error>> {
+    async fn channel_add(&mut self, conf: ChannelConfig) -> Result<(), Error> {
+        TODO impl via the cmder;
+        let channels = {
+            let (cmd_tx, cmd_rx) = asynchan::bounded(16, "ChannelCmd");
+            let e = ChannelCat {
+                channel: channels::channel::Channel::new(backend.clone(), conf, cmd_rx),
+                cmd_tx,
+            };
+            [e].into()
+        };
+        // ret.cmder.channel_add(conf).await?;
+
+        let (cmd_tx, cmd_rx) = asynchan::bounded(16, "ChannelCmd");
+        let e = ChannelCat {
+            channel: channels::channel::Channel::new(self.backend.clone(), conf, cmd_rx),
+            cmd_tx,
+        };
+        Ok(())
+    }
+
+    async fn channel_remove(&mut self, conf: ChannelConfig) -> Result<(), Error> {
+        //
+        Ok(())
+    }
+
+    fn poll_channels(
+        self: Pin<&mut Self>,
+        cx: &mut Context,
+    ) -> Poll<Result<Option<(ErasedFuture<Result<(), Error>, 512>,)>, Error>> {
         use Poll::*;
-        // TODO rework return type
+        // TODO caller wants to handle only one potential future at a time.
+        let mut hpp = HaveProgressPending::new();
         let self2 = self.get_mut();
         for ch in self2.channels.iter_mut() {
             let mut ress = PollRess::new(&self2.ch_info_tx, &self2.finder_handle);
@@ -171,12 +207,13 @@ impl ConnSet {
                         match x {
                             ChannelActionItem::AddToCaConn(conf, addr) => {
                                 trace!("poll_channels  ChannelActionItem::AddToCaConn  {addr}  {conf:?}");
-                                if let Some((comm, jh)) = self2.ca_conns.get_mut(&addr) {
+                                if let Some((comm, _jh)) = self2.ca_conns.get_mut(&addr) {
                                     let fut = async move {
                                         comm.channel_add(conf).await?;
                                         Ok(())
                                     };
-                                    self2.cmd_fut = Some(ErasedFuture::new(fut));
+                                    hpp.mark_progress();
+                                    return Ready(Ok(Some((ErasedFuture::new(fut),))));
                                 } else {
                                     let conn =
                                         CaConn::new(self2.backend.clone(), addr, self2.local_epics_hostname.clone());
@@ -187,11 +224,28 @@ impl ConnSet {
                                         comm.channel_add(conf).await?;
                                         Ok(())
                                     };
-                                    self2.cmd_fut = Some(ErasedFuture::new(fut));
+                                    hpp.mark_progress();
+                                    return Ready(Ok(Some((ErasedFuture::new(fut),))));
+                                }
+                            }
+                            ChannelActionItem::RemoveFromCaConn(conf, reminfo, mut done_tx) => {
+                                // TODO send a command to the CaConn to remove the channel, wait for confirmation.
+                                if let Some(addr) = reminfo.addr {
+                                    if let Some((comm, _jh)) = self2.ca_conns.get_mut(&addr) {
+                                        let fut = async move {
+                                            comm.channel_remove(conf).await?;
+                                            let _ = done_tx.send(0).await;
+                                            Ok(())
+                                        };
+                                        hpp.mark_progress();
+                                        return Ready(Ok(Some((ErasedFuture::new(fut),))));
+                                    } else {
+                                    }
+                                } else {
+                                    // Channel has no address (yet) so it can not be assigned to a CaConn yet.
                                 }
                             }
                         }
-                        return Ready(Ok(()));
                     }
                     Err(e) => {
                         return Ready(Err(e.into()));
@@ -203,28 +257,90 @@ impl ConnSet {
                 Pending => {}
             }
         }
-        Pending
+        if hpp.have_progress() {
+            // TODO return type does not allow yet to indicate progress without future to execute.
+            let fut = async move { Ok(()) };
+            Ready(Ok(Some((ErasedFuture::new(fut),))))
+        } else if hpp.have_pending() {
+            Pending
+        } else {
+            Ready(Ok(None))
+        }
     }
 
     fn poll_conn_comm(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Result<(), Error>>> {
+        let selfname = "poll_conn_comm";
         use Poll::*;
-        for (_, (comm, _)) in self.ca_conns.iter_mut() {
-            match comm.poll_next_unpin(cx) {
-                Ready(x) => match x {
-                    Some(x) => match x {
-                        Ok(x) => {
-                            //
-                            trace!("TODO handle item from CaConn {x:?}");
-                            return Ready(Some(Ok(())));
-                        }
-                        Err(e) => todoval(),
+        loop {
+            let mut hpp = HaveProgressPending::new();
+            for (_, (comm, _)) in self.ca_conns.iter_mut() {
+                match comm.poll_next_unpin(cx) {
+                    Ready(x) => match x {
+                        Some(x) => match x {
+                            Ok(x) => {
+                                trace!("TODO handle item from CaConn {x:?}");
+                                match x {
+                                    conn2::conn::CaConnItem::StatusInfo(e1) => match e1.state {
+                                        conn2::conn::StatusState::Connecting => {}
+                                        conn2::conn::StatusState::Connected(e2) => match e2.status {
+                                            conn2::conn::connected::StatusInfoState::Init => {}
+                                            conn2::conn::connected::StatusInfoState::Handshake => {}
+                                            conn2::conn::connected::StatusInfoState::ActiveCa(e3) => match e3.state {
+                                                conn2::conn::activeca::StatusInfoState::Running(e4) => {
+                                                    for e5 in e4.handlers {
+                                                        match e5.status {
+                                                            conn2::conn::channelheap::StatusChannelHandlerState::Active(e6) => {
+                                                                if e6.counters.event_add_res_cnt > 6 {
+                                                                    // TODO clean up reduce indent
+                                                                    trace!("{selfname}  channel counter reach limit");
+                                                                    // TODO send command to CaConn to remove channel
+                                                                    // TODO observe that CaConn shuts down after a few seconds.
+                                                                    if let Some(ch) = self.channels.iter().filter(|x| {
+                                                                        x.channel.name() == &e5.name
+                                                                    }).next() {
+                                                                        let mut tx = ch.cmd_tx.clone();
+                                                                        let fut = async move {
+                                                                            let item = pollcstm::Cmd::Remove;
+                                                                            let _ = tx.send(item).await?;
+                                                                            Ok(())
+                                                                        };
+                                                                        self.cmd_fut_comm = Some(ErasedFuture::new(fut));
+                                                                    }
+                                                                }
+                                                            },
+                                                            conn2::conn::channelheap::StatusChannelHandlerState::Done => {},
+                                                        }
+                                                    }
+                                                }
+                                                conn2::conn::activeca::StatusInfoState::Done => {}
+                                            },
+                                            conn2::conn::connected::StatusInfoState::Done => {}
+                                        },
+                                        conn2::conn::StatusState::Done => {}
+                                    },
+                                }
+                                return Ready(Some(Ok(())));
+                            }
+                            Err(e) => {
+                                trace!("{selfname}  ERROR from CaConnComm  {e}");
+                                todo!("{selfname}  ERROR from CaConnComm  {e}");
+                            }
+                        },
+                        None => {}
                     },
-                    None => {}
-                },
-                Pending => {}
+                    Pending => {
+                        hpp.mark_pending();
+                    }
+                }
             }
+            break if hpp.have_progress() {
+                continue;
+            } else if hpp.have_pending() {
+                Pending
+            } else {
+                Ready(None)
+            };
         }
-        Pending
     }
 }
 
@@ -269,9 +385,10 @@ impl Stream for ConnSet {
                 Some(fut) => match fut.poll_unpin(cx) {
                     Ready(x) => {
                         self.cmd_fut = None;
-                        hpp.mark_progress();
                         match x {
-                            Ok(()) => {}
+                            Ok(()) => {
+                                hpp.mark_progress();
+                            }
                             Err(e) => {
                                 break Ready(Some(Err(e)));
                             }
@@ -294,18 +411,76 @@ impl Stream for ConnSet {
                     }
                 },
             }
-            match self.as_mut().poll_channels(cx) {
-                Ready(x) => match x {
-                    Ok(()) => {
-                        hpp.mark_progress();
+            {
+                let opt = &mut self.cmd_fut_channel;
+                if let Some(fut) = opt {
+                    match fut.poll_unpin(cx) {
+                        Ready(x) => match x {
+                            Ok(()) => {
+                                *opt = None;
+                                hpp.mark_progress();
+                            }
+                            Err(e) => {
+                                break Ready(Some(Err(e)));
+                            }
+                        },
+                        Pending => {
+                            hpp.mark_pending();
+                        }
                     }
-                    Err(e) => {
-                        hpp.mark_progress();
-                        break Ready(Some(Err(e)));
+                }
+            }
+            {
+                let opt = &mut self.cmd_fut_comm;
+                if let Some(fut) = opt {
+                    match fut.poll_unpin(cx) {
+                        Ready(x) => match x {
+                            Ok(()) => {
+                                *opt = None;
+                                hpp.mark_progress();
+                            }
+                            Err(e) => {
+                                break Ready(Some(Err(e)));
+                            }
+                        },
+                        Pending => {
+                            hpp.mark_pending();
+                        }
                     }
-                },
-                Pending => {
-                    hpp.mark_pending();
+                }
+            }
+            if self.cmd_fut_channel.is_none() {
+                match self.as_mut().poll_channels(cx) {
+                    Ready(x) => match x {
+                        Ok(Some((fut,))) => {
+                            self.cmd_fut_channel = Some(fut);
+                            hpp.mark_progress();
+                        }
+                        Ok(None) => {}
+                        Err(e) => {
+                            hpp.mark_progress();
+                            break Ready(Some(Err(e)));
+                        }
+                    },
+                    Pending => {
+                        hpp.mark_pending();
+                    }
+                }
+            }
+            if self.cmd_fut_comm.is_none() {
+                match self.as_mut().poll_conn_comm(cx) {
+                    Ready(Some(x)) => match x {
+                        Ok(()) => {
+                            hpp.mark_progress();
+                        }
+                        Err(e) => {
+                            break Ready(Some(Err(e)));
+                        }
+                    },
+                    Ready(None) => {}
+                    Pending => {
+                        hpp.mark_pending();
+                    }
                 }
             }
             break if hpp.have_progress() {
