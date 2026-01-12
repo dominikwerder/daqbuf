@@ -13,6 +13,7 @@ use netpod::log;
 use serde_json::Value as JsVal;
 use tokio_postgres::Client as PgClient;
 
+macro_rules! info { ($($arg:tt)*) => ( if true { log::info!($($arg)*) } ); }
 macro_rules! debug { ($($arg:tt)*) => ( if true { log::debug!($($arg)*) } ); }
 macro_rules! trace { ($($arg:tt)*) => ( if true { log::trace!($($arg)*) } ); }
 
@@ -117,6 +118,8 @@ pub(super) async fn search_channel_scylla(
     query: ChannelSearchQuery,
     pgc: &PgClient,
 ) -> Result<ChannelSearchResult, Error> {
+    let selfname = "search_channel_scylla";
+    info!("{selfname}  search_channel_scylla  {:?}", query);
     let empty = if !query.name_regex.is_empty() { false } else { true };
     if empty {
         let ret = ChannelSearchResult { channels: Vec::new() };
@@ -142,9 +145,11 @@ pub(super) async fn search_channel_scylla(
         regop
     );
     let params: &[&(dyn tokio_postgres::types::ToSql + Sync)] = &[&ch_kind, &query.name_regex, &cb1, &cb2];
-    trace!("search_channel_scylla  {:?}", params);
+    trace!("{selfname}  search_channel_scylla  {:?}", params);
+    info!("{selfname}  search_channel_scylla  {:?}", params);
     let rows = pgc.query(sql, params).await.err_conv()?;
     let mut res = Vec::new();
+    info!("{selfname}  search_channel_scylla  rows {:?}", rows.len());
     for row in rows {
         let series: i64 = row.get(0);
         let series = series as u64;

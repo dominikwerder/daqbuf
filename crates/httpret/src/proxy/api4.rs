@@ -50,16 +50,13 @@ pub async fn channel_search(req: Requ, ctx: &ReqCtx, proxy_config: &ProxyConfig)
     let mut tags = Vec::new();
     let mut bodies = Vec::new();
     for pb in &proxy_config.backends {
-        let use_backend = if let Some(b) = &query.backend {
-            pb.name.contains(b)
-        } else {
-            true
-        };
-        if use_backend {
+        if query.backend.as_ref().map_or(true, |b| pb.name.eq(b)) {
             match Url::parse(&format!("{}/api/4/search/channel", pb.url)) {
                 Ok(mut url) => {
+                    let tag = url.to_string();
+                    info!("search  forward to  tag {tag}  url {url}");
                     query.append_to_url(&mut url);
-                    tags.push(url.to_string());
+                    tags.push(tag);
                     bodies.push(None);
                     urls.push(url);
                 }
@@ -72,7 +69,7 @@ pub async fn channel_search(req: Requ, ctx: &ReqCtx, proxy_config: &ProxyConfig)
             let (_head, body) = res.into_parts();
             let fut = read_body_bytes(body);
             let body = fut.await?;
-            //info!("got a result {:?}", body);
+            // info!("got a result {:?}", body);
             let res: ChannelSearchResult = match serde_json::from_slice(&body) {
                 Ok(k) => k,
                 Err(_) => {
@@ -81,7 +78,7 @@ pub async fn channel_search(req: Requ, ctx: &ReqCtx, proxy_config: &ProxyConfig)
                     return Err(Error::with_msg_no_trace(msg));
                 }
             };
-            info!("from {}  len {}  {:?}", tag, res.channels.len(), res.channels);
+            info!("search  from {}  len {}  {:?}", tag, res.channels.len(), res.channels);
             let ret = SubRes {
                 tag,
                 status: StatusCode::OK,
