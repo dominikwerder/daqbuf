@@ -14,7 +14,7 @@ use std::task::Context;
 use std::task::Poll;
 use std::time::Instant;
 
-macro_rules! trace_in_out { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
+macro_rules! trace_in_out { ($($arg:tt)*) => { if false { log::info!($($arg)*); } }; }
 
 autoerr::create_error_v1!(
     name(Error, "CaProto"),
