@@ -38,6 +38,7 @@ autoerr::create_error_v1!(
     enum variants {
         Finder(#[from] crate::ca::finder::Error),
         AddrNotFound(String),
+        LogicSendBlock,
     },
 );
 
@@ -112,6 +113,33 @@ impl Channel {
         };
         self.state = State::Removing0(RemovingInfo { addr });
     }
+
+    fn handle_command(mut self: Pin<&mut Self>, cmd: Cmd, cx: &mut Context) -> Result<(), Error> {
+        match cmd {
+            Cmd::Remove(cmd) => {
+                self.transition_to_removing();
+                let mut tx = cmd.done_tx;
+                // This should never block:
+                let mut fut = tx.send(Ok(()));
+                loop {
+                    use Poll::*;
+                    match fut.poll_unpin(cx) {
+                        Ready(Ok(())) => {
+                            break Ok(());
+                        }
+                        Ready(Err(e)) => {
+                            warn!("command issuer seems gone");
+                            // TODO count metrics, otherwise ignore.
+                            break Ok(());
+                        }
+                        Pending => {
+                            break Err(Error::LogicSendBlock);
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 impl PollCstm for Channel {
@@ -121,15 +149,13 @@ impl PollCstm for Channel {
         use Poll::*;
         loop {
             let mut hpp = HaveProgressPending::new();
-            match self.cmd_rx.poll_next_unpin(cx) {
-                Ready(Some(x)) => {
-                    hpp.mark_progress();
-                    match x {
-                        Cmd::Remove => {
-                            trace!("Channel  received Cmd::Remove");
-                            self.transition_to_removing();
-                        }
+            match self.as_mut().cmd_rx.poll_next_unpin(cx) {
+                Ready(Some(cmd)) => {
+                    match self.as_mut().handle_command(cmd, cx) {
+                        Ok(()) => {}
+                        Err(e) => break Ready(Some(Err(e))),
                     }
+                    hpp.mark_progress();
                 }
                 Ready(None) => {}
                 Pending => {
@@ -188,13 +214,13 @@ impl PollCstm for Channel {
                         }
                         Err(e) => {
                             match e {
-                                Error::Finder(e) => {
-                                    warn!("State::AddrSearch  finder error {e}");
+                                Error::AddrNotFound(_) => {
+                                    // TODO instead, back off and try again. Count metrics.
                                     self.state = State::Removed;
                                     hpp.mark_progress();
                                 }
-                                Error::AddrNotFound(_) => {
-                                    // TODO instead, back off and try again. Count metrics.
+                                e => {
+                                    warn!("State::AddrSearch  finder error {e}");
                                     self.state = State::Removed;
                                     hpp.mark_progress();
                                 }

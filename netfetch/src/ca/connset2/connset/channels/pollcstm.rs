@@ -1,3 +1,4 @@
+use crate::ca::conn2::asynchan;
 use crate::ca::connset::IocAddrQuery;
 use crate::ca::finder::FinderHandleV02;
 use crate::ca::findioc::FindIocRes;
@@ -14,8 +15,13 @@ autoerr::create_error_v1!(
 );
 
 #[derive(Debug)]
+pub struct Remove {
+    pub done_tx: asynchan::Sender<Result<(), Error>>,
+}
+
+#[derive(Debug)]
 pub enum Cmd {
-    Remove,
+    Remove(Remove),
 }
 
 // #[derive(Clone)]

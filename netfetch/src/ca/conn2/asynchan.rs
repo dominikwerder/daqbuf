@@ -9,7 +9,8 @@ use std::task::Waker;
 
 macro_rules! trace { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
 
-pub struct Sender<T>(crossfire::MAsyncTx<T>, crossfire::sink::AsyncSink<T>, String);
+// pub struct Sender<T>(crossfire::MAsyncTx<T>, crossfire::sink::AsyncSink<T>, String);
+pub struct Sender<T>(crossfire::MAsyncTx<T>, (), String);
 
 pub struct Receiver<T>(crossfire::MAsyncRx<T>, crossfire::stream::AsyncStream<T>, String);
 
@@ -17,20 +18,21 @@ pub fn bounded<T: Unpin + Send + 'static, S: Into<String>>(n: usize, tag: S) -> 
     let tag = tag.into();
     let (tx, rx) = crossfire::mpmc::bounded_async(n);
     (
-        Sender(tx.clone(), tx.into_sink(), tag.clone()),
+        // Sender(tx.clone(), tx.into_sink(), tag.clone()),
+        Sender(tx.clone(), (), tag.clone()),
         Receiver(rx.clone(), rx.into_stream(), tag),
     )
 }
 
 impl<T> fmt::Debug for Sender<T> {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt.debug_struct("Sender").field("tag", &self.1).finish()
+        fmt.debug_struct("Sender").field("tag", &self.2).finish()
     }
 }
 
 impl<T> fmt::Debug for Receiver<T> {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt.debug_struct("Receiver").field("tag", &self.1).finish()
+        fmt.debug_struct("Receiver").field("tag", &self.2).finish()
     }
 }
 
@@ -39,7 +41,8 @@ where
     T: Unpin + Send + 'static,
 {
     fn clone(&self) -> Self {
-        let sink = self.0.clone().into_sink();
+        // let sink = self.0.clone().into_sink();
+        let sink = ();
         Self(self.0.clone(), sink, self.2.clone())
     }
 }
@@ -67,8 +70,10 @@ where
 pub struct SendError<T>(T);
 
 pub struct Sending<'a, T> {
-    tx: &'a mut crossfire::sink::AsyncSink<T>,
+    // tx: &'a mut crossfire::sink::AsyncSink<T>,
+    tx: crossfire::sink::AsyncSink<T>,
     item: Option<T>,
+    _p1: std::marker::PhantomData<&'a ()>,
 }
 
 impl<'a, T> Future for Sending<'a, T>
@@ -98,11 +103,16 @@ where
     }
 }
 
-impl<T> Sender<T> {
+impl<T> Sender<T>
+where
+    T: Unpin + Send + 'static,
+{
     pub fn send(&mut self, item: T) -> Sending<'_, T> {
         Sending {
-            tx: &mut self.1,
+            // tx: &mut self.1,
+            tx: self.0.clone().into_sink(),
             item: Some(item),
+            _p1: std::marker::PhantomData,
         }
     }
 }
@@ -146,7 +156,9 @@ pub trait SendPoll<T> {
 impl<T: Unpin + Send + 'static> SendPoll<T> for Sender<T> {
     fn poll_send(mut self: Pin<&mut Self>, item: T, cx: &mut Context<'_>) -> Result<(), SendPollError<T>> {
         use crossfire::TrySendError;
-        match self.1.poll_send(cx, item) {
+        let mut sink = self.0.clone().into_sink();
+        // let sink = self.1;
+        match sink.poll_send(cx, item) {
             Ok(()) => Ok(()),
             Err(e) => match e {
                 TrySendError::Full(item) => Err(SendPollError::Full(item)),
