@@ -38,6 +38,7 @@ use taskrun::tokio::task::JoinHandle;
 
 macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
 macro_rules! warn { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
+macro_rules! info { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
 macro_rules! trace { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
 macro_rules! trace2 { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
 macro_rules! trace3 { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
@@ -124,6 +125,7 @@ pub struct ConnSet {
     channels: VecDeque<ChannelCat>,
     ch_info_tx: ChannelInfoQuerySender,
     ca_conns: BTreeMap<SocketAddrV4, (CaConnComm, JoinHandle<Result<(), Error>>)>,
+    int_rx: asynchan::Receiver<u32>,
 }
 
 impl ConnSet {
@@ -135,6 +137,7 @@ impl ConnSet {
         // This seems to be for when I already know the type and shape. But what about the status series?
         // channel_info_query_tx: ChannelInfoQuerySender,
         ingest_opts: CaIngestOpts,
+        int_rx: asynchan::Receiver<u32>,
     ) -> Result<Self, Error> {
         // streamtask::run_in_task();
         // let (find_ioc_res_tx, find_ioc_res_rx) = async_channel::bounded(400);
@@ -163,6 +166,7 @@ impl ConnSet {
             channels: VecDeque::new(),
             ch_info_tx,
             ca_conns: BTreeMap::new(),
+            int_rx,
         };
         Ok(ret)
     }
@@ -239,7 +243,9 @@ impl ConnSet {
                 Ready(None) => {
                     trace!("Channel is done  TODO status event, clean up");
                 }
-                Pending => {}
+                Pending => {
+                    hpp.mark_pending();
+                }
             }
         }
         if hpp.have_progress() {
@@ -599,6 +605,16 @@ impl Stream for ConnSet {
                     Pending => {
                         hpp.mark_pending();
                     }
+                }
+            }
+            match self.int_rx.poll_next_unpin(cx) {
+                Ready(Some(x)) => {
+                    info!("received SIGINT");
+                    hpp.mark_progress();
+                }
+                Ready(None) => {}
+                Pending => {
+                    hpp.mark_pending();
                 }
             }
             break if hpp.have_progress() {

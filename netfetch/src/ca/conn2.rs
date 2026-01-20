@@ -1,4 +1,5 @@
-pub mod asynchan;
+pub mod asynchan1;
+pub mod asynchan2;
 mod caids;
 mod channelstateinfo;
 pub(super) mod conn;
@@ -13,3 +14,5 @@ mod synchan;
 pub mod test_00;
 #[cfg(test)]
 mod waker_test_a;
+
+pub use asynchan1 as asynchan;

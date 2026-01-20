@@ -891,7 +891,8 @@ static SIGINT_CONFIRM: AtomicUsize = AtomicUsize::new(0);
 static SIGTERM: AtomicUsize = AtomicUsize::new(0);
 static SHUTDOWN_SENT: AtomicUsize = AtomicUsize::new(0);
 
-fn handler_sigint(_a: libc::c_int, _b: *const libc::siginfo_t, _c: *const libc::c_void) {
+// fn handler_sigint(_a: libc::c_int, _b: *const libc::siginfo_t, _c: *const libc::c_void)
+fn handler_sigint(_a: libc::c_int) {
     let n = SIGINT.fetch_add(1, atomic::Ordering::AcqRel);
     if n >= 2 {
         let _ = ingest_linux::signal::unset_signal_handler(libc::SIGINT);
@@ -907,7 +908,7 @@ fn handler_sigterm(_a: libc::c_int, _b: *const libc::siginfo_t, _c: *const libc:
 pub async fn run(opts: CaIngestOpts, channels_config: Option<ChannelsConfig>) -> Result<(), Error> {
     info!("start up {:?}", opts);
     ingest_linux::signal::set_signal_handler(libc::SIGINT, handler_sigint).map_err(Error::from_string)?;
-    ingest_linux::signal::set_signal_handler(libc::SIGTERM, handler_sigterm).map_err(Error::from_string)?;
+    // ingest_linux::signal::set_signal_handler(libc::SIGTERM, handler_sigterm).map_err(Error::from_string)?;
     {
         let (pg, jh) = dbpg::conn::make_pg_client(opts.postgresql_config())
             .await

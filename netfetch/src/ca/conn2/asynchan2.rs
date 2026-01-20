@@ -6,33 +6,30 @@ use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
 use std::task::Waker;
+use taskrun::tokio;
+use tokio::sync::mpsc;
 
 macro_rules! trace { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
 
-// pub struct Sender<T>(crossfire::MAsyncTx<T>, crossfire::sink::AsyncSink<T>, String);
-pub struct Sender<T>(crossfire::MAsyncTx<T>, (), String);
+pub struct Sender<T>(mpsc::Sender<T>, String);
 
-pub struct Receiver<T>(crossfire::MAsyncRx<T>, crossfire::stream::AsyncStream<T>, String);
+pub struct Receiver<T>(mpsc::Receiver<T>, String);
 
 pub fn bounded<T: Unpin + Send + 'static, S: Into<String>>(n: usize, tag: S) -> (Sender<T>, Receiver<T>) {
     let tag = tag.into();
-    let (tx, rx) = crossfire::mpmc::bounded_async(n);
-    (
-        // Sender(tx.clone(), tx.into_sink(), tag.clone()),
-        Sender(tx.clone(), (), tag.clone()),
-        Receiver(rx.clone(), rx.into_stream(), tag),
-    )
+    let (tx, rx) = mpsc::channel(n);
+    (Sender(tx.clone(), tag.clone()), Receiver(rx, tag))
 }
 
 impl<T> fmt::Debug for Sender<T> {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt.debug_struct("Sender").field("tag", &self.2).finish()
+        fmt.debug_struct("Sender").field("tag", &self.1).finish()
     }
 }
 
 impl<T> fmt::Debug for Receiver<T> {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt.debug_struct("Receiver").field("tag", &self.2).finish()
+        fmt.debug_struct("Receiver").field("tag", &self.1).finish()
     }
 }
 
@@ -41,18 +38,7 @@ where
     T: Unpin + Send + 'static,
 {
     fn clone(&self) -> Self {
-        // let sink = self.0.clone().into_sink();
-        let sink = ();
-        Self(self.0.clone(), sink, self.2.clone())
-    }
-}
-
-impl<T> Clone for Receiver<T>
-where
-    T: Unpin + Send + 'static,
-{
-    fn clone(&self) -> Self {
-        Self(self.0.clone(), self.0.clone().into_stream(), self.2.clone())
+        Self(self.0.clone(), self.1.clone())
     }
 }
 
@@ -63,16 +49,19 @@ where
     type Item = T;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        self.1.poll_next_unpin(cx)
+        use Poll::*;
+        match self.0.poll_recv(cx) {
+            Ready(Some(x)) => Ready(Some(x)),
+            Ready(None) => Ready(None),
+            Pending => Pending,
+        }
     }
 }
 
 pub struct SendError<T>(T);
 
 pub struct Sending<'a, T> {
-    // tx: &'a mut crossfire::sink::AsyncSink<T>,
-    tx: crossfire::sink::AsyncSink<T>,
-    item: Option<T>,
+    fut: Box<dyn Future<Output = Result<(), mpsc::error::SendError<T>>>>,
     _p1: std::marker::PhantomData<&'a ()>,
 }
 
@@ -107,17 +96,16 @@ impl<T> Sender<T>
 where
     T: Unpin + Send + 'static,
 {
-    pub fn send(&mut self, item: T) -> Sending<'_, T> {
+    pub fn send<'a>(&'a mut self, item: T) -> Sending<'a, T> {
+        let tx = self.0.clone();
         Sending {
-            // tx: &mut self.1,
-            tx: self.0.clone().into_sink(),
-            item: Some(item),
+            fut: Box::new(async move { tx.send(item).await }),
             _p1: std::marker::PhantomData,
         }
     }
 
     pub fn try_send(&mut self, item: T) -> Result<(), SendError<T>> {
-        match self.0.clone().into_blocking().try_send(item) {
+        match self.0.try_send(item) {
             Ok(()) => Ok(()),
             Err(x) => Err(SendError(x.into_inner())),
         }
@@ -162,14 +150,11 @@ pub trait SendPoll<T> {
 
 impl<T: Unpin + Send + 'static> SendPoll<T> for Sender<T> {
     fn poll_send(mut self: Pin<&mut Self>, item: T, cx: &mut Context<'_>) -> Result<(), SendPollError<T>> {
-        use crossfire::TrySendError;
-        let mut sink = self.0.clone().into_sink();
-        // let sink = self.1;
-        match sink.poll_send(cx, item) {
+        match self.0.try_send(item) {
             Ok(()) => Ok(()),
             Err(e) => match e {
-                TrySendError::Full(item) => Err(SendPollError::Full(item)),
-                TrySendError::Disconnected(item) => Err(SendPollError::Closed(item)),
+                mpsc::error::TrySendError::Full(x) => Err(SendPollError::Full(x)),
+                mpsc::error::TrySendError::Closed(x) => Err(SendPollError::Closed(x)),
             },
         }
     }
@@ -197,7 +182,7 @@ impl fmt::Display for RecvError {
 }
 
 pub struct Receiving<'a, T> {
-    rx: &'a mut crossfire::stream::AsyncStream<T>,
+    fut: Box<dyn Future<Output = Option<T>>>,
 }
 
 impl<'a, T> Future for Receiving<'a, T>
@@ -221,7 +206,8 @@ where
     T: Unpin + Send + 'static,
 {
     pub fn recv(&mut self) -> Receiving<'_, T> {
-        Receiving { rx: &mut self.1 }
+        // TODO write this in different way, can not clone the receiver.
+        Receiving { fut: Bx::new(TODO) }
     }
 }
 
