@@ -150,7 +150,7 @@ enum State {
 }
 
 impl State {
-    fn new(remote_addr: SocketAddrV4) -> Self {
+    fn new(remote_addr: SocketAddrV4, ca_cmd_rx: asynchan::Receiver<activeca::CaCommand>) -> Self {
         let fut = tokio::net::TcpStream::connect(remote_addr).map_err(Error::from);
         let fut = Box::pin(fut);
         let fut = ConnectFut(fut);
@@ -158,6 +158,7 @@ impl State {
             remote_addr,
             // ress_a,
             fut,
+            ca_cmd_rx,
         })
     }
 }
@@ -175,6 +176,7 @@ struct Connecting {
     remote_addr: SocketAddrV4,
     // ress_a: StateRessShr1,
     fut: ConnectFut,
+    ca_cmd_rx: asynchan::Receiver<activeca::CaCommand>,
 }
 
 impl Future for Connecting {
@@ -209,7 +211,7 @@ impl CaConnCmd {
 #[derive(Debug, Clone)]
 pub struct CaConnComm {
     cmd_tx: asynchan::Sender<CaConnCmd>,
-    rx: asynchan::Receiver<Result<CaConnItem, Error>>,
+    // rx: asynchan::Receiver<Result<CaConnItem, Error>>,
 }
 
 impl CaConnComm {
@@ -232,10 +234,6 @@ impl CaConnComm {
         let _ = done_rx.next().await;
         Ok(())
     }
-
-    pub fn poll_next_unpin(&mut self, cx: &mut Context) -> Poll<Option<Result<CaConnItem, Error>>> {
-        self.rx.poll_next_unpin(cx)
-    }
 }
 
 #[derive(Debug)]
@@ -257,6 +255,8 @@ pub enum CaConnItem {
     StatusInfo(StatusInfo),
 }
 
+const EF4: usize = 0x500;
+
 #[derive(Debug)]
 pub struct CaConn {
     backend: String,
@@ -271,11 +271,8 @@ pub struct CaConn {
     cmd_tx: asynchan::Sender<CaConnCmd>,
     cmd_rx: asynchan::Receiver<CaConnCmd>,
     ca_cmd_tx: asynchan::Sender<activeca::CaCommand>,
-    ca_cmd_rx: asynchan::Receiver<activeca::CaCommand>,
-    ca_cmd_tx_fut: Option<ErasedFuture<Result<(), Error>, 0x200>>,
+    ca_cmd_tx_fut: Option<ErasedFuture<Result<(), Error>, EF4>>,
     out_qu: VecDeque<Result<CaConnItem, Error>>,
-    out_tx: asynchan::Sender<Result<CaConnItem, Error>>,
-    out_rx: asynchan::Receiver<Result<CaConnItem, Error>>,
 }
 
 impl CaConn {
@@ -288,13 +285,12 @@ impl CaConn {
     ) -> Self {
         // let ress_a: StateRessShr1 = todoval();
         let (cmd_tx, cmd_rx) = asynchan::bounded(32, "CaConn-cmd");
-        let (out_tx, out_rx) = asynchan::bounded(32, "CaConn-out");
         let (ca_cmd_tx, ca_cmd_rx) = asynchan::bounded(16, "ActiveCa-cmd");
-        Self {
+        let ret = Self {
             backend,
             remote_addr,
             local_epics_hostname,
-            state: State::new(remote_addr),
+            state: State::new(remote_addr, ca_cmd_rx),
             // iqdqs: InsertDeques::new(),
             // ca_conn_event_out_queue: VecDeque::new(),
             // ca_conn_event_out_queue_max: 2000,
@@ -303,22 +299,19 @@ impl CaConn {
             cmd_tx,
             cmd_rx,
             ca_cmd_tx,
-            ca_cmd_rx,
             ca_cmd_tx_fut: None,
             out_qu: VecDeque::new(),
-            out_tx,
-            out_rx,
-        }
+        };
+        ret
     }
 
     pub fn comm(&self) -> CaConnComm {
         CaConnComm {
             cmd_tx: self.cmd_tx.clone(),
-            rx: self.out_rx.clone(),
         }
     }
 
-    pub fn into_task(self) -> CaConnTask {
+    pub fn into_task(self) -> (CaConnTask, asynchan::Receiver<std::result::Result<CaConnItem, Error>>) {
         CaConnTask::new(self)
     }
 
@@ -495,7 +488,9 @@ impl Stream for CaConn {
                     State::Connecting(st1) => match st1.poll_unpin(cx) {
                         Ready(Ok(x)) => {
                             trace!("CaConn:Connecting:Ready");
-                            let stn = Connected::new(x, self.remote_addr, tsloop, self.ca_cmd_rx.clone());
+                            // ok, we replace the full state
+                            let ca_cmd_rx = std::mem::replace(&mut st1.ca_cmd_rx, asynchan::bounded(1, "dummy").1);
+                            let stn = Connected::new(x, self.remote_addr, tsloop, ca_cmd_rx);
                             self.state = State::Connected(stn);
                             hpp.mark_progress();
                         }
@@ -719,11 +714,14 @@ impl Stream for CaConn {
 pub struct CaConnTask {
     conn: CaConn,
     t1: Option<Result<CaConnItem, Error>>,
+    out_tx: asynchan::Sender<Result<CaConnItem, Error>>,
 }
 
 impl CaConnTask {
-    fn new(conn: CaConn) -> Self {
-        Self { conn, t1: None }
+    fn new(conn: CaConn) -> (Self, asynchan::Receiver<Result<CaConnItem, Error>>) {
+        let (out_tx, out_rx) = asynchan::bounded(32, "CaConnTask-out");
+        let fut = Self { conn, t1: None, out_tx };
+        (fut, out_rx)
     }
 }
 
@@ -734,7 +732,7 @@ impl Future for CaConnTask {
         use Poll::*;
         loop {
             break if let Some(x) = self.t1.take() {
-                match self.conn.out_tx.poll_send_unpin(x, cx) {
+                match self.out_tx.poll_send_unpin(x, cx) {
                     Ok(()) => continue,
                     Err(e) => match e {
                         asynchan::SendPollError::Full(x) => {

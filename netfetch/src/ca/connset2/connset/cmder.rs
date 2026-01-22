@@ -47,9 +47,9 @@ impl ConnSetCmder {
         trace2!("{selfname} tx.send");
         let _ = tx.send(cmd).await?;
         trace2!("{selfname} done_rx.recv");
-        let res = done_rx.recv().await??;
+        done_rx.recv().await??;
         trace2!("{selfname} done");
-        Ok(res)
+        Ok(())
     }
 
     /// When this async fn completes, the channel has been removed.

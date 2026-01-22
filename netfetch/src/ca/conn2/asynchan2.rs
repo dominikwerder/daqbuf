@@ -1,11 +1,10 @@
-use futures::Sink;
+use crate::ca::futstack::ErasedFuture;
+use futures::FutureExt;
 use futures::Stream;
-use futures::StreamExt;
 use std::fmt;
 use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
-use std::task::Waker;
 use taskrun::tokio;
 use tokio::sync::mpsc;
 
@@ -60,8 +59,13 @@ where
 
 pub struct SendError<T>(T);
 
+pub enum TrySendError<T> {
+    Full(T),
+    Closed(T),
+}
+
 pub struct Sending<'a, T> {
-    fut: Box<dyn Future<Output = Result<(), mpsc::error::SendError<T>>>>,
+    fut: ErasedFuture<Result<(), mpsc::error::SendError<T>>, 0x300>,
     _p1: std::marker::PhantomData<&'a ()>,
 }
 
@@ -73,21 +77,10 @@ where
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         use Poll::*;
-        if let Some(item) = self.item.take() {
-            use crossfire::TrySendError as Serr;
-            match self.tx.poll_send(cx, item) {
-                Ok(()) => Ready(Ok(())),
-                Err(e) => match e {
-                    Serr::Full(item) => {
-                        self.item = Some(item);
-                        Pending
-                    }
-                    Serr::Disconnected(item) => Ready(Err(SendError(item))),
-                },
-            }
-        } else {
-            // TODO should never happen
-            Ready(Ok(()))
+        match self.fut.poll_unpin(cx) {
+            Ready(Ok(x)) => Ready(Ok(x)),
+            Ready(Err(e)) => Ready(Err(SendError(e.0))),
+            Pending => Pending,
         }
     }
 }
@@ -97,17 +90,20 @@ where
     T: Unpin + Send + 'static,
 {
     pub fn send<'a>(&'a mut self, item: T) -> Sending<'a, T> {
-        let tx = self.0.clone();
+        let fut = self.0.send(item);
         Sending {
-            fut: Box::new(async move { tx.send(item).await }),
+            fut: ErasedFuture::new(fut),
             _p1: std::marker::PhantomData,
         }
     }
 
-    pub fn try_send(&mut self, item: T) -> Result<(), SendError<T>> {
+    pub fn try_send(&mut self, item: T) -> Result<(), TrySendError<T>> {
         match self.0.try_send(item) {
             Ok(()) => Ok(()),
-            Err(x) => Err(SendError(x.into_inner())),
+            Err(e) => match e {
+                mpsc::error::TrySendError::Full(x) => Err(TrySendError::Full(x)),
+                mpsc::error::TrySendError::Closed(x) => Err(TrySendError::Closed(x)),
+            },
         }
     }
 }
@@ -132,6 +128,15 @@ impl<T> fmt::Display for SendPollError<T> {
     }
 }
 
+impl<T> SendPollError<T> {
+    pub fn reason_str(&self) -> &'static str {
+        match self {
+            SendPollError::Full(_) => "Full",
+            SendPollError::Closed(_) => "Closed",
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct SendCloseError;
 
@@ -142,14 +147,16 @@ impl fmt::Display for SendCloseError {
 }
 
 pub trait SendPoll<T> {
-    fn poll_send(self: Pin<&mut Self>, item: T, cx: &mut Context<'_>) -> Result<(), SendPollError<T>>;
+    // fn poll_send(self: Pin<&mut Self>, item: T, cx: &mut Context<'_>) -> Result<(), SendPollError<T>>;
     fn poll_send_unpin(&mut self, item: T, cx: &mut Context<'_>) -> Result<(), SendPollError<T>>;
-    fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Result<(), SendCloseError>;
-    fn poll_close_unpin(&mut self, cx: &mut Context<'_>) -> Result<(), SendCloseError>;
+    // fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Result<(), SendCloseError>;
+    // fn poll_close_unpin(&mut self, cx: &mut Context<'_>) -> Result<(), SendCloseError>;
 }
 
 impl<T: Unpin + Send + 'static> SendPoll<T> for Sender<T> {
-    fn poll_send(mut self: Pin<&mut Self>, item: T, cx: &mut Context<'_>) -> Result<(), SendPollError<T>> {
+    /*
+    fn poll_send(self: Pin<&mut Self>, item: T, cx: &mut Context<'_>) -> Result<(), SendPollError<T>> {
+        // TODO must do differently because this will not wake
         match self.0.try_send(item) {
             Ok(()) => Ok(()),
             Err(e) => match e {
@@ -158,11 +165,29 @@ impl<T: Unpin + Send + 'static> SendPoll<T> for Sender<T> {
             },
         }
     }
+    */
 
     fn poll_send_unpin(&mut self, item: T, cx: &mut Context<'_>) -> Result<(), SendPollError<T>> {
-        Pin::new(self).poll_send(item, cx)
+        use Poll::*;
+        if self.0.is_closed() {
+            Err(SendPollError::Closed(item))
+        } else {
+            let mut tx = tokio_util::sync::PollSender::new(self.0.clone());
+            match tx.poll_reserve(cx) {
+                Ready(Ok(())) => match tx.send_item(item) {
+                    Ok(()) => Ok(()),
+                    Err(e) => {
+                        // According to docs this should never happen
+                        Err(SendPollError::Closed(e.into_inner().unwrap()))
+                    }
+                },
+                Ready(Err(e)) => Err(SendPollError::Full(e.into_inner().unwrap())),
+                Pending => Err(SendPollError::Full(item)),
+            }
+        }
     }
 
+    /*
     fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Result<(), SendCloseError> {
         Ok(())
     }
@@ -170,6 +195,7 @@ impl<T: Unpin + Send + 'static> SendPoll<T> for Sender<T> {
     fn poll_close_unpin(&mut self, cx: &mut Context<'_>) -> Result<(), SendCloseError> {
         Pin::new(self).poll_close(cx)
     }
+    */
 }
 
 #[derive(Debug)]
@@ -182,7 +208,7 @@ impl fmt::Display for RecvError {
 }
 
 pub struct Receiving<'a, T> {
-    fut: Box<dyn Future<Output = Option<T>>>,
+    rx: &'a mut mpsc::Receiver<T>,
 }
 
 impl<'a, T> Future for Receiving<'a, T>
@@ -193,7 +219,7 @@ where
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         use Poll::*;
-        match self.rx.poll_next_unpin(cx) {
+        match self.rx.poll_recv(cx) {
             Ready(Some(item)) => Ready(Ok(item)),
             Ready(None) => Ready(Err(RecvError {})),
             Pending => Pending,
@@ -206,8 +232,7 @@ where
     T: Unpin + Send + 'static,
 {
     pub fn recv(&mut self) -> Receiving<'_, T> {
-        // TODO write this in different way, can not clone the receiver.
-        Receiving { fut: Bx::new(TODO) }
+        Receiving { rx: &mut self.0 }
     }
 }
 

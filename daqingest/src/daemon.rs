@@ -891,8 +891,8 @@ static SIGINT_CONFIRM: AtomicUsize = AtomicUsize::new(0);
 static SIGTERM: AtomicUsize = AtomicUsize::new(0);
 static SHUTDOWN_SENT: AtomicUsize = AtomicUsize::new(0);
 
-// fn handler_sigint(_a: libc::c_int, _b: *const libc::siginfo_t, _c: *const libc::c_void)
-fn handler_sigint(_a: libc::c_int) {
+// fn handler_sigint(_a: libc::c_int) {
+fn handler_sigint(_a: libc::c_int, _b: *const libc::siginfo_t, _c: *const libc::c_void) {
     let n = SIGINT.fetch_add(1, atomic::Ordering::AcqRel);
     if n >= 2 {
         let _ = ingest_linux::signal::unset_signal_handler(libc::SIGINT);

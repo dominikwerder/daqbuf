@@ -15,4 +15,4 @@ pub mod test_00;
 #[cfg(test)]
 mod waker_test_a;
 
-pub use asynchan1 as asynchan;
+pub use asynchan2 as asynchan;

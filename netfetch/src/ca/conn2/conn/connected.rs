@@ -45,7 +45,7 @@ autoerr::create_error_v1!(
 
 #[derive(Debug)]
 enum State {
-    Init(asynchan::Receiver<CaMsg>),
+    Init(asynchan::Receiver<CaMsg>, asynchan::Receiver<activeca::CaCommand>),
     Handshake(Handshake),
     ActiveCa(ActiveCa),
     Done,
@@ -96,7 +96,6 @@ pub struct Connected {
     out_tx: asynchan::Sender<CaMsg>,
     inp_buf: VecDeque<CaMsg>,
     inp_tx_main: asynchan::Sender<CaMsg>,
-    ca_cmd_rx: asynchan::Receiver<activeca::CaCommand>,
 }
 
 impl Connected {
@@ -130,20 +129,19 @@ impl Connected {
             tsbeg: tsnow,
             addr,
             protowrap,
-            state: State::Init(inp_rx),
+            state: State::Init(inp_rx, ca_cmd_rx),
             out_tx,
             inp_buf: VecDeque::with_capacity(32),
             inp_tx_main: inp_tx,
-            ca_cmd_rx,
         }
     }
 
     pub fn status_info(&self) -> StatusInfo {
         match &self.state {
-            State::Init(st) => StatusInfo {
+            State::Init(..) => StatusInfo {
                 status: StatusInfoState::Init,
             },
-            State::Handshake(st) => StatusInfo {
+            State::Handshake(..) => StatusInfo {
                 status: StatusInfoState::Handshake,
             },
             State::ActiveCa(st) => StatusInfo {
@@ -210,9 +208,10 @@ impl Stream for Connected {
                 }
             }
             match &mut self2.state {
-                State::Init(st1) => {
+                State::Init(st1, ca_cmd_rx) => {
                     let inp_rx = std::mem::replace(st1, asynchan::bounded(1, "Connected-dummy").1);
-                    let stn = Handshake::new(inp_rx, self.out_tx.clone(), tsnow, self.addr.clone());
+                    let ca_cmd_rx = std::mem::replace(ca_cmd_rx, asynchan::bounded(1, "Connected-dummy-cacmd").1);
+                    let stn = Handshake::new(inp_rx, self.out_tx.clone(), tsnow, self.addr.clone(), ca_cmd_rx);
                     self.state = State::Handshake(stn);
                     if false {
                         // check whether this can be useful or not
@@ -223,10 +222,12 @@ impl Stream for Connected {
                 State::Handshake(st1) => match st1.poll_unpin(cx) {
                     Ready(Ok(())) => {
                         trace!("Handshake:Done");
+                        let ca_cmd_rx =
+                            std::mem::replace(&mut st1.ca_cmd_rx, asynchan::bounded(1, "Connected-dummy-cacmd").1);
                         let st1 = std::mem::replace(st1, st1.to_dummy());
                         let tx = self2.out_tx.clone();
                         let (rx,) = st1.dismantle();
-                        let stn = ActiveCa::new(rx, tx, self2.ca_cmd_rx.clone(), tsnow, self2.addr, cx);
+                        let stn = ActiveCa::new(rx, tx, ca_cmd_rx, tsnow, self2.addr, cx);
                         self.state = State::ActiveCa(stn);
                         hpp.mark_progress();
                     }

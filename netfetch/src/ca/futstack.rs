@@ -14,10 +14,10 @@ const CHARTAB: [u8; 16] = [
     b'0', b'1', b'2', b'3', b'4', b'5', b'6', b'7', b'8', b'9', b'a', b'b', b'c', b'd', b'e', b'f',
 ];
 
-macro_rules! format_u32 {
-    ($n:expr,$b:expr) => {{
+macro_rules! format_u32_hex {
+    ($n:expr, $b:expr) => {{
         let n: u32 = $n;
-        let b: &mut [u8; 8] = $b;
+        let b: &mut [u8; 16] = $b;
         let c = n.to_le_bytes();
         b[0] = CHARTAB[(c[3] >> 4) as usize];
         b[1] = CHARTAB[(c[3] & 0xf) as usize];
@@ -27,18 +27,78 @@ macro_rules! format_u32 {
         b[5] = CHARTAB[(c[1] & 0xf) as usize];
         b[6] = CHARTAB[(c[0] >> 4) as usize];
         b[7] = CHARTAB[(c[0] & 0xf) as usize];
-        if let Ok(x) = str::from_utf8(b) { x } else { "" }
+        if let Ok(x) = str::from_utf8(b) {
+            x
+        } else {
+            "(bad string)"
+        }
+    }};
+}
+macro_rules! format_u32 {
+    ($n:expr, $b:expr) => {{
+        let n: u32 = $n;
+        let s: &mut [u8; 8] = unsafe { &mut *($b as *mut u8 as *mut [u8; 8]) };
+
+        let mut i = 7;
+        let mut a = n;
+        let mut b;
+        let mut r;
+
+        b = a / 10;
+        r = a - 10 * b;
+        s[i] = CHARTAB[r as usize];
+        a = b;
+        i -= 1;
+
+        b = a / 10;
+        r = a - 10 * b;
+        s[i] = CHARTAB[r as usize];
+        a = b;
+        i -= 1;
+
+        b = a / 10;
+        r = a - 10 * b;
+        s[i] = CHARTAB[r as usize];
+        a = b;
+        i -= 1;
+
+        b = a / 10;
+        r = a - 10 * b;
+        s[i] = CHARTAB[r as usize];
+        a = b;
+        i -= 1;
+
+        b = a / 10;
+        r = a - 10 * b;
+        s[i] = CHARTAB[r as usize];
+        a = b;
+        i -= 1;
+
+        b = a / 10;
+        r = a - 10 * b;
+        s[i] = CHARTAB[r as usize];
+        a = b;
+        i -= 1;
+
+        let _ = a;
+        let _ = i;
     }};
 }
 
 impl<F, const N: usize> AssertFits<F, N> {
     const GOOD: bool = {
-        let size = std::mem::size_of::<F>() as u32;
-        let _align = std::mem::align_of::<F>();
-        let a = std::mem::size_of::<F>() <= N && std::mem::align_of::<F>() <= 8;
-        let mut b1 = [0u8; 8];
-        let s1 = format_u32!(size as u32, &mut b1);
+        let size = std::mem::size_of::<F>();
+        let align = std::mem::align_of::<F>();
+        let a = size <= N && align <= 16;
+        let mut b1 = [b'.'; 16];
         if a == false {
+            format_u32!(size as u32, &mut b1[0]);
+            format_u32!(align as u32, &mut b1[8]);
+            let s1 = if let Ok(x) = str::from_utf8(&b1) {
+                x
+            } else {
+                "(bad string)"
+            };
             assert!(a, "{}", s1);
         }
         a

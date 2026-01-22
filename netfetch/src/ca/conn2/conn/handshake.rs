@@ -1,4 +1,5 @@
 use crate::ca::conn2::asynchan;
+use crate::ca::conn2::conn::activeca::CaCommand;
 use ca_proto::ca::proto::CaMsg;
 use ca_proto::ca::proto::CaMsgTy;
 use futures::StreamExt;
@@ -63,16 +64,24 @@ pub struct Handshake {
     state: State,
     tx: asynchan::Sender<CaMsg>,
     rx: asynchan::Receiver<CaMsg>,
+    pub ca_cmd_rx: asynchan::Receiver<CaCommand>,
 }
 
 impl Handshake {
-    pub fn new(rx: asynchan::Receiver<CaMsg>, tx: asynchan::Sender<CaMsg>, tsnow: Instant, addr: SocketAddrV4) -> Self {
+    pub fn new(
+        rx: asynchan::Receiver<CaMsg>,
+        tx: asynchan::Sender<CaMsg>,
+        tsnow: Instant,
+        addr: SocketAddrV4,
+        ca_cmd_rx: asynchan::Receiver<CaCommand>,
+    ) -> Self {
         Self {
             tsbeg: tsnow,
             addr,
             state: State::new(),
             tx,
             rx,
+            ca_cmd_rx,
         }
     }
 
@@ -87,6 +96,7 @@ impl Handshake {
             state: State::Done,
             tx: asynchan::bounded(1, "handshake-dummy-A").0,
             rx: asynchan::bounded(1, "handshake-dummy-B").1,
+            ca_cmd_rx: asynchan::bounded(1, "handshake-dummy-C").1,
         }
     }
 }

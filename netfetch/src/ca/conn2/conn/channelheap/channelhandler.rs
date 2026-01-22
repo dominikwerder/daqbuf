@@ -36,12 +36,18 @@ autoerr::create_error_v1!(
         ChannelHandlerRxClosed,
         CreateMonitorUnexpectedMessage,
         Recv(#[from] asynchan::RecvError),
+        Logic,
     },
 );
 
 #[derive(Debug)]
+struct Init {
+    proto_rx: asynchan::Receiver<CaMsg>,
+}
+
+#[derive(Debug)]
 struct Creating {
-    fut: FutDbg<Result<(Sid,), Error>>,
+    fut: FutDbg<Result<(Sid, asynchan::Receiver<CaMsg>), Error>>,
 }
 
 #[derive(Debug)]
@@ -128,32 +134,35 @@ enum FetchMethod {
 struct Running {
     fetch_method: FetchMethod,
     sid: Sid,
+    proto_rx: asynchan::Receiver<CaMsg>,
 }
 
 impl Running {
-    fn new(sid: Sid) -> Self {
+    fn new(sid: Sid, proto_rx: asynchan::Receiver<CaMsg>) -> Self {
         Self {
             fetch_method: FetchMethod::None,
             sid,
+            proto_rx,
         }
     }
 }
 
 #[derive(Debug)]
 enum State {
-    Init,
+    Init(Init),
     Creating(Creating),
     Running(Running),
     Done,
+    Dummy,
 }
 
 async fn channel_create(
     cid: u32,
     name: String,
     mut tx: asynchan::Sender<CaMsg>,
-    mut inp_rx: asynchan::Receiver<CaMsg>,
+    mut proto_rx: asynchan::Receiver<CaMsg>,
     tsnow: Instant,
-) -> Result<(Sid,), Error> {
+) -> Result<(Sid, asynchan::Receiver<CaMsg>), Error> {
     let msg = CaMsg::from_ty_ts(
         proto::CaMsgTy::CreateChan(proto::CreateChan {
             cid,
@@ -164,13 +173,13 @@ async fn channel_create(
     tx.send(msg).await.map_err(|_| Error::ProtoTxClosed)?;
     // TODO make this more resilient to other messages
     loop {
-        let x = inp_rx.recv().await;
+        let x = proto_rx.recv().await;
         let item = x?;
         use proto::CaMsgTy;
         match &item.ty {
             CaMsgTy::CreateChanRes(k) => {
                 trace!("CreateMonitor:CreateChanRes {k:?}");
-                return Ok((Sid::new(k.sid),));
+                return Ok((Sid::new(k.sid), proto_rx));
             }
             CaMsgTy::CreateChanFail(k) => {
                 trace!("CreateMonitor:CreateChanFail {k:?}");
@@ -223,7 +232,6 @@ pub struct ChannelHandler {
     cid: CidOwned,
     conf: ChannelConfig,
     proto_tx: asynchan::Sender<CaMsg>,
-    proto_rx: asynchan::Receiver<CaMsg>,
     ch_hp_tx: asynchan::Sender<ChHeapCmd>,
     proto_rx_dispatch: Option<CaMsg>,
     counters: Counters,
@@ -246,11 +254,10 @@ impl ChannelHandler {
         // When polling, ChannelHeap must pass a specific Waker.
 
         Self {
-            state: State::Init,
+            state: State::Init(Init { proto_rx }),
             cid,
             conf,
             proto_tx,
-            proto_rx,
             ch_hp_tx,
             proto_rx_dispatch: None,
             counters: Counters::new(),
@@ -377,13 +384,19 @@ impl Stream for ChannelHandler {
             let mut hpp = HaveProgressPending::new();
             let self2 = self.as_mut().get_mut();
             match &mut self2.state {
-                State::Init => {
+                State::Init(st2) => {
                     trace!("ChannelHandler:Init");
+                    let st_old = std::mem::replace(&mut self2.state, State::Dummy);
+                    let proto_rx = if let State::Init(st1) = st_old {
+                        st1.proto_rx
+                    } else {
+                        panic!("logic")
+                    };
                     let fut = channel_create(
                         self2.cid.to_u32(),
                         self2.conf.name().into(),
                         self2.proto_tx.clone(),
-                        self2.proto_rx.clone(),
+                        proto_rx,
                         tsnow,
                     )
                     .box2();
@@ -393,9 +406,9 @@ impl Stream for ChannelHandler {
                 State::Creating(st1) => {
                     trace!("ChannelHandler:Creating");
                     match st1.fut.poll_unpin(cx) {
-                        Ready(Ok((sid,))) => {
+                        Ready(Ok((sid, proto_rx))) => {
                             trace!("ChannelHandler:Creating:Ready:Ok  {sid}");
-                            self2.state = State::Running(Running::new(sid));
+                            self2.state = State::Running(Running::new(sid, proto_rx));
                             hpp.mark_progress();
                         }
                         Ready(Err(e)) => {
@@ -478,7 +491,7 @@ impl Stream for ChannelHandler {
                                 }
                             }
                         } else {
-                            match Self::proto_rx_poll(&mut self2.proto_rx, &mut self2.proto_rx_dispatch, cx) {
+                            match Self::proto_rx_poll(&mut st1.proto_rx, &mut self2.proto_rx_dispatch, cx) {
                                 Ok(Ready(())) => {
                                     trace!("ChannelHandler:Running:ProtoRx:loop  got item");
                                     hpp.mark_progress();
@@ -510,6 +523,7 @@ impl Stream for ChannelHandler {
                 State::Done => {
                     trace!("ChannelHandler:Done");
                 }
+                State::Dummy => break Ready(Some(Err(Error::Logic))),
             }
             break if hpp.have_progress() {
                 trace!("HPP:Progress");

@@ -112,19 +112,30 @@ pub struct ChannelCat {
     cmd_tx: asynchan::Sender<pollcstm::Cmd>,
 }
 
+const EF1: usize = 0x500;
+const EF2: usize = 0x500;
+const EF3: usize = 0x500;
+
 #[derive(Debug)]
 pub struct ConnSet {
     backend: String,
     local_epics_hostname: String,
     cmder: ConnSetCmder,
     cmd_rx: asynchan::Receiver<ConnSetCmd>,
-    cmder_cmd_fut: Option<ErasedFuture<Result<(), Error>, 0x200>>,
-    cmd_fut_channel: Option<ErasedFuture<Result<(), Error>, 0x256>>,
-    cmd_fut_comm: Option<ErasedFuture<Result<(), Error>, 0x200>>,
+    cmder_cmd_fut: Option<ErasedFuture<Result<(), Error>, EF1>>,
+    cmd_fut_channel: Option<ErasedFuture<Result<(), Error>, EF2>>,
+    cmd_fut_comm: Option<ErasedFuture<Result<(), Error>, EF3>>,
     finder_handle: FinderHandleV02,
     channels: VecDeque<ChannelCat>,
     ch_info_tx: ChannelInfoQuerySender,
-    ca_conns: BTreeMap<SocketAddrV4, (CaConnComm, JoinHandle<Result<(), Error>>)>,
+    ca_conns: BTreeMap<
+        SocketAddrV4,
+        (
+            CaConnComm,
+            asynchan::Receiver<Result<conn2::conn::CaConnItem, conn2::conn::Error>>,
+            JoinHandle<Result<(), Error>>,
+        ),
+    >,
     int_rx: asynchan::Receiver<u32>,
 }
 
@@ -182,7 +193,7 @@ impl ConnSet {
     fn poll_channels(
         self: Pin<&mut Self>,
         cx: &mut Context,
-    ) -> Poll<Result<Option<(ErasedFuture<Result<(), Error>, 0x256>,)>, Error>> {
+    ) -> Poll<Result<Option<(ErasedFuture<Result<(), Error>, EF2>,)>, Error>> {
         use Poll::*;
         // TODO caller wants to handle only one potential future at a time.
         let mut hpp = HaveProgressPending::new();
@@ -196,7 +207,7 @@ impl ConnSet {
                         match x {
                             ChannelActionItem::AddToCaConn(conf, addr) => {
                                 trace!("poll_channels  ChannelActionItem::AddToCaConn  {addr}  {conf:?}");
-                                if let Some((comm, _jh)) = self2.ca_conns.get_mut(&addr) {
+                                if let Some((comm, ca_conn_rx, _jh)) = self2.ca_conns.get_mut(&addr) {
                                     let fut = async move {
                                         comm.channel_add(conf).await?;
                                         Ok(())
@@ -207,8 +218,9 @@ impl ConnSet {
                                     let conn =
                                         CaConn::new(self2.backend.clone(), addr, self2.local_epics_hostname.clone());
                                     let mut comm = conn.comm();
-                                    let jh = tokio::spawn(conn.into_task().map_err(Error::from));
-                                    self2.ca_conns.insert(addr, (comm.clone(), jh));
+                                    let (conn, ca_conn_rx) = conn.into_task();
+                                    let jh = tokio::spawn(conn.map_err(Error::from));
+                                    self2.ca_conns.insert(addr, (comm.clone(), ca_conn_rx, jh));
                                     let fut = async move {
                                         comm.channel_add(conf).await?;
                                         Ok(())
@@ -220,7 +232,7 @@ impl ConnSet {
                             ChannelActionItem::RemoveFromCaConn(conf, reminfo, mut done_tx) => {
                                 // TODO send a command to the CaConn to remove the channel, wait for confirmation.
                                 if let Some(addr) = reminfo.addr {
-                                    if let Some((comm, _jh)) = self2.ca_conns.get_mut(&addr) {
+                                    if let Some((comm, ca_conn_rx, jh)) = self2.ca_conns.get_mut(&addr) {
                                         let fut = async move {
                                             comm.channel_remove(conf).await?;
                                             let _ = done_tx.send(0).await;
@@ -263,7 +275,7 @@ impl ConnSet {
         e1: conn2::conn::StatusInfo,
         cmder: &ConnSetCmder,
         cx: &mut Context,
-    ) -> Result<Option<ErasedFuture<Result<(), Error>, 512>>, Error> {
+    ) -> Result<Option<ErasedFuture<Result<(), Error>, EF3>>, Error> {
         let selfname = "handle_conn_comm_status_info";
         match e1.state {
             conn2::conn::StatusState::Connecting => {}
@@ -275,14 +287,16 @@ impl ConnSet {
                         for e5 in e4.handlers {
                             match e5.status {
                                 conn2::conn::channelheap::StatusChannelHandlerState::Active(e6) => {
-                                    if e6.counters.event_add_res_cnt > 6 {
-                                        trace!("{selfname}  channel counter reach limit");
-                                        let fut = async move {
-                                            cmder.channel_remove(&e5.name).await;
-                                            trace!("{selfname}  channel removed  {}", e5.name);
-                                            Ok(())
-                                        };
-                                        return Ok(Some(ErasedFuture::new(fut)));
+                                    if false {
+                                        if e6.counters.event_add_res_cnt > 6 {
+                                            trace!("{selfname}  channel counter reach limit");
+                                            let fut = async move {
+                                                cmder.channel_remove(&e5.name).await;
+                                                trace!("{selfname}  channel removed  {}", e5.name);
+                                                Ok(())
+                                            };
+                                            return Ok(Some(ErasedFuture::new(fut)));
+                                        }
                                     }
                                 }
                                 conn2::conn::channelheap::StatusChannelHandlerState::Done => {}
@@ -304,8 +318,9 @@ impl ConnSet {
         loop {
             let mut hpp = HaveProgressPending::new();
             let self2 = self.as_mut().get_mut();
-            for (_, (comm, _)) in self2.ca_conns.iter_mut() {
-                match comm.poll_next_unpin(cx) {
+            for (_, (comm, ca_conn_rx, _)) in self2.ca_conns.iter_mut() {
+                match ca_conn_rx.poll_next_unpin(cx) {
+                    // match comm.poll_next_unpin(cx) {
                     Ready(x) => match x {
                         Some(x) => match x {
                             Ok(x) => {
@@ -368,12 +383,23 @@ impl ConnSet {
                 };
                 self.channels.push_back(e);
                 // TODO expect it to succeed immediately, should use dedicated api.
+                if cmd.done_tx.try_send(Ok(())).is_err() {
+                    error!("{selfname}  ConnSetCmdKind::ChannelAdd  done_tx.try_send failed");
+                }
+                /*
                 match cmd.done_tx.poll_send_unpin(Ok(()), cx) {
-                    Ok(()) => {}
-                    Err(_) => {
+                    Ok(()) => {
+                        info!("{selfname}  ConnSetCmdKind::ChannelAdd  done_tx.send succeeded");
+                    }
+                    Err(e) => {
+                        info!(
+                            "{selfname}  ConnSetCmdKind::ChannelAdd  done_tx.send failed {}",
+                            e.reason_str()
+                        );
                         // TODO count for metrics
                     }
                 }
+                */
             }
             ConnSetCmdKind::ChannelRemove(cmd) => {
                 // regular channel remove initiated by ConnSet.
@@ -609,7 +635,10 @@ impl Stream for ConnSet {
             }
             match self.int_rx.poll_next_unpin(cx) {
                 Ready(Some(x)) => {
-                    info!("received SIGINT");
+                    info!("received SIGINT {}", x);
+                    eprintln!("========================   received SIGINT {}", x);
+                    eprintln!("TODO trigger a clean shutdown");
+                    std::process::exit(1);
                     hpp.mark_progress();
                 }
                 Ready(None) => {}
