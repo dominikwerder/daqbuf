@@ -1,7 +1,6 @@
 use std::ffi::CStr;
 use std::mem::MaybeUninit;
-use std::sync::atomic::AtomicUsize;
-use std::sync::atomic::Ordering;
+use std::sync::RwLock;
 
 autoerr::create_error_v1!(
     name(Error, "LinuxSignalError"),
@@ -11,12 +10,11 @@ autoerr::create_error_v1!(
     },
 );
 
-static ACT_OLD: AtomicUsize = AtomicUsize::new(0);
-
+#[allow(unused)]
 type CB1 = fn(libc::c_int) -> ();
 type CB3 = fn(libc::c_int, *const libc::siginfo_t, *const libc::c_void) -> ();
 
-pub fn set_signal_handler(signum: libc::c_int, cb: CB3) -> Result<(), Error> {
+pub fn set_signal_handler(signum: libc::c_int, cb: CB3, old: &RwLock<libc::sigaction>) -> Result<(), Error> {
     let mut mask: libc::sigset_t = unsafe { std::mem::zeroed() };
     let ec = unsafe { libc::sigemptyset(&mut mask) };
     if ec != 0 {
@@ -44,7 +42,7 @@ pub fn set_signal_handler(signum: libc::c_int, cb: CB3) -> Result<(), Error> {
         eprintln!("unable to set signal handler: {msg:?}");
         std::process::exit(81);
     }
-    ACT_OLD.store(act_old.sa_sigaction, Ordering::Release);
+    *old.write().unwrap() = act_old;
     if false {
         eprintln!("act_old.sa_sigaction {:p}", act_old.sa_sigaction as *const ());
     }

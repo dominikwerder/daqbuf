@@ -18,6 +18,8 @@ use crate::ca::futstack::ErasedFuture;
 use crate::ca::progpend::HaveProgressPending;
 use crate::conf::CaIngestOpts;
 use crate::conf::ChannelConfig;
+use crate::futwrap::FutDbg;
+use crate::futwrap::FutDbgBox;
 use crate::misc::todoval;
 use dbpg::seriesbychannel::ChannelInfoQuery;
 use dbpg::seriesbychannel::ChannelInfoQuerySender;
@@ -33,6 +35,7 @@ use std::net::SocketAddrV4;
 use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
+use std::time::Duration;
 use taskrun::tokio;
 use taskrun::tokio::task::JoinHandle;
 
@@ -110,6 +113,14 @@ impl ConnSetCmd {
 pub struct ChannelCat {
     channel: channels::channel::Channel,
     cmd_tx: asynchan::Sender<pollcstm::Cmd>,
+    remove_on_shutdown_sent: bool,
+}
+
+#[derive(Debug)]
+enum State {
+    Running,
+    Shutdown,
+    Done,
 }
 
 const EF1: usize = 0x500;
@@ -120,6 +131,7 @@ const EF3: usize = 0x500;
 pub struct ConnSet {
     backend: String,
     local_epics_hostname: String,
+    state: State,
     cmder: ConnSetCmder,
     cmd_rx: asynchan::Receiver<ConnSetCmd>,
     cmder_cmd_fut: Option<ErasedFuture<Result<(), Error>, EF1>>,
@@ -137,6 +149,7 @@ pub struct ConnSet {
         ),
     >,
     int_rx: asynchan::Receiver<u32>,
+    shutdown_fut: Option<FutDbg<Result<(), Error>>>,
 }
 
 impl ConnSet {
@@ -168,6 +181,7 @@ impl ConnSet {
         let ret = ConnSet {
             backend,
             local_epics_hostname,
+            state: State::Running,
             cmder,
             cmd_rx,
             cmder_cmd_fut: None,
@@ -178,16 +192,42 @@ impl ConnSet {
             ch_info_tx,
             ca_conns: BTreeMap::new(),
             int_rx,
+            shutdown_fut: None,
         };
         Ok(ret)
     }
 
-    pub async fn shutdown(&self) -> FutShutdown {
-        todo!()
+    fn is_accept_cmds(&self) -> bool {
+        match &self.state {
+            State::Running => true,
+            State::Shutdown => false,
+            State::Done => false,
+        }
     }
 
     pub fn cmder(&self) -> &ConnSetCmder {
         &self.cmder
+    }
+
+    fn trigger_shutdown(mut self: Pin<&mut Self>) {
+        // TODO move Self state such that it is clear that we proceed to shut down.
+        // Channels must not get added.
+        // Also not removed, we remove all on our own anyway.
+        // Trigger the ConnSet channel handlers to go into shut down mode.
+        // TODO go through Self fields to check what needs to get cleaned.
+        match self.state {
+            State::Running => {
+                self.state = State::Shutdown;
+                self.shutdown_fut = Some(Self::shutdown_task().box2());
+            }
+            State::Shutdown => {}
+            State::Done => {}
+        }
+    }
+
+    async fn shutdown_task() -> Result<(), Error> {
+        // Can not do much here.
+        Ok(())
     }
 
     fn poll_channels(
@@ -380,12 +420,14 @@ impl ConnSet {
                 let e = ChannelCat {
                     channel: channels::channel::Channel::new(self.backend.clone(), cmd.ch_cfg, cmd_rx),
                     cmd_tx,
+                    remove_on_shutdown_sent: false,
                 };
                 self.channels.push_back(e);
                 // TODO expect it to succeed immediately, should use dedicated api.
                 if cmd.done_tx.try_send(Ok(())).is_err() {
                     error!("{selfname}  ConnSetCmdKind::ChannelAdd  done_tx.try_send failed");
                 }
+                info!("{selfname}  ConnSetCmdKind::ChannelAdd  added channel");
                 /*
                 match cmd.done_tx.poll_send_unpin(Ok(()), cx) {
                     Ok(()) => {
@@ -481,20 +523,26 @@ impl ConnSet {
                     hpp.mark_pending();
                 }
             },
-            None => match self.poll_cmder_rx(cx) {
-                Ready(Some(x)) => match x {
-                    Ok(()) => {
-                        hpp.mark_progress();
+            None => {
+                if self.is_accept_cmds() {
+                    match self.poll_cmder_rx(cx) {
+                        Ready(Some(x)) => match x {
+                            Ok(()) => {
+                                hpp.mark_progress();
+                            }
+                            Err(e) => {
+                                return Ready(Some(Err(e)));
+                            }
+                        },
+                        Ready(None) => {}
+                        Pending => {
+                            hpp.mark_pending();
+                        }
                     }
-                    Err(e) => {
-                        return Ready(Some(Err(e)));
-                    }
-                },
-                Ready(None) => {}
-                Pending => {
-                    hpp.mark_pending();
+                } else {
+                    // TODO ?
                 }
-            },
+            }
         }
         if hpp.have_progress() {
             trace4!("{selfname}  have_progress");
@@ -633,18 +681,72 @@ impl Stream for ConnSet {
                     }
                 }
             }
-            match self.int_rx.poll_next_unpin(cx) {
-                Ready(Some(x)) => {
-                    info!("received SIGINT {}", x);
-                    eprintln!("========================   received SIGINT {}", x);
-                    eprintln!("TODO trigger a clean shutdown");
-                    std::process::exit(1);
-                    hpp.mark_progress();
+            match &mut self.state {
+                State::Running => match self.int_rx.poll_next_unpin(cx) {
+                    Ready(Some(_)) => {
+                        self.as_mut().trigger_shutdown();
+                        info!("shutdown triggered");
+                        hpp.mark_progress();
+                    }
+                    Ready(None) => {}
+                    Pending => {
+                        hpp.mark_pending();
+                    }
+                },
+                State::Shutdown => {
+                    if let Some(fut) = &mut self.shutdown_fut {
+                        match fut.poll_unpin(cx) {
+                            Ready(x) => {
+                                self.shutdown_fut = None;
+                                hpp.mark_progress();
+                                match x {
+                                    Ok(()) => {}
+                                    Err(e) => {
+                                        break Ready(Some(Err(e)));
+                                    }
+                                }
+                            }
+                            Pending => {
+                                hpp.mark_pending();
+                            }
+                        }
+                    } else {
+                        // Either find something new to do for shutdown_fut for transition to Done.
+                        let self2 = self.as_mut().get_mut();
+                        for ch in self2.channels.iter_mut() {
+                            if ch.remove_on_shutdown_sent == false {
+                                ch.remove_on_shutdown_sent = true;
+                                let (done_tx, mut done_rx) = asynchan::bounded(4, "ConnSetShutdownRemove");
+                                let mut tx = ch.cmd_tx.clone();
+                                let fut = async move {
+                                    tx.send(pollcstm::Cmd::Remove(pollcstm::Remove { done_tx })).await?;
+                                    let _ = done_rx.recv().await;
+                                    Ok(())
+                                };
+                                self2.shutdown_fut = Some(fut.box2());
+                            }
+                        }
+                        if self.shutdown_fut.is_none() {
+                            let self2 = self.as_mut().get_mut();
+                            // Wait for all channels to be removed.
+                            let fut = async {
+                                tokio::time::sleep(Duration::from_millis(1000)).await;
+                                info!("waiting for shutdown...");
+                                Ok(())
+                            };
+                            self2.shutdown_fut = Some(fut.box2());
+                        }
+                        if self.shutdown_fut.is_none() {
+                            // TODO emit all final metrics.
+                        }
+                        if self.shutdown_fut.is_none() {
+                            self.state = State::Done;
+                            eprintln!("shutdown done");
+                        }
+                        hpp.mark_progress();
+                    }
                 }
-                Ready(None) => {}
-                Pending => {
-                    hpp.mark_pending();
-                }
+                State::Done => {}
             }
             break if hpp.have_progress() {
                 continue;

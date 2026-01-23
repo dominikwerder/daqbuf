@@ -23,6 +23,7 @@ use tokio::time::error::Elapsed;
 
 macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
 macro_rules! warn { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
+macro_rules! debug { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
 macro_rules! trace { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
 macro_rules! trace2 { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
 macro_rules! trace3 { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
@@ -159,6 +160,8 @@ impl ActiveCa {
     }
 
     fn handle_command(&mut self, cmd: CaCommand, cx: &mut Context) -> CommandFut {
+        let selfname = "handle_command";
+        debug!("{selfname} called");
         match cmd.kind {
             CaCommandKind::ChannelAdd(conf, mut done_tx) => {
                 self.chanheap.channel_add(conf, cx);
@@ -175,7 +178,7 @@ impl ActiveCa {
                     Ok(())
                 }
                 .boxed();
-                todo!("TODO trigger remove of channel, clean up");
+                error!("TODO trigger remove of channel, clean up");
                 CommandFut(Box::pin(fut))
             }
         }

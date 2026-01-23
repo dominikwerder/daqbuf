@@ -48,7 +48,7 @@ impl ConnSetCmder {
         let _ = tx.send(cmd).await?;
         trace2!("{selfname} done_rx.recv");
         done_rx.recv().await??;
-        trace2!("{selfname} done");
+        trace2!("{selfname} done_rx.recv done");
         Ok(())
     }
 

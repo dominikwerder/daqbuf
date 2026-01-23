@@ -25,6 +25,7 @@ use scywr::insertqueues::InsertQueuesTx;
 use scywr::insertworker::InsertWorkerOpts;
 use stats::rand_xoshiro::rand_core::RngCore;
 use std::sync::Arc;
+use std::sync::RwLock;
 use std::sync::atomic;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::AtomicUsize;
@@ -907,8 +908,10 @@ fn handler_sigterm(_a: libc::c_int, _b: *const libc::siginfo_t, _c: *const libc:
 
 pub async fn run(opts: CaIngestOpts, channels_config: Option<ChannelsConfig>) -> Result<(), Error> {
     info!("start up {:?}", opts);
-    ingest_linux::signal::set_signal_handler(libc::SIGINT, handler_sigint).map_err(Error::from_string)?;
-    // ingest_linux::signal::set_signal_handler(libc::SIGTERM, handler_sigterm).map_err(Error::from_string)?;
+    let act_old_1: RwLock<libc::sigaction> = RwLock::new(unsafe { std::mem::zeroed() });
+    let act_old_2: RwLock<libc::sigaction> = RwLock::new(unsafe { std::mem::zeroed() });
+    ingest_linux::signal::set_signal_handler(libc::SIGINT, handler_sigint, &act_old_1).map_err(Error::from_string)?;
+    ingest_linux::signal::set_signal_handler(libc::SIGTERM, handler_sigterm, &act_old_2).map_err(Error::from_string)?;
     {
         let (pg, jh) = dbpg::conn::make_pg_client(opts.postgresql_config())
             .await

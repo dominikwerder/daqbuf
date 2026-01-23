@@ -27,6 +27,7 @@ use std::task::Poll;
 
 macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
 macro_rules! warn { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
+macro_rules! debug { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
 macro_rules! trace { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
 macro_rules! trace2 { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
 macro_rules! trace3 { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
@@ -104,6 +105,9 @@ impl Channel {
     }
 
     fn transition_to_removing(&mut self) {
+        let selfname = "transition_to_removing";
+        debug!("{selfname} called");
+        warn!("{selfname} TODO impl");
         // TODO
         // Correct? More to do?
         // Must be safe to be called in any state.
@@ -115,28 +119,16 @@ impl Channel {
     }
 
     fn handle_command(mut self: Pin<&mut Self>, cmd: Cmd, cx: &mut Context) -> Result<(), Error> {
+        let selfname = "handle_command";
+        debug!("{selfname} called");
         match cmd {
             Cmd::Remove(cmd) => {
                 self.transition_to_removing();
                 let mut tx = cmd.done_tx;
-                // This should never block:
-                let mut fut = tx.send(Ok(()));
-                loop {
-                    use Poll::*;
-                    match fut.poll_unpin(cx) {
-                        Ready(Ok(())) => {
-                            break Ok(());
-                        }
-                        Ready(Err(e)) => {
-                            warn!("command issuer seems gone");
-                            // TODO count metrics, otherwise ignore.
-                            break Ok(());
-                        }
-                        Pending => {
-                            break Err(Error::LogicSendBlock);
-                        }
-                    }
+                if tx.try_send(Ok(())).is_err() {
+                    warn!("command issuer seems gone");
                 }
+                Ok(())
             }
         }
     }
@@ -266,7 +258,6 @@ impl PollCstm for Channel {
                                     reminfo.clone(),
                                     removed_from_conn_tx,
                                 );
-                                // TODO take instead of clone
                                 self.state = State::Removing2(reminfo, fut.box2());
                                 break Ready(Some(Ok(item)));
                             }
@@ -284,6 +275,7 @@ impl PollCstm for Channel {
                     match fut.poll_unpin(cx) {
                         Ready(x) => match x {
                             Ok(()) => {
+                                debug!("channel removed from ca conn");
                                 let fut = async move {
                                     // TODO emit another channel status event write?
                                     // Ok(())
