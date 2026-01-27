@@ -4,6 +4,7 @@ use crate::ca::conn2::asynchan::SendPoll;
 use crate::ca::conn2::asynchan::Sender;
 use crate::ca::conn2::conn::channelheap;
 use crate::ca::conn2::conn::channelheap::ChannelHeap;
+use crate::ca::conn2::conn::ctchan::CtChan;
 use crate::ca::progpend::HaveProgressPending;
 use crate::conf::ChannelConfig;
 use ca_proto::ca::proto::CaMsg;
@@ -106,6 +107,8 @@ pub struct StatusInfo {
     pub state: StatusInfoState,
 }
 
+type StreamItem = Result<ActiveCaItem, Error>;
+
 #[derive(Debug)]
 pub struct ActiveCa {
     tsbeg: Instant,
@@ -116,15 +119,16 @@ pub struct ActiveCa {
     proto_rx: asynchan::Receiver<CaMsg>,
     proto_rx_buf: VecDeque<CaMsg>,
     proto_2_tx: asynchan::Sender<CaMsg>,
-    cmd_rx: Receiver<CaCommand>,
+    // cmd_rx: Receiver<CaCommand>,
     cmd_fut: Option<CommandFut>,
+    chanheap_cmd_chan: CtChan<channelheap::Cmd>,
 }
 
 impl ActiveCa {
     pub fn new(
         proto_rx: asynchan::Receiver<CaMsg>,
         proto_tx: Sender<CaMsg>,
-        cmd_rx: Receiver<CaCommand>,
+        // cmd_rx: Receiver<CaCommand>,
         tsnow: Instant,
         addr: SocketAddrV4,
         cx: &mut Context,
@@ -139,8 +143,9 @@ impl ActiveCa {
             proto_rx,
             proto_rx_buf: VecDeque::with_capacity(16),
             proto_2_tx,
-            cmd_rx,
+            // cmd_rx,
             cmd_fut: None,
+            chanheap_cmd_chan: CtChan::new(),
         }
     }
 
@@ -173,6 +178,14 @@ impl ActiveCa {
                 CommandFut(Box::pin(fut))
             }
             CaCommandKind::ChannelRemove(name, mut done_tx) => {
+                // TODO send in turn a command to ChannelHeap to get the channel terminated.
+                //   to do this, need to be able to write a future here which can send that
+                //   command to ChannelHeap and await its completion.
+                //   But to do that, must somehow have an owned Sender to move into the future.
+                //   Which means, I need a guard that this Sender never leaves this task.
+                //   Also, need to work at least with RefCell.
+                // TODO then await that shutdown of the channel.
+                // TODO then send to done_tx.
                 let fut = async move {
                     let _ = done_tx.send(0).await;
                     Ok(())
@@ -184,7 +197,12 @@ impl ActiveCa {
         }
     }
 
-    fn poll_command_input(mut self: Pin<&mut Self>, cx: &mut Context, hpp: &mut HaveProgressPending) -> Option<Error> {
+    fn poll_command_input(
+        mut self: Pin<&mut Self>,
+        cmd_rx: &mut CtChan<CaCommand>,
+        cx: &mut Context,
+        hpp: &mut HaveProgressPending,
+    ) -> Option<Error> {
         use Poll::*;
         let self2 = self.as_mut().get_mut();
         if let Some(fut) = self2.cmd_fut.as_mut() {
@@ -207,9 +225,10 @@ impl ActiveCa {
                 }
             }
         } else {
-            match self2.cmd_rx.poll_next_unpin(cx) {
+            match cmd_rx.poll_next_unpin(cx) {
                 Ready(Some(cmd)) => {
                     trace!("CmdRx:Some");
+                    trace!("---------------------------------------------------     CmdRx:Some");
                     let fut = self2.handle_command(cmd, cx);
                     self2.cmd_fut = Some(fut);
                     hpp.mark_progress();
@@ -224,17 +243,17 @@ impl ActiveCa {
             }
         }
     }
-}
 
-impl Stream for ActiveCa {
-    type Item = Result<ActiveCaItem, Error>;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
+    fn poll_next(
+        mut self: Pin<&mut Self>,
+        cmd_rx: &mut CtChan<CaCommand>,
+        cx: &mut Context,
+    ) -> Poll<Option<StreamItem>> {
         use Poll::*;
         trace4!("ActiveCa:poll_next");
         loop {
             let mut hpp = HaveProgressPending::new();
-            match self.as_mut().poll_command_input(cx, &mut hpp) {
+            match self.as_mut().poll_command_input(cmd_rx, cx, &mut hpp) {
                 Some(e) => {
                     hpp.mark_progress();
                     break Ready(Some(Err(e)));
@@ -254,7 +273,7 @@ impl Stream for ActiveCa {
                                 }
                                 None => {
                                     trace!("ActiveCa:ProtoRx:Error");
-                                    error!("TODO clean shutdown");
+                                    error!("TODO clean shutdown, remote seems gone");
                                     self.state = State::Done;
                                     hpp.mark_progress();
                                 }
@@ -308,7 +327,7 @@ impl Stream for ActiveCa {
                         }
                     }
                     let self2 = self.as_mut().get_mut();
-                    match self2.chanheap.poll_next_unpin(cx) {
+                    match self2.chanheap.poll_next_unpin(&mut self2.chanheap_cmd_chan, cx) {
                         Ready(Some(x)) => match x {
                             Ok(item) => {
                                 trace!("ActiveCa:ChannelHeap:Done");
@@ -347,5 +366,9 @@ impl Stream for ActiveCa {
                 Ready(None)
             };
         }
+    }
+
+    pub fn poll_next_unpin(&mut self, cmd_rx: &mut CtChan<CaCommand>, cx: &mut Context) -> Poll<Option<StreamItem>> {
+        Pin::new(self).poll_next(cmd_rx, cx)
     }
 }

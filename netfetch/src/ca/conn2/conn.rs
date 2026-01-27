@@ -1,6 +1,7 @@
 pub mod activeca;
 pub mod channelheap;
 pub mod connected;
+pub mod ctchan;
 pub mod handshake;
 
 use super::conncmd::ConnCommand;

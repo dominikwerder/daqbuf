@@ -5,6 +5,7 @@ use crate::ca::conn2::caids::Cid;
 use crate::ca::conn2::caids::Sid;
 use crate::ca::conn2::caids::Subid;
 use crate::ca::conn2::conn::channelheap::channelhandler::ChannelHandler;
+use crate::ca::conn2::conn::ctchan::CtChan;
 use crate::ca::progpend::HaveProgressPending;
 use crate::conf::ChannelConfig;
 use ca_proto::ca::proto::CaMsg;
@@ -201,12 +202,19 @@ pub struct StatusInfo {
     pub handlers: Vec<StatusChannelHandler>,
 }
 
+#[derive(Debug)]
+pub enum Cmd {
+    RemoveChannel(()),
+}
+
 enum Poll2<T> {
     Item(T),
     Progress,
     Pending,
     Done,
 }
+
+type StreamItem = Result<ChannelHeapItem, Error>;
 
 #[derive(Debug)]
 pub struct ChannelHeap {
@@ -486,12 +494,8 @@ impl ChannelHeap {
             Poll2::Done
         }
     }
-}
 
-impl Stream for ChannelHeap {
-    type Item = Result<ChannelHeapItem, Error>;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+    fn poll_next(mut self: Pin<&mut Self>, cmd_rx: &mut CtChan<Cmd>, cx: &mut Context<'_>) -> Poll<Option<StreamItem>> {
         use Poll::*;
         trace4!("ChannelHeap  poll_next");
         'main: loop {
@@ -610,5 +614,9 @@ impl Stream for ChannelHeap {
                 Ready(None)
             };
         }
+    }
+
+    pub fn poll_next_unpin(&mut self, cmd_rx: &mut CtChan<Cmd>, cx: &mut Context) -> Poll<Option<StreamItem>> {
+        Pin::new(self).poll_next(cmd_rx, cx)
     }
 }

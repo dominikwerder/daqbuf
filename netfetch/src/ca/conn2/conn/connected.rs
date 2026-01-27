@@ -2,6 +2,7 @@ use super::handshake::Handshake;
 use crate::ca::conn2::asynchan;
 use crate::ca::conn2::conn::activeca;
 use crate::ca::conn2::conn::activeca::ActiveCa;
+use crate::ca::conn2::conn::ctchan::CtChan;
 use crate::ca::conn2::protowrap;
 use crate::ca::progpend::HaveProgressPending;
 use ca_proto::ca::proto::CaItem;
@@ -47,7 +48,7 @@ autoerr::create_error_v1!(
 enum State {
     Init(asynchan::Receiver<CaMsg>, asynchan::Receiver<activeca::CaCommand>),
     Handshake(Handshake),
-    ActiveCa(ActiveCa),
+    ActiveCa(ActiveCa, asynchan::Receiver<activeca::CaCommand>),
     Done,
 }
 
@@ -96,6 +97,7 @@ pub struct Connected {
     out_tx: asynchan::Sender<CaMsg>,
     inp_buf: VecDeque<CaMsg>,
     inp_tx_main: asynchan::Sender<CaMsg>,
+    msg_a_chan: CtChan<activeca::CaCommand>,
 }
 
 impl Connected {
@@ -123,7 +125,6 @@ impl Connected {
 
         // But then: when and how to deliver the input?
         // There are N channels, one for each Cid (which can be General).
-        //
 
         Self {
             tsbeg: tsnow,
@@ -133,6 +134,7 @@ impl Connected {
             out_tx,
             inp_buf: VecDeque::with_capacity(32),
             inp_tx_main: inp_tx,
+            msg_a_chan: CtChan::new(),
         }
     }
 
@@ -144,7 +146,7 @@ impl Connected {
             State::Handshake(..) => StatusInfo {
                 status: StatusInfoState::Handshake,
             },
-            State::ActiveCa(st) => StatusInfo {
+            State::ActiveCa(st, _rx) => StatusInfo {
                 status: StatusInfoState::ActiveCa(st.status_info()),
             },
             State::Done => StatusInfo {
@@ -162,7 +164,7 @@ impl Stream for Connected {
         trace4!("Connected:poll_next");
         loop {
             let tsnow = Instant::now();
-            let mut self2 = self.as_mut();
+            let mut self2 = self.as_mut().get_mut();
             let mut hpp = HaveProgressPending::new();
             if self2.inp_buf.len() < self2.inp_buf.capacity() {
                 match Pin::new(&mut self2).protowrap.poll_next_unpin(cx) {
@@ -227,8 +229,8 @@ impl Stream for Connected {
                         let st1 = std::mem::replace(st1, st1.to_dummy());
                         let tx = self2.out_tx.clone();
                         let (rx,) = st1.dismantle();
-                        let stn = ActiveCa::new(rx, tx, ca_cmd_rx, tsnow, self2.addr, cx);
-                        self.state = State::ActiveCa(stn);
+                        let stn = ActiveCa::new(rx, tx, tsnow, self2.addr, cx);
+                        self.state = State::ActiveCa(stn, ca_cmd_rx);
                         hpp.mark_progress();
                     }
                     Ready(Err(e)) => {
@@ -242,37 +244,55 @@ impl Stream for Connected {
                         hpp.mark_pending();
                     }
                 },
-                State::ActiveCa(st1) => match st1.poll_next_unpin(cx) {
-                    Ready(Some(x)) => match x {
-                        Ok(item) => {
-                            trace!("ActiveCa:Ready");
-                            error!("ActiveCa:Ready  TODO do something with item");
-                            let item = match item.inner {
-                                activeca::ItemInner::ScyllaWrite => ConnectedItem {
-                                    ts_create: item.ts_create,
-                                    inner: ItemInner::ScyllaWrite,
-                                },
-                            };
-                            hpp.mark_progress();
-                            break Ready(Some(Ok(item)));
+                State::ActiveCa(st1, rx) => {
+                    let ctchan = &mut self2.msg_a_chan;
+                    if ctchan.has_space() {
+                        match rx.poll_next_unpin(cx) {
+                            Ready(Some(item)) => {
+                                hpp.mark_progress();
+                                // We checked for space before.
+                                // TODO add api for reserved slot.
+                                #[allow(unused)]
+                                ctchan.poll_send_unpin(item, cx);
+                            }
+                            Ready(None) => {}
+                            Pending => {
+                                hpp.mark_pending();
+                            }
                         }
-                        Err(e) => {
-                            trace!("ActiveCa:Error");
+                    }
+                    match st1.poll_next_unpin(&mut self2.msg_a_chan, cx) {
+                        Ready(Some(x)) => match x {
+                            Ok(item) => {
+                                trace!("ActiveCa:Ready");
+                                error!("ActiveCa:Ready  TODO do something with item");
+                                let item = match item.inner {
+                                    activeca::ItemInner::ScyllaWrite => ConnectedItem {
+                                        ts_create: item.ts_create,
+                                        inner: ItemInner::ScyllaWrite,
+                                    },
+                                };
+                                hpp.mark_progress();
+                                break Ready(Some(Ok(item)));
+                            }
+                            Err(e) => {
+                                trace!("ActiveCa:Error");
+                                self.state = State::Done;
+                                hpp.mark_progress();
+                                break Ready(Some(Err(e.into())));
+                            }
+                        },
+                        Ready(None) => {
+                            trace!("ActiveCa:Done");
                             self.state = State::Done;
                             hpp.mark_progress();
-                            break Ready(Some(Err(e.into())));
                         }
-                    },
-                    Ready(None) => {
-                        trace!("ActiveCa:Done");
-                        self.state = State::Done;
-                        hpp.mark_progress();
+                        Pending => {
+                            trace_pending!("ActiveCa");
+                            hpp.mark_pending();
+                        }
                     }
-                    Pending => {
-                        trace_pending!("ActiveCa");
-                        hpp.mark_pending();
-                    }
-                },
+                }
                 State::Done => {}
             }
             break if hpp.have_progress() {
