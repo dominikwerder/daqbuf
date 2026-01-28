@@ -8,6 +8,8 @@ use crate::ca::conn2::conn::channelheap::channelhandler::ChannelHandler;
 use crate::ca::conn2::conn::ctchan::CtChan;
 use crate::ca::progpend::HaveProgressPending;
 use crate::conf::ChannelConfig;
+use crate::futwrap::FutDbg;
+use crate::futwrap::FutDbgBox;
 use ca_proto::ca::proto::CaMsg;
 use futures::FutureExt;
 use futures::Stream;
@@ -42,7 +44,7 @@ autoerr::create_error_v1!(
 #[derive(Debug)]
 struct ChHandlerActive {
     handler: ChannelHandler,
-    tx: asynchan::Sender<CaMsg>,
+    proto_tx: asynchan::Sender<CaMsg>,
     waker: task::Waker,
 }
 
@@ -204,7 +206,7 @@ pub struct StatusInfo {
 
 #[derive(Debug)]
 pub enum Cmd {
-    RemoveChannel(()),
+    RemoveChannel(String, asynchan::Sender<u32>),
 }
 
 enum Poll2<T> {
@@ -228,6 +230,7 @@ pub struct ChannelHeap {
     wakeup_cids_tmp: Vec<Cid>,
     ch_hp_tx: asynchan::Sender<ChHeapCmd>,
     ch_hp_rx: asynchan::Receiver<ChHeapCmd>,
+    cmd_exec_fut: Option<FutDbg<Result<(), Error>>>,
 }
 
 impl ChannelHeap {
@@ -244,6 +247,7 @@ impl ChannelHeap {
             wakeup_cids_tmp: Vec::new(),
             ch_hp_tx,
             ch_hp_rx,
+            cmd_exec_fut: None,
         }
     }
 
@@ -283,11 +287,22 @@ impl ChannelHeap {
         let waker = waker1::waker(cid.clone(), cx.waker().clone(), self.wakeup_cids.clone());
         let e = ChannelEntry {
             name,
-            ch_handler: ChHandler::ChHandlerActive(ChHandlerActive { handler, tx, waker }),
+            ch_handler: ChHandler::ChHandlerActive(ChHandlerActive { handler, proto_tx: tx, waker }),
         };
         self.by_cid.insert(cid.clone(), e);
         self.wakeup_cids.insert(cid, ());
         cx.waker().wake_by_ref();
+    }
+
+    // low-level cleanup, call only when channel behind this Cid is actually done.
+    fn remove_cid(&mut self, cid: Cid) {
+        let selfname = "remove_cid";
+        self.by_cid.remove(&cid);
+        let subids: Vec<_> = self.by_subid.iter().filter(|(_, v)| **v == cid).collect();
+        if subids.len() != 0 {
+            error!("{selfname} subids discovered");
+        }
+        self.wakeup_cids.remove(&cid);
     }
 
     fn poll_handler(
@@ -374,7 +389,7 @@ impl ChannelHeap {
                             ChHandler::ChHandlerActive(st2) => {
                                 use asynchan::SendPoll;
                                 use asynchan::SendPollError;
-                                match st2.tx.poll_send_unpin(item, cx) {
+                                match st2.proto_tx.poll_send_unpin(item, cx) {
                                     Ok(()) => {
                                         trace!("{selfname}  ChannelHeap:Dispatch:Sent {cid}");
                                         self2.wakeup_cids.insert(cid, ());
@@ -495,13 +510,90 @@ impl ChannelHeap {
         }
     }
 
-    fn poll_next(mut self: Pin<&mut Self>, cmd_rx: &mut CtChan<Cmd>, cx: &mut Context<'_>) -> Poll<Option<StreamItem>> {
+    fn handle_command(&mut self, cmd: Cmd) {
+        match cmd {
+            Cmd::RemoveChannel(name, mut tx) => {
+                // TODO place a future which handles execution of this command.
+                let fut = async move {
+                    // TODO find channel by name.
+                    let cids: Vec<_> = self
+                        .by_cid
+                        .iter()
+                        .filter(|x| x.1.name == name)
+                        .map(|x| x.0.clone())
+                        .collect();
+                    for cid in cids {
+                        // TODO send remove command to that handler.
+                        // TODO await confirmation of removal.
+                        if let Some(h1) = self.by_cid.get(&cid) {
+                            match &h1.ch_handler {
+                                ChHandler::ChHandlerActive(h2) => {
+                                    h2.handler.
+                                },
+                                ChHandler::Done => {
+                                    // TODO count?
+                                }
+                            }
+                        } else {
+                            // TODO count metrics, should not happen
+                        }
+                    }
+                    if tx.try_send(0).is_err() {
+                        panic!("done tx send fail");
+                    }
+                    todo!("TODO handle removal");
+                    Ok(())
+                };
+                self.cmd_exec_fut = Some(fut.box2());
+            }
+        }
+    }
+
+    fn poll_outer_cmd(
+        mut self: Pin<&mut Self>,
+        cmd_rx: &mut asynchan::Receiver<Cmd>,
+        cx: &mut Context,
+    ) -> Poll<Option<()>> {
+        let selfname = "poll_outer_cmd";
+        use Poll::*;
+        if let Some(fut) = &mut self.cmd_exec_fut {
+            match fut.poll_unpin(cx) {
+                Ready(x) => match x {
+                    Ok(()) => Ready(Some(())),
+                    Err(e) => {
+                        // TODO
+                        panic!("{selfname}  {e}");
+                    }
+                },
+                Pending => Pending,
+            }
+        } else {
+            match cmd_rx.poll_next_unpin(cx) {
+                Ready(Some(x)) => {
+                    self.handle_command(x);
+                    Ready(Some(()))
+                }
+                Ready(None) => {
+                    // TODO make sure polling on closed is cheap enough.
+                    Ready(None)
+                }
+                Pending => Pending,
+            }
+        }
+    }
+
+    fn poll_next(
+        mut self: Pin<&mut Self>,
+        cmd_rx: &mut asynchan::Receiver<Cmd>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<StreamItem>> {
         use Poll::*;
         trace4!("ChannelHeap  poll_next");
         'main: loop {
             let mut hpp = HaveProgressPending::new();
             match &self.state {
                 State::Running => {
+                    self.as_mut().poll_outer_cmd(cmd_rx, cx);
                     match self.ch_hp_rx.poll_next_unpin(cx) {
                         Ready(Some(cmd)) => {
                             trace!("ChannelHeap:ChHpCmd:Got");
@@ -616,7 +708,11 @@ impl ChannelHeap {
         }
     }
 
-    pub fn poll_next_unpin(&mut self, cmd_rx: &mut CtChan<Cmd>, cx: &mut Context) -> Poll<Option<StreamItem>> {
+    pub fn poll_next_unpin(
+        &mut self,
+        cmd_rx: &mut asynchan::Receiver<Cmd>,
+        cx: &mut Context,
+    ) -> Poll<Option<StreamItem>> {
         Pin::new(self).poll_next(cmd_rx, cx)
     }
 }

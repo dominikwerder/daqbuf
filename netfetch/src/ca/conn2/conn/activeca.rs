@@ -5,17 +5,20 @@ use crate::ca::conn2::asynchan::Sender;
 use crate::ca::conn2::conn::channelheap;
 use crate::ca::conn2::conn::channelheap::ChannelHeap;
 use crate::ca::conn2::conn::ctchan::CtChan;
+use crate::ca::conn2::conn::ctchan::CtChanRc;
 use crate::ca::progpend::HaveProgressPending;
 use crate::conf::ChannelConfig;
 use ca_proto::ca::proto::CaMsg;
 use futures::FutureExt;
 use futures::Stream;
 use futures::StreamExt;
+use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::fmt;
 use std::future::Future;
 use std::net::SocketAddrV4;
 use std::pin::Pin;
+use std::rc::Rc;
 use std::task::Context;
 use std::task::Poll;
 use std::time::Instant;
@@ -121,7 +124,8 @@ pub struct ActiveCa {
     proto_2_tx: asynchan::Sender<CaMsg>,
     // cmd_rx: Receiver<CaCommand>,
     cmd_fut: Option<CommandFut>,
-    chanheap_cmd_chan: CtChan<channelheap::Cmd>,
+    chanheap_cmd_tx: asynchan::Sender<channelheap::Cmd>,
+    chanheap_cmd_rx: asynchan::Receiver<channelheap::Cmd>,
 }
 
 impl ActiveCa {
@@ -134,6 +138,7 @@ impl ActiveCa {
         cx: &mut Context,
     ) -> Self {
         let (proto_2_tx, proto_2_rx) = asynchan::bounded(120, "ActiveCa-proto2");
+        let (chanheap_cmd_tx, chanheap_cmd_rx) = asynchan::bounded(16, "ActiveCa-ChannelHeap-cmd");
         Self {
             tsbeg: tsnow,
             addr,
@@ -145,7 +150,8 @@ impl ActiveCa {
             proto_2_tx,
             // cmd_rx,
             cmd_fut: None,
-            chanheap_cmd_chan: CtChan::new(),
+            chanheap_cmd_tx,
+            chanheap_cmd_rx,
         }
     }
 
@@ -178,20 +184,25 @@ impl ActiveCa {
                 CommandFut(Box::pin(fut))
             }
             CaCommandKind::ChannelRemove(name, mut done_tx) => {
-                // TODO send in turn a command to ChannelHeap to get the channel terminated.
-                //   to do this, need to be able to write a future here which can send that
-                //   command to ChannelHeap and await its completion.
-                //   But to do that, must somehow have an owned Sender to move into the future.
-                //   Which means, I need a guard that this Sender never leaves this task.
-                //   Also, need to work at least with RefCell.
-                // TODO then await that shutdown of the channel.
-                // TODO then send to done_tx.
+                let mut chanheap_cmd_tx = self.chanheap_cmd_tx.clone();
                 let fut = async move {
-                    let _ = done_tx.send(0).await;
-                    Ok(())
+                    let (done_2_tx, mut done_2_rx) = asynchan::bounded(2, "ChannelHeap-Done");
+                    let cmd = channelheap::Cmd::RemoveChannel(name, done_2_tx);
+                    let ff = chanheap_cmd_tx.send(cmd);
+                    match ff.await {
+                        Ok(()) => {
+                            trace!("{selfname} ChannelRemove Future: sent RemoveChannel command");
+                            done_2_rx.recv().await;
+                            let _ = done_tx.send(0).await;
+                            Ok(())
+                        }
+                        Err(e) => {
+                            error!("{selfname} ChannelRemove Future: failed to send RemoveChannel command");
+                            todo!()
+                        }
+                    }
                 }
                 .boxed();
-                error!("TODO trigger remove of channel, clean up");
                 CommandFut(Box::pin(fut))
             }
         }
@@ -327,24 +338,25 @@ impl ActiveCa {
                         }
                     }
                     let self2 = self.as_mut().get_mut();
-                    match self2.chanheap.poll_next_unpin(&mut self2.chanheap_cmd_chan, cx) {
-                        Ready(Some(x)) => match x {
-                            Ok(item) => {
-                                trace!("ActiveCa:ChannelHeap:Done");
-                                trace!("ActiveCa:ChannelHeap:Done  TODO do something with item");
-                                hpp.mark_progress();
+                    match self2.chanheap.poll_next_unpin(&mut self2.chanheap_cmd_rx, cx) {
+                        Ready(Some(x)) => {
+                            hpp.mark_progress();
+                            match x {
+                                Ok(item) => {
+                                    trace!("ActiveCa:ChannelHeap:Done");
+                                    panic!("ActiveCa:ChannelHeap:Done  TODO do something with item");
+                                }
+                                Err(e) => {
+                                    trace!("ActiveCa:ChannelHeap:Error {e}");
+                                    panic!("ActiveCa:ChannelHeap:Error  TODO clean shutdown");
+                                    self2.state = State::Done;
+                                    break Ready(Some(Err(e.into())));
+                                }
                             }
-                            Err(e) => {
-                                trace!("ActiveCa:ChannelHeap:Error {e}");
-                                error!("ActiveCa:ChannelHeap:Error  TODO clean shutdown");
-                                self.state = State::Done;
-                                hpp.mark_progress();
-                                break Ready(Some(Err(e.into())));
-                            }
-                        },
+                        }
                         Ready(None) => {
                             trace!("ActiveCa:ChannelHeap:Done  TODO clean shutdown");
-                            self.state = State::Done;
+                            self2.state = State::Done;
                             hpp.mark_progress();
                         }
                         Pending => {
