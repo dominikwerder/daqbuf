@@ -12,6 +12,7 @@ mod statefut;
 mod statetrans;
 mod synchan;
 pub mod test_00;
+pub mod timeoutable;
 #[cfg(test)]
 mod waker_test_a;
 

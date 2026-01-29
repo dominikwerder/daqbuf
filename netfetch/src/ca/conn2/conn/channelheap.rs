@@ -287,7 +287,11 @@ impl ChannelHeap {
         let waker = waker1::waker(cid.clone(), cx.waker().clone(), self.wakeup_cids.clone());
         let e = ChannelEntry {
             name,
-            ch_handler: ChHandler::ChHandlerActive(ChHandlerActive { handler, proto_tx: tx, waker }),
+            ch_handler: ChHandler::ChHandlerActive(ChHandlerActive {
+                handler,
+                proto_tx: tx,
+                waker,
+            }),
         };
         self.by_cid.insert(cid.clone(), e);
         self.wakeup_cids.insert(cid, ());
@@ -512,33 +516,42 @@ impl ChannelHeap {
 
     fn handle_command(&mut self, cmd: Cmd) {
         match cmd {
-            Cmd::RemoveChannel(name, mut tx) => {
-                // TODO place a future which handles execution of this command.
-                let fut = async move {
-                    // TODO find channel by name.
-                    let cids: Vec<_> = self
-                        .by_cid
-                        .iter()
-                        .filter(|x| x.1.name == name)
-                        .map(|x| x.0.clone())
-                        .collect();
-                    for cid in cids {
-                        // TODO send remove command to that handler.
-                        // TODO await confirmation of removal.
-                        if let Some(h1) = self.by_cid.get(&cid) {
+            Cmd::RemoveChannel(name, mut done_tx) => {
+                let cids: Vec<_> = self
+                    .by_cid
+                    .iter()
+                    .filter(|x| x.1.name == name)
+                    .map(|x| x.0.clone())
+                    .collect();
+                let handler_txs: Vec<_> = cids
+                    .into_iter()
+                    .filter_map(|cid| {
+                        self.by_cid.get(&cid).map(|h1| {
                             match &h1.ch_handler {
-                                ChHandler::ChHandlerActive(h2) => {
-                                    h2.handler.
-                                },
+                                ChHandler::ChHandlerActive(h2) => Some(h2.handler.cmd_tx().clone()),
                                 ChHandler::Done => {
                                     // TODO count?
+                                    None
                                 }
                             }
-                        } else {
-                            // TODO count metrics, should not happen
+                        })
+                    })
+                    .filter_map(|x| x)
+                    .collect();
+                let fut = async move {
+                    for mut tx in handler_txs {
+                        let (inner_done_tx, mut inner_done_rx) =
+                            asynchan::bounded(4, "ChannelHeap-ChannelHandler-done-tx");
+                        let item = channelhandler::Cmd::Remove(inner_done_tx);
+                        if tx.send(item).await.is_err() {
+                            error!("cmd send fail");
+                        }
+                        // TODO await confirmation of removal.
+                        if inner_done_rx.recv().await.is_err() {
+                            error!("cmd send fail");
                         }
                     }
-                    if tx.try_send(0).is_err() {
+                    if done_tx.try_send(0).is_err() {
                         panic!("done tx send fail");
                     }
                     todo!("TODO handle removal");
