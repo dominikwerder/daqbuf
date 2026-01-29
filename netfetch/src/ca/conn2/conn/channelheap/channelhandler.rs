@@ -16,6 +16,7 @@ use ca_proto::ca::proto::CaMsgTy;
 use futures::FutureExt;
 use futures::Stream;
 use futures::StreamExt;
+use std::collections::VecDeque;
 use std::fmt;
 use std::pin::Pin;
 use std::task::Context;
@@ -54,6 +55,7 @@ struct Init {
 #[derive(Debug)]
 struct Creating {
     fut: FutDbg<Result<(Sid, asynchan::Receiver<CaMsg>), Error>>,
+    removing: bool,
 }
 
 #[derive(Debug)]
@@ -147,6 +149,8 @@ struct Running {
     fetch_method: FetchMethod,
     sid: Sid,
     proto_rx: asynchan::Receiver<CaMsg>,
+    removing: bool,
+    outbuf: VecDeque<CaMsg>,
 }
 
 impl Running {
@@ -155,6 +159,8 @@ impl Running {
             fetch_method: FetchMethod::None,
             sid,
             proto_rx,
+            removing: false,
+            outbuf: VecDeque::new(),
         }
     }
 }
@@ -411,12 +417,17 @@ impl ChannelHandler {
                         self.state = State::Done;
                     }
                     State::Creating(_) => {
-                        let Creating { fut: fut_sid } =
+                        let Creating { fut: fut_sid, removing } =
                             if let State::Creating(st2) = std::mem::replace(&mut self.state, State::Dummy) {
                                 st2
                             } else {
                                 panic!()
                             };
+                        // TODO add flags to Creating so that we now what proto messages we still expect
+                        // TODO add timeout to Creating (anyways!)
+                        // TODO keep done_tx and signal when channel remove done
+
+                        /*
                         let cid = self.cid();
                         let mut proto_tx = self.proto_tx.clone();
                         let fut = async move {
@@ -438,17 +449,32 @@ impl ChannelHandler {
                             fut: fut.box2(),
                             done_tx,
                         });
+                        */
                     }
                     State::Running(st2) => {
                         let Running {
                             fetch_method,
                             sid,
                             proto_rx,
+                            removing,
+                            outbuf,
                         } = if let State::Running(st2) = std::mem::replace(&mut self.state, State::Dummy) {
                             st2
                         } else {
                             panic!()
                         };
+                        // TODO
+                        // add necessary commands to outbuf.
+                        // in poll loop, check for outbuf and poll emit.
+                        // handle:
+                        // CA_PROTO_EVENT_CANCEL leads to 0-size CA_PROTO_EVENT_ADD response
+                        // CA_PROTO_CLEAR_CHANNEL leads to CA_PROTO_CLEAR_CHANNEL response
+                        // and flag when those messages come in "removing" mode.
+                        // Otherwise, the IOC may also shut down of course.
+                        // TODO make sure the IOC disconnect triggers correct logic in ingest. (log!)
+                        // When we are in removing mode, and received all cleanup confirmations, then trigger state change.
+
+                        /*
                         let sid = sid.clone();
                         let cid = self.cid();
                         match fetch_method {
@@ -500,29 +526,6 @@ impl ChannelHandler {
                                         match e {
                                             Ok(x) => {
                                                 match x.ty {
-                                                    CaMsgTy::Version => todo!(),
-                                                    CaMsgTy::VersionRes(_) => todo!(),
-                                                    CaMsgTy::Error(error_cmd) => todo!(),
-                                                    CaMsgTy::ClientName => todo!(),
-                                                    CaMsgTy::ClientNameRes(client_name_res) => todo!(),
-                                                    CaMsgTy::HostName(_) => todo!(),
-                                                    CaMsgTy::Search(search) => todo!(),
-                                                    CaMsgTy::SearchRes(search_res) => todo!(),
-                                                    CaMsgTy::CreateChan(create_chan) => todo!(),
-                                                    CaMsgTy::CreateChanRes(create_chan_res) => todo!(),
-                                                    CaMsgTy::CreateChanFail(create_chan_fail) => todo!(),
-                                                    CaMsgTy::AccessRightsRes(access_rights_res) => todo!(),
-                                                    CaMsgTy::EventAdd(event_add) => todo!(),
-                                                    CaMsgTy::EventAddRes(event_add_res) => todo!(),
-                                                    CaMsgTy::EventAddResEmpty(event_add_res_empty) => todo!(),
-                                                    CaMsgTy::EventCancel(event_cancel) => todo!(),
-                                                    CaMsgTy::EventCancelRes(event_cancel_res) => todo!(),
-                                                    CaMsgTy::ReadNotify(read_notify) => todo!(),
-                                                    CaMsgTy::ReadNotifyRes(read_notify_res) => todo!(),
-                                                    CaMsgTy::ChannelClose(channel_close) => todo!(),
-                                                    CaMsgTy::ChannelCloseRes(channel_close_res) => todo!(),
-                                                    CaMsgTy::ChannelDisconnect(channel_disconnect) => todo!(),
-                                                    CaMsgTy::Echo => todo!(),
                                                 }
                                             }
                                             Err(e) => {
@@ -540,6 +543,7 @@ impl ChannelHandler {
                             fut: fut.box2(),
                             done_tx,
                         });
+                        */
                     }
                     State::Closing1(st2) => {
                         error!("{selfname} received Remove in State::Closing1");
@@ -581,10 +585,22 @@ impl Stream for ChannelHandler {
             let mut hpp = HaveProgressPending::new();
             let self2 = self.as_mut().get_mut();
             match &mut self2.state {
-                State::Done => {}
+                State::Done => match self2.cmd_rx.poll_next_unpin(cx) {
+                    Ready(Some(_)) => {
+                        hpp.mark_progress();
+                        warn!("received command while Done");
+                        // TODO count metrics
+                        // ignore commands when Done
+                    }
+                    Ready(None) => {}
+                    Pending => {
+                        hpp.mark_pending();
+                    }
+                },
                 _ => match self2.cmd_rx.poll_next_unpin(cx) {
                     Ready(Some(x)) => {
                         hpp.mark_progress();
+                        self2.handle_cmd(x);
                     }
                     Ready(None) => {}
                     Pending => {
@@ -609,7 +625,7 @@ impl Stream for ChannelHandler {
                         tsnow,
                     )
                     .box2();
-                    self2.state = State::Creating(Creating { fut });
+                    self2.state = State::Creating(Creating { fut, removing: false });
                     hpp.mark_progress();
                 }
                 State::Creating(st1) => {
