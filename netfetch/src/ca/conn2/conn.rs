@@ -46,7 +46,7 @@ macro_rules! info { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
 macro_rules! conn_err { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
 macro_rules! trace { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
 macro_rules! trace2 { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
-macro_rules! trace3 { ($($arg:tt)*) => { if false { log::info!($($arg)*); } }; }
+macro_rules! trace3 { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
 macro_rules! trace4 { ($($arg:tt)*) => { if false { log::info!($($arg)*); } }; }
 macro_rules! trace_pending { ($($arg:tt)*) => { if false { trace!("{}  Pending", format_args!($($arg)*)); } }; }
 
@@ -192,21 +192,12 @@ impl Future for Connecting {
 enum CaConnCmdKind {
     ChannelAdd(ChannelConfig, asynchan::Sender<u32>),
     ChannelRemove(ChannelConfig, asynchan::Sender<u32>),
-    Shutdown,
+    DisconnectOnIdle(asynchan::Sender<u32>),
 }
 
 #[derive(Debug)]
 pub struct CaConnCmd {
     kind: CaConnCmdKind,
-}
-
-impl CaConnCmd {
-    /// Does not offer a confirmation. Shutdown done the CaConn Stream has ended.
-    fn shutdown() -> Self {
-        Self {
-            kind: CaConnCmdKind::Shutdown,
-        }
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -230,6 +221,18 @@ impl CaConnComm {
         let (done_tx, mut done_rx) = asynchan::bounded(1, "CaConnComm-channel_add-done");
         let cmd = CaConnCmd {
             kind: CaConnCmdKind::ChannelRemove(conf, done_tx),
+        };
+        self.cmd_tx.send(cmd).await?;
+        let _ = done_rx.next().await;
+        Ok(())
+    }
+
+    pub async fn trigger_disconnect_on_idle(&mut self) -> Result<(), Error> {
+        // The confirmation will get sent on command receive.
+        // User then waits until the future is done.
+        let (done_tx, mut done_rx) = asynchan::bounded(1, "CaConnComm-trigger_disconnect_on_idle-done");
+        let cmd = CaConnCmd {
+            kind: CaConnCmdKind::DisconnectOnIdle(done_tx),
         };
         self.cmd_tx.send(cmd).await?;
         let _ = done_rx.next().await;
@@ -410,11 +413,17 @@ impl Stream for CaConn {
     type Item = Result<CaConnItem, Error>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
+        TODO;
+        // TODO
+        // We should observe here that our next inner handler is Done.
+        // Check that we do that.
+        // It seems that Connected does not exit properly. Listening on command input?
         use Poll::*;
-        trace4!("CaConn  poll_next");
+        trace3!("CaConn  poll_next");
         let mut durs = DurationMeasureSteps::new();
         self.mett.poll_fn_begin().inc();
         let ret = loop {
+            trace3!("CaConn  poll_next  loop");
             let self2 = self.as_mut().get_mut();
             self2.mett.poll_loop_begin().inc();
             let tsloop = Instant::now();
@@ -454,7 +463,6 @@ impl Stream for CaConn {
                                         Ok(())
                                     };
                                     self2.ca_cmd_tx_fut = Some(ErasedFuture::new(fut));
-                                    hpp.mark_progress();
                                 }
                                 CaConnCmdKind::ChannelRemove(conf, done_tx) => {
                                     trace!("CaConn:Received:ChannelRemove  {conf:?}");
@@ -466,14 +474,17 @@ impl Stream for CaConn {
                                         Ok(())
                                     };
                                     self2.ca_cmd_tx_fut = Some(ErasedFuture::new(fut));
-                                    hpp.mark_progress();
                                 }
-                                CaConnCmdKind::Shutdown => {
-                                    trace!("CaConn:Received:Shutdown");
-                                    error!("TODO trigger shutdown in inner");
-                                    error!("TODO wait until inner is done");
-                                    self2.state = State::Done;
-                                    hpp.mark_progress();
+                                CaConnCmdKind::DisconnectOnIdle(done_tx) => {
+                                    trace!("CaConn:Received:DisconnectOnIdle");
+                                    let cmd = activeca::CaCommand::disconnect_on_idle(done_tx);
+                                    let mut tx = self2.ca_cmd_tx.clone();
+                                    let fut = async move {
+                                        tx.send(cmd).await?;
+                                        // The is-done-sender is already passed to inner handler.
+                                        Ok(())
+                                    };
+                                    self2.ca_cmd_tx_fut = Some(ErasedFuture::new(fut));
                                 }
                             }
                         }
@@ -530,7 +541,10 @@ impl Stream for CaConn {
                             hpp.mark_pending();
                         }
                     },
-                    State::Done => {}
+                    State::Done => {
+                        error!("State::Done  {}  {}", hpp.have_progress(), hpp.have_pending());
+                        // TODO when in Done, we should no longer be stuck with Pending on something.
+                    }
                 };
             }
 

@@ -54,9 +54,16 @@ impl CaCommand {
             kind: CaCommandKind::ChannelAdd(conf, done_tx),
         }
     }
+
     pub fn channel_remove<S: Into<String>>(name: S, done_tx: asynchan::Sender<u32>) -> Self {
         Self {
             kind: CaCommandKind::ChannelRemove(name.into(), done_tx),
+        }
+    }
+
+    pub fn disconnect_on_idle(done_tx: asynchan::Sender<u32>) -> Self {
+        Self {
+            kind: CaCommandKind::DisconnectOnIdle(done_tx),
         }
     }
 }
@@ -65,6 +72,7 @@ impl CaCommand {
 enum CaCommandKind {
     ChannelAdd(ChannelConfig, asynchan::Sender<u32>),
     ChannelRemove(String, asynchan::Sender<u32>),
+    DisconnectOnIdle(asynchan::Sender<u32>),
 }
 
 #[derive(Debug)]
@@ -192,8 +200,12 @@ impl ActiveCa {
                     match ff.await {
                         Ok(()) => {
                             trace!("{selfname} ChannelRemove Future: sent RemoveChannel command");
-                            done_2_rx.recv().await;
-                            let _ = done_tx.send(0).await;
+                            if done_2_rx.recv().await.is_err() {
+                                error!("{selfname}  done_2_rx  recv  fail")
+                            }
+                            if done_tx.send(0).await.is_err() {
+                                error!("{selfname}  done_tx  send  fail")
+                            }
                             Ok(())
                         }
                         Err(e) => {
@@ -201,6 +213,15 @@ impl ActiveCa {
                             todo!()
                         }
                     }
+                }
+                .boxed();
+                CommandFut(Box::pin(fut))
+            }
+            CaCommandKind::DisconnectOnIdle(mut done_tx) => {
+                self.chanheap.disconnect_on_idle();
+                let fut = async move {
+                    let _ = done_tx.send(0).await;
+                    Ok(())
                 }
                 .boxed();
                 CommandFut(Box::pin(fut))
@@ -240,9 +261,9 @@ impl ActiveCa {
                 Ready(Some(cmd)) => {
                     trace!("CmdRx:Some");
                     trace!("---------------------------------------------------     CmdRx:Some");
+                    hpp.mark_progress();
                     let fut = self2.handle_command(cmd, cx);
                     self2.cmd_fut = Some(fut);
-                    hpp.mark_progress();
                     None
                 }
                 Ready(None) => None,
@@ -264,16 +285,17 @@ impl ActiveCa {
         trace4!("ActiveCa:poll_next");
         loop {
             let mut hpp = HaveProgressPending::new();
-            match self.as_mut().poll_command_input(cmd_rx, cx, &mut hpp) {
-                Some(e) => {
-                    hpp.mark_progress();
-                    break Ready(Some(Err(e)));
-                }
-                None => {}
-            }
-            let self2 = self.as_mut().get_mut();
-            match &mut self2.state {
+            // let self2 = self.as_mut().get_mut();
+            match &mut self.state {
                 State::Running => {
+                    match self.as_mut().poll_command_input(cmd_rx, cx, &mut hpp) {
+                        Some(e) => {
+                            hpp.mark_progress();
+                            break Ready(Some(Err(e)));
+                        }
+                        None => {}
+                    }
+                    let self2 = self.as_mut().get_mut();
                     if self2.proto_rx_buf.len() < self2.proto_rx_buf.capacity() {
                         match self2.proto_rx.poll_next_unpin(cx) {
                             Ready(x) => match x {
@@ -299,7 +321,7 @@ impl ActiveCa {
                     }
                     loop {
                         if let Some(item) = self.proto_rx_buf.pop_front() {
-                            let dispatch = if let Some(_) = item.cid() {
+                            let dispatch = if item.cid().is_some() {
                                 true
                             } else if item.subid().is_some() {
                                 true
@@ -344,20 +366,21 @@ impl ActiveCa {
                             match x {
                                 Ok(item) => {
                                     trace!("ActiveCa:ChannelHeap:Done");
-                                    panic!("ActiveCa:ChannelHeap:Done  TODO do something with item");
+                                    error!("ActiveCa:ChannelHeap:Done  TODO do something with item  {item:?}");
+                                    panic!("ActiveCa:ChannelHeap:Done");
                                 }
                                 Err(e) => {
-                                    trace!("ActiveCa:ChannelHeap:Error {e}");
-                                    panic!("ActiveCa:ChannelHeap:Error  TODO clean shutdown");
+                                    error!("ActiveCa:ChannelHeap:Error {e}");
+                                    error!("ActiveCa:ChannelHeap:Error  TODO clean shutdown");
                                     self2.state = State::Done;
                                     break Ready(Some(Err(e.into())));
                                 }
                             }
                         }
                         Ready(None) => {
-                            trace!("ActiveCa:ChannelHeap:Done  TODO clean shutdown");
-                            self2.state = State::Done;
+                            error!("ActiveCa:ChannelHeap:Done  TODO clean shutdown");
                             hpp.mark_progress();
+                            self2.state = State::Done;
                         }
                         Pending => {
                             trace_pending!("ActiveCa:ChannelHeap");
@@ -365,16 +388,19 @@ impl ActiveCa {
                         }
                     }
                 }
-                State::Done => {}
+                State::Done => {
+                    error!("State::Done  {}  {}", hpp.have_progress(), hpp.have_pending());
+                    // TODO when in Done, we should no longer be stuck with Pending on something.
+                }
             }
             break if hpp.have_progress() {
-                trace!("HPP:Progress");
+                trace4!("HPP:Progress");
                 continue;
             } else if hpp.have_pending() {
                 trace_pending!("HPP");
                 Pending
             } else {
-                trace!("HPP:Done");
+                trace4!("HPP:Done");
                 Ready(None)
             };
         }

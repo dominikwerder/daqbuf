@@ -25,7 +25,7 @@ static SIGINT: AtomicUsize = AtomicUsize::new(0);
 
 fn handler_sigint(_: libc::c_int, _: *const libc::siginfo_t, _: *const libc::c_void) {
     let n = SIGINT.fetch_add(1, Ordering::AcqRel);
-    if n >= 2 {
+    if n >= 1 {
         std::process::exit(13);
     } else {
         let fd = INT_TX.load(Ordering::Acquire);
@@ -112,7 +112,12 @@ pub async fn test_01() {
         let cmder = connset.cmder().clone();
         let fut = async move {
             trace!("test_01 adding channel");
-            let chname = "TEST:SLOW:SCALAR:F32:000000";
+            if false {
+                let chname = "TEST:SLOW:SCALAR:F32:000000";
+                let conf = crate::conf::ChannelConfig::st_monitor(chname, "TEST");
+                cmder.channel_add(conf).await.unwrap();
+            }
+            let chname = "SAT-CVME-TIMAST:SYS_CPU_LOAD";
             let conf = crate::conf::ChannelConfig::st_monitor(chname, "TEST");
             cmder.channel_add(conf).await.unwrap();
             trace!("test_01 added channel");

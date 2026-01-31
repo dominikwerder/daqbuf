@@ -6,6 +6,8 @@ use crate::ca::conn2::caids::Sid;
 use crate::ca::conn2::caids::Subid;
 use crate::ca::conn2::conn::channelheap::channelhandler::ChannelHandler;
 use crate::ca::conn2::conn::ctchan::CtChan;
+use crate::ca::conn2::timeoutable::TimeoutError;
+use crate::ca::conn2::timeoutable::Timeoutable;
 use crate::ca::progpend::HaveProgressPending;
 use crate::conf::ChannelConfig;
 use crate::futwrap::FutDbg;
@@ -14,6 +16,7 @@ use ca_proto::ca::proto::CaMsg;
 use futures::FutureExt;
 use futures::Stream;
 use futures::StreamExt;
+use futures::future::ready;
 use hashbrown::HashMap;
 use std::collections::VecDeque;
 use std::pin::Pin;
@@ -21,10 +24,12 @@ use std::sync::Arc;
 use std::task;
 use std::task::Context;
 use std::task::Poll;
+use std::time::Duration;
 use std::time::Instant;
 
 macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
 macro_rules! warn { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
+macro_rules! info { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
 macro_rules! trace { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
 macro_rules! trace2 { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
 macro_rules! trace3 { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
@@ -38,6 +43,7 @@ autoerr::create_error_v1!(
         Recv(#[from] asynchan::RecvError),
         Msg(String),
         ProtoRxClosed,
+        Timeout(#[from] TimeoutError),
     },
 );
 
@@ -89,7 +95,7 @@ mod waker1 {
 
     fn clone(d: *const ()) -> task::RawWaker {
         let data = unsafe { Arc::<WakeData>::from_raw(d as _) };
-        trace!(
+        trace4!(
             "waker1:clone  {}  {}  {}  {}",
             data.cid(),
             data.cnt.load(Acquire),
@@ -105,7 +111,7 @@ mod waker1 {
 
     fn wake(d: *const ()) {
         let data = unsafe { Arc::<WakeData>::from_raw(d as _) };
-        trace!(
+        trace4!(
             "waker1:wake  {}  {}  {}  {}",
             data.cid(),
             data.cnt.load(Acquire),
@@ -121,7 +127,7 @@ mod waker1 {
 
     fn wake_by_ref(d: *const ()) {
         let data = unsafe { Arc::<WakeData>::from_raw(d as _) };
-        trace!(
+        trace4!(
             "waker1:wake_by_ref  {}  {}  {}  {}",
             data.cid(),
             data.cnt.load(Acquire),
@@ -137,7 +143,7 @@ mod waker1 {
 
     fn drop(d: *const ()) {
         let data = unsafe { Arc::<WakeData>::from_raw(d as _) };
-        trace!(
+        trace4!(
             "waker1:drop  {}  {}  {}  {}",
             data.cid(),
             data.cnt.load(Acquire),
@@ -218,6 +224,8 @@ enum Poll2<T> {
 
 type StreamItem = Result<ChannelHeapItem, Error>;
 
+type Cb1Box = Box<dyn FnOnce(&mut ChannelHeap) -> () + Send>;
+
 #[derive(Debug)]
 pub struct ChannelHeap {
     state: State,
@@ -230,7 +238,8 @@ pub struct ChannelHeap {
     wakeup_cids_tmp: Vec<Cid>,
     ch_hp_tx: asynchan::Sender<ChHeapCmd>,
     ch_hp_rx: asynchan::Receiver<ChHeapCmd>,
-    cmd_exec_fut: Option<FutDbg<Result<(), Error>>>,
+    cmd_exec_fut: Option<FutDbg<Result<(Cb1Box,), Error>>>,
+    disconnect_on_idle: bool,
 }
 
 impl ChannelHeap {
@@ -248,6 +257,7 @@ impl ChannelHeap {
             ch_hp_tx,
             ch_hp_rx,
             cmd_exec_fut: None,
+            disconnect_on_idle: false,
         }
     }
 
@@ -298,13 +308,27 @@ impl ChannelHeap {
         cx.waker().wake_by_ref();
     }
 
+    pub fn disconnect_on_idle(&mut self) {
+        let selfname = "disconnect_on_idle";
+        info!("{selfname}");
+        self.disconnect_on_idle = true;
+    }
+
     // low-level cleanup, call only when channel behind this Cid is actually done.
     fn remove_cid(&mut self, cid: Cid) {
         let selfname = "remove_cid";
         self.by_cid.remove(&cid);
-        let subids: Vec<_> = self.by_subid.iter().filter(|(_, v)| **v == cid).collect();
+        let subids: Vec<_> = self
+            .by_subid
+            .iter()
+            .filter(|(_, v)| **v == cid)
+            .map(|x| x.0.clone())
+            .collect();
         if subids.len() != 0 {
             error!("{selfname} subids discovered");
+            for subid in subids {
+                self.by_subid.remove(&subid);
+            }
         }
         self.wakeup_cids.remove(&cid);
     }
@@ -453,8 +477,7 @@ impl ChannelHeap {
             .wakeup_cids_tmp
             .extend(self2.wakeup_cids.iter().map(|x| x.key().clone()));
         for cid in self2.wakeup_cids_tmp.iter() {
-            // let cid = &cid;
-            trace!("ChannelHeap  waking  {cid}");
+            trace4!("ChannelHeap  waking  {cid}");
             if let Some(st1) = self2.by_cid.get_mut(cid) {
                 match &mut st1.ch_handler {
                     ChHandler::ChHandlerActive(st2) => {
@@ -515,6 +538,7 @@ impl ChannelHeap {
     }
 
     fn handle_command(&mut self, cmd: Cmd) {
+        let selfname = "handle_command";
         match cmd {
             Cmd::RemoveChannel(name, mut done_tx) => {
                 let cids: Vec<_> = self
@@ -524,9 +548,9 @@ impl ChannelHeap {
                     .map(|x| x.0.clone())
                     .collect();
                 let handler_txs: Vec<_> = cids
-                    .into_iter()
+                    .iter()
                     .filter_map(|cid| {
-                        self.by_cid.get(&cid).map(|h1| {
+                        self.by_cid.get(cid).map(|h1| {
                             match &h1.ch_handler {
                                 ChHandler::ChHandlerActive(h2) => Some(h2.handler.cmd_tx().clone()),
                                 ChHandler::Done => {
@@ -539,24 +563,37 @@ impl ChannelHeap {
                     .filter_map(|x| x)
                     .collect();
                 let fut = async move {
+                    let selfname = "handle_command:RemoveChannel:fut";
                     for mut tx in handler_txs {
                         let (inner_done_tx, mut inner_done_rx) =
                             asynchan::bounded(4, "ChannelHeap-ChannelHandler-done-tx");
                         let item = channelhandler::Cmd::Remove(inner_done_tx);
                         if tx.send(item).await.is_err() {
-                            error!("cmd send fail");
+                            error!("{selfname}  tx  send  fail");
+                            // TODO handle
                         }
-                        // TODO await confirmation of removal.
                         if inner_done_rx.recv().await.is_err() {
-                            error!("cmd send fail");
+                            error!("{selfname}  inner_done_rx  recv  fail");
+                            // TODO handle
                         }
                     }
-                    if done_tx.try_send(0).is_err() {
-                        panic!("done tx send fail");
+                    if done_tx.send(0).await.is_err() {
+                        error!("{selfname}  done_tx  send  fail");
+                        // TODO handle
                     }
-                    todo!("TODO handle removal");
-                    Ok(())
+                    let donecb = |cheap: &mut ChannelHeap| {
+                        let selfname = "handle_command:RemoveChannel:fut:donecb";
+                        error!("{selfname}  TODO impl donecb");
+                        for cid in cids {
+                            cheap.remove_cid(cid);
+                        }
+                    };
+                    Ok((Box::new(donecb) as Cb1Box,))
                 };
+                let fut = fut.timeout(Duration::from_millis(2000)).then(|x| match x {
+                    Ok(x) => ready(x),
+                    Err(e) => ready(Err(e.into())),
+                });
                 self.cmd_exec_fut = Some(fut.box2());
             }
         }
@@ -571,13 +608,20 @@ impl ChannelHeap {
         use Poll::*;
         if let Some(fut) = &mut self.cmd_exec_fut {
             match fut.poll_unpin(cx) {
-                Ready(x) => match x {
-                    Ok(()) => Ready(Some(())),
-                    Err(e) => {
-                        // TODO
-                        panic!("{selfname}  {e}");
+                Ready(x) => {
+                    self.cmd_exec_fut = None;
+                    match x {
+                        Ok((donecb,)) => {
+                            donecb(&mut self);
+                            Ready(Some(()))
+                        }
+                        Err(e) => {
+                            // TODO could be a remote timeout!
+                            error!("{selfname}  {e}");
+                            Ready(Some(()))
+                        }
                     }
-                },
+                }
                 Pending => Pending,
             }
         } else {
@@ -606,7 +650,15 @@ impl ChannelHeap {
             let mut hpp = HaveProgressPending::new();
             match &self.state {
                 State::Running => {
-                    self.as_mut().poll_outer_cmd(cmd_rx, cx);
+                    match self.as_mut().poll_outer_cmd(cmd_rx, cx) {
+                        Ready(Some(())) => {
+                            hpp.mark_progress();
+                        }
+                        Ready(None) => {}
+                        Pending => {
+                            hpp.mark_pending();
+                        }
+                    }
                     match self.ch_hp_rx.poll_next_unpin(cx) {
                         Ready(Some(cmd)) => {
                             trace!("ChannelHeap:ChHpCmd:Got");
@@ -693,17 +745,24 @@ impl ChannelHeap {
                     loop {
                         break match self.as_mut().poll_all_handler(cx) {
                             Poll2::Item(item) => {
-                                trace!("TODO  ChannelHeap:poll_all_handler:Item");
                                 hpp.mark_progress();
+                                error!("TODO  ChannelHeap:poll_all_handler:Item {item:?}");
                             }
                             Poll2::Progress => {
-                                continue;
+                                hpp.mark_progress();
                             }
                             Poll2::Pending => {
                                 hpp.mark_pending();
                             }
                             Poll2::Done => {}
                         };
+                    }
+                    if self.disconnect_on_idle && hpp.have_progress() == false {
+                        if self.by_cid.len() == 0 {
+                            info!("disconnect_on_idle goto Done");
+                            hpp.mark_progress();
+                            self.state = State::Done;
+                        }
                     }
                 }
                 State::Done => {}

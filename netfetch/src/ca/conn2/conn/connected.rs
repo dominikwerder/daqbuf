@@ -166,6 +166,10 @@ impl Stream for Connected {
             let tsnow = Instant::now();
             let mut self2 = self.as_mut().get_mut();
             let mut hpp = HaveProgressPending::new();
+
+            // TODO only poll protocol input as long as we want to be active.
+            // Latest in Done, we do not want to trigger any more Pending.
+
             if self2.inp_buf.len() < self2.inp_buf.capacity() {
                 match Pin::new(&mut self2).protowrap.poll_next_unpin(cx) {
                     Ready(Some(Ok(x))) => {
@@ -262,30 +266,31 @@ impl Stream for Connected {
                         }
                     }
                     match st1.poll_next_unpin(&mut self2.msg_a_chan, cx) {
-                        Ready(Some(x)) => match x {
-                            Ok(item) => {
-                                trace!("ActiveCa:Ready");
-                                error!("ActiveCa:Ready  TODO do something with item");
-                                let item = match item.inner {
-                                    activeca::ItemInner::ScyllaWrite => ConnectedItem {
-                                        ts_create: item.ts_create,
-                                        inner: ItemInner::ScyllaWrite,
-                                    },
-                                };
-                                hpp.mark_progress();
-                                break Ready(Some(Ok(item)));
+                        Ready(Some(x)) => {
+                            hpp.mark_progress();
+                            match x {
+                                Ok(item) => {
+                                    trace!("ActiveCa:Ready");
+                                    error!("ActiveCa:Ready  TODO do something with item");
+                                    let item = match item.inner {
+                                        activeca::ItemInner::ScyllaWrite => ConnectedItem {
+                                            ts_create: item.ts_create,
+                                            inner: ItemInner::ScyllaWrite,
+                                        },
+                                    };
+                                    break Ready(Some(Ok(item)));
+                                }
+                                Err(e) => {
+                                    trace!("ActiveCa:Error");
+                                    self.state = State::Done;
+                                    break Ready(Some(Err(e.into())));
+                                }
                             }
-                            Err(e) => {
-                                trace!("ActiveCa:Error");
-                                self.state = State::Done;
-                                hpp.mark_progress();
-                                break Ready(Some(Err(e.into())));
-                            }
-                        },
+                        }
                         Ready(None) => {
                             trace!("ActiveCa:Done");
-                            self.state = State::Done;
                             hpp.mark_progress();
+                            self.state = State::Done;
                         }
                         Pending => {
                             trace_pending!("ActiveCa");
@@ -293,16 +298,19 @@ impl Stream for Connected {
                         }
                     }
                 }
-                State::Done => {}
+                State::Done => {
+                    error!("State::Done  {}  {}", hpp.have_progress(), hpp.have_pending());
+                    // TODO when in Done, we should no longer be stuck with Pending on something.
+                }
             }
             break if hpp.have_progress() {
-                trace!("HPP:Progress");
+                trace4!("HPP:Progress");
                 continue;
             } else if hpp.have_pending() {
                 trace_pending!("HPP");
                 Pending
             } else {
-                trace!("HPP:Done");
+                trace3!("HPP:Done");
                 Ready(None)
             };
         }

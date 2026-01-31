@@ -106,10 +106,6 @@ where
             },
         }
     }
-
-    //     pub fn yo(&mut self) -> () {
-    // self.0.reserve()
-    //     }
 }
 
 pub enum SendPollError<T> {
@@ -137,6 +133,13 @@ impl<T> SendPollError<T> {
         match self {
             SendPollError::Full(_) => "Full",
             SendPollError::Closed(_) => "Closed",
+        }
+    }
+
+    pub fn into_inner(self) -> T {
+        match self {
+            SendPollError::Full(x) => x,
+            SendPollError::Closed(x) => x,
         }
     }
 }

@@ -57,9 +57,21 @@ struct Observing {
     addr: SocketAddrV4,
 }
 
+impl Observing {
+    fn addr(&self) -> Option<SocketAddrV4> {
+        Some(self.addr.clone())
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct RemovingInfo {
-    pub addr: Option<SocketAddrV4>,
+    addr: Option<SocketAddrV4>,
+}
+
+impl RemovingInfo {
+    pub fn addr(&self) -> Option<SocketAddrV4> {
+        self.addr.clone()
+    }
 }
 
 #[derive(Debug)]
@@ -130,6 +142,20 @@ impl Channel {
                 }
                 Ok(())
             }
+        }
+    }
+
+    pub fn addr(&self) -> Option<SocketAddrV4> {
+        match &self.state {
+            State::Init => None,
+            State::CssidReq(..) => None,
+            State::AddrSearch(..) => None,
+            State::Observing(st) => st.addr(),
+            State::Removing0(st) => st.addr(),
+            State::Removing1(st, _) => st.addr(),
+            State::Removing2(st, _) => st.addr(),
+            State::Removed => None,
+            State::Done => None,
         }
     }
 }
@@ -275,7 +301,7 @@ impl PollCstm for Channel {
                     match fut.poll_unpin(cx) {
                         Ready(x) => match x {
                             Ok(()) => {
-                                debug!("channel removed from ca conn");
+                                error!("channel removed from ca conn  TODO emit metrics, status event");
                                 let fut = async move {
                                     // TODO emit another channel status event write?
                                     // Ok(())
@@ -293,7 +319,10 @@ impl PollCstm for Channel {
                         }
                     }
                 }
-                State::Removed => {}
+                State::Removed => {
+                    hpp.mark_progress();
+                    self.state = State::Done;
+                }
                 State::Done => {}
             }
             break if hpp.have_progress() {

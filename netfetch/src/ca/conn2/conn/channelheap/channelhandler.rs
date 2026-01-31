@@ -10,6 +10,8 @@ use crate::ca::progpend::HaveProgressPending;
 use crate::conf::ChannelConfig;
 use crate::futwrap::FutDbg;
 use crate::futwrap::FutDbgBox;
+use asynchan::SendPoll;
+use asynchan::SendPollError;
 use ca_proto::ca::proto;
 use ca_proto::ca::proto::CaMsg;
 use ca_proto::ca::proto::CaMsgTy;
@@ -28,10 +30,11 @@ use timeoutable::Timeoutable;
 
 macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
 macro_rules! warn { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
+macro_rules! info { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
 macro_rules! trace { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
 macro_rules! trace2 { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
 macro_rules! trace3 { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
-macro_rules! trace4 { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
+macro_rules! trace4 { ($($arg:tt)*) => { if false { log::info!($($arg)*); } }; }
 macro_rules! trace_pending { ($($arg:tt)*) => { if false { trace!("{}  Pending", format_args!($($arg)*)); } }; }
 
 autoerr::create_error_v1!(
@@ -61,7 +64,12 @@ struct Creating {
 #[derive(Debug)]
 struct Closing1 {
     fut: FutDbg<Result<(), Error>>,
-    done_tx: asynchan::Sender<u32>,
+    done_tx: Option<asynchan::Sender<u32>>,
+}
+
+#[derive(Debug)]
+struct Closing2 {
+    done_tx: Option<asynchan::Sender<u32>>,
 }
 
 #[derive(Debug)]
@@ -150,7 +158,9 @@ struct Running {
     sid: Sid,
     proto_rx: asynchan::Receiver<CaMsg>,
     removing: bool,
+    chan_close_ack: bool,
     outbuf: VecDeque<CaMsg>,
+    remove_done_tx: Option<asynchan::Sender<u32>>,
 }
 
 impl Running {
@@ -160,7 +170,9 @@ impl Running {
             sid,
             proto_rx,
             removing: false,
+            chan_close_ack: false,
             outbuf: VecDeque::new(),
+            remove_done_tx: None,
         }
     }
 }
@@ -171,6 +183,7 @@ enum State {
     Creating(Creating),
     Running(Running),
     Closing1(Closing1),
+    Closing2(Closing2),
     Done1,
     Done,
     Dummy,
@@ -351,20 +364,23 @@ impl ChannelHandler {
     }
 
     fn proto_rx_handle_dispatch(
-        st1: &mut Running,
+        st2: &mut Running,
         item: CaMsg,
         cx: &mut Context<'_>,
         counters: &mut Counters,
     ) -> Result<Option<CaMsg>, Error> {
         match &item.ty {
-            proto::CaMsgTy::EventAddRes(_) | proto::CaMsgTy::EventAddResEmpty(_) => {
-                match &mut st1.fetch_method {
-                    FetchMethod::CreateMonitor(st2) => {
+            proto::CaMsgTy::EventAddRes(item2) => {
+                if item2.payload_len == 0 {
+                    info!("\n\nempty EventAddRes\n\n");
+                }
+                match &mut st2.fetch_method {
+                    FetchMethod::CreateMonitor(st3) => {
                         trace!("ChannelHandler:Running:ProtoDispatch:Ready:Some:CreateMonitor  try_send");
                         // TODO send down channel must be async poll!
                         use asynchan::SendPoll;
                         use asynchan::SendPollError;
-                        match st2.inp_tx.poll_send_unpin(item, cx) {
+                        match st3.inp_tx.poll_send_unpin(item, cx) {
                             Ok(()) => {
                                 trace!(
                                     "ChannelHandler:Running:ProtoDispatch:Ready:Some:CreateMonitor  sent to CreateMonitor"
@@ -401,8 +417,22 @@ impl ChannelHandler {
                     }
                 }
             }
+            proto::CaMsgTy::EventAddResEmpty(item2) => {
+                info!("\n\n{}\n\n", "EventAddResEmpty");
+                Ok(None)
+            }
+            proto::CaMsgTy::ChannelCloseRes(item2) => {
+                if st2.removing {
+                    info!("\n\n{}\n\n", "ChannelCloseRes");
+                    st2.chan_close_ack = true;
+                } else {
+                    warn!("not removing but got {}", "ChannelCloseRes");
+                    // TODO abort?
+                }
+                Ok(None)
+            }
             _ => {
-                trace!("ChannelHandler:Running:ProtoDispatch:Ready:Some  TODO handle {item:?}");
+                warn!("---------->> ChannelHandler:Running:ProtoDispatch:Ready:Some  TODO handle {item:?}");
                 Ok(None)
             }
         }
@@ -452,6 +482,7 @@ impl ChannelHandler {
                         */
                     }
                     State::Running(st2) => {
+                        /*
                         let Running {
                             fetch_method,
                             sid,
@@ -463,6 +494,9 @@ impl ChannelHandler {
                         } else {
                             panic!()
                         };
+                        */
+                        let sid = st2.sid.clone();
+                        let cid = self.cid.to_cid();
                         // TODO
                         // add necessary commands to outbuf.
                         // in poll loop, check for outbuf and poll emit.
@@ -473,6 +507,19 @@ impl ChannelHandler {
                         // Otherwise, the IOC may also shut down of course.
                         // TODO make sure the IOC disconnect triggers correct logic in ingest. (log!)
                         // When we are in removing mode, and received all cleanup confirmations, then trigger state change.
+
+                        st2.removing = true;
+                        st2.remove_done_tx = Some(done_tx);
+
+                        let tsnow = Instant::now();
+                        let item = CaMsg::from_ty_ts(
+                            proto::CaMsgTy::ChannelClose(proto::ChannelClose {
+                                sid: sid.to_u32(),
+                                cid: cid.to_u32(),
+                            }),
+                            tsnow,
+                        );
+                        st2.outbuf.push_back(item);
 
                         /*
                         let sid = sid.clone();
@@ -548,6 +595,9 @@ impl ChannelHandler {
                     State::Closing1(st2) => {
                         error!("{selfname} received Remove in State::Closing1");
                     }
+                    State::Closing2(st2) => {
+                        error!("{selfname} received Remove in State::Closing2");
+                    }
                     State::Done1 => {
                         error!("{selfname} received Remove in State::Done1");
                         panic!()
@@ -579,7 +629,8 @@ impl Stream for ChannelHandler {
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         use Poll::*;
-        trace4!("ChannelHandler:poll_next  {}", self.cid);
+        let selfname = "ChannelHandler:poll_next";
+        trace4!("{selfname}  {}", self.cid);
         'main: loop {
             let tsnow = Instant::now();
             let mut hpp = HaveProgressPending::new();
@@ -649,6 +700,28 @@ impl Stream for ChannelHandler {
                     }
                 }
                 State::Running(st2) => {
+                    if st2.removing {
+                        if let Some(item) = st2.outbuf.pop_front() {
+                            match self2.proto_tx.poll_send_unpin(item, cx) {
+                                Ok(()) => {
+                                    hpp.mark_progress();
+                                }
+                                Err(e) => match e {
+                                    SendPollError::Full(x) => {
+                                        hpp.mark_pending();
+                                        st2.outbuf.push_front(x);
+                                    }
+                                    SendPollError::Closed(_) => {
+                                        hpp.mark_progress();
+                                        error!("{selfname}  can not close channel, no proto");
+                                        // TODO handle better? metrics.
+                                        st2.chan_close_ack = true;
+                                        st2.outbuf.clear();
+                                    }
+                                },
+                            }
+                        }
+                    }
                     match &mut st2.fetch_method {
                         FetchMethod::None => {
                             trace!("ChannelHandler:Running:FetchMethod:None");
@@ -744,51 +817,60 @@ impl Stream for ChannelHandler {
                             break;
                         }
                     }
+                    if st2.outbuf.len() == 0 && st2.chan_close_ack {
+                        info!("{selfname}  -----------------------------------------------------------");
+                        info!("{selfname}  State::Running  chan_close_ack");
+                        hpp.mark_progress();
+                        let fut = async move { Ok(()) };
+                        self.state = State::Closing1(Closing1 {
+                            fut: fut.box2(),
+                            done_tx: st2.remove_done_tx.take(),
+                        });
+                    }
                 }
-                State::Closing1(st2) => {
-                    match st2.fut.poll_unpin(cx) {
-                        Ready(x) => {
-                            hpp.mark_progress();
-                            match x {
-                                Ok(()) => {
-                                    error!("Closing1 done");
+                State::Closing1(st2) => match st2.fut.poll_unpin(cx) {
+                    Ready(x) => {
+                        hpp.mark_progress();
+                        match x {
+                            Ok(()) => {
+                                trace2!("Closing1 done");
+                                self.state = State::Closing2(Closing2 {
+                                    done_tx: st2.done_tx.take(),
+                                });
+                            }
+                            Err(e) => {
+                                info!("Closing1  {e}");
+                                break Ready(Some(Err(e)));
+                            }
+                        }
+                    }
+                    Pending => {
+                        hpp.mark_pending();
+                    }
+                },
+                State::Closing2(st2) => {
+                    if let Some(tx) = &mut st2.done_tx {
+                        match tx.poll_send_unpin(0, cx) {
+                            Ok(()) => {
+                                hpp.mark_progress();
+                                self.state = State::Done1;
+                            }
+                            Err(e) => match e {
+                                SendPollError::Full(_) => {
+                                    hpp.mark_pending();
+                                }
+                                SendPollError::Closed(_) => {
+                                    hpp.mark_progress();
+                                    error!("{selfname}  can not signal Remove Done");
+                                    // TODO metrics
                                     self.state = State::Done1;
                                 }
-                                Err(e) => {
-                                    error!("Closing1  {e}");
-                                    break Ready(Some(Err(e)));
-                                }
-                            }
+                            },
                         }
-                        Pending => {
-                            hpp.mark_pending();
-                        }
+                    } else {
+                        hpp.mark_progress();
+                        self.state = State::Done1;
                     }
-                    /*
-                    loop {
-                        let hpp2 = &mut hpp;
-                        let mut hpp = HaveProgressPending::new();
-                        if let Some(item) = self2.proto_rx_dispatch.take() {
-                        } else {
-                            match Self::proto_rx_poll(&mut st2.proto_rx, &mut self2.proto_rx_dispatch, cx) {
-                                Ok(_) => todo!(),
-                                Err(_) => todo!(),
-                            }
-                        }
-                        if hpp.have_progress() {
-                            trace!("ChannelHandler:Running:ProtoRx:loop:HPP:Progress");
-                            continue;
-                        } else if hpp.have_pending() {
-                            trace_pending!("ChannelHandler:Running:ProtoRx:loop:HPP");
-                            hpp2.mark_pending();
-                            break;
-                        } else {
-                            trace!("ChannelHandler:Running:ProtoRx:loop:HPP:Done");
-                            break;
-                        }
-                    }
-                    */
-                    todo!()
                 }
                 State::Done1 => {
                     trace!("ChannelHandler:Done1");
