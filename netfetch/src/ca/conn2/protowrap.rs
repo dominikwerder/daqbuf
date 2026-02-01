@@ -43,6 +43,10 @@ impl ProtoPusher {
         }
     }
 
+    pub fn close(&mut self) {
+        self.out_rx = None;
+    }
+
     fn try_01(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,

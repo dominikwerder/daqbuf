@@ -163,7 +163,7 @@ pub struct ConnSet {
     channels: VecDeque<ChannelCat>,
     ch_info_tx: ChannelInfoQuerySender,
     ca_conns: BTreeMap<SocketAddrV4, CaConnReg>,
-    int_rx: asynchan::Receiver<u32>,
+    // int_rx: asynchan::Receiver<u32>,
     shutdown_fut: Option<FutDbg<Result<(), Error>>>,
     conn_idle_disconnect_futs: VecDeque<FutDbg<Result<(), Error>>>,
 }
@@ -177,7 +177,7 @@ impl ConnSet {
         // This seems to be for when I already know the type and shape. But what about the status series?
         // channel_info_query_tx: ChannelInfoQuerySender,
         ingest_opts: CaIngestOpts,
-        int_rx: asynchan::Receiver<u32>,
+        // int_rx: asynchan::Receiver<u32>,
     ) -> Result<Self, Error> {
         // streamtask::run_in_task();
         // let (find_ioc_res_tx, find_ioc_res_rx) = async_channel::bounded(400);
@@ -207,7 +207,7 @@ impl ConnSet {
             channels: VecDeque::new(),
             ch_info_tx,
             ca_conns: BTreeMap::new(),
-            int_rx,
+            // int_rx,
             shutdown_fut: None,
             conn_idle_disconnect_futs: VecDeque::new(),
         };
@@ -391,48 +391,73 @@ impl ConnSet {
         use Poll::*;
         loop {
             let mut hpp = HaveProgressPending::new();
-            let self2 = self.as_mut().get_mut();
-            for (_, conn_reg) in self2.ca_conns.iter_mut() {
-                // match comm.poll_next_unpin(cx) {
-                match conn_reg.rx.poll_next_unpin(cx) {
-                    Ready(Some(x)) => {
-                        hpp.mark_progress();
-                        match x {
-                            Ok(x) => {
-                                trace!("TODO handle item from CaConn {x:?}");
-                                match x {
-                                    conn2::conn::CaConnItem::StatusInfo(e1) => {
-                                        match Self::handle_conn_comm_status_info(e1, &self2.cmder, cx) {
-                                            Ok(x) => match x {
-                                                Some(fut) => {
-                                                    self2.cmd_fut_comm = Some(fut);
-                                                }
-                                                None => {}
-                                            },
-                                            Err(e) => {
-                                                return Ready(Some(Err(e)));
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            Err(e) => {
-                                trace!("{selfname}  ERROR from CaConnComm  {e}");
-                                todo!("{selfname}  ERROR from CaConnComm  {e}");
-                            }
+            if let Some(fut) = self.cmd_fut_comm.as_mut() {
+                match fut.poll_unpin(cx) {
+                    Ready(x) => match x {
+                        Ok(()) => {
+                            self.cmd_fut_comm = None;
+                            hpp.mark_progress();
                         }
-                    }
-                    Ready(None) => {
-                        error!("{selfname}  TODO  Conn seems done, must process this here");
-                    }
+                        Err(e) => {
+                            hpp.mark_progress();
+                            break Ready(Some(Err(e)));
+                        }
+                    },
                     Pending => {
                         hpp.mark_pending();
                     }
                 }
-                // TODO factor this better.
-                // We must abort the loop because a precondition is that the fut slot is available.
-                if self2.cmd_fut_comm.is_some() {
-                    return Ready(Some(Ok(())));
+            } else {
+                let mut addr_found_done = Vec::new();
+                let self2 = self.as_mut().get_mut();
+                for (addr, conn_reg) in self2.ca_conns.iter_mut() {
+                    // match comm.poll_next_unpin(cx) {
+                    match conn_reg.rx.poll_next_unpin(cx) {
+                        Ready(Some(x)) => {
+                            hpp.mark_progress();
+                            match x {
+                                Ok(x) => {
+                                    trace!("TODO handle item from CaConn {x:?}");
+                                    match x {
+                                        conn2::conn::CaConnItem::StatusInfo(e1) => {
+                                            match Self::handle_conn_comm_status_info(e1, &self2.cmder, cx) {
+                                                Ok(x) => match x {
+                                                    Some(fut) => {
+                                                        self2.cmd_fut_comm = Some(fut);
+                                                    }
+                                                    None => {}
+                                                },
+                                                Err(e) => {
+                                                    return Ready(Some(Err(e)));
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    trace!("{selfname}  ERROR from CaConnComm  {e}");
+                                    todo!("{selfname}  ERROR from CaConnComm  {e}");
+                                }
+                            }
+                        }
+                        Ready(None) => {
+                            error!("{selfname}  TODO  Conn seems done, must process this here");
+                            let fut = async move {
+                                error!("{selfname}  TODO  Conn seems done, must emit status event here");
+                                // TODO need to emit status event.
+                                Ok(())
+                            };
+                            self2.cmd_fut_comm = Some(ErasedFuture::new(fut));
+                            error!("{selfname}  TODO  Conn seems done, must modify data structure");
+                            addr_found_done.push(*addr);
+                        }
+                        Pending => {
+                            hpp.mark_pending();
+                        }
+                    }
+                }
+                for addr in addr_found_done {
+                    self.ca_conns.remove(&addr);
                 }
             }
             break if hpp.have_progress() {
@@ -447,6 +472,7 @@ impl ConnSet {
 
     fn handle_cmder_cmd(mut self: Pin<&mut Self>, cmd: ConnSetCmd, cx: &mut Context) {
         let selfname = "handle_cmder_cmd";
+        assert!(self.cmder_cmd_fut.is_none());
         match cmd.kind {
             ConnSetCmdKind::ChannelAdd(mut cmd) => {
                 trace4!("{selfname}  ConnSetCmdKind::ChannelAdd");
@@ -498,10 +524,14 @@ impl ConnSet {
                 };
                 // TODO maybe better return the future from here and let caller place it.
                 self.cmder_cmd_fut = Some(ErasedFuture::new(fut));
-                // TODO connection tear down logic.
+                error!("TODO connection tear down logic");
                 // self.ca_conns;
             }
-            ConnSetCmdKind::Shutdown => todo!("TODO handle shutdown"),
+            ConnSetCmdKind::Shutdown => {
+                self.as_mut().trigger_shutdown();
+                info!("shutdown triggered");
+                todo!("TODO handle shutdown")
+            }
         }
     }
 
@@ -685,11 +715,98 @@ impl ConnSet {
         }
     }
 
-    fn poll_common_running_shutdown(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<()>> {
-        let selfname = "poll_common_running_shutdown";
+    fn poll_channels_outer(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Result<(), Error>>> {
+        let selfname = "poll_channels_outer";
         info!("{selfname} =======================");
         use Poll::*;
+        // let mut hpp = HaveProgressPending::new();
+        let opt = &mut self.cmd_fut_channel;
+        if let Some(fut) = opt {
+            match fut.poll_unpin(cx) {
+                Ready(x) => match x {
+                    Ok(()) => {
+                        *opt = None;
+                        // hpp.mark_progress();
+                        Ready(Some(Ok(())))
+                    }
+                    Err(e) => Ready(Some(Err(e))),
+                },
+                Pending => {
+                    // hpp.mark_pending();
+                    Pending
+                }
+            }
+        } else {
+            match self.as_mut().poll_channels(cx) {
+                Ready(x) => match x {
+                    Ok(Some((fut,))) => {
+                        self.cmd_fut_channel = Some(fut);
+                        // hpp.mark_progress();
+                        Ready(Some(Ok(())))
+                    }
+                    Ok(None) => Ready(None),
+                    Err(e) => {
+                        // hpp.mark_progress();
+                        Ready(Some(Err(e)))
+                    }
+                },
+                Pending => {
+                    // hpp.mark_pending();
+                    Pending
+                }
+            }
+        }
+    }
+
+    fn poll_if_not_done(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Result<(), Error>>> {
+        let selfname = "poll_if_not_done";
+        use Poll::*;
         let mut hpp = HaveProgressPending::new();
+        // TODO move these polls out of Done.
+        match self.as_mut().poll_cmder(cx) {
+            Ready(Some(x)) => match x {
+                Ok(()) => {
+                    hpp.mark_progress();
+                }
+                Err(e) => {
+                    return Ready(Some(Err(e)));
+                }
+            },
+            Ready(None) => {}
+            Pending => {
+                hpp.mark_pending();
+            }
+        }
+        match self.as_mut().poll_channels_outer(cx) {
+            Ready(Some(x)) => {
+                hpp.mark_progress();
+                match x {
+                    Ok(()) => {}
+                    Err(e) => {
+                        self.state = State::Done;
+                        return Ready(Some(Err(e)));
+                    }
+                }
+            }
+            Ready(None) => {}
+            Pending => {
+                hpp.mark_pending();
+            }
+        }
+        match self.as_mut().poll_conn_comm(cx) {
+            Ready(Some(x)) => match x {
+                Ok(()) => {
+                    hpp.mark_progress();
+                }
+                Err(e) => {
+                    return Ready(Some(Err(e)));
+                }
+            },
+            Ready(None) => {}
+            Pending => {
+                hpp.mark_pending();
+            }
+        }
         match self.as_mut().check_idle_caconn(cx) {
             Ready(Some(())) => {
                 hpp.mark_progress();
@@ -709,7 +826,7 @@ impl ConnSet {
             }
         }
         if hpp.have_progress() {
-            Ready(Some(()))
+            Ready(Some(Ok(())))
         } else if hpp.have_pending() {
             Pending
         } else {
@@ -718,34 +835,54 @@ impl ConnSet {
     }
 }
 
-macro_rules! poll_next_mark {
-    ($fut:expr, $cx:expr, $hpp:expr) => {{
-        let fut = $fut;
-        let cx = $cx;
-        let hpp = $hpp;
-        match fut {
-            Some(fut) => match fut.poll_unpin(cx) {
-                Ready(()) => {
-                    self.cmd_fut = None;
-                    hpp.mark_progress();
-                }
-                Pending => {
-                    hpp.mark_pending();
-                }
-            },
-            None => match self.cmd_rx.poll_next_unpin(cx) {
-                Ready(x) => match x {
-                    Some(x) => {
-                        hpp.mark_progress();
+macro_rules! poll_a {
+    ($poll:expr, $hpp:expr) => {{
+        match $poll {
+            Ready(Some(x)) => {
+                $hpp.mark_progress();
+                match x {
+                    Ok(()) => {}
+                    Err(e) => {
+                        //
+                        break Ready(Some(Err(e)));
                     }
-                    None => {}
-                },
-                Pending => {
-                    hpp.mark_pending();
                 }
-            },
+            }
+            Ready(None) => {}
+            Pending => {
+                $hpp.mark_pending();
+            }
         }
     }};
+}
+
+macro_rules! poll_map_ok {
+    ($poll:expr, $hpp:expr, $self2:expr, $map:expr) => {
+        // use Poll::*;
+        match $poll {
+            Poll::Ready(Some(x)) => {
+                $hpp.mark_progress();
+                match $map(x) {
+                    Ok(Some(x)) => {
+                        //
+                        break Poll::Ready(Some(Ok(x)));
+                    }
+                    Ok(None) => {
+                        //
+                    }
+                    Err(e) => {
+                        // TODO
+                        $self2.state = State::Done;
+                        break Poll::Ready(Some(Err(e)));
+                    }
+                }
+            }
+            Poll::Ready(None) => {}
+            Poll::Pending => {
+                $hpp.mark_pending();
+            }
+        }
+    };
 }
 
 impl Stream for ConnSet {
@@ -756,125 +893,17 @@ impl Stream for ConnSet {
         loop {
             trace4!("ConnSet  poll_next  loop begin  {}", self.state.name());
             let mut hpp = HaveProgressPending::new();
-            match self.as_mut().poll_cmder(cx) {
-                Ready(Some(x)) => match x {
-                    Ok(()) => {
-                        hpp.mark_progress();
-                    }
-                    Err(e) => {
-                        break Ready(Some(Err(e)));
-                    }
-                },
-                Ready(None) => {}
-                Pending => {
-                    hpp.mark_pending();
-                }
-            }
-            {
-                let opt = &mut self.cmd_fut_channel;
-                if let Some(fut) = opt {
-                    match fut.poll_unpin(cx) {
-                        Ready(x) => match x {
-                            Ok(()) => {
-                                *opt = None;
-                                hpp.mark_progress();
-                            }
-                            Err(e) => {
-                                break Ready(Some(Err(e)));
-                            }
-                        },
-                        Pending => {
-                            hpp.mark_pending();
-                        }
-                    }
-                }
-            }
-            {
-                let opt = &mut self.cmd_fut_comm;
-                if let Some(fut) = opt {
-                    match fut.poll_unpin(cx) {
-                        Ready(x) => match x {
-                            Ok(()) => {
-                                *opt = None;
-                                hpp.mark_progress();
-                            }
-                            Err(e) => {
-                                break Ready(Some(Err(e)));
-                            }
-                        },
-                        Pending => {
-                            hpp.mark_pending();
-                        }
-                    }
-                }
-            }
-            if self.cmd_fut_channel.is_none() {
-                match self.as_mut().poll_channels(cx) {
-                    Ready(x) => match x {
-                        Ok(Some((fut,))) => {
-                            self.cmd_fut_channel = Some(fut);
-                            hpp.mark_progress();
-                        }
-                        Ok(None) => {}
-                        Err(e) => {
-                            hpp.mark_progress();
-                            break Ready(Some(Err(e)));
-                        }
-                    },
-                    Pending => {
-                        hpp.mark_pending();
-                    }
-                }
-            }
-            if self.cmd_fut_comm.is_none() {
-                match self.as_mut().poll_conn_comm(cx) {
-                    Ready(Some(x)) => match x {
-                        Ok(()) => {
-                            hpp.mark_progress();
-                        }
-                        Err(e) => {
-                            break Ready(Some(Err(e)));
-                        }
-                    },
-                    Ready(None) => {}
-                    Pending => {
-                        hpp.mark_pending();
-                    }
-                }
-            }
             match &mut self.state {
                 State::Running => {
-                    match self.int_rx.poll_next_unpin(cx) {
-                        Ready(Some(_)) => {
-                            self.as_mut().trigger_shutdown();
-                            info!("shutdown triggered");
-                            hpp.mark_progress();
-                        }
-                        Ready(None) => {}
-                        Pending => {
-                            hpp.mark_pending();
-                        }
-                    }
-                    match self.as_mut().poll_common_running_shutdown(cx) {
-                        Ready(Some(())) => {
-                            hpp.mark_progress();
-                        }
-                        Ready(None) => {}
-                        Pending => {
-                            hpp.mark_pending();
-                        }
-                    }
+                    poll_a!(self.as_mut().poll_if_not_done(cx), hpp);
+                    // poll_map_ok!(self.int_rx.poll_next_unpin(cx), hpp, self, |x| {
+                    //     self.as_mut().trigger_shutdown();
+                    //     info!("shutdown triggered");
+                    //     Ok(None)
+                    // });
                 }
                 State::Shutdown => {
-                    match self.as_mut().poll_common_running_shutdown(cx) {
-                        Ready(Some(())) => {
-                            hpp.mark_progress();
-                        }
-                        Ready(None) => {}
-                        Pending => {
-                            hpp.mark_pending();
-                        }
-                    }
+                    poll_a!(self.as_mut().poll_if_not_done(cx), hpp);
                     if let Some(fut) = &mut self.shutdown_fut {
                         match fut.poll_unpin(cx) {
                             Ready(x) => {

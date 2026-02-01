@@ -154,6 +154,19 @@ impl Connected {
             },
         }
     }
+
+    fn goto_state_done(&mut self) {
+        {
+            let (tx, _rx) = asynchan::bounded(16, "Connected-CaMsg-dummy1");
+            self.inp_tx_main = tx;
+        }
+        {
+            let (tx, _rx) = asynchan::bounded(16, "Connected-CaMsg-dummy2");
+            self.out_tx = tx;
+        }
+        self.protowrap.close();
+        self.state = State::Done;
+    }
 }
 
 impl Stream for Connected {
@@ -166,51 +179,52 @@ impl Stream for Connected {
             let tsnow = Instant::now();
             let mut self2 = self.as_mut().get_mut();
             let mut hpp = HaveProgressPending::new();
-
-            // TODO only poll protocol input as long as we want to be active.
-            // Latest in Done, we do not want to trigger any more Pending.
-
-            if self2.inp_buf.len() < self2.inp_buf.capacity() {
-                match Pin::new(&mut self2).protowrap.poll_next_unpin(cx) {
-                    Ready(Some(Ok(x))) => {
-                        hpp.mark_progress();
-                        match x {
-                            CaItem::Msg(x) => {
-                                self2.inp_buf.push_back(x);
+            match &mut self2.state {
+                State::Done => {}
+                _ => {
+                    if self2.inp_buf.len() < self2.inp_buf.capacity() {
+                        match Pin::new(&mut self2).protowrap.poll_next_unpin(cx) {
+                            Ready(Some(Ok(x))) => {
+                                hpp.mark_progress();
+                                match x {
+                                    CaItem::Msg(x) => {
+                                        self2.inp_buf.push_back(x);
+                                    }
+                                    CaItem::Empty => {}
+                                }
                             }
-                            CaItem::Empty => {}
+                            Ready(Some(Err(e))) => {
+                                hpp.mark_progress();
+                                self2.goto_state_done();
+                                break Ready(Some(Err(e.into())));
+                            }
+                            Ready(None) => {}
+                            Pending => {
+                                hpp.mark_pending();
+                            }
                         }
                     }
-                    Ready(Some(Err(e))) => {
-                        hpp.mark_progress();
-                        self2.state = State::Done;
-                        break Ready(Some(Err(e.into())));
-                    }
-                    Ready(None) => {}
-                    Pending => {
-                        hpp.mark_pending();
-                    }
-                }
-            }
-            if let Some(item) = self2.inp_buf.pop_front() {
-                use asynchan::SendPoll;
-                use asynchan::SendPollError;
-                match self2.inp_tx_main.poll_send_unpin(item, cx) {
-                    Ok(()) => {
-                        hpp.mark_progress();
-                    }
-                    Err(e) => match e {
-                        SendPollError::Full(item) => {
-                            self2.inp_buf.push_front(item);
-                            hpp.mark_pending();
+                    if let Some(item) = self2.inp_buf.pop_front() {
+                        use asynchan::SendPoll;
+                        use asynchan::SendPollError;
+                        match self2.inp_tx_main.poll_send_unpin(item, cx) {
+                            Ok(()) => {
+                                hpp.mark_progress();
+                            }
+                            Err(e) => match e {
+                                SendPollError::Full(item) => {
+                                    hpp.mark_pending();
+                                    self2.inp_buf.push_front(item);
+                                }
+                                SendPollError::Closed(item) => {
+                                    hpp.mark_progress();
+                                    self2.inp_buf.push_front(item);
+                                    self2.goto_state_done();
+                                    break Ready(Some(Err(Error::ProtoOutputClosed)));
+                                }
+                            },
                         }
-                        SendPollError::Closed(item) => {
-                            self2.inp_buf.push_front(item);
-                            hpp.mark_progress();
-                            self.state = State::Done;
-                            break Ready(Some(Err(Error::ProtoOutputClosed)));
-                        }
-                    },
+                    }
                 }
             }
             match &mut self2.state {
@@ -239,7 +253,7 @@ impl Stream for Connected {
                     }
                     Ready(Err(e)) => {
                         trace!("Handshake:Error");
-                        self.state = State::Done;
+                        self2.goto_state_done();
                         hpp.mark_progress();
                         break Ready(Some(Err(e.into())));
                     }
@@ -282,7 +296,7 @@ impl Stream for Connected {
                                 }
                                 Err(e) => {
                                     trace!("ActiveCa:Error");
-                                    self.state = State::Done;
+                                    self2.goto_state_done();
                                     break Ready(Some(Err(e.into())));
                                 }
                             }
@@ -290,7 +304,7 @@ impl Stream for Connected {
                         Ready(None) => {
                             trace!("ActiveCa:Done");
                             hpp.mark_progress();
-                            self.state = State::Done;
+                            self2.goto_state_done();
                         }
                         Pending => {
                             trace_pending!("ActiveCa");

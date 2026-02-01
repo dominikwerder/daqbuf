@@ -70,4 +70,13 @@ impl ConnSetCmder {
         trace2!("{selfname} done");
         Ok(res)
     }
+
+    pub async fn shutdown(&self) -> Result<(), Error> {
+        let mut tx = self.tx.clone();
+        let cmd = ConnSetCmd {
+            kind: ConnSetCmdKind::Shutdown,
+        };
+        let _ = tx.send(cmd).await?;
+        Ok(())
+    }
 }

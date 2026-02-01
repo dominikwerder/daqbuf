@@ -413,17 +413,13 @@ impl Stream for CaConn {
     type Item = Result<CaConnItem, Error>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
-        TODO;
-        // TODO
-        // We should observe here that our next inner handler is Done.
-        // Check that we do that.
-        // It seems that Connected does not exit properly. Listening on command input?
         use Poll::*;
-        trace3!("CaConn  poll_next");
+        let selfname = "CaConn::poll_next";
+        trace3!("{selfname}");
         let mut durs = DurationMeasureSteps::new();
         self.mett.poll_fn_begin().inc();
         let ret = loop {
-            trace3!("CaConn  poll_next  loop");
+            trace3!("{selfname}  loop");
             let self2 = self.as_mut().get_mut();
             self2.mett.poll_loop_begin().inc();
             let tsloop = Instant::now();
@@ -438,7 +434,7 @@ impl Stream for CaConn {
                     }
                     Ready(Err(e)) => {
                         self2.ca_cmd_tx_fut = None;
-                        error!("CaConn: ca_cmd_tx_fut error: {}", e);
+                        error!("{selfname}  ca_cmd_tx_fut error: {e}");
                         self2.state = State::Done;
                         hpp.mark_progress();
                         break Ready(Some(Err(e)));
@@ -447,6 +443,7 @@ impl Stream for CaConn {
                         hpp.mark_pending();
                     }
                 }
+            } else if let State::Done = &self2.state {
             } else {
                 match self2.cmd_rx.poll_next_unpin(cx) {
                     Ready(x) => match x {
@@ -454,7 +451,7 @@ impl Stream for CaConn {
                             hpp.mark_progress();
                             match cmd.kind {
                                 CaConnCmdKind::ChannelAdd(conf, done_tx) => {
-                                    trace!("CaConn:Received:ChannelAdd  {conf:?}");
+                                    trace!("{selfname}:Received:ChannelAdd  {conf:?}");
                                     let cmd = activeca::CaCommand::channel_add(conf, done_tx);
                                     let mut tx = self2.ca_cmd_tx.clone();
                                     let fut = async move {
@@ -465,7 +462,7 @@ impl Stream for CaConn {
                                     self2.ca_cmd_tx_fut = Some(ErasedFuture::new(fut));
                                 }
                                 CaConnCmdKind::ChannelRemove(conf, done_tx) => {
-                                    trace!("CaConn:Received:ChannelRemove  {conf:?}");
+                                    trace!("{selfname}:Received:ChannelRemove  {conf:?}");
                                     let cmd = activeca::CaCommand::channel_remove(conf.name(), done_tx);
                                     let mut tx = self2.ca_cmd_tx.clone();
                                     let fut = async move {
@@ -476,7 +473,7 @@ impl Stream for CaConn {
                                     self2.ca_cmd_tx_fut = Some(ErasedFuture::new(fut));
                                 }
                                 CaConnCmdKind::DisconnectOnIdle(done_tx) => {
-                                    trace!("CaConn:Received:DisconnectOnIdle");
+                                    trace!("{selfname}:Received:DisconnectOnIdle");
                                     let cmd = activeca::CaCommand::disconnect_on_idle(done_tx);
                                     let mut tx = self2.ca_cmd_tx.clone();
                                     let fut = async move {
@@ -499,7 +496,7 @@ impl Stream for CaConn {
                 match &mut self2.state {
                     State::Connecting(st1) => match st1.poll_unpin(cx) {
                         Ready(Ok(x)) => {
-                            trace!("CaConn:Connecting:Ready");
+                            trace!("{selfname}:Connecting:Ready");
                             // ok, we replace the full state
                             let ca_cmd_rx = std::mem::replace(&mut st1.ca_cmd_rx, asynchan::bounded(1, "dummy").1);
                             let stn = Connected::new(x, self.remote_addr, tsloop, ca_cmd_rx);
@@ -507,7 +504,7 @@ impl Stream for CaConn {
                             hpp.mark_progress();
                         }
                         Ready(Err(e)) => {
-                            trace!("CaConn:Connecting:Err:{}", e);
+                            trace!("{selfname}:Connecting:Err:{e}");
                             self.state = State::Done;
                             hpp.mark_progress();
                             break Ready(Some(Err(e)));
@@ -519,21 +516,21 @@ impl Stream for CaConn {
                     State::Connected(st1) => match st1.poll_next_unpin(cx) {
                         Ready(Some(x)) => match x {
                             Ok(x) => {
-                                trace!("CaConn:Connected:Ready");
-                                error!("CaConn:Connected:Ready  TODO handle the item");
+                                trace!("{selfname}:Connected:Ready");
+                                error!("{selfname}:Connected:Ready  TODO handle the item {x:?}");
                                 hpp.mark_progress();
                             }
                             Err(e) => {
-                                trace!("CaConn:Connected:Err:{}", e);
-                                error!("CaConn:Connected:Err:  TODO handle error and shutdown");
+                                trace!("{selfname}:Connected:Err:{e}");
+                                error!("{selfname}:Connected:Err:  TODO handle error and shutdown");
                                 self.state = State::Done;
                                 hpp.mark_progress();
                                 break Ready(Some(Err(e.into())));
                             }
                         },
                         Ready(None) => {
-                            trace!("CaConn:Connected:Done");
-                            error!("CaConn:Connected:Done  TODO handle shutdown");
+                            trace!("{selfname}:Connected:Done");
+                            error!("{selfname}:Connected:Done  TODO handle shutdown");
                             self.state = State::Done;
                             hpp.mark_progress();
                         }
@@ -542,7 +539,11 @@ impl Stream for CaConn {
                         }
                     },
                     State::Done => {
-                        error!("State::Done  {}  {}", hpp.have_progress(), hpp.have_pending());
+                        error!(
+                            "{selfname}  State::Done  {}  {}",
+                            hpp.have_progress(),
+                            hpp.have_pending()
+                        );
                         // TODO when in Done, we should no longer be stuck with Pending on something.
                     }
                 };
@@ -551,14 +552,17 @@ impl Stream for CaConn {
             // TODO get rid of the handling of ca_conn_event_out_queue in here.
             // The future which pushes to the queue must also trigger the async push if needed.
 
-            // TODO add up duration of this scope
-            match self.as_mut().poll_own_ticker(cx) {
-                Ok(hpp2) => {
-                    hpp.merge(hpp2);
-                }
-                Err(e) => {
-                    hpp.mark_progress();
-                    break Ready(Some(Err(e)));
+            if let State::Done = &self.state {
+            } else {
+                // TODO add up duration of this scope
+                match self.as_mut().poll_own_ticker(cx) {
+                    Ok(hpp2) => {
+                        hpp.merge(hpp2);
+                    }
+                    Err(e) => {
+                        hpp.mark_progress();
+                        break Ready(Some(Err(e)));
+                    }
                 }
             }
 

@@ -41,7 +41,7 @@ fn handler_sigint(_: libc::c_int, _: *const libc::siginfo_t, _: *const libc::c_v
 }
 
 pub async fn test_01() {
-    let (mut int_tx, int_rx) = asynchan::bounded(16, "SIGINT");
+    let (mut int_tx, mut int_rx) = asynchan::bounded(16, "SIGINT");
     if true {
         let mut fds = [0; 2];
         let ec = unsafe { libc::pipe(&mut fds[0]) };
@@ -106,10 +106,18 @@ pub async fn test_01() {
     } else {
         let buf = std::fs::read("daqingest.yml").unwrap();
         let ingest_opts = serde_yaml::from_slice(&buf).unwrap();
-        let mut connset = ConnSet::new("sf-archiver".into(), "".into(), ingest_opts, int_rx)
+        // int_rx
+        let mut connset = ConnSet::new("sf-archiver".into(), "".into(), ingest_opts)
             .await
             .unwrap();
         let cmder = connset.cmder().clone();
+        {
+            let cmder = cmder.clone();
+            tokio::spawn(async move {
+                let _ = int_rx.recv().await;
+                cmder.shutdown().await.unwrap();
+            });
+        }
         let fut = async move {
             trace!("test_01 adding channel");
             if false {
@@ -117,9 +125,11 @@ pub async fn test_01() {
                 let conf = crate::conf::ChannelConfig::st_monitor(chname, "TEST");
                 cmder.channel_add(conf).await.unwrap();
             }
-            let chname = "SAT-CVME-TIMAST:SYS_CPU_LOAD";
-            let conf = crate::conf::ChannelConfig::st_monitor(chname, "TEST");
-            cmder.channel_add(conf).await.unwrap();
+            if true {
+                let chname = "SAT-CVME-TIMAST:SYS_CPU_LOAD";
+                let conf = crate::conf::ChannelConfig::st_monitor(chname, "TEST");
+                cmder.channel_add(conf).await.unwrap();
+            }
             trace!("test_01 added channel");
         };
         tokio::spawn(fut);
