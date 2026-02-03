@@ -560,7 +560,8 @@ pub async fn parse_channels(channels_dir: Option<PathBuf>) -> Result<Option<Chan
     }
 }
 
-pub async fn parse_config(config: PathBuf) -> Result<(CaIngestOpts, Option<ChannelsConfig>), ConfError> {
+pub async fn parse_config<P: Into<PathBuf>>(config: P) -> Result<(CaIngestOpts, Option<ChannelsConfig>), ConfError> {
+    let config = config.into();
     let mut file = OpenOptions::new().read(true).open(config).await?;
     let mut buf = Vec::new();
     file.read_to_end(&mut buf).await?;
@@ -1002,15 +1003,16 @@ impl ChannelConfig {
 
     pub fn poll_conf(&self) -> Option<(u64,)> {
         if self.is_polled() {
-            if let Some(ChannelReadConfig::Poll(x)) = self.arch.short_term {
-                Some((x.as_millis() as u64,))
+            let ret = if let Some(ChannelReadConfig::Poll(x)) = self.arch.short_term {
+                (x.as_millis() as u64,)
             } else if let Some(ChannelReadConfig::Poll(x)) = self.arch.medium_term {
-                Some((x.as_millis() as u64,))
+                (x.as_millis() as u64,)
             } else if let Some(ChannelReadConfig::Poll(x)) = self.arch.long_term {
-                Some((x.as_millis() as u64,))
+                (x.as_millis() as u64,)
             } else {
-                Some((60,))
-            }
+                (60,)
+            };
+            Some(ret)
         } else {
             None
         }

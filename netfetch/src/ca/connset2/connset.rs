@@ -48,8 +48,8 @@ macro_rules! info { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
 macro_rules! trace { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
 macro_rules! trace2 { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
 macro_rules! trace3 { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
-macro_rules! trace4 { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
-macro_rules! trace_pending { ($($arg:tt)*) => { if true { log::info!("{}  Pending", format_args!($($arg)*)); } }; }
+macro_rules! trace4 { ($($arg:tt)*) => { if false { log::info!($($arg)*); } }; }
+macro_rules! trace_pending { ($($arg:tt)*) => { if false { log::info!("{}  Pending", format_args!($($arg)*)); } }; }
 
 autoerr::create_error_v1!(
     name(Error, "ConnSet"),
@@ -129,9 +129,15 @@ struct CaConnReg {
 }
 
 #[derive(Debug)]
+struct Shutdown {
+    timeout: FutDbg<()>,
+}
+
+#[derive(Debug)]
 enum State {
     Running,
-    Shutdown,
+    Shutdown(Shutdown),
+    Shutdown2,
     Done,
 }
 
@@ -139,7 +145,8 @@ impl State {
     fn name(&self) -> &'static str {
         match self {
             State::Running => "Running",
-            State::Shutdown => "Shutdown",
+            State::Shutdown(_) => "Shutdown",
+            State::Shutdown2 => "Shutdown2",
             State::Done => "Done",
         }
     }
@@ -163,7 +170,6 @@ pub struct ConnSet {
     channels: VecDeque<ChannelCat>,
     ch_info_tx: ChannelInfoQuerySender,
     ca_conns: BTreeMap<SocketAddrV4, CaConnReg>,
-    // int_rx: asynchan::Receiver<u32>,
     shutdown_fut: Option<FutDbg<Result<(), Error>>>,
     conn_idle_disconnect_futs: VecDeque<FutDbg<Result<(), Error>>>,
 }
@@ -177,7 +183,6 @@ impl ConnSet {
         // This seems to be for when I already know the type and shape. But what about the status series?
         // channel_info_query_tx: ChannelInfoQuerySender,
         ingest_opts: CaIngestOpts,
-        // int_rx: asynchan::Receiver<u32>,
     ) -> Result<Self, Error> {
         // streamtask::run_in_task();
         // let (find_ioc_res_tx, find_ioc_res_rx) = async_channel::bounded(400);
@@ -207,7 +212,6 @@ impl ConnSet {
             channels: VecDeque::new(),
             ch_info_tx,
             ca_conns: BTreeMap::new(),
-            // int_rx,
             shutdown_fut: None,
             conn_idle_disconnect_futs: VecDeque::new(),
         };
@@ -217,7 +221,8 @@ impl ConnSet {
     fn is_accept_cmds(&self) -> bool {
         match &self.state {
             State::Running => true,
-            State::Shutdown => false,
+            State::Shutdown(_) => false,
+            State::Shutdown2 => false,
             State::Done => false,
         }
     }
@@ -234,17 +239,24 @@ impl ConnSet {
         // TODO go through Self fields to check what needs to get cleaned.
         match self.state {
             State::Running => {
-                self.state = State::Shutdown;
-                self.shutdown_fut = Some(Self::shutdown_task().box2());
+                self.state = State::Shutdown(Shutdown {
+                    timeout: tokio::time::sleep(Duration::from_millis(10000)).box2(),
+                });
+                // NOTE shutdown is triggered simply via our state change.
+                if false {
+                    let conn_comms: Vec<_> = self.ca_conns.iter().map(|x| x.1.comm.clone()).collect();
+                    for mut comm in conn_comms {
+                        comm.channel_remove(todo!());
+                        comm.trigger_disconnect_on_idle();
+                    }
+                }
+                let fut = async move { Ok(()) };
+                self.shutdown_fut = Some(fut.box2());
             }
-            State::Shutdown => {}
+            State::Shutdown(_) => {}
+            State::Shutdown2 => {}
             State::Done => {}
         }
-    }
-
-    async fn shutdown_task() -> Result<(), Error> {
-        // Can not do much here.
-        Ok(())
     }
 
     fn poll_channels(
@@ -530,7 +542,6 @@ impl ConnSet {
             ConnSetCmdKind::Shutdown => {
                 self.as_mut().trigger_shutdown();
                 info!("shutdown triggered");
-                todo!("TODO handle shutdown")
             }
         }
     }
@@ -833,6 +844,55 @@ impl ConnSet {
             Ready(None)
         }
     }
+
+    fn poll_shutdown_issue_all_removes(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<(), Error>>> {
+        let selfname = "poll_shutdown_issue_all_removes";
+        use Poll::*;
+        let mut hpp = HaveProgressPending::new();
+        if let Some(fut) = &mut self.shutdown_fut {
+            match fut.poll_unpin(cx) {
+                Ready(x) => {
+                    self.shutdown_fut = None;
+                    hpp.mark_progress();
+                    match x {
+                        Ok(()) => {}
+                        Err(e) => {
+                            return Ready(Some(Err(e)));
+                        }
+                    }
+                }
+                Pending => {
+                    hpp.mark_pending();
+                }
+            }
+        } else {
+            // Either find something new to do for shutdown_fut for transition to Done.
+            let self2 = self.as_mut().get_mut();
+            for ch in self2.channels.iter_mut() {
+                if ch.remove_on_shutdown_sent == false {
+                    ch.remove_on_shutdown_sent = true;
+                    let (done_tx, mut done_rx) = asynchan::bounded(4, "ConnSetShutdownRemove");
+                    let mut tx = ch.cmd_tx.clone();
+                    let fut = async move {
+                        tx.send(pollcstm::Cmd::Remove(pollcstm::Remove { done_tx })).await?;
+                        let _ = done_rx.recv().await;
+                        Ok(())
+                    };
+                    self2.shutdown_fut = Some(fut.box2());
+                }
+            }
+        }
+        if hpp.have_progress() {
+            Ready(Some(Ok(())))
+        } else if hpp.have_pending() {
+            Pending
+        } else {
+            Ready(None)
+        }
+    }
 }
 
 macro_rules! poll_a {
@@ -856,33 +916,67 @@ macro_rules! poll_a {
     }};
 }
 
-macro_rules! poll_map_ok {
-    ($poll:expr, $hpp:expr, $self2:expr, $map:expr) => {
-        // use Poll::*;
+macro_rules! poll_stream_map_ok {
+    ($poll:expr, $hpp:expr, $self2:expr, $map:expr, $streamdone:tt) => {{
+        use Poll::*;
         match $poll {
-            Poll::Ready(Some(x)) => {
+            Ready(Some(x)) => {
                 $hpp.mark_progress();
                 match $map(x) {
                     Ok(Some(x)) => {
                         //
-                        break Poll::Ready(Some(Ok(x)));
+                        break Ready(Some(Ok(x)));
                     }
                     Ok(None) => {
                         //
+                        $streamdone
                     }
                     Err(e) => {
                         // TODO
                         $self2.state = State::Done;
-                        break Poll::Ready(Some(Err(e)));
+                        break Ready(Some(Err(e)));
                     }
                 }
             }
-            Poll::Ready(None) => {}
-            Poll::Pending => {
+            Ready(None) => {}
+            Pending => {
                 $hpp.mark_pending();
             }
         }
-    };
+    }};
+}
+
+macro_rules! poll_opt_fut_map {
+    ($futopt:expr, $cx:expr, $hpp:expr, $self2:expr, $cf1:ident, $map:expr, $futnone:tt, $streamdone:tt) => {{
+        use Poll::*;
+        if let Some(fut) = $futopt.as_mut() {
+            match fut.poll_unpin($cx) {
+                Ready(x) => {
+                    $hpp.mark_progress();
+                    match $map(x) {
+                        Ok(Some(x)) => {
+                            //
+                            $cf1 Poll::Ready(Some(Ok(x)));
+                        }
+                        Ok(None) => {
+                            //
+                            $streamdone
+                        }
+                        Err(e) => {
+                            // TODO
+                            // $self2.state = State::Done;
+                            $cf1 Poll::Ready(Some(Err(e)));
+                        }
+                    }
+                }
+                Pending => {
+                    $hpp.mark_pending();
+                }
+            }
+        } else {
+            $futnone
+        }
+    }};
 }
 
 impl Stream for ConnSet {
@@ -902,59 +996,35 @@ impl Stream for ConnSet {
                     //     Ok(None)
                     // });
                 }
-                State::Shutdown => {
-                    poll_a!(self.as_mut().poll_if_not_done(cx), hpp);
-                    if let Some(fut) = &mut self.shutdown_fut {
-                        match fut.poll_unpin(cx) {
-                            Ready(x) => {
-                                self.shutdown_fut = None;
-                                hpp.mark_progress();
-                                match x {
-                                    Ok(()) => {}
-                                    Err(e) => {
-                                        break Ready(Some(Err(e)));
-                                    }
-                                }
-                            }
-                            Pending => {
-                                hpp.mark_pending();
-                            }
+                State::Shutdown(st2) => {
+                    match st2.timeout.poll_unpin(cx) {
+                        Ready(()) => {
+                            error!("TODO  shutdown timeout");
                         }
-                    } else {
-                        // Either find something new to do for shutdown_fut for transition to Done.
-                        let self2 = self.as_mut().get_mut();
-                        for ch in self2.channels.iter_mut() {
-                            if ch.remove_on_shutdown_sent == false {
-                                ch.remove_on_shutdown_sent = true;
-                                let (done_tx, mut done_rx) = asynchan::bounded(4, "ConnSetShutdownRemove");
-                                let mut tx = ch.cmd_tx.clone();
-                                let fut = async move {
-                                    tx.send(pollcstm::Cmd::Remove(pollcstm::Remove { done_tx })).await?;
-                                    let _ = done_rx.recv().await;
-                                    Ok(())
-                                };
-                                self2.shutdown_fut = Some(fut.box2());
-                            }
+                        Pending => {
+                            hpp.mark_pending();
                         }
-                        if self.shutdown_fut.is_none() {
-                            let self2 = self.as_mut().get_mut();
-                            // Wait for all channels to be removed.
-                            let fut = async {
-                                tokio::time::sleep(Duration::from_millis(1000)).await;
-                                info!("waiting for shutdown...");
-                                Ok(())
-                            };
-                            self2.shutdown_fut = Some(fut.box2());
-                        }
-                        if self.shutdown_fut.is_none() {
-                            // TODO emit all final metrics.
-                        }
-                        if self.shutdown_fut.is_none() {
-                            self.state = State::Done;
-                            eprintln!("shutdown done");
-                        }
-                        hpp.mark_progress();
                     }
+                    poll_a!(self.as_mut().poll_if_not_done(cx), hpp);
+                    if false {
+                        poll_opt_fut_map!(self.shutdown_fut, cx, hpp, self, break, |x| { Ok(None) }, {}, {});
+                    }
+                    poll_stream_map_ok!(
+                        self.as_mut().poll_shutdown_issue_all_removes(cx),
+                        hpp,
+                        self,
+                        |x: Result<(), Error>| x.map_err(|e| e).map(|_| None),
+                        {
+                            trace2!("Shutdown --> Shutdown2");
+                            hpp.mark_progress();
+                            self.state = State::Shutdown2;
+                        }
+                    );
+                }
+                State::Shutdown2 => {
+                    trace2!("Shutdown2 --> Done");
+                    hpp.mark_progress();
+                    self.state = State::Done;
                 }
                 State::Done => {}
             }

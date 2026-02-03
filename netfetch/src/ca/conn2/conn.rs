@@ -162,6 +162,24 @@ impl State {
             ca_cmd_rx,
         })
     }
+
+    fn display_short(&self) -> StateDisplayShort<'_> {
+        StateDisplayShort { inner: self }
+    }
+}
+
+struct StateDisplayShort<'a> {
+    inner: &'a State,
+}
+
+impl<'a> fmt::Display for StateDisplayShort<'a> {
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.inner {
+            State::Connecting(_) => fmt.debug_tuple("Connecting").finish(),
+            State::Connected(_) => fmt.debug_tuple("Connected").finish(),
+            State::Done => fmt.debug_tuple("Done").finish(),
+        }
+    }
 }
 
 struct ConnectFut(Pin<Box<dyn Future<Output = Result<tokio::net::TcpStream, Error>> + Send>>);
@@ -415,11 +433,11 @@ impl Stream for CaConn {
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         use Poll::*;
         let selfname = "CaConn::poll_next";
-        trace3!("{selfname}");
+        trace4!("{selfname}");
         let mut durs = DurationMeasureSteps::new();
         self.mett.poll_fn_begin().inc();
         let ret = loop {
-            trace3!("{selfname}  loop");
+            trace4!("{selfname}  loop  state {}", self.state.display_short());
             let self2 = self.as_mut().get_mut();
             self2.mett.poll_loop_begin().inc();
             let tsloop = Instant::now();
@@ -696,13 +714,13 @@ impl Stream for CaConn {
             // };
 
             break if hpp.have_progress() {
-                trace!("HPP:Progress");
+                trace4!("HPP:Progress");
                 continue;
             } else if hpp.have_pending() {
                 trace_pending!("HPP");
                 Pending
             } else {
-                trace!("HPP:Done");
+                trace3!("HPP:Done");
                 Ready(None)
             };
         };

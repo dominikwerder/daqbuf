@@ -104,10 +104,12 @@ pub async fn test_01() {
             info!("SIGINT counter {i}");
         }
     } else {
-        let buf = std::fs::read("daqingest.yml").unwrap();
-        let ingest_opts = serde_yaml::from_slice(&buf).unwrap();
-        // int_rx
-        let mut connset = ConnSet::new("sf-archiver".into(), "".into(), ingest_opts)
+        if false {
+            let buf = std::fs::read("daqingest.yml").unwrap();
+            let ingest_opts: crate::conf::CaIngestOpts = serde_yaml::from_slice(&buf).unwrap();
+        }
+        let (ingest_opts, channels_config) = crate::conf::parse_config("daqingest.yml").await.unwrap();
+        let mut connset = ConnSet::new(ingest_opts.backend().into(), "".into(), ingest_opts)
             .await
             .unwrap();
         let cmder = connset.cmder().clone();
@@ -121,14 +123,24 @@ pub async fn test_01() {
         let fut = async move {
             trace!("test_01 adding channel");
             if false {
-                let chname = "TEST:SLOW:SCALAR:F32:000000";
-                let conf = crate::conf::ChannelConfig::st_monitor(chname, "TEST");
-                cmder.channel_add(conf).await.unwrap();
+                let channels = [
+                    "TEST:SLOW:SCALAR:F32:000000",
+                    "TEST:SLOW:SCALAR:F32:000001",
+                    // "SAT-CVME-TIMAST:SYS_CPU_LOAD",
+                    // "X04SA-UIND:GAP-SP",
+                    // "X04SA-UIND:GAP-SET",
+                    // "X04SA-UIND:GAP-READ",
+                    // "X04SA-UIND:GAP-RBV",
+                ];
+                for chname in channels {
+                    let conf = crate::conf::ChannelConfig::st_monitor(chname, "TEST");
+                    cmder.channel_add(conf).await.unwrap();
+                }
             }
-            if true {
-                let chname = "SAT-CVME-TIMAST:SYS_CPU_LOAD";
-                let conf = crate::conf::ChannelConfig::st_monitor(chname, "TEST");
-                cmder.channel_add(conf).await.unwrap();
+            if let Some(channels_config) = channels_config {
+                for chconf in channels_config.channels() {
+                    cmder.channel_add(chconf.clone()).await.unwrap();
+                }
             }
             trace!("test_01 added channel");
         };
