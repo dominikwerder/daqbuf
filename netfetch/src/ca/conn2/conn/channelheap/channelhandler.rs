@@ -1,6 +1,8 @@
 use crate::ca::conn2::asynchan;
+use crate::ca::conn2::caids::CaDbrTy;
 use crate::ca::conn2::caids::Cid;
 use crate::ca::conn2::caids::CidOwned;
+use crate::ca::conn2::caids::Ioid;
 use crate::ca::conn2::caids::Sid;
 use crate::ca::conn2::caids::Subid;
 use crate::ca::conn2::caids::SubidOwned;
@@ -19,6 +21,9 @@ use ca_proto::ca::proto::CaMsgTy;
 use futures::FutureExt;
 use futures::Stream;
 use futures::StreamExt;
+use hashbrown::HashMap;
+use netpod::ScalarType;
+use netpod::Shape;
 use std::collections::VecDeque;
 use std::fmt;
 use std::pin::Pin;
@@ -58,7 +63,7 @@ struct Init {
 
 #[derive(Debug)]
 struct Creating {
-    fut: FutDbg<Result<(Sid, asynchan::Receiver<CaMsg>), Error>>,
+    fut: FutDbg<Result<(Sid, ScalarType, Shape, CaDbrTy, asynchan::Receiver<CaMsg>), Error>>,
     removing: bool,
 }
 
@@ -75,7 +80,7 @@ struct Closing2 {
 
 #[derive(Debug)]
 struct CreateMonitor {
-    fut: FutDbg<Result<(), Error>>,
+    fut: FutDbg<Result<(SubidOwned,), Error>>,
     inp_buf: VecDeque<CaMsg>,
 }
 
@@ -83,40 +88,35 @@ impl CreateMonitor {
     fn new(
         cid: Cid,
         sid: Sid,
+        ca_dbr_ty: CaDbrTy,
+        shape: Shape,
         out_tx: asynchan::Sender<CaMsg>,
         mut ch_hp_tx: asynchan::Sender<ChHeapCmd>,
         chconf: ChannelConfig,
     ) -> Self {
-        let fut = {
-            let mut proto_tx = out_tx;
-            async move {
-                let subid = SubidOwned::new();
-                {
-                    let (reg_tx, mut reg_rx) = asynchan::bounded(4, "RegisterSubidResp");
-                    ch_hp_tx
-                        .send(ChHeapCmd::RegisterSubid(cid.clone(), subid.to_subid(), reg_tx))
-                        .await
-                        .map_err(|_| Error::ProtoTxClosed)?;
-                    let _reg_res = reg_rx.recv().await?;
-                    trace!("CreateMonitor: registered subid {subid:?}");
-                    // TODO also store the chosen Subid somewhere for later.
-                }
-                error!("TODO do not hard code the CA data types");
-                // hard code f32
-                let data_type = 16;
-                let data_count = 0;
-                let msg = CaMsg::from_ty_ts(
-                    proto::CaMsgTy::EventAdd(proto::EventAdd::new(
-                        data_type,
-                        data_count,
-                        sid.to_u32(),
-                        subid.to_u32(),
-                    )),
-                    Instant::now(),
-                );
-                proto_tx.send(msg).await.map_err(|_| Error::ProtoTxClosed)?;
-                Ok(())
+        let mut proto_tx = out_tx;
+        let fut = async move {
+            let subid = SubidOwned::new();
+            {
+                let (reg_tx, mut reg_rx) = asynchan::bounded(4, "RegisterSubidResp");
+                ch_hp_tx
+                    .send(ChHeapCmd::RegisterSubid(cid.clone(), subid.to_subid(), reg_tx))
+                    .await
+                    .map_err(|_| Error::ProtoTxClosed)?;
+                let _reg_res = reg_rx.recv().await?;
+                trace!("CreateMonitor: registered subid {subid:?}");
             }
+            let msg = CaMsg::from_ty_ts(
+                proto::CaMsgTy::EventAdd(proto::EventAdd::new(
+                    ca_dbr_ty.to_u16(),
+                    shape.to_ca_count().unwrap(),
+                    sid.to_u32(),
+                    subid.to_u32(),
+                )),
+                Instant::now(),
+            );
+            proto_tx.send(msg).await.map_err(|_| Error::ProtoTxClosed)?;
+            Ok((subid,))
         };
         Self {
             fut: fut.box2(),
@@ -131,11 +131,6 @@ impl CreateMonitor {
         } else {
             Some(msg)
         }
-    }
-
-    fn poll_unpin(mut self: Pin<&mut Self>, msg: CaMsg, cx: &mut Context) -> Option<CaMsg> {
-        use Poll::*;
-        todo!("TODO CreateMonitor poll_unpin")
     }
 }
 
@@ -165,6 +160,19 @@ impl CreatePolling {
     }
 }
 
+#[derive(Debug)]
+struct Monitor {
+    subid: SubidOwned,
+}
+
+#[derive(Debug)]
+struct FetchData {
+    ioid: Ioid,
+    scalar_type: ScalarType,
+    shape: Shape,
+    ca_dbr_ty: CaDbrTy,
+}
+
 const EFP1: usize = 300;
 
 #[derive(Debug)]
@@ -183,17 +191,18 @@ struct FetchPolling {
 enum FetchMethod {
     None,
     CreateMonitor(CreateMonitor),
-    Monitor,
+    Monitor(Monitor),
     CreatePolling(CreatePolling),
     Polling(FetchPolling),
 }
 
 enum FetchMethodPollOutput {
     None,
-    CallbackOnRunning(Box<dyn FnOnce(&mut Running)>),
+    CallbackOnRunning(Box<dyn FnOnce(&mut Running)>, Vec<ChannelHandlerItem>),
 }
 
 struct FetchMethodPollRes<'a> {
+    fetch_data: &'a mut FetchData,
     conf: &'a ChannelConfig,
     cid: Cid,
     sid: Sid,
@@ -204,7 +213,6 @@ struct FetchMethodPollRes<'a> {
 impl FetchMethod {
     fn poll_next_unpin(
         mut self: Pin<&mut Self>,
-        // st2: &mut Running,
         pres: FetchMethodPollRes,
         cx: &mut Context,
     ) -> Poll<Option<Result<FetchMethodPollOutput, Error>>> {
@@ -215,7 +223,13 @@ impl FetchMethod {
         where
             F: FnOnce(&mut Running) + 'static,
         {
-            FetchMethodPollOutput::CallbackOnRunning(Box::new(f))
+            FetchMethodPollOutput::CallbackOnRunning(Box::new(f), Vec::new())
+        }
+        fn make_cb2<F>(f: F) -> Box<dyn FnOnce(&mut Running)>
+        where
+            F: FnOnce(&mut Running) + 'static,
+        {
+            Box::new(f)
         }
         match self.as_mut().get_mut() {
             FetchMethod::None => {
@@ -240,6 +254,8 @@ impl FetchMethod {
                     let create = CreateMonitor::new(
                         pres.cid.clone(),
                         pres.sid.clone(),
+                        pres.fetch_data.ca_dbr_ty.clone(),
+                        pres.fetch_data.shape.clone(),
                         pres.proto_tx.clone(),
                         pres.ch_hp_tx.clone(),
                         pres.conf.clone(),
@@ -254,12 +270,12 @@ impl FetchMethod {
                 trace!("{selfname}  CreateMonitor");
                 match st3.fut.poll_unpin(cx) {
                     Ready(x) => match x {
-                        Ok(()) => {
+                        Ok((subid,)) => {
                             trace!("{selfname}  CreateMonitor:Ready:Ok");
                             trace!("{selfname}  :Ready:Ok  TODO implement monitor handling");
                             hpp.mark_progress();
                             let ret = make_cb(move |st2| {
-                                st2.fetch_method = FetchMethod::Monitor;
+                                st2.fetch_method = FetchMethod::Monitor(Monitor { subid });
                             });
                             return Ready(Some(Ok(ret)));
                         }
@@ -275,10 +291,12 @@ impl FetchMethod {
                     }
                 }
             }
-            FetchMethod::Monitor => {
+            FetchMethod::Monitor(st3) => {
                 // At the moment, nothing to do here.
                 // TODO here, probably good to do some housekeeping on timeout:
                 // like promote last written value to next longer retention time.
+                // TODO when we leave monitoring, must remove monitoring by the subid.
+                let _ = &st3.subid;
             }
             FetchMethod::CreatePolling(st3) => match st3.fut.poll_unpin(cx) {
                 Ready(x) => {
@@ -307,14 +325,48 @@ impl FetchMethod {
                 FetchPollingReq::Idle(fut) => match fut.poll_unpin(cx) {
                     Ready(()) => {
                         info!("{selfname}  Polling Idle Done");
+                        let ioid = pres.fetch_data.ioid.inc();
+                        let tsnow = Instant::now();
+                        let msg = CaMsg::from_ty_ts(
+                            CaMsgTy::ReadNotify(proto::ReadNotify {
+                                data_type: pres.fetch_data.ca_dbr_ty.to_u16(),
+                                data_count: pres.fetch_data.shape.to_ca_count().unwrap(),
+                                sid: pres.sid.to_u32(),
+                                ioid: ioid.to_u32(),
+                            }),
+                            tsnow,
+                        );
+                        // {
+                        //     // TODO emit channel status, but not on each poll
+                        //     let item = ChannelStatusItem {
+                        //         ts: self.tmp_ts_poll,
+                        //         cssid: st2.channel.cssid.clone(),
+                        //         status: ChannelStatus::MonitoringSilenceReadStart,
+                        //     };
+                        //     conf.wrst.emit_channel_status_item(
+                        //         item,
+                        //         Self::channel_status_qu(&mut self.iqdqs),
+                        //         &mut self.mett,
+                        //     )?;
+                        // }
+
+                        //
+
                         hpp.mark_progress();
-                        let ret = make_cb(move |st2| {
+
+                        let items = vec![ChannelHandlerItem {
+                            ts_create: tsnow,
+                            inner: ItemInner::ProtoOutIoid(msg, ioid),
+                        }];
+
+                        let cb = make_cb2(move |st2| {
                             st2.fetch_method = FetchMethod::Polling(FetchPolling {
-                                req: FetchPollingReq::SendReq(ErasedFuture::new(tokio::time::sleep(
-                                    Duration::from_millis(3000),
-                                ))),
+                                req: FetchPollingReq::SendReq(ErasedFuture::new(async move {
+                                    tokio::time::sleep(Duration::from_millis(3000)).await;
+                                })),
                             })
                         });
+                        let ret = FetchMethodPollOutput::CallbackOnRunning(cb, items);
                         return Ready(Some(Ok(ret)));
                     }
                     Pending => {
@@ -373,6 +425,7 @@ impl FetchMethod {
 #[derive(Debug)]
 struct Running {
     fetch_method: FetchMethod,
+    fetch_data: FetchData,
     sid: Sid,
     proto_rx: asynchan::Receiver<CaMsg>,
     removing: bool,
@@ -382,9 +435,21 @@ struct Running {
 }
 
 impl Running {
-    fn new(sid: Sid, proto_rx: asynchan::Receiver<CaMsg>) -> Self {
+    fn new(
+        sid: Sid,
+        scalar_type: ScalarType,
+        shape: Shape,
+        ca_dbr_ty: CaDbrTy,
+        proto_rx: asynchan::Receiver<CaMsg>,
+    ) -> Self {
         Self {
             fetch_method: FetchMethod::None,
+            fetch_data: FetchData {
+                ioid: Ioid::new(0),
+                scalar_type,
+                shape,
+                ca_dbr_ty,
+            },
             sid,
             proto_rx,
             removing: false,
@@ -413,7 +478,7 @@ async fn channel_create(
     mut tx: asynchan::Sender<CaMsg>,
     mut proto_rx: asynchan::Receiver<CaMsg>,
     tsnow: Instant,
-) -> Result<(Sid, asynchan::Receiver<CaMsg>), Error> {
+) -> Result<(Sid, ScalarType, Shape, CaDbrTy, asynchan::Receiver<CaMsg>), Error> {
     let msg = CaMsg::from_ty_ts(
         proto::CaMsgTy::CreateChan(proto::CreateChan {
             cid,
@@ -431,7 +496,36 @@ async fn channel_create(
         match &item.ty {
             CaMsgTy::CreateChanRes(k) => {
                 trace!("CreateMonitor:CreateChanRes {k:?}");
-                return Ok((Sid::new(k.sid), proto_rx));
+                if k.data_type > 6 {
+                    error!(
+                        "CreateChanRes with unexpected data_type {} count {}",
+                        k.data_type, k.data_count
+                    );
+                    return Err(Error::CreateMonitorUnexpectedMessage);
+                }
+                // Ask for DBR_TIME_...
+                let ca_dbr_type = CaDbrTy::new(k.data_type + 14);
+                let scalar_type = match ScalarType::from_ca_id(k.data_type) {
+                    Ok(x) => x,
+                    Err(e) => {
+                        error!(
+                            "CreateChanRes with unexpected data_type {} count {}",
+                            k.data_type, k.data_count
+                        );
+                        return Err(Error::CreateMonitorUnexpectedMessage);
+                    }
+                };
+                let shape = match Shape::from_ca_count(k.data_count) {
+                    Ok(x) => x,
+                    Err(e) => {
+                        error!(
+                            "CreateChanRes with unexpected data_type {} count {}",
+                            k.data_type, k.data_count
+                        );
+                        return Err(Error::CreateMonitorUnexpectedMessage);
+                    }
+                };
+                return Ok((Sid::new(k.sid), scalar_type, shape, ca_dbr_type, proto_rx));
             }
             CaMsgTy::CreateChanFail(k) => {
                 trace!("CreateMonitor:CreateChanFail {k:?}");
@@ -453,6 +547,7 @@ async fn channel_create(
 #[derive(Debug)]
 pub enum ItemInner {
     ScyllaWrite,
+    ProtoOutIoid(CaMsg, Ioid),
 }
 
 #[derive(Debug)]
@@ -494,6 +589,7 @@ pub struct ChannelHandler {
     counters: Counters,
     cmd_tx: asynchan::Sender<Cmd>,
     cmd_rx: asynchan::Receiver<Cmd>,
+    outbuf: VecDeque<ChannelHandlerItem>,
 }
 
 impl ChannelHandler {
@@ -524,6 +620,7 @@ impl ChannelHandler {
             counters: Counters::new(),
             cmd_tx,
             cmd_rx,
+            outbuf: VecDeque::new(),
         }
     }
 
@@ -541,20 +638,6 @@ impl ChannelHandler {
         &self.cmd_tx
     }
 
-    pub fn poll_housekeeping_1(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Error>> {
-        // TODO do periodic tasks here.
-        // TODO poll the bin writer.
-        // TODO poll channel data flush?
-        // TODO we want to achieve rather low latency... therefore, better to return scylla writes via regular Stream.
-        todo!()
-    }
-
-    pub fn poll_read_1(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Error>> {
-        // TODO check and kick-off polling read.
-        // TODO count how often we cause Pending.
-        todo!()
-    }
-
     fn handle_cmd(&mut self, cmd: Cmd) {
         let selfname = "handle_cmd";
         match cmd {
@@ -570,6 +653,8 @@ impl ChannelHandler {
                             } else {
                                 panic!()
                             };
+                        error!("TODO impl Cmd::Remove for State::Creating");
+                        panic!("TODO impl Cmd::Remove for State::Creating");
                         // TODO add flags to Creating so that we now what proto messages we still expect
                         // TODO add timeout to Creating (anyways!)
                         // TODO keep done_tx and signal when channel remove done
@@ -767,7 +852,7 @@ impl<'a> PollProtoRx<'a> {
                             None => Ok(None),
                         }
                     }
-                    FetchMethod::Monitor => {
+                    FetchMethod::Monitor(st3) => {
                         trace!(
                             "ChannelHandler:Running:ProtoDispatch:Ready:Some:Monitor    TODO handle monitor update  {item:?}"
                         );
@@ -866,12 +951,15 @@ impl Stream for ChannelHandler {
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         use Poll::*;
-        let selfname = "ChannelHandler:poll_next";
+        let selfname = "ChannelHandler::poll_next";
         trace4!("{selfname}  {}", self.cid);
         loop {
             let tsnow = Instant::now();
             let mut hpp = HaveProgressPending::new();
             let self2 = self.as_mut().get_mut();
+            if let Some(item) = self2.outbuf.pop_front() {
+                break Ready(Some(Ok(item)));
+            }
             match &mut self2.state {
                 State::Done => match self2.cmd_rx.poll_next_unpin(cx) {
                     Ready(Some(_)) => {
@@ -919,9 +1007,9 @@ impl Stream for ChannelHandler {
                 State::Creating(st1) => {
                     trace!("ChannelHandler:Creating");
                     match st1.fut.poll_unpin(cx) {
-                        Ready(Ok((sid, proto_rx))) => {
+                        Ready(Ok((sid, scalar_type, shape, ca_dbr_ty, proto_rx))) => {
                             trace!("ChannelHandler:Creating:Ready:Ok  {sid}");
-                            self2.state = State::Running(Running::new(sid, proto_rx));
+                            self2.state = State::Running(Running::new(sid, scalar_type, shape, ca_dbr_ty, proto_rx));
                             hpp.mark_progress();
                         }
                         Ready(Err(e)) => {
@@ -982,6 +1070,7 @@ impl Stream for ChannelHandler {
                         }
                     }
                     let pres = FetchMethodPollRes {
+                        fetch_data: &mut st2.fetch_data,
                         conf: &self2.conf,
                         cid: self2.cid.to_cid(),
                         sid: st2.sid.clone(),
@@ -994,8 +1083,14 @@ impl Stream for ChannelHandler {
                             match x {
                                 Ok(x) => match x {
                                     FetchMethodPollOutput::None => {}
-                                    FetchMethodPollOutput::CallbackOnRunning(cb) => {
+                                    FetchMethodPollOutput::CallbackOnRunning(cb, mut items) => {
                                         cb(st2);
+                                        if items.len() > 1 {
+                                            self2.outbuf.extend(items);
+                                        } else if let Some(item) = items.pop() {
+                                            break Ready(Some(Ok(item)));
+                                        } else {
+                                        }
                                     }
                                 },
                                 Err(e) => {

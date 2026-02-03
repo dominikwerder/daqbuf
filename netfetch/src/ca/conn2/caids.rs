@@ -127,6 +127,11 @@ impl Ioid {
     pub fn to_u32(&self) -> u32 {
         self.0
     }
+
+    pub fn inc(&mut self) -> Self {
+        self.0 = self.0.wrapping_add(1);
+        self.clone()
+    }
 }
 
 impl fmt::Display for CidOwned {
@@ -162,5 +167,30 @@ impl fmt::Display for Subid {
 impl fmt::Display for Ioid {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(fmt, "Ioid({})", self.0)
+    }
+}
+
+#[derive(Clone)]
+pub struct CaDbrTy(u16);
+
+impl fmt::Debug for CaDbrTy {
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(fmt, "CaDbrTy({})", self.0)
+    }
+}
+
+impl fmt::Display for CaDbrTy {
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(self, fmt)
+    }
+}
+
+impl CaDbrTy {
+    pub fn new(x: u16) -> Self {
+        Self(x)
+    }
+
+    pub fn to_u16(&self) -> u16 {
+        self.0
     }
 }
