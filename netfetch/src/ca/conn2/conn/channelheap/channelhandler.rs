@@ -24,6 +24,8 @@ use futures::StreamExt;
 use hashbrown::HashMap;
 use netpod::ScalarType;
 use netpod::Shape;
+use serieswriter::binwriter::BinWriter;
+use stats::mett::ChannelHandlerMetrics;
 use std::collections::VecDeque;
 use std::fmt;
 use std::pin::Pin;
@@ -172,6 +174,7 @@ struct FetchData {
     scalar_type: ScalarType,
     shape: Shape,
     ca_dbr_ty: CaDbrTy,
+    // binwriter: BinWriter,
 }
 
 const EFP1: usize = 300;
@@ -209,6 +212,7 @@ struct FetchMethodPollRes<'a> {
     sid: Sid,
     proto_tx: &'a asynchan::Sender<CaMsg>,
     ch_hp_tx: &'a asynchan::Sender<ChHeapCmd>,
+    mett: &'a mut ChannelHandlerMetrics,
 }
 
 impl FetchMethod {
@@ -325,7 +329,7 @@ impl FetchMethod {
             FetchMethod::Polling(st3) => match &mut st3.req {
                 FetchPollingReq::Idle(fut) => match fut.poll_unpin(cx) {
                     Ready(()) => {
-                        info!("{selfname}  Polling Idle Done");
+                        trace4!("{selfname}  Polling Idle Done");
                         // let ioid = pres.fetch_data.ioid.inc();
                         let tsnow = Instant::now();
                         let msg = CaMsg::from_ty_ts(
@@ -355,6 +359,7 @@ impl FetchMethod {
                         //
 
                         hpp.mark_progress();
+                        pres.mett.read_notify_send().inc();
 
                         let items = vec![ChannelHandlerItem {
                             ts_create: tsnow,
@@ -457,6 +462,18 @@ impl Running {
                 scalar_type,
                 shape,
                 ca_dbr_ty,
+                // binwriter: BinWriter::new(
+                //     beg,
+                //     min_quiets,
+                //     is_polled,
+                //     emit_znt_zero_default,
+                //     do_discard_front,
+                //     cssid,
+                //     sid,
+                //     scalar_type,
+                //     shape,
+                //     chname,
+                // ),
             },
             sid,
             proto_rx,
@@ -600,6 +617,7 @@ pub struct ChannelHandler {
     cmd_tx: asynchan::Sender<Cmd>,
     cmd_rx: asynchan::Receiver<Cmd>,
     outbuf: VecDeque<ChannelHandlerItem>,
+    mett: ChannelHandlerMetrics,
 }
 
 impl ChannelHandler {
@@ -611,15 +629,7 @@ impl ChannelHandler {
     ) -> Self {
         let cid = CidOwned::new();
         trace!("ChannelHandler::new  {cid:?}  {conf:?}");
-
         let (cmd_tx, cmd_rx) = asynchan::bounded(16, "ChannelHandler-cmd");
-
-        // TODO to send the channel create message, I need to be in some async function.
-        // Issue:
-        // Even if this handler attempts a send, but hits Pending, then ChannelHeap will get
-        // woken up at some point, but how does ChannelHeap know to poll this ChannelHandler again?
-        // When polling, ChannelHeap must pass a specific Waker.
-
         Self {
             state: State::Init(Init { proto_rx }),
             cid,
@@ -631,6 +641,7 @@ impl ChannelHandler {
             cmd_tx,
             cmd_rx,
             outbuf: VecDeque::new(),
+            mett: ChannelHandlerMetrics::new(),
         }
     }
 
@@ -638,6 +649,10 @@ impl ChannelHandler {
         StatusInfo {
             counters: self.counters.clone(),
         }
+    }
+
+    pub fn mett_take(&mut self) -> ChannelHandlerMetrics {
+        std::mem::replace(&mut self.mett, ChannelHandlerMetrics::new())
     }
 
     pub fn cid(&self) -> Cid {
@@ -853,14 +868,15 @@ struct PollProtoRx<'a> {
     cid: Cid,
     proto_rx_dispatch: &'a mut Option<CaMsg>,
     counters: &'a mut Counters,
+    mett: &'a mut ChannelHandlerMetrics,
 }
 
 impl<'a> PollProtoRx<'a> {
     fn proto_rx_handle_dispatch(
+        mut self: Pin<&mut Self>,
         st2: &mut Running,
         item: CaMsg,
         cx: &mut Context<'_>,
-        counters: &mut Counters,
     ) -> Result<Option<CaMsg>, Error> {
         let selfname = "proto_rx_handle_dispatch";
         match &item.ty {
@@ -870,6 +886,7 @@ impl<'a> PollProtoRx<'a> {
                 }
                 match &mut st2.fetch_method {
                     FetchMethod::CreateMonitor(st3) => {
+                        // TODO metrics count here the first monitor event?
                         trace!("ChannelHandler:Running:ProtoDispatch:Ready:Some:CreateMonitor  try_send");
                         match Pin::new(st3).poll_msg_inp(item, cx) {
                             Some(x) => Ok(Some(x)),
@@ -877,10 +894,11 @@ impl<'a> PollProtoRx<'a> {
                         }
                     }
                     FetchMethod::Monitor(st3) => {
+                        self.mett.monitor_read_expected().inc();
                         trace!(
                             "ChannelHandler:Running:ProtoDispatch:Ready:Some:Monitor    TODO handle monitor update  {item:?}"
                         );
-                        counters.event_add_res_cnt += 1;
+                        self.counters.event_add_res_cnt += 1;
                         Ok(None)
                     }
                     _ => {
@@ -907,6 +925,7 @@ impl<'a> PollProtoRx<'a> {
                 trace3!("TODO  handle {item:?}");
                 match &mut st2.fetch_method {
                     FetchMethod::Polling(st3) => {
+                        self.mett.read_notify_recv().inc();
                         debug!("FetchMethod::Polling  recvd  go back to idle");
                         warn!("TODO use the correct idle time");
                         st3.req =
@@ -935,8 +954,8 @@ impl<'a> PollProtoRx<'a> {
         trace4!("{selfname}  {}", self.cid);
         loop {
             let mut hpp = HaveProgressPending::new();
-            if let Some(item) = self.as_mut().proto_rx_dispatch.take() {
-                match Self::proto_rx_handle_dispatch(st2, item, cx, &mut self.counters) {
+            if let Some(item) = self.proto_rx_dispatch.take() {
+                match self.as_mut().proto_rx_handle_dispatch(st2, item, cx) {
                     Ok(x) => match x {
                         Some(item) => {
                             trace2!("{selfname}  item came back");
@@ -1091,6 +1110,7 @@ impl Stream for ChannelHandler {
                             cid: self2.cid.to_cid(),
                             proto_rx_dispatch: &mut self2.proto_rx_dispatch,
                             counters: &mut self2.counters,
+                            mett: &mut self2.mett,
                         };
                         match Pin::new(&mut pr).poll_proto_rx(st2, cx) {
                             Ready(Some(x)) => {
@@ -1115,6 +1135,7 @@ impl Stream for ChannelHandler {
                         sid: st2.sid.clone(),
                         proto_tx: &self2.proto_tx,
                         ch_hp_tx: &self2.ch_hp_tx,
+                        mett: &mut self2.mett,
                     };
                     match Pin::new(&mut st2.fetch_method).poll_next_unpin(pres, cx) {
                         Ready(Some(x)) => {

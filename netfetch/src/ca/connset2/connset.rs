@@ -45,11 +45,12 @@ use taskrun::tokio::task::JoinHandle;
 macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
 macro_rules! warn { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
 macro_rules! info { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
-macro_rules! trace { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
-macro_rules! trace2 { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
-macro_rules! trace3 { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
-macro_rules! trace4 { ($($arg:tt)*) => { if false { log::info!($($arg)*); } }; }
-macro_rules! trace_pending { ($($arg:tt)*) => { if false { log::info!("{}  Pending", format_args!($($arg)*)); } }; }
+macro_rules! debug { ($($arg:tt)*) => { if true { log::debug!($($arg)*); } }; }
+macro_rules! trace { ($($arg:tt)*) => { if true { log::trace!($($arg)*); } }; }
+macro_rules! trace2 { ($($arg:tt)*) => { if true { log::trace!($($arg)*); } }; }
+macro_rules! trace3 { ($($arg:tt)*) => { if true { log::trace!($($arg)*); } }; }
+macro_rules! trace4 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
+macro_rules! trace_pending { ($($arg:tt)*) => { if false { log::trace!("{}  Pending", format_args!($($arg)*)); } }; }
 
 autoerr::create_error_v1!(
     name(Error, "ConnSet"),
@@ -405,16 +406,17 @@ impl ConnSet {
             let mut hpp = HaveProgressPending::new();
             if let Some(fut) = self.cmd_fut_comm.as_mut() {
                 match fut.poll_unpin(cx) {
-                    Ready(x) => match x {
-                        Ok(()) => {
-                            self.cmd_fut_comm = None;
-                            hpp.mark_progress();
+                    Ready(x) => {
+                        hpp.mark_progress();
+                        match x {
+                            Ok(()) => {
+                                self.cmd_fut_comm = None;
+                            }
+                            Err(e) => {
+                                break Ready(Some(Err(e)));
+                            }
                         }
-                        Err(e) => {
-                            hpp.mark_progress();
-                            break Ready(Some(Err(e)));
-                        }
-                    },
+                    }
                     Pending => {
                         hpp.mark_pending();
                     }
@@ -428,26 +430,22 @@ impl ConnSet {
                         Ready(Some(x)) => {
                             hpp.mark_progress();
                             match x {
-                                Ok(x) => {
-                                    trace!("TODO handle item from CaConn {x:?}");
-                                    match x {
-                                        conn2::conn::CaConnItem::StatusInfo(e1) => {
-                                            match Self::handle_conn_comm_status_info(e1, &self2.cmder, cx) {
-                                                Ok(x) => match x {
-                                                    Some(fut) => {
-                                                        self2.cmd_fut_comm = Some(fut);
-                                                    }
-                                                    None => {}
-                                                },
-                                                Err(e) => {
-                                                    return Ready(Some(Err(e)));
+                                Ok(x) => match x {
+                                    conn2::conn::CaConnItem::StatusInfo(e1) => {
+                                        match Self::handle_conn_comm_status_info(e1, &self2.cmder, cx) {
+                                            Ok(x) => match x {
+                                                Some(fut) => {
+                                                    self2.cmd_fut_comm = Some(fut);
                                                 }
+                                                None => {}
+                                            },
+                                            Err(e) => {
+                                                return Ready(Some(Err(e)));
                                             }
                                         }
                                     }
-                                }
+                                },
                                 Err(e) => {
-                                    trace!("{selfname}  ERROR from CaConnComm  {e}");
                                     todo!("{selfname}  ERROR from CaConnComm  {e}");
                                 }
                             }
@@ -633,7 +631,7 @@ impl ConnSet {
 
     fn check_idle_caconn(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<()>> {
         let selfname = "check_idle_caconn";
-        info!("{selfname} =======================");
+        trace4!("{selfname}");
         use Poll::*;
         let mut hpp = HaveProgressPending::new();
         // TODO
@@ -693,7 +691,7 @@ impl ConnSet {
 
     fn poll_conn_idle_disconnect_futs(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<()>> {
         let selfname = "poll_conn_idle_disconnect_futs";
-        info!("{selfname} =======================");
+        trace4!("{selfname}");
         use Poll::*;
         let mut hpp = HaveProgressPending::new();
         if let Some(fut) = self.conn_idle_disconnect_futs.get_mut(0) {
@@ -728,7 +726,7 @@ impl ConnSet {
 
     fn poll_channels_outer(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Result<(), Error>>> {
         let selfname = "poll_channels_outer";
-        info!("{selfname} =======================");
+        trace4!("{selfname}");
         use Poll::*;
         // let mut hpp = HaveProgressPending::new();
         let opt = &mut self.cmd_fut_channel;
@@ -1029,12 +1027,12 @@ impl Stream for ConnSet {
                 State::Done => {}
             }
             break if hpp.have_progress() {
-                trace2!("ConnSet  poll_next  Done");
+                trace4!("ConnSet  poll_next  Done");
                 continue;
             } else if hpp.have_pending() {
                 Pending
             } else {
-                trace2!("ConnSet  poll_next  Done");
+                trace4!("ConnSet  poll_next  Done");
                 Ready(None)
             };
         }

@@ -12,6 +12,7 @@ use ca_proto::ca::proto::CaMsg;
 use futures::FutureExt;
 use futures::Stream;
 use futures::StreamExt;
+use stats::mett::CaConnConnectedMetrics;
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::fmt;
@@ -27,11 +28,11 @@ use tokio::time::error::Elapsed;
 
 macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
 macro_rules! warn { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
-macro_rules! debug { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
-macro_rules! trace { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
-macro_rules! trace2 { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
-macro_rules! trace3 { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
-macro_rules! trace4 { ($($arg:tt)*) => { if false { log::info!($($arg)*); } }; }
+macro_rules! debug { ($($arg:tt)*) => { if true { log::debug!($($arg)*); } }; }
+macro_rules! trace { ($($arg:tt)*) => { if true { log::trace!($($arg)*); } }; }
+macro_rules! trace2 { ($($arg:tt)*) => { if true { log::trace!($($arg)*); } }; }
+macro_rules! trace3 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
+macro_rules! trace4 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
 macro_rules! trace_pending { ($($arg:tt)*) => { if false { trace!("{}  Pending", format_args!($($arg)*)); } }; }
 
 autoerr::create_error_v1!(
@@ -134,6 +135,7 @@ pub struct ActiveCa {
     cmd_fut: Option<CommandFut>,
     chanheap_cmd_tx: asynchan::Sender<channelheap::Cmd>,
     chanheap_cmd_rx: asynchan::Receiver<channelheap::Cmd>,
+    mett: CaConnConnectedMetrics,
 }
 
 impl ActiveCa {
@@ -160,6 +162,7 @@ impl ActiveCa {
             cmd_fut: None,
             chanheap_cmd_tx,
             chanheap_cmd_rx,
+            mett: CaConnConnectedMetrics::new(),
         }
     }
 
@@ -176,6 +179,10 @@ impl ActiveCa {
                 state: StatusInfoState::Done,
             },
         }
+    }
+
+    pub fn mett_take(&mut self) -> CaConnConnectedMetrics {
+        self.chanheap.mett_take()
     }
 
     fn handle_command(&mut self, cmd: CaCommand, cx: &mut Context) -> CommandFut {

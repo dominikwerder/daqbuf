@@ -1,4 +1,28 @@
 mod Metrics {
+    type StructName = ChannelHandlerMetrics;
+    enum counters {
+        monitor_read_expected,
+        read_notify_send,
+        read_notify_recv,
+    }
+}
+
+mod Metrics {
+    type StructName = CaConnConnectedMetrics;
+    enum counters {
+        channel_handler_new,
+    }
+    mod Compose {
+        type Input = ChannelHandlerMetrics;
+        type Name = channel_handler;
+    }
+    mod Compose {
+        type Input = ca_proto::mett::CaProtoMetrics;
+        type Name = proto;
+    }
+}
+
+mod Metrics {
     type StructName = ScyllaJobTransform;
     enum counters {
         SeriesData,

@@ -92,7 +92,7 @@ impl JitterTicker {
         use stats::rand_xoshiro::rand_core::RngCore;
         let b = self.ivl;
         let t = b + b * (self.rng.next_u32() & 0x1f) / 0xff;
-        trace!("TODO  make_ticker  {:.0} ms", 1e3 * t.as_secs_f32());
+        trace3!("make_ticker  {:.0} ms", 1e3 * t.as_secs_f32());
         tokio::time::sleep(t)
     }
 }
@@ -289,7 +289,7 @@ pub struct CaConn {
     // ca_conn_event_out_queue: VecDeque<CaConnEvent>,
     // ca_conn_event_out_queue_max: usize,
     ticker: JitterTicker,
-    mett: stats::mett::CaConnMetrics,
+    mett: stats::mett::CaConnConnectedMetrics,
     cmd_tx: asynchan::Sender<CaConnCmd>,
     cmd_rx: asynchan::Receiver<CaConnCmd>,
     ca_cmd_tx: asynchan::Sender<activeca::CaCommand>,
@@ -317,7 +317,7 @@ impl CaConn {
             // ca_conn_event_out_queue: VecDeque::new(),
             // ca_conn_event_out_queue_max: 2000,
             ticker: JitterTicker::new(Duration::from_millis(2000)),
-            mett: stats::mett::CaConnMetrics::new(),
+            mett: stats::mett::CaConnConnectedMetrics::new(),
             cmd_tx,
             cmd_rx,
             ca_cmd_tx,
@@ -366,6 +366,21 @@ impl CaConn {
 
     fn on_ticker_fired(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<()>> {
         use Poll::*;
+        if true {
+            match &mut self.state {
+                State::Connecting(st1) => {
+                    // TODO
+                }
+                State::Connected(st1) => {
+                    let m = st1.mett_take();
+                    self.mett.ingest(m);
+                }
+                State::Done => {
+                    // TODO
+                }
+            }
+            info!("CURRENT METRICS  {:?}", self.mett);
+        }
         if self.out_qu.len() < OUT_QUEUE_LEN_MAX {
             trace!("TODO  poll_own_ticker  emit status info");
             let v = self.as_mut().make_status_info();
@@ -383,7 +398,6 @@ impl CaConn {
         let mut hpp = HaveProgressPending::new();
         match self.ticker.poll_next_unpin(cx) {
             Ready(Some(())) => {
-                trace!("TODO  CaConn:Ticker fired");
                 hpp.mark_progress();
                 match self.on_ticker_fired(cx) {
                     Ready(Some(())) => {
@@ -435,11 +449,9 @@ impl Stream for CaConn {
         let selfname = "CaConn::poll_next";
         trace4!("{selfname}");
         let mut durs = DurationMeasureSteps::new();
-        self.mett.poll_fn_begin().inc();
         let ret = loop {
             trace4!("{selfname}  loop  state {}", self.state.display_short());
             let self2 = self.as_mut().get_mut();
-            self2.mett.poll_loop_begin().inc();
             let tsloop = Instant::now();
             let hpp = &mut HaveProgressPending::new();
             if let Some(item) = self2.out_qu.pop_front() {

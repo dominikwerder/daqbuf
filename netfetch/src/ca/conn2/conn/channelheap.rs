@@ -21,6 +21,7 @@ use futures::Stream;
 use futures::StreamExt;
 use futures::future::ready;
 use hashbrown::HashMap;
+use stats::mett::CaConnConnectedMetrics;
 use std::collections::VecDeque;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -298,6 +299,7 @@ pub struct ChannelHeap {
     disconnect_on_idle: bool,
     ioid_reg: IoidRegistry,
     poll_handler_fut: Option<FutDbg<Result<(), Error>>>,
+    mett: CaConnConnectedMetrics,
 }
 
 impl ChannelHeap {
@@ -319,6 +321,7 @@ impl ChannelHeap {
             disconnect_on_idle: false,
             ioid_reg: IoidRegistry::new(),
             poll_handler_fut: None,
+            mett: CaConnConnectedMetrics::new(),
         }
     }
 
@@ -345,10 +348,26 @@ impl ChannelHeap {
         StatusInfo { handlers }
     }
 
+    pub fn mett_take(&mut self) -> CaConnConnectedMetrics {
+        for (cid, ee) in self.by_cid.iter_mut() {
+            match &mut ee.ch_handler {
+                ChHandler::ChHandlerActive(ha) => {
+                    let m = ha.handler.mett_take();
+                    self.mett.channel_handler().ingest(m);
+                }
+                ChHandler::Done => {
+                    // TODO count in metrics
+                }
+            }
+        }
+        std::mem::replace(&mut self.mett, CaConnConnectedMetrics::new())
+    }
+
     pub fn channel_add(&mut self, conf: ChannelConfig, cx: &mut Context) {
         trace!("channel_add {conf:?}");
         let name = conf.name().into();
         let (tx, rx) = asynchan::bounded(12, "ChannelHeap-channeladd");
+        self.mett.channel_handler_new().inc();
         let handler = ChannelHandler::new(conf, self.proto_tx.clone(), rx, self.ch_hp_tx.clone());
         let cid = handler.cid();
         if self.by_cid.contains_key(&cid) {
@@ -479,9 +498,11 @@ impl ChannelHeap {
             // Some message can be dispatched by Cid.
             // Others need translation from Subid.
             let disp_cid = if let Some(cid) = item.cid() {
+                trace!("{selfname}  resolved via cid");
                 Some(Cid::new(cid))
             } else if let Some(subid) = item.subid() {
                 if let Some(cid) = self2.by_subid.get(&Subid::new(subid)) {
+                    trace!("{selfname}  resolved via subid");
                     Some(cid.clone())
                 } else {
                     trace!("{selfname}  TODO  msg has unknown subid");
@@ -492,6 +513,7 @@ impl ChannelHeap {
                     // TODO metrics
                     let dt = Instant::now().duration_since(ts);
                     let dtms = 1e3 * dt.as_secs_f32();
+                    debug!("--------------------------------------------------------");
                     debug!("resolve incoming Ioid  dt {:.0} ms", dtms);
                     Some(cid)
                 } else {
@@ -887,12 +909,12 @@ impl ChannelHeap {
                         match self.proto_rx.poll_next_unpin(cx) {
                             Ready(x) => match x {
                                 Some(item) => {
-                                    trace!("ChannelHeap:CaInp:Rx:Ok");
+                                    trace3!("ChannelHeap:CaInp:Rx:Ok");
                                     hpp.mark_progress();
                                     self.inp_buf.push_back(item);
                                 }
                                 None => {
-                                    trace!("ChannelHeap:CaInp:Rx:Err");
+                                    debug!("ChannelHeap:CaInp:Rx:Err");
                                     hpp.mark_progress();
                                     self.state = State::Done;
                                     break Ready(Some(Err(Error::ProtoRxClosed)));
@@ -979,7 +1001,7 @@ impl ChannelHeap {
                 State::Done => {}
             }
             break if hpp.have_progress() {
-                trace!("HPP:Progress");
+                trace4!("HPP:Progress");
                 continue;
             } else if hpp.have_pending() {
                 trace_pending!("HPP");

@@ -12,6 +12,7 @@ use ca_proto_tokio::tcpasyncwriteread::TcpAsyncWriteRead;
 use futures::FutureExt;
 use futures::Stream;
 use futures::StreamExt;
+use stats::mett::CaConnConnectedMetrics;
 use std::collections::VecDeque;
 use std::fmt;
 use std::future::Future;
@@ -98,6 +99,7 @@ pub struct Connected {
     inp_buf: VecDeque<CaMsg>,
     inp_tx_main: asynchan::Sender<CaMsg>,
     msg_a_chan: CtChan<activeca::CaCommand>,
+    mett: CaConnConnectedMetrics,
 }
 
 impl Connected {
@@ -135,6 +137,7 @@ impl Connected {
             inp_buf: VecDeque::with_capacity(32),
             inp_tx_main: inp_tx,
             msg_a_chan: CtChan::new(),
+            mett: CaConnConnectedMetrics::new(),
         }
     }
 
@@ -152,6 +155,25 @@ impl Connected {
             State::Done => StatusInfo {
                 status: StatusInfoState::Done,
             },
+        }
+    }
+
+    pub fn mett_take(&mut self) -> CaConnConnectedMetrics {
+        // std::mem::replace(&mut self.mett, CaConnConnectedMetrics::new())
+        match &mut self.state {
+            State::Init(..) => {
+                // TODO
+                CaConnConnectedMetrics::new()
+            }
+            State::Handshake(st) => {
+                // TODO
+                CaConnConnectedMetrics::new()
+            }
+            State::ActiveCa(st, _) => st.mett_take(),
+            State::Done => {
+                // TODO
+                CaConnConnectedMetrics::new()
+            }
         }
     }
 
@@ -190,11 +212,11 @@ impl Stream for Connected {
                                 hpp.mark_progress();
                                 match x {
                                     CaItem::Msg(x) => {
-                                        trace3!("PROTOWRAP  msg {x:?}");
+                                        trace3!("PROTOWRAP  Msg");
                                         self2.inp_buf.push_back(x);
                                     }
                                     CaItem::Empty => {
-                                        trace3!("PROTOWRAP  msg  Empty");
+                                        trace3!("PROTOWRAP  Empty");
                                     }
                                 }
                             }
