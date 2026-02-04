@@ -17,6 +17,7 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use tokio::runtime::Runtime;
 use tokio::task::JoinHandle;
+use tracing_subscriber::layer::Context;
 
 pub mod log {
     #[allow(unused_imports)]
@@ -192,14 +193,23 @@ fn tracing_init_inner(mode: TracingMode) -> Result<(), Error> {
         let tracing_trace = collect_env_list("TRACING_TRACE");
         // let tracing_trace_always = collect_env_list("TRACING_TRACE_ALWAYS");
         let filter_3 = tracing_subscriber::filter::DynFilterFn::new(move |meta, ctx| {
-            let mut tmp1 = String::with_capacity(128);
-            if *meta.level() >= tracing::Level::TRACE {
+            let mut tmp1 = String::with_capacity(256);
+            fn check_target(
+                meta: &tracing::Metadata,
+                ctx: &Context<'_, tracing_subscriber::Registry>,
+                list: &Vec<String>,
+                tmp1: &mut String,
+            ) -> bool {
                 let mut target_match = false;
-                for e in &tracing_trace {
+                for e in list {
                     tmp1.clear();
                     tmp1.push_str(e);
                     tmp1.push_str("::");
-                    if meta.target() == &tmp1[..tmp1.len() - 2] || meta.target().starts_with(&tmp1) {
+                    let target = meta.target();
+                    if target.contains("conn::handshake") {
+                        // eprintln!("LOOKING AT  tmp1 [{tmp1}]  target [{target}]");
+                    }
+                    if target == &tmp1[..tmp1.len() - 2] || target.starts_with(tmp1.as_str()) {
                         target_match = true;
                         break;
                     }
@@ -215,47 +225,16 @@ fn tracing_init_inner(mode: TracingMode) -> Result<(), Error> {
                             sr = g.parent();
                         }
                     }
-                    // allow = true;
+                    allow = true;
                     allow
                 } else {
                     false
                 }
+            }
+            if *meta.level() >= tracing::Level::TRACE {
+                check_target(meta, ctx, &tracing_trace, &mut tmp1)
             } else if *meta.level() >= tracing::Level::DEBUG {
-                let mut target_match = false;
-                for e in &tracing_debug {
-                    tmp1.clear();
-                    tmp1.push_str(e);
-                    tmp1.push_str("::");
-                    if meta.target() == &tmp1[..tmp1.len() - 2] || meta.target().starts_with(&tmp1) {
-                        target_match = true;
-                        break;
-                    }
-                }
-                for e in &tracing_trace {
-                    tmp1.clear();
-                    tmp1.push_str(e);
-                    tmp1.push_str("::");
-                    if meta.target() == &tmp1[..tmp1.len() - 2] || meta.target().starts_with(&tmp1) {
-                        target_match = true;
-                        break;
-                    }
-                }
-                if target_match {
-                    let mut sr = ctx.lookup_current();
-                    let mut allow = false;
-                    while let Some(g) = sr {
-                        if g.name() == "log_span_trace" || g.name() == "log_span_debug" {
-                            allow = true;
-                            break;
-                        } else {
-                            sr = g.parent();
-                        }
-                    }
-                    // allow = true;
-                    allow
-                } else {
-                    false
-                }
+                check_target(meta, ctx, &tracing_debug, &mut tmp1)
             } else {
                 true
             }
