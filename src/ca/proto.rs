@@ -2,7 +2,6 @@ use futures_util::AsyncRead;
 use futures_util::AsyncWrite;
 use futures_util::Stream;
 use netpod::log;
-use netpod::log::*;
 use netpod::timeunits::*;
 use serde::Serialize;
 use slidebuf::SlideBuf;
@@ -14,6 +13,9 @@ use std::task::Context;
 use std::task::Poll;
 use std::time::Instant;
 
+macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
+macro_rules! warn { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
+macro_rules! debug { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
 macro_rules! trace_in_out { ($($arg:tt)*) => { if false { log::info!($($arg)*); } }; }
 
 autoerr::create_error_v1!(
@@ -845,7 +847,33 @@ impl CaMsg {
         self.ty.len()
     }
 
+    pub fn overwrite_ioid(&mut self, ioid: u32) {
+        match &mut self.ty {
+            CaMsgTy::ReadNotify(v) => {
+                v.ioid = ioid;
+            }
+            _ => {
+                warn!("overwrite_ioid for unsupported type");
+            }
+        }
+    }
+
     fn place_into(&self, buf: &mut [u8]) {
+        match &self.ty {
+            CaMsgTy::ChannelClose(..) => {
+                debug!(
+                    "\n\nNOTE ------------------------------------------\n{}\n\n",
+                    "ChannelClose"
+                );
+            }
+            CaMsgTy::ChannelCloseRes(..) => {
+                debug!(
+                    "\n\nNOTE ------------------------------------------\n{}\n\n",
+                    "ChannelCloseRes"
+                );
+            }
+            _ => {}
+        }
         trace_in_out!("CaMsg place_into {}", self.ty.cmd_title());
         if self.ty.payload_len() <= 0x3ff0 && self.ty.data_count() <= 0xffff {
             let pls = self.ty.payload_len() as u16;
@@ -1226,6 +1254,21 @@ impl CaMsg {
             CreateChanFail(x) => x.cid,
             AccessRightsRes(x) => x.cid,
             ChannelDisconnect(x) => x.cid,
+            ChannelClose(x) => x.cid,
+            ChannelCloseRes(x) => x.cid,
+            _ => return None,
+        };
+        Some(ret)
+    }
+
+    pub fn sid(&self) -> Option<u32> {
+        use CaMsgTy::*;
+        let ret = match &self.ty {
+            CreateChanRes(x) => x.sid,
+            ChannelClose(x) => x.sid,
+            ChannelCloseRes(x) => x.sid,
+            ReadNotify(x) => x.sid,
+            ReadNotifyRes(x) => x.sid,
             _ => return None,
         };
         Some(ret)
