@@ -37,10 +37,11 @@ use timeoutable::Timeoutable;
 macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
 macro_rules! warn { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
 macro_rules! info { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
-macro_rules! trace { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
-macro_rules! trace2 { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
-macro_rules! trace3 { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
-macro_rules! trace4 { ($($arg:tt)*) => { if false { log::info!($($arg)*); } }; }
+macro_rules! debug { ($($arg:tt)*) => { if true { log::debug!($($arg)*); } }; }
+macro_rules! trace { ($($arg:tt)*) => { if true { log::trace!($($arg)*); } }; }
+macro_rules! trace2 { ($($arg:tt)*) => { if true { log::trace!($($arg)*); } }; }
+macro_rules! trace3 { ($($arg:tt)*) => { if true { log::trace!($($arg)*); } }; }
+macro_rules! trace4 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
 macro_rules! trace_pending { ($($arg:tt)*) => { if false { trace!("{}  Pending", format_args!($($arg)*)); } }; }
 
 autoerr::create_error_v1!(
@@ -325,14 +326,15 @@ impl FetchMethod {
                 FetchPollingReq::Idle(fut) => match fut.poll_unpin(cx) {
                     Ready(()) => {
                         info!("{selfname}  Polling Idle Done");
-                        let ioid = pres.fetch_data.ioid.inc();
+                        // let ioid = pres.fetch_data.ioid.inc();
                         let tsnow = Instant::now();
                         let msg = CaMsg::from_ty_ts(
                             CaMsgTy::ReadNotify(proto::ReadNotify {
                                 data_type: pres.fetch_data.ca_dbr_ty.to_u16(),
                                 data_count: pres.fetch_data.shape.to_ca_count().unwrap(),
                                 sid: pres.sid.to_u32(),
-                                ioid: ioid.to_u32(),
+                                // ioid: ioid.to_u32(),
+                                ioid: 0,
                             }),
                             tsnow,
                         );
@@ -356,13 +358,15 @@ impl FetchMethod {
 
                         let items = vec![ChannelHandlerItem {
                             ts_create: tsnow,
-                            inner: ItemInner::ProtoOutIoid(msg, ioid),
+                            inner: ItemInner::ProtoOutIoid(msg, pres.sid.clone()),
                         }];
 
                         let cb = make_cb2(move |st2| {
                             st2.fetch_method = FetchMethod::Polling(FetchPolling {
                                 req: FetchPollingReq::SendReq(ErasedFuture::new(async move {
-                                    tokio::time::sleep(Duration::from_millis(3000)).await;
+                                    // tokio::time::sleep(Duration::from_millis(3000)).await;
+                                    // TODO handle timeout, change state, metrics.
+                                    // warn!("poll timeout");
                                 })),
                             })
                         });
@@ -375,15 +379,19 @@ impl FetchMethod {
                 },
                 FetchPollingReq::SendReq(fut) => match fut.poll_unpin(cx) {
                     Ready(()) => {
-                        info!("{selfname}  Polling SendReq Done");
+                        debug!("{selfname}  Polling SendReq Done");
                         hpp.mark_progress();
-                        let ret = make_cb(move |st2| {
+                        let items = Vec::new();
+                        let cb = make_cb2(move |st2| {
                             st2.fetch_method = FetchMethod::Polling(FetchPolling {
-                                req: FetchPollingReq::WaitRes(ErasedFuture::new(tokio::time::sleep(
-                                    Duration::from_millis(3000),
-                                ))),
+                                req: FetchPollingReq::WaitRes(ErasedFuture::new(async move {
+                                    tokio::time::sleep(Duration::from_millis(3000)).await;
+                                    // TODO handle timeout, change state, metrics.
+                                    warn!("poll timeout");
+                                })),
                             })
                         });
+                        let ret = FetchMethodPollOutput::CallbackOnRunning(cb, items);
                         return Ready(Some(Ok(ret)));
                     }
                     Pending => {
@@ -487,7 +495,9 @@ async fn channel_create(
         tsnow,
     );
     let to = Duration::from_millis(5000);
+    trace!("channel_create  sending CreateChan");
     tx.send(msg).timeout(to).await?.map_err(|_| Error::ProtoTxClosed)?;
+    trace!("channel_create  sending CreateChan done");
     // TODO make this more resilient to other messages
     loop {
         let x = proto_rx.recv().await;
@@ -547,7 +557,7 @@ async fn channel_create(
 #[derive(Debug)]
 pub enum ItemInner {
     ScyllaWrite,
-    ProtoOutIoid(CaMsg, Ioid),
+    ProtoOutIoid(CaMsg, Sid),
 }
 
 #[derive(Debug)]
@@ -632,6 +642,19 @@ impl ChannelHandler {
 
     pub fn cid(&self) -> Cid {
         self.cid.to_cid()
+    }
+
+    pub fn sid(&self) -> Option<Sid> {
+        match &self.state {
+            State::Init(_) => None,
+            State::Creating(_) => None,
+            State::Running(st) => Some(st.sid.clone()),
+            State::Closing1(_) => None,
+            State::Closing2(_) => None,
+            State::Done1 => None,
+            State::Done => None,
+            State::Dummy => None,
+        }
     }
 
     pub fn cmd_tx(&self) -> &asynchan::Sender<Cmd> {
@@ -839,10 +862,11 @@ impl<'a> PollProtoRx<'a> {
         cx: &mut Context<'_>,
         counters: &mut Counters,
     ) -> Result<Option<CaMsg>, Error> {
+        let selfname = "proto_rx_handle_dispatch";
         match &item.ty {
             proto::CaMsgTy::EventAddRes(item2) => {
                 if item2.payload_len == 0 {
-                    info!("\n\nempty EventAddRes\n\n");
+                    debug!("{selfname}  empty  EventAddRes");
                 }
                 match &mut st2.fetch_method {
                     FetchMethod::CreateMonitor(st3) => {
@@ -876,6 +900,21 @@ impl<'a> PollProtoRx<'a> {
                 } else {
                     error!("TODO not removing but got {}", "ChannelCloseRes");
                     // TODO abort?
+                }
+                Ok(None)
+            }
+            proto::CaMsgTy::ReadNotifyRes(msg) => {
+                trace3!("TODO  handle {item:?}");
+                match &mut st2.fetch_method {
+                    FetchMethod::Polling(st3) => {
+                        debug!("FetchMethod::Polling  recvd  go back to idle");
+                        warn!("TODO use the correct idle time");
+                        st3.req =
+                            FetchPollingReq::Idle(ErasedFuture::new(tokio::time::sleep(Duration::from_millis(3000))))
+                    }
+                    _ => {
+                        error!("unexpected ReadNotifyRes");
+                    }
                 }
                 Ok(None)
             }

@@ -26,10 +26,10 @@ use taskrun::tokio;
 use tokio::net::TcpStream;
 
 macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
-macro_rules! trace { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
-macro_rules! trace2 { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
-macro_rules! trace3 { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
-macro_rules! trace4 { ($($arg:tt)*) => { if false { log::info!($($arg)*); } }; }
+macro_rules! trace { ($($arg:tt)*) => { if true { log::trace!($($arg)*); } }; }
+macro_rules! trace2 { ($($arg:tt)*) => { if true { log::trace!($($arg)*); } }; }
+macro_rules! trace3 { ($($arg:tt)*) => { if true { log::trace!($($arg)*); } }; }
+macro_rules! trace4 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
 macro_rules! trace_pending { ($($arg:tt)*) => { if false { trace!("{}  Pending", format_args!($($arg)*)); } }; }
 
 autoerr::create_error_v1!(
@@ -176,30 +176,39 @@ impl Stream for Connected {
         use Poll::*;
         trace4!("Connected:poll_next");
         loop {
+            trace4!("Connected:poll_next  loop");
             let tsnow = Instant::now();
             let mut self2 = self.as_mut().get_mut();
             let mut hpp = HaveProgressPending::new();
             match &mut self2.state {
                 State::Done => {}
                 _ => {
+                    trace4!("PROTOWRAP  self2.inp_buf.len() {n}", n = self2.inp_buf.len());
                     if self2.inp_buf.len() < self2.inp_buf.capacity() {
                         match Pin::new(&mut self2).protowrap.poll_next_unpin(cx) {
                             Ready(Some(Ok(x))) => {
                                 hpp.mark_progress();
                                 match x {
                                     CaItem::Msg(x) => {
+                                        trace3!("PROTOWRAP  msg {x:?}");
                                         self2.inp_buf.push_back(x);
                                     }
-                                    CaItem::Empty => {}
+                                    CaItem::Empty => {
+                                        trace3!("PROTOWRAP  msg  Empty");
+                                    }
                                 }
                             }
                             Ready(Some(Err(e))) => {
                                 hpp.mark_progress();
+                                trace3!("PROTOWRAP  error  {e}");
                                 self2.goto_state_done();
                                 break Ready(Some(Err(e.into())));
                             }
-                            Ready(None) => {}
+                            Ready(None) => {
+                                trace3!("PROTOWRAP  Done");
+                            }
                             Pending => {
+                                trace4!("PROTOWRAP  Pending");
                                 hpp.mark_pending();
                             }
                         }

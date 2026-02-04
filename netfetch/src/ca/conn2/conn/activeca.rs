@@ -139,7 +139,7 @@ pub struct ActiveCa {
 impl ActiveCa {
     pub fn new(
         proto_rx: asynchan::Receiver<CaMsg>,
-        proto_tx: Sender<CaMsg>,
+        proto_tx: asynchan::Sender<CaMsg>,
         // cmd_rx: Receiver<CaCommand>,
         tsnow: Instant,
         addr: SocketAddrV4,
