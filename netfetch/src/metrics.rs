@@ -11,7 +11,9 @@ use crate::ca::connset::ChannelStatusesResponse;
 use crate::ca::connset::ConnSetCmd;
 use crate::ca::statemap::ChannelState;
 use crate::conf::ChannelConfig;
+use crate::daemon_common::ChannelName;
 use crate::daemon_common::DaemonEvent;
+use crate::metrics::types::MetricsPrometheusShort;
 use async_channel::Receiver;
 use async_channel::Sender;
 use async_channel::WeakSender;
@@ -64,6 +66,25 @@ impl ToPublicErrorMsg for err::Error {
         PublicErrorMsg(msg)
     }
 }
+
+pub trait CaIngestCtrls: Send + Sync {
+    fn timer_tick(&self, v: u32) -> Box<dyn Future<Output = u32>>;
+    fn get_metrics(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = Result<MetricsPrometheusShort, Box<dyn std::error::Error>>> + Send>>;
+    fn channel_add(
+        &self,
+        conf: ChannelConfig,
+    ) -> Pin<Box<dyn Future<Output = Result<(), Box<dyn std::error::Error>>> + Send>>;
+    fn channel_remove(
+        &self,
+        name: ChannelName,
+    ) -> Pin<Box<dyn Future<Output = Result<(), Box<dyn std::error::Error>>> + Send>>;
+    fn config_reload(&self) -> Pin<Box<dyn Future<Output = Result<(), Box<dyn std::error::Error>>> + Send>>;
+    fn shutdown(&self) -> Pin<Box<dyn Future<Output = Result<(), Box<dyn std::error::Error>>> + Send>>;
+}
+
+pub trait PostIngestCtrls: Send + Sync {}
 
 pub struct Res123 {
     content: Option<Bytes>,
@@ -152,46 +173,40 @@ async fn always_error(params: HashMap<String, String>) -> Result<axum::Json<bool
         .into_response())
 }
 
-async fn config_reload(dcom: Arc<DaemonComm>) -> Result<axum::Json<serde_json::Value>, Response> {
+async fn config_reload(ca_ingest_ctrls: Arc<dyn CaIngestCtrls>) -> Result<axum::Json<serde_json::Value>, Response> {
     info!("api config reload request");
-    let (tx, rx) = async_channel::bounded(10);
-    let item = DaemonEvent::ConfigReload(tx);
-    dcom.tx.send(item).await;
-    match rx.recv().await {
-        Ok(x) => {
-            let res = json!({
-                "status": "ok",
-            });
-            let ret = serde_json::to_value(&res).unwrap();
-            Ok(axum::Json(ret))
-        }
-        Err(e) => {
-            let res = json!({
-                "status": "error",
-                "error": e.to_string(),
-            });
-            let ret = serde_json::to_value(&res).unwrap();
-            Ok(axum::Json(ret))
-        }
-    }
-}
-
-async fn metrics2(dcom: Arc<DaemonComm>) -> Result<String, Response> {
-    let (tx, rx) = async_channel::bounded(1);
-    let item = DaemonEvent::GetMetrics(tx);
-    dcom.tx.send(item).await;
-    match rx.recv().await {
-        Ok(x) => Ok(x.prometheus()),
-        Err(e) => Err(Error::with_public_msg_no_trace(e.to_string())
+    ca_ingest_ctrls.config_reload().await.map_err(|e| {
+        Error::with_public_msg_no_trace(format!("config reload error {e}"))
             .to_public_err_msg()
-            .into_response()),
-    }
+            .into_response()
+    })?;
+    let res = json!({
+        "status": "ok",
+    });
+    let ret = serde_json::to_value(&res).unwrap();
+    Ok(axum::Json(ret))
 }
 
-async fn find_channel(
-    params: HashMap<String, String>,
-    dcom: Arc<DaemonComm>,
-) -> axum::Json<Vec<(String, Vec<String>)>> {
+fn _test_is_into() {
+    let x: Response = todo!();
+    let _: &dyn IntoResponse = &x;
+    let x: String = todo!();
+    let _: &dyn IntoResponse = &x;
+    let x: Result<String, Response> = todo!();
+    let _: &dyn IntoResponse = &x;
+}
+
+async fn metrics2(ca_ingest_ctrls: Arc<dyn CaIngestCtrls>) -> Result<String, Response> {
+    let x = ca_ingest_ctrls.get_metrics().await.map_err(|_| {
+        Error::with_public_msg_no_trace("metrics2 fail")
+            .to_public_err_msg()
+            .into_response()
+    })?;
+    let ret = x.prometheus();
+    Ok(ret)
+}
+
+async fn find_channel(params: HashMap<String, String>) -> axum::Json<Vec<(String, Vec<String>)>> {
     let pattern = params.get("pattern").map_or(String::new(), |x| x.clone()).to_string();
     // TODO ask Daemon for that information.
     error!("TODO find_channel");
@@ -199,31 +214,36 @@ async fn find_channel(
     axum::Json(res)
 }
 
-async fn channel_add_inner(params: HashMap<String, String>, dcom: Arc<DaemonComm>) -> Result<(), Error> {
+async fn channel_add_inner(
+    params: HashMap<String, String>,
+    ca_ingest_ctrls: Arc<dyn CaIngestCtrls>,
+) -> Result<(), Error> {
     if let Some(name) = params.get("name") {
-        // let ch = crate::daemon_common::Channel::new(name.into());
-        let ch_cfg = ChannelConfig::st_monitor(name, "api");
-        let (tx, rx) = async_channel::bounded(1);
-        let ev = DaemonEvent::ChannelAdd(ch_cfg, tx);
-        dcom.tx.send(ev).await?;
-        match rx.recv().await {
-            Ok(Ok(())) => Ok(()),
-            Ok(Err(e)) => Err(Error::with_msg_no_trace(format!("{e}"))),
-            Err(e) => Err(Error::with_msg_no_trace(format!("{e}"))),
-        }
+        let conf = ChannelConfig::st_monitor(name, "api");
+        let _ = ca_ingest_ctrls
+            .channel_add(conf)
+            .await
+            .map_err(|_| Error::with_public_msg_no_trace("channel_add fail"))?;
+        Ok(())
     } else {
         Err(Error::with_msg_no_trace(format!("wrong parameters given")))
     }
 }
 
-async fn channel_add(params: HashMap<String, String>, dcom: Arc<DaemonComm>) -> Result<axum::Json<bool>, Response> {
-    match channel_add_inner(params, dcom).await {
+async fn channel_add(
+    params: HashMap<String, String>,
+    ca_ingest_ctrls: Arc<dyn CaIngestCtrls>,
+) -> Result<axum::Json<bool>, Response> {
+    match channel_add_inner(params, ca_ingest_ctrls).await {
         Ok(_) => Ok(axum::Json::from(true)),
         Err(e) => Err(e.to_public_err_msg().into_response()),
     }
 }
 
-async fn channel_remove(params: HashMap<String, String>, dcom: Arc<DaemonComm>) -> axum::Json<serde_json::Value> {
+async fn channel_remove(
+    params: HashMap<String, String>,
+    ca_ingest_ctrls: Arc<dyn CaIngestCtrls>,
+) -> axum::Json<serde_json::Value> {
     use axum::Json;
     use serde_json::Value;
     let addr = if let Some(x) = params.get("addr") {
@@ -249,74 +269,6 @@ async fn channel_remove(params: HashMap<String, String>, dcom: Arc<DaemonComm>) 
     Json(Value::Bool(false))
 }
 
-async fn channel_inspect_inner(
-    params: HashMap<String, String>,
-    dcom: Arc<DaemonComm>,
-) -> Result<axum::Json<serde_json::Value>, Error> {
-    if let Some(name) = params.get("name") {
-        let (tx, rx) = async_channel::bounded(1);
-        let ev = DaemonEvent::ChannelCommand(crate::ca::connset::ChannelCommand {
-            channel: name.into(),
-            conn_command: crate::ca::conn::ConnCommand::channel_inspect(name.into(), tx),
-        });
-        dcom.tx.send(ev).await?;
-        match rx.recv().await {
-            Ok(js) => Ok(axum::Json(js)),
-            Err(e) => Err(Error::from_string("recv error while waiting for answer")),
-        }
-    } else {
-        Err(Error::with_msg_no_trace(format!("wrong parameters given")))
-    }
-}
-
-async fn channel_inspect(params: HashMap<String, String>, dcom: Arc<DaemonComm>) -> impl IntoResponse {
-    match channel_inspect_inner(params, dcom).await {
-        Ok(ret) => ret.into_response(),
-        Err(e) => (
-            StatusCode::OK,
-            [(http::header::CONTENT_TYPE, APP_JSON)],
-            axum::Json(json!({"status":"error","error":e.to_string()})),
-        )
-            .into_response(),
-    }
-}
-
-async fn ca_conn_set_setpoint_channel_configs_inner(
-    params: HashMap<String, String>,
-    dcom: Arc<DaemonComm>,
-) -> Result<axum::Json<serde_json::Value>, Error> {
-    let (tx, rx) = async_channel::bounded(1);
-    let ev = DaemonEvent::CaConnSetCmd(crate::ca::connset::ConnSetCmd::ChannelConfigSetpoint(
-        crate::ca::connset::ChannelConfigSetpointRequest {
-            name: String::new(),
-            tx,
-        },
-    ));
-    dcom.tx.send(ev).await?;
-    match rx.recv().await {
-        Ok(js) => match serde_json::from_str(&js) {
-            Ok(js) => Ok(axum::Json(js)),
-            Err(e) => Err(Error::from_string(format!("error parsing json from CaConnSet {e}"))),
-        },
-        Err(e) => Err(Error::from_string(format!("recv error while waiting for answer {e}"))),
-    }
-}
-
-async fn ca_conn_set_setpoint_channel_configs(
-    params: HashMap<String, String>,
-    dcom: Arc<DaemonComm>,
-) -> impl IntoResponse {
-    match ca_conn_set_setpoint_channel_configs_inner(params, dcom).await {
-        Ok(ret) => ret.into_response(),
-        Err(e) => (
-            StatusCode::OK,
-            [(http::header::CONTENT_TYPE, APP_JSON)],
-            axum::Json(json!({"status":"error","error":e.to_string()})),
-        )
-            .into_response(),
-    }
-}
-
 // ChannelStatusesResponse
 // BTreeMap<String, ChannelState>
 async fn private_channel_states(
@@ -338,7 +290,7 @@ async fn private_channel_states(
     axum::Json(res.channels_ca_conn_set)
 }
 
-async fn extra_inserts_conf_set(v: ExtraInsertsConf, dcom: Arc<DaemonComm>) -> axum::Json<bool> {
+async fn extra_inserts_conf_set(v: ExtraInsertsConf) -> axum::Json<bool> {
     // TODO ingest_commons is the authorative value. Should have common function outside of this metrics which
     // can update everything to a given value.
     error!("TODO extra_inserts_conf_set");
@@ -439,7 +391,6 @@ fn make_routes_ingest(
 
 fn make_routes_daqingest_private(
     rres: Arc<RoutesResources>,
-    dcom: Arc<DaemonComm>,
     connset_cmd_tx: Sender<CaConnSetEvent>,
     stats_set: StatsSet,
 ) -> axum::Router {
@@ -449,7 +400,7 @@ fn make_routes_daqingest_private(
     Router::new()
         .nest(
             "/channel",
-            make_routes_private_channel(rres.clone(), dcom.clone(), connset_cmd_tx.clone(), stats_set.clone()),
+            make_routes_private_channel(rres.clone(), connset_cmd_tx.clone(), stats_set.clone()),
         )
         .route(
             "/channel/states",
@@ -617,6 +568,8 @@ fn make_routes_daqingest_ui_node(rres: Arc<RoutesResources>) -> axum::Router {
 }
 
 fn make_routes_daqingest(
+    ca_ingest_ctrls: Arc<dyn CaIngestCtrls>,
+    post_ingest_ctrls: Arc<dyn PostIngestCtrls>,
     rres: Arc<RoutesResources>,
     dcom: Arc<DaemonComm>,
     connset_cmd_tx: Sender<CaConnSetEvent>,
@@ -632,22 +585,8 @@ fn make_routes_daqingest(
             Router::new().fallback(|| async { StatusCode::NOT_FOUND }).route(
                 "/",
                 get({
-                    let dcom = dcom.clone();
-                    let stats_set = stats_set.clone();
-                    || async move {
-                        let prom = metrics2(dcom).await.unwrap_or(String::new());
-                        prom
-                    }
-                }),
-            ),
-        )
-        .nest(
-            "/metrics2",
-            Router::new().fallback(|| async { StatusCode::NOT_FOUND }).route(
-                "/",
-                get({
-                    let dcom = dcom.clone();
-                    || metrics2(dcom)
+                    let ca_ingest_ctrls = ca_ingest_ctrls.clone();
+                    || metrics2(ca_ingest_ctrls)
                 }),
             ),
         )
@@ -656,14 +595,19 @@ fn make_routes_daqingest(
             Router::new().route(
                 "/reload",
                 get({
-                    let dcom = dcom.clone();
-                    || config_reload(dcom)
+                    let ca_ingest_ctrls = ca_ingest_ctrls.clone();
+                    || config_reload(ca_ingest_ctrls)
                 }),
             ),
         )
         .nest(
             "/channel",
-            make_routes_channel(rres.clone(), dcom.clone(), connset_cmd_tx.clone(), stats_set.clone()),
+            make_routes_channel(
+                rres.clone(),
+                ca_ingest_ctrls.clone(),
+                connset_cmd_tx.clone(),
+                stats_set.clone(),
+            ),
         )
         .nest(
             "/ingest",
@@ -671,7 +615,7 @@ fn make_routes_daqingest(
         )
         .nest(
             "/private",
-            make_routes_daqingest_private(rres.clone(), dcom, connset_cmd_tx.clone(), stats_set.clone()),
+            make_routes_daqingest_private(rres.clone(), connset_cmd_tx.clone(), stats_set.clone()),
         )
         .route(
             "/metricbeat",
@@ -684,6 +628,8 @@ fn make_routes_daqingest(
 }
 
 fn make_routes(
+    ca_ingest_ctrls: Arc<dyn CaIngestCtrls>,
+    post_ingest_ctrls: Arc<dyn PostIngestCtrls>,
     rres: Arc<RoutesResources>,
     dcom: Arc<DaemonComm>,
     connset_cmd_tx: Sender<CaConnSetEvent>,
@@ -700,7 +646,14 @@ fn make_routes(
         })
         .nest(
             "/daqingest",
-            make_routes_daqingest(rres, dcom.clone(), connset_cmd_tx, stats_set.clone()),
+            make_routes_daqingest(
+                ca_ingest_ctrls,
+                post_ingest_ctrls,
+                rres,
+                dcom.clone(),
+                connset_cmd_tx,
+                stats_set.clone(),
+            ),
         )
         .route(
             "/daqingest/always-error/",
@@ -708,21 +661,11 @@ fn make_routes(
         )
         .route(
             "/daqingest/find/channel",
-            get({
-                let dcom = dcom.clone();
-                |Query(params): Query<HashMap<String, String>>| find_channel(params, dcom)
-            }),
+            get({ |Query(params): Query<HashMap<String, String>>| find_channel(params) }),
         )
         .route(
             "/daqingest/store_workers_rate",
-            get({
-                let dcom = dcom.clone();
-                || async move { axum::Json(123) }
-            })
-            .put({
-                let dcom = dcom.clone();
-                |v: extract::Json<u64>| async move {}
-            }),
+            get({ || async move { axum::Json(123) } }).put({ |v: extract::Json<u64>| async move {} }),
         )
         .route(
             "/daqingest/insert_frac",
@@ -739,13 +682,9 @@ fn make_routes(
         )
         .route(
             "/daqingest/extra_inserts_conf",
-            get({
+            get({ || async move { axum::Json(serde_json::to_value(&"TODO").unwrap()) } }).put({
                 let dcom = dcom.clone();
-                || async move { axum::Json(serde_json::to_value(&"TODO").unwrap()) }
-            })
-            .put({
-                let dcom = dcom.clone();
-                |v: extract::Json<ExtraInsertsConf>| extra_inserts_conf_set(v.0, dcom)
+                |v: extract::Json<ExtraInsertsConf>| extra_inserts_conf_set(v.0)
             }),
         )
         .route(
@@ -759,7 +698,7 @@ fn make_routes(
 
 fn make_routes_channel(
     rres: Arc<RoutesResources>,
-    dcom: Arc<DaemonComm>,
+    ca_ingest_ctrls: Arc<dyn CaIngestCtrls>,
     connset_cmd_tx: Sender<CaConnSetEvent>,
     stats_set: StatsSet,
 ) -> axum::Router {
@@ -786,52 +725,36 @@ fn make_routes_channel(
         .route(
             "/add",
             get({
-                let dcom = dcom.clone();
-                |Query(params): Query<HashMap<String, String>>| channel_add(params, dcom)
+                let ca_ingest_ctrls = ca_ingest_ctrls.clone();
+                |Query(params): Query<HashMap<String, String>>| channel_add(params, ca_ingest_ctrls)
             }),
         )
         .route(
             "/remove",
             get({
-                let dcom = dcom.clone();
-                |Query(params): Query<HashMap<String, String>>| channel_remove(params, dcom)
+                let ca_ingest_ctrls = ca_ingest_ctrls.clone();
+                |Query(params): Query<HashMap<String, String>>| channel_remove(params, ca_ingest_ctrls)
             }),
         )
 }
 
 fn make_routes_private_channel(
     rres: Arc<RoutesResources>,
-    dcom: Arc<DaemonComm>,
     connset_cmd_tx: Sender<CaConnSetEvent>,
     stats_set: StatsSet,
 ) -> axum::Router {
     use axum::routing::{get, post, put};
     use axum::{Router, extract};
     use http::StatusCode;
-    Router::new()
-        .route(
-            "/delete",
-            post({
-                let rres = rres.clone();
-                move |(headers, params, body): (HeaderMap, Query<HashMap<String, String>>, axum::body::Body)| {
-                    delete::delete((headers, params, body), rres)
-                }
-            }),
-        )
-        .route(
-            "/inspect",
-            get({
-                let dcom = dcom.clone();
-                |Query(params): Query<HashMap<String, String>>| channel_inspect(params, dcom)
-            }),
-        )
-        .route(
-            "/CaConnSet-channel-configs",
-            get({
-                let dcom = dcom.clone();
-                |Query(params): Query<HashMap<String, String>>| ca_conn_set_setpoint_channel_configs(params, dcom)
-            }),
-        )
+    Router::new().route(
+        "/delete",
+        post({
+            let rres = rres.clone();
+            move |(headers, params, body): (HeaderMap, Query<HashMap<String, String>>, axum::body::Body)| {
+                delete::delete((headers, params, body), rres)
+            }
+        }),
+    )
 }
 
 pub async fn metrics_service(
@@ -841,12 +764,21 @@ pub async fn metrics_service(
     stats_set: StatsSet,
     shutdown_signal: Receiver<u32>,
     rres: Arc<RoutesResources>,
+    ca_ingest_ctrls: Arc<dyn CaIngestCtrls>,
+    post_ingest_ctrls: Arc<dyn PostIngestCtrls>,
 ) -> Result<(), Error> {
     info!("metrics service start  {}", bind_to);
     let addr: SocketAddr = bind_to.parse().map_err(Error::from_string)?;
-    let router = make_routes(rres, dcom, connset_cmd_tx, stats_set)
-        .layer(tower_http::compression::CompressionLayer::new().gzip(true))
-        .into_make_service();
+    let router = make_routes(
+        ca_ingest_ctrls,
+        post_ingest_ctrls,
+        rres,
+        dcom,
+        connset_cmd_tx,
+        stats_set,
+    )
+    .layer(tower_http::compression::CompressionLayer::new().gzip(true))
+    .into_make_service();
     let listener = TcpListener::bind(addr).await?;
     // into_make_service_with_connect_info
     axum::serve(listener, router)

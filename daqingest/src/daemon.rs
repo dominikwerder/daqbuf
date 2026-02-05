@@ -24,6 +24,7 @@ use scywr::insertqueues::InsertQueuesRx;
 use scywr::insertqueues::InsertQueuesTx;
 use scywr::insertworker::InsertWorkerOpts;
 use stats::rand_xoshiro::rand_core::RngCore;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::RwLock;
 use std::sync::atomic;
@@ -42,6 +43,110 @@ macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
 macro_rules! warn { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
 macro_rules! info { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
 macro_rules! debug { ($($arg:tt)*) => { if true { log::debug!($($arg)*); } }; }
+
+struct CaIngestCtrls {
+    daemon_tx: Sender<DaemonEvent>,
+}
+
+impl CaIngestCtrls {
+    fn new(daemon_tx: Sender<DaemonEvent>) -> Self {
+        Self { daemon_tx }
+    }
+}
+
+impl netfetch::metrics::CaIngestCtrls for CaIngestCtrls {
+    fn timer_tick(&self, v: u32) -> Box<dyn Future<Output = u32>> {
+        let dtx = self.daemon_tx.clone();
+        Box::new(async move {
+            let (tx, rx) = async_channel::bounded(1);
+            if dtx.send(DaemonEvent::TimerTick(v, tx)).await.is_err() {
+                return 0;
+            }
+            rx.recv().await.unwrap_or(0)
+        })
+    }
+
+    fn get_metrics(
+        &self,
+    ) -> Pin<
+        Box<
+            dyn Future<Output = Result<netfetch::metrics::types::MetricsPrometheusShort, Box<dyn std::error::Error>>>
+                + Send,
+        >,
+    > {
+        let dtx = self.daemon_tx.clone();
+        let fut = async move {
+            let (tx, rx) = async_channel::bounded(1);
+            let x = DaemonEvent::GetMetrics(tx);
+            dtx.send(x).await?;
+            let x = rx.recv().await?;
+            Ok(x)
+        };
+        Box::pin(fut)
+    }
+
+    fn channel_add(
+        &self,
+        conf: ChannelConfig,
+    ) -> Pin<Box<dyn Future<Output = Result<(), Box<dyn std::error::Error>>> + Send>> {
+        let dtx = self.daemon_tx.clone();
+        let fut = async move {
+            let (tx, rx) = async_channel::bounded(1);
+            let x = DaemonEvent::ChannelAdd(conf, tx);
+            dtx.send(x).await?;
+            let x = rx.recv().await?;
+            let x = x?;
+            Ok(x)
+        };
+        Box::pin(fut)
+    }
+
+    fn channel_remove(
+        &self,
+        name: ChannelName,
+    ) -> Pin<Box<dyn Future<Output = Result<(), Box<dyn std::error::Error>>> + Send>> {
+        let dtx = self.daemon_tx.clone();
+        let fut = async move {
+            let x = DaemonEvent::ChannelRemove(name);
+            dtx.send(x).await?;
+            Ok(())
+        };
+        Box::pin(fut)
+    }
+
+    fn config_reload(&self) -> Pin<Box<dyn Future<Output = Result<(), Box<dyn std::error::Error>>> + Send>> {
+        let dtx = self.daemon_tx.clone();
+        let fut = async move {
+            let (tx, rx) = async_channel::bounded(1);
+            let x = DaemonEvent::ConfigReload(tx);
+            dtx.send(x).await?;
+            let x = rx.recv().await?;
+            let x = x.map_err(|_| Error::from_string("error")).map_err(Box::new)?;
+            Ok(x)
+        };
+        Box::pin(fut)
+    }
+
+    fn shutdown(&self) -> Pin<Box<dyn Future<Output = Result<(), Box<dyn std::error::Error>>> + Send>> {
+        let dtx = self.daemon_tx.clone();
+        let fut = async move {
+            let x = DaemonEvent::Shutdown;
+            dtx.send(x).await?;
+            Ok(())
+        };
+        Box::pin(fut)
+    }
+}
+
+struct PostIngestCtrls {}
+
+impl PostIngestCtrls {
+    fn new() -> Self {
+        Self {}
+    }
+}
+
+impl netfetch::metrics::PostIngestCtrls for PostIngestCtrls {}
 
 pub struct DaemonOpts {
     pgconf: Database,
@@ -735,7 +840,6 @@ impl Daemon {
             }
             ChannelAdd(ch, tx) => self.handle_channel_add(ch, tx).await,
             ChannelRemove(ch) => self.handle_channel_remove(ch).await,
-            ChannelCommand(cmd) => self.handle_channel_command(cmd).await,
             CaConnSetItem(item) => self.handle_ca_conn_set_item(item).await,
             CaConnSetCmd(item) => {
                 info!("handle_event  recv CaConnSetCmd  {:?}", item);
@@ -834,6 +938,8 @@ impl Daemon {
                 stats_set,
                 self.metrics_shutdown_rx.clone(),
                 rres,
+                Arc::new(CaIngestCtrls::new(self.tx.clone())),
+                Arc::new(PostIngestCtrls::new()),
             );
             tokio::task::spawn(fut)
         };

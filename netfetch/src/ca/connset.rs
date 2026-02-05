@@ -268,10 +268,6 @@ pub enum CaConnSetEvent {
     ConnSetCmd(ConnSetCmd),
 }
 
-impl CaConnSetEvent {
-    // pub fn new_cmd_channel_statuses() -> (Self, Receiver) {}
-}
-
 #[derive(Debug)]
 pub enum CaConnSetItem {
     Error(Error),
@@ -597,7 +593,10 @@ impl CaConnSet {
                 ConnSetCmd::ChannelRemove(x) => self.handle_remove_channel(x),
                 ConnSetCmd::Shutdown => self.handle_shutdown(),
                 ConnSetCmd::ChannelStatuses(x) => self.handle_channel_statuses_req(x),
-                ConnSetCmd::ChannelStatusesPrivate(x) => self.handle_channel_statuses_private_req(x),
+                ConnSetCmd::ChannelStatusesPrivate(x) => {
+                    // unused
+                    Ok(())
+                }
                 ConnSetCmd::ChannelConfigSetpoint(x) => self.handle_channel_config_setpoint(x),
                 ConnSetCmd::ChannelCommand(x) => self.handle_channel_command(x),
             },
@@ -1108,18 +1107,6 @@ impl CaConnSet {
         if req.tx.try_send(item).is_err() {
             self.mett.chan_send_err().inc();
         }
-        Ok(())
-    }
-
-    fn handle_channel_statuses_private_req(&mut self, req: ChannelStatusesPrivateRequest) -> Result<(), Error> {
-        if self.shutdown_stopping {
-            return Ok(());
-        }
-        for (addr, ca_conn) in self.ca_conn_ress.iter() {
-            // let item = ConnCommand::status_private();
-            // ca_conn.cmd_queue.push_back(item);
-        }
-        let reg1 = regex::Regex::new(&req.name)?;
         Ok(())
     }
 
