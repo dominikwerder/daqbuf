@@ -1,4 +1,5 @@
 use super::RoutesResources;
+use crate::metrics::PostIngestCtrls;
 use axum::Json;
 use axum::extract::FromRequest;
 use axum::extract::Query;
@@ -59,14 +60,15 @@ autoerr::create_error_v1!(
         ScyllaNextRow(#[from] scylla::errors::NextRowError),
         ScyllaTypeCheck(#[from] scylla::deserialize::TypeCheckError),
         InvalidTimestamp,
+        Boxed(#[from] Box<dyn std::error::Error>),
     },
 );
 
 pub async fn delete(
     (headers, Query(params), body): (HeaderMap, Query<HashMap<String, String>>, axum::body::Body),
-    rres: Arc<RoutesResources>,
+    post_ingest_ctrls: Arc<dyn PostIngestCtrls>,
 ) -> Json<serde_json::Value> {
-    match delete_try(headers, params, body, rres).await {
+    match delete_try(headers, params, body, post_ingest_ctrls).await {
         Ok(k) => k,
         Err(e) => Json(serde_json::json!({
             "error": e.to_string(),
@@ -92,8 +94,9 @@ async fn delete_try(
     headers: HeaderMap,
     params: HashMap<String, String>,
     body: axum::body::Body,
-    rres: Arc<RoutesResources>,
+    post_ingest_ctrls: Arc<dyn PostIngestCtrls>,
 ) -> Result<Json<serde_json::Value>, Error> {
+    let rres = post_ingest_ctrls.resources().await?;
     let rt: RetentionTime = params
         .get("retentionTime")
         .ok_or(Error::MissingRetentionTime)

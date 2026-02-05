@@ -6,11 +6,11 @@ use crate::ca::conn2::asynchan;
 
 macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
 macro_rules! warn { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
-macro_rules! trace { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
-macro_rules! trace2 { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
-macro_rules! trace3 { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
-macro_rules! trace4 { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
-macro_rules! trace_pending { ($($arg:tt)*) => { if true { log::info!("{}  Pending", format_args!($($arg)*)); } }; }
+macro_rules! trace { ($($arg:tt)*) => { if true { log::trace!($($arg)*); } }; }
+macro_rules! trace2 { ($($arg:tt)*) => { if true { log::trace!($($arg)*); } }; }
+macro_rules! trace3 { ($($arg:tt)*) => { if true { log::trace!($($arg)*); } }; }
+macro_rules! trace4 { ($($arg:tt)*) => { if true { log::trace!($($arg)*); } }; }
+macro_rules! trace_pending { ($($arg:tt)*) => { if true { log::trace!("{}  Pending", format_args!($($arg)*)); } }; }
 
 autoerr::create_error_v1!(
     name(Error, "ConnSetCmder"),
@@ -78,5 +78,16 @@ impl ConnSetCmder {
         };
         let _ = tx.send(cmd).await?;
         Ok(())
+    }
+
+    pub async fn connection_list_get_v1(&self) -> Result<crate::metrics::ConnectionListV1, Error> {
+        let mut dtx = self.tx.clone();
+        let (tx, mut rx) = asynchan::bounded(2, "connection_list_get_v1");
+        let cmd = ConnSetCmd {
+            kind: ConnSetCmdKind::ConnectionListGetV1(tx),
+        };
+        let _ = dtx.send(cmd).await?;
+        let ret = rx.recv().await?;
+        Ok(ret)
     }
 }

@@ -3,6 +3,7 @@ use crate::ca::connset::ChannelStatusesRequest;
 use crate::ca::connset::ConnSetCmd;
 use crate::conf::ChannelConfig;
 use crate::conf::ChannelConfigForStatesApi;
+use crate::metrics::CaIngestCtrls;
 use async_channel::Sender;
 use chrono::DateTime;
 use chrono::Utc;
@@ -10,6 +11,7 @@ use serde::Serialize;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::SystemTime;
 
 autoerr::create_error_v1!(
@@ -18,6 +20,7 @@ autoerr::create_error_v1!(
         Internal,
         ChannelSend,
         ChannelRecv,
+        Boxed(#[from] Box<dyn std::error::Error>),
     },
 );
 
@@ -236,9 +239,9 @@ pub async fn error_handler_test() -> Result<axum::Json<ChannelStates>, axum::Jso
 // BTreeMap<String, ChannelState>
 pub async fn channel_states(
     params: HashMap<String, String>,
-    tx: Sender<CaConnSetEvent>,
+    ca_ingest_ctrls: Arc<dyn CaIngestCtrls>,
 ) -> Result<axum::Json<ChannelStates>, axum::Json<String>> {
-    match channel_states_try(params, tx).await {
+    match channel_states_try(params, ca_ingest_ctrls).await {
         Ok(x) => Ok(x),
         Err(e) => Err(axum::Json(e.to_string())),
     }
@@ -246,15 +249,11 @@ pub async fn channel_states(
 
 async fn channel_states_try(
     params: HashMap<String, String>,
-    tx: Sender<CaConnSetEvent>,
+    ca_ingest_ctrls: Arc<dyn CaIngestCtrls>,
 ) -> Result<axum::Json<ChannelStates>, Error> {
     let name = params.get("name").map_or(String::new(), |x| x.clone()).to_string();
     let limit = params.get("limit").and_then(|x| x.parse().ok()).unwrap_or(1000 * 1000);
-    let (tx2, rx2) = async_channel::bounded(1);
-    let req = ChannelStatusesRequest { name, limit, tx: tx2 };
-    let item = CaConnSetEvent::ConnSetCmd(ConnSetCmd::ChannelStatuses(req));
-    tx.send(item).await.map_err(|e| Error::ChannelSend)?;
-    let res = rx2.recv().await.map_err(|e| Error::ChannelRecv)?;
+    let res = ca_ingest_ctrls.channel_states(name, limit).await?;
     let mut states = ChannelStates {
         running_since: Utc::now(),
         channels: BTreeMap::new(),

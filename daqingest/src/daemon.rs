@@ -8,6 +8,7 @@ use err::Error;
 use log;
 use netfetch::ca::connset::CaConnSet;
 use netfetch::ca::connset::CaConnSetCtrl;
+use netfetch::ca::connset::CaConnSetEvent;
 use netfetch::ca::connset::CaConnSetItem;
 use netfetch::conf::CaIngestOpts;
 use netfetch::conf::ChannelConfig;
@@ -16,7 +17,6 @@ use netfetch::conf::ScyllaInsertsetConf;
 use netfetch::daemon_common::ChannelName;
 use netfetch::daemon_common::DaemonEvent;
 use netfetch::metrics::RoutesResources;
-use netfetch::metrics::StatsSet;
 use netfetch::throttletrace::ThrottleTrace;
 use netpod::Database;
 use netpod::ttl::RetentionTime;
@@ -46,11 +46,12 @@ macro_rules! debug { ($($arg:tt)*) => { if true { log::debug!($($arg)*); } }; }
 
 struct CaIngestCtrls {
     daemon_tx: Sender<DaemonEvent>,
+    connset_tx: Sender<CaConnSetEvent>,
 }
 
 impl CaIngestCtrls {
-    fn new(daemon_tx: Sender<DaemonEvent>) -> Self {
-        Self { daemon_tx }
+    fn new(daemon_tx: Sender<DaemonEvent>, connset_tx: Sender<CaConnSetEvent>) -> Self {
+        Self { daemon_tx, connset_tx }
     }
 }
 
@@ -136,17 +137,55 @@ impl netfetch::metrics::CaIngestCtrls for CaIngestCtrls {
         };
         Box::pin(fut)
     }
-}
 
-struct PostIngestCtrls {}
+    fn channel_states(
+        &self,
+        name: String,
+        limit: u64,
+    ) -> Pin<
+        Box<
+            dyn Future<Output = Result<netfetch::ca::connset::ChannelStatusesResponse, Box<dyn std::error::Error>>>
+                + Send,
+        >,
+    > {
+        let dtx = self.connset_tx.clone();
+        let fut = async move {
+            use netfetch::ca::connset::ChannelStatusesRequest;
+            let (tx, rx) = async_channel::bounded(1);
+            let req = ChannelStatusesRequest { name, limit, tx };
+            let item = CaConnSetEvent::ConnSetCmd(netfetch::ca::connset::ConnSetCmd::ChannelStatuses(req));
+            dtx.send(item).await?;
+            let res = rx.recv().await?;
+            Ok(res)
+        };
+        Box::pin(fut)
+    }
 
-impl PostIngestCtrls {
-    fn new() -> Self {
-        Self {}
+    fn conn2_ctrls(&self) -> Pin<Box<dyn Future<Output = Option<Box<dyn netfetch::metrics::Conn2Ctrls>>> + Send>> {
+        let fut = async { None };
+        Box::pin(fut)
     }
 }
 
-impl netfetch::metrics::PostIngestCtrls for PostIngestCtrls {}
+struct PostIngestCtrls {
+    rres: Arc<RoutesResources>,
+}
+
+impl PostIngestCtrls {
+    fn new(rres: Arc<RoutesResources>) -> Self {
+        Self { rres }
+    }
+}
+
+impl netfetch::metrics::PostIngestCtrls for PostIngestCtrls {
+    fn resources(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = Result<Arc<RoutesResources>, Box<dyn std::error::Error>>> + Send>> {
+        let rres = self.rres.clone();
+        let fut = async move { Ok(rres) };
+        Box::pin(fut)
+    }
+}
 
 pub struct DaemonOpts {
     pgconf: Database,
@@ -912,9 +951,6 @@ impl Daemon {
     }
 
     pub async fn spawn_metrics(&mut self) -> Result<(), Error> {
-        let tx = self.tx.clone();
-        let connset_cmd_tx = self.connset_ctrl.sender().clone();
-        let dcom = Arc::new(netfetch::metrics::DaemonComm::new(tx.clone()));
         let rres = RoutesResources::new(
             self.ingest_opts.backend().into(),
             self.channel_info_query_tx.clone(),
@@ -930,16 +966,11 @@ impl Daemon {
         );
         let rres = Arc::new(rres);
         let metrics_jh = {
-            let stats_set = StatsSet::new(self.opts.insert_frac.clone());
             let fut = netfetch::metrics::metrics_service(
                 self.ingest_opts.api_bind(),
-                dcom,
-                connset_cmd_tx,
-                stats_set,
                 self.metrics_shutdown_rx.clone(),
-                rres,
-                Arc::new(CaIngestCtrls::new(self.tx.clone())),
-                Arc::new(PostIngestCtrls::new()),
+                Arc::new(CaIngestCtrls::new(self.tx.clone(), self.connset_ctrl.sender())),
+                Arc::new(PostIngestCtrls::new(rres)),
             );
             tokio::task::spawn(fut)
         };

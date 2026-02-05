@@ -13,7 +13,6 @@ use crate::ca::conn2::timeoutable::Timeoutable;
 use crate::ca::connset2::connset::channels::pollcstm;
 use crate::ca::connset2::connset::channels::pollcstm::PollCstm;
 use crate::ca::connset2::connset::channels::pollcstm::PollRess;
-use crate::ca::connset2::connset::cmder::ConnSetCmder;
 use crate::ca::finder::FinderHandleV02;
 use crate::ca::findioc::FindIocRes;
 use crate::ca::futstack::ErasedFuture;
@@ -41,6 +40,9 @@ use std::task::Poll;
 use std::time::Duration;
 use taskrun::tokio;
 use taskrun::tokio::task::JoinHandle;
+
+pub use cmder::ConnSetCmder;
+use std::net::Ipv4Addr;
 
 macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
 macro_rules! warn { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
@@ -99,6 +101,7 @@ enum ConnSetCmdKind {
     ChannelAdd(ChannelAdd),
     ChannelRemove(ChannelRemove),
     Shutdown,
+    ConnectionListGetV1(asynchan::Sender<crate::metrics::ConnectionListV1>),
 }
 
 #[derive(Debug)]
@@ -153,7 +156,7 @@ impl State {
     }
 }
 
-const EF1: usize = 0x500;
+const EF1: usize = 0x600;
 const EF2: usize = 0x500;
 const EF3: usize = 0x500;
 
@@ -540,6 +543,68 @@ impl ConnSet {
             ConnSetCmdKind::Shutdown => {
                 self.as_mut().trigger_shutdown();
                 info!("shutdown triggered");
+            }
+            ConnSetCmdKind::ConnectionListGetV1(mut tx) => {
+                let mut ret = crate::metrics::ConnectionListV1 { list: Vec::new() };
+                for (addr, conn) in self.ca_conns.iter() {
+                    ret.list.push((*addr, format!("todo-resolve")));
+                }
+                let fut = async move {
+                    let z: Vec<_> = ret.list.iter().map(|x| x.0.ip()).collect();
+                    let args = ["hosts".to_string()]
+                        .into_iter()
+                        .chain(z.iter().take(20).map(ToString::to_string));
+                    let d = tokio::process::Command::new("getent")
+                        .args(args)
+                        .output()
+                        .await
+                        .unwrap();
+                    let s2 = String::from_utf8_lossy(&d.stdout);
+                    let m: BTreeMap<_, _> = s2
+                        .split("\n")
+                        .into_iter()
+                        .filter_map({
+                            let re1 = regex::Regex::new(r"([^ ]+) +([^ ]+)").unwrap();
+                            move |line| {
+                                let cc: Vec<_> = re1
+                                    .captures_iter(line)
+                                    .map(|c| c.iter().map(|x| x.map(|x| x.as_str().to_string())).collect::<Vec<_>>())
+                                    .collect();
+                                if let Some(p) = cc.into_iter().next() {
+                                    let mut it2 = p.into_iter();
+                                    it2.next();
+                                    if let (Some(addr), Some(name)) = (it2.next(), it2.next()) {
+                                        if let (Some(addr), Some(name)) = (addr, name) {
+                                            Some((addr, name))
+                                        } else {
+                                            None
+                                        }
+                                    } else {
+                                        None
+                                    }
+                                } else {
+                                    None
+                                }
+                            }
+                        })
+                        .filter_map(|(addr, name)| {
+                            if let Ok(x) = addr.parse::<Ipv4Addr>() {
+                                Some((x, name))
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
+                    for e in ret.list.iter_mut() {
+                        if let Some(y) = m.get(&e.0.ip()) {
+                            e.1 = y.to_string();
+                        }
+                    }
+                    let _ = tx.send(ret).await;
+                    Ok(())
+                };
+                // TODO maybe better return the future from here and let caller place it.
+                self.cmder_cmd_fut = Some(ErasedFuture::new(fut));
             }
         }
     }

@@ -1,3 +1,4 @@
+use crate::metrics::PostIngestCtrls;
 use crate::metrics::RoutesResources;
 use axum::Json;
 use axum::extract::FromRequest;
@@ -50,13 +51,9 @@ use streams::framed_bytes::FramedBytesStream;
 use taskrun::tokio::time::timeout;
 
 macro_rules! error { ($($arg:tt)*) => ( if true { log::error!($($arg)*) } ); }
-
 macro_rules! info { ($($arg:tt)*) => ( if true { log::info!($($arg)*) } ); }
-
 macro_rules! debug_setup { ($($arg:tt)*) => ( if true { log::debug!($($arg)*) } ); }
-
 macro_rules! trace_input { ($($arg:tt)*) => ( if true { log::trace!($($arg)*) } ); }
-
 macro_rules! trace_queues { ($($arg:tt)*) => ( if true { log::trace!($($arg)*) } ); }
 
 autoerr::create_error_v1!(
@@ -81,6 +78,7 @@ autoerr::create_error_v1!(
         Postgres(#[from] dbpg::err::Error),
         TaskJoin(#[from] taskrun::tokio::task::JoinError),
         ConfBySeries(#[from] dbpg::confbyseries::Error),
+        Boxed(#[from] Box<dyn std::error::Error>),
     },
 );
 
@@ -437,10 +435,11 @@ async fn write_with_fresh_msps_inner(
     headers: HeaderMap,
     params: HashMap<String, String>,
     body: axum::body::Body,
-    rres: Arc<RoutesResources>,
+    post_ingest_ctrls: Arc<dyn PostIngestCtrls>,
 ) -> Result<Json<serde_json::Value>, Error> {
     info!("params: {params:?}");
     info!("headers: {headers:?}");
+    let rres = post_ingest_ctrls.resources().await?;
     if let Some(ct) = headers.get(http::header::CONTENT_TYPE) {
         if let Ok(s) = ct.to_str() {
             if s == APP_CBOR_FRAMED {
@@ -541,9 +540,9 @@ pub async fn write_with_fresh_msps(
     headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
     body: axum::body::Body,
-    rres: Arc<RoutesResources>,
+    post_ingest_ctrls: Arc<dyn PostIngestCtrls>,
 ) -> impl IntoResponse {
-    match write_with_fresh_msps_inner(headers, params, body, rres).await {
+    match write_with_fresh_msps_inner(headers, params, body, post_ingest_ctrls).await {
         Ok(k) => k.into_response(),
         Err(e) => Json(serde_json::json!({
             "status": "error",

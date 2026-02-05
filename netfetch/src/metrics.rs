@@ -3,6 +3,7 @@ pub mod delete;
 pub mod ingest;
 pub mod status;
 pub mod types;
+pub mod ui;
 
 use crate::ca::conn::ChannelStateInfo;
 use crate::ca::connset::CaConnSetEvent;
@@ -29,7 +30,7 @@ use futures::future::ready;
 use http::Request;
 use http::StatusCode;
 use http_body::Body;
-use log::*;
+use log;
 use netpod::APP_JSON;
 use scywr::config::ScyllaIngestConfig;
 use scywr::insertqueues::InsertQueuesTx;
@@ -52,6 +53,12 @@ use std::time::Duration;
 use taskrun::tokio;
 use taskrun::tokio::net::TcpListener;
 
+macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
+macro_rules! warn { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
+macro_rules! info { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
+macro_rules! debug { ($($arg:tt)*) => { if true { log::debug!($($arg)*); } }; }
+macro_rules! trace { ($($arg:tt)*) => { if true { log::trace!($($arg)*); } }; }
+
 struct PublicErrorMsg(String);
 
 trait ToPublicErrorMsg {
@@ -65,6 +72,17 @@ impl ToPublicErrorMsg for err::Error {
             .map_or("no error message provided".into(), |x| x.join(", "));
         PublicErrorMsg(msg)
     }
+}
+
+#[derive(Serialize)]
+pub struct ConnectionListV1 {
+    pub list: Vec<(SocketAddrV4, String)>,
+}
+
+pub trait Conn2Ctrls: Send + Sync {
+    fn connection_list_get_v1(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = Result<ConnectionListV1, Box<dyn std::error::Error>>> + Send>>;
 }
 
 pub trait CaIngestCtrls: Send + Sync {
@@ -82,9 +100,19 @@ pub trait CaIngestCtrls: Send + Sync {
     ) -> Pin<Box<dyn Future<Output = Result<(), Box<dyn std::error::Error>>> + Send>>;
     fn config_reload(&self) -> Pin<Box<dyn Future<Output = Result<(), Box<dyn std::error::Error>>> + Send>>;
     fn shutdown(&self) -> Pin<Box<dyn Future<Output = Result<(), Box<dyn std::error::Error>>> + Send>>;
+    fn channel_states(
+        &self,
+        name: String,
+        limit: u64,
+    ) -> Pin<Box<dyn Future<Output = Result<ChannelStatusesResponse, Box<dyn std::error::Error>>> + Send>>;
+    fn conn2_ctrls(&self) -> Pin<Box<dyn Future<Output = Option<Box<dyn Conn2Ctrls>>> + Send>>;
 }
 
-pub trait PostIngestCtrls: Send + Sync {}
+pub trait PostIngestCtrls: Send + Sync {
+    fn resources(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = Result<Arc<RoutesResources>, Box<dyn std::error::Error>>> + Send>>;
+}
 
 pub struct Res123 {
     content: Option<Bytes>,
@@ -145,17 +173,6 @@ impl IntoResponse for CustomErrorResponse {
     }
 }
 
-#[derive(Clone)]
-pub struct StatsSet {
-    insert_frac: Arc<AtomicU64>,
-}
-
-impl StatsSet {
-    pub fn new(insert_frac: Arc<AtomicU64>) -> Self {
-        Self { insert_frac }
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExtraInsertsConf {
     pub copies: Vec<(u64, u64)>,
@@ -185,15 +202,6 @@ async fn config_reload(ca_ingest_ctrls: Arc<dyn CaIngestCtrls>) -> Result<axum::
     });
     let ret = serde_json::to_value(&res).unwrap();
     Ok(axum::Json(ret))
-}
-
-fn _test_is_into() {
-    let x: Response = todo!();
-    let _: &dyn IntoResponse = &x;
-    let x: String = todo!();
-    let _: &dyn IntoResponse = &x;
-    let x: Result<String, Response> = todo!();
-    let _: &dyn IntoResponse = &x;
 }
 
 async fn metrics2(ca_ingest_ctrls: Arc<dyn CaIngestCtrls>) -> Result<String, Response> {
@@ -273,7 +281,7 @@ async fn channel_remove(
 // BTreeMap<String, ChannelState>
 async fn private_channel_states(
     params: HashMap<String, String>,
-    tx: Sender<CaConnSetEvent>,
+    ca_ingest_ctrls: Arc<dyn CaIngestCtrls>,
 ) -> axum::Json<BTreeMap<String, ChannelState>> {
     let name = params.get("name").map_or(String::new(), |x| x.clone()).to_string();
     let limit = params
@@ -281,12 +289,7 @@ async fn private_channel_states(
         .map(|x| x.parse().ok())
         .unwrap_or(None)
         .unwrap_or(40);
-    let (tx2, rx2) = async_channel::bounded(1);
-    let req = ChannelStatusesRequest { name, limit, tx: tx2 };
-    let item = CaConnSetEvent::ConnSetCmd(ConnSetCmd::ChannelStatuses(req));
-    // TODO handle error
-    tx.send(item).await.unwrap();
-    let res = rx2.recv().await.unwrap();
+    let res = ca_ingest_ctrls.channel_states(name, limit).await.unwrap();
     axum::Json(res.channels_ca_conn_set)
 }
 
@@ -315,9 +318,8 @@ impl DaemonComm {
     }
 }
 
-fn metricbeat(stats_set: &StatsSet) -> axum::Json<serde_json::Value> {
+fn metricbeat() -> axum::Json<serde_json::Value> {
     let mut map = serde_json::Map::new();
-    // map.insert("insert_worker_stats".to_string(), stats_set.insert_worker_stats.json());
     let mut ret = serde_json::Map::new();
     ret.insert("daqingest".to_string(), serde_json::Value::Object(map));
     axum::Json(serde_json::Value::Object(ret))
@@ -356,14 +358,10 @@ impl RoutesResources {
     }
 }
 
-fn make_routes_ingest(
-    rres: Arc<RoutesResources>,
-    dcom: Arc<DaemonComm>,
-    connset_cmd_tx: Sender<CaConnSetEvent>,
-    stats_set: StatsSet,
-) -> axum::Router {
+fn make_routes_ingest(post_ingest_ctrls: Arc<dyn PostIngestCtrls>) -> axum::Router {
+    use axum::Router;
+    use axum::extract;
     use axum::routing::post;
-    use axum::{Router, extract};
     use http::StatusCode;
     Router::new().nest(
         "/write",
@@ -371,18 +369,18 @@ fn make_routes_ingest(
             .route(
                 "/v2",
                 post({
-                    let rres = rres.clone();
+                    let post_ingest_ctrls = post_ingest_ctrls.clone();
                     move |headers: HeaderMap, params: Query<HashMap<String, String>>, body: axum::body::Body| {
-                        ingest::write_v02::write_with_fresh_msps(headers, params, body, rres)
+                        ingest::write_v02::write_with_fresh_msps(headers, params, body, post_ingest_ctrls)
                     }
                 }),
             )
             .route(
                 "/v1",
                 post({
-                    let rres = rres.clone();
+                    let post_ingest_ctrls = post_ingest_ctrls.clone();
                     move |(headers, params, body): (HeaderMap, Query<HashMap<String, String>>, axum::body::Body)| {
-                        ingest::post_v01((headers, params, body), rres)
+                        ingest::post_v01((headers, params, body), post_ingest_ctrls)
                     }
                 }),
             ),
@@ -390,23 +388,19 @@ fn make_routes_ingest(
 }
 
 fn make_routes_daqingest_private(
-    rres: Arc<RoutesResources>,
-    connset_cmd_tx: Sender<CaConnSetEvent>,
-    stats_set: StatsSet,
+    ca_ingest_ctrls: Arc<dyn CaIngestCtrls>,
+    post_ingest_ctrls: Arc<dyn PostIngestCtrls>,
 ) -> axum::Router {
     use axum::Router;
     use axum::extract;
     use axum::routing::get;
     Router::new()
-        .nest(
-            "/channel",
-            make_routes_private_channel(rres.clone(), connset_cmd_tx.clone(), stats_set.clone()),
-        )
+        .nest("/channel", make_routes_private_channel(post_ingest_ctrls.clone()))
         .route(
             "/channel/states",
             get({
-                let tx = connset_cmd_tx.clone();
-                |Query(params): Query<HashMap<String, String>>| private_channel_states(params, tx)
+                let ca_ingest_ctrls = ca_ingest_ctrls.clone();
+                |Query(params): Query<HashMap<String, String>>| private_channel_states(params, ca_ingest_ctrls)
             }),
         )
         .route(
@@ -416,6 +410,20 @@ fn make_routes_daqingest_private(
                 let format = time::format_description::parse("[year]-[month]-[day] [hour]:[minute]:[second]Z").unwrap();
                 let s = ts.format(&format).unwrap();
                 axum::Json(json!({"ts":s}))
+            }),
+        )
+        .route(
+            "/conn2/connections",
+            get({
+                let ca_ingest_ctrls = ca_ingest_ctrls.clone();
+                || async move {
+                    if let Some(c2) = ca_ingest_ctrls.conn2_ctrls().await {
+                        let ret = c2.connection_list_get_v1().await.unwrap();
+                        axum::Json(serde_json::to_value(&ret).unwrap())
+                    } else {
+                        axum::Json(json!({"error": "no ctrl"}))
+                    }
+                }
             }),
         )
 }
@@ -463,117 +471,9 @@ fn make_routes_daqingest_ui_static(rres: Arc<RoutesResources>) -> axum::Router {
         )
 }
 
-fn make_routes_daqingest_ui_node(rres: Arc<RoutesResources>) -> axum::Router {
-    use axum::Router;
-    use axum::extract;
-    use axum::routing::get;
-    Router::new()
-        .fallback(|| async { StatusCode::NOT_FOUND })
-        .route(
-            "/allpaths",
-            get({ move || async move { format!("{:?}", daqingest_ui::assets::all_asset_paths()) } }),
-        )
-        .route("/a1", get(|| ready(format!("a1 without trailing"))))
-        .route("/a1/", get(|| ready(format!("a1 with trailing"))))
-        .route("/b1/", get(|| ready(format!("b1 with trailing"))))
-        .route("/b1", get(|| ready(format!("b1 without trailing"))))
-        .route("/c1", get(|| ready(format!("c1 without trailing"))))
-        .route("/c1/", get(|| ready(format!("c1 with trailing"))))
-        .route(
-            "/c1/{*path}",
-            get(|extract::Path(path): extract::Path<String>| ready(format!("c1 with wildcard  {path:?}"))),
-        )
-        .route("/d1/", get(|| ready(format!("d1 with trailing"))))
-        .route("/e1", get(|| ready(format!("e1 without trailing"))))
-        .route(
-            "/e1/{*path}",
-            get(|extract::Path(path): extract::Path<String>| ready(format!("e1 with wildcard  {path:?}"))),
-        )
-        .route("/f1/", get(|| ready(format!("f1 with trailing"))))
-        .route(
-            "/f1/{*path}",
-            get(|extract::Path(path): extract::Path<String>| ready(format!("f1 with wildcard  {path:?}"))),
-        )
-        .route(
-            "/g1{*path}",
-            get(|extract::Path(path): extract::Path<String>| ready(format!("g1 with wildcard  {path:?}"))),
-        )
-        .route(
-            "/ui1/_app/{*path}",
-            get({
-                let pre = "/ui1/client/daqingest/ui/ui1/_app";
-                move |extract::Path(path): extract::Path<String>| async move {
-                    let full = format!("{pre}/{path}");
-                    match daqingest_ui::assets::get_asset(&full) {
-                        Some((bytes, mime)) => ([(http::header::CONTENT_TYPE, mime)], bytes).into_response(),
-                        None => (StatusCode::NOT_FOUND, "Not Found").into_response(),
-                    }
-                }
-            }),
-        )
-        .route(
-            "/ui1",
-            get(|| ready((StatusCode::SEE_OTHER, [(http::header::LOCATION, "ui1/")]))),
-        )
-        .route(
-            "/ui1/",
-            get({
-                let pre = "/ui1/prerendered/daqingest/ui/ui1";
-                let path = "index.html";
-                move || async move {
-                    let full = format!("{pre}/{path}");
-                    match daqingest_ui::assets::get_asset(&full) {
-                        Some((bytes, mime)) => ([(http::header::CONTENT_TYPE, mime)], bytes).into_response(),
-                        None => (StatusCode::NOT_FOUND, "Not Found").into_response(),
-                    }
-                }
-            }),
-        )
-        .route(
-            "/ui1/img/{*path}",
-            get({
-                let pre = "/ui1/client/daqingest/ui/ui1/img";
-                move |extract::Path(path): extract::Path<String>| async move {
-                    let full = format!("{pre}/{path}");
-                    match daqingest_ui::assets::get_asset(&full) {
-                        Some((bytes, mime)) => ([(http::header::CONTENT_TYPE, mime)], bytes).into_response(),
-                        None => (StatusCode::NOT_FOUND, "Not Found").into_response(),
-                    }
-                }
-            }),
-        )
-        .route(
-            "/ui1/{*path}",
-            get({
-                let pre = "/ui1/prerendered/daqingest/ui/ui1";
-                move |extract::Path(path): extract::Path<String>| async move {
-                    let path2 = if path == "" {
-                        format!("index.html")
-                    } else {
-                        let p2 = PathBuf::from(&path);
-                        if p2.extension().is_some() {
-                            format!("{path}")
-                        } else {
-                            format!("{path}.html")
-                        }
-                    };
-                    let full = format!("{pre}/{path2}");
-                    match daqingest_ui::assets::get_asset(&full) {
-                        Some((bytes, mime)) => ([(http::header::CONTENT_TYPE, mime)], bytes).into_response(),
-                        None => (StatusCode::NOT_FOUND, "Not Found").into_response(),
-                    }
-                }
-            }),
-        )
-}
-
 fn make_routes_daqingest(
     ca_ingest_ctrls: Arc<dyn CaIngestCtrls>,
     post_ingest_ctrls: Arc<dyn PostIngestCtrls>,
-    rres: Arc<RoutesResources>,
-    dcom: Arc<DaemonComm>,
-    connset_cmd_tx: Sender<CaConnSetEvent>,
-    stats_set: StatsSet,
 ) -> axum::Router {
     use axum::Router;
     use axum::extract;
@@ -600,41 +500,17 @@ fn make_routes_daqingest(
                 }),
             ),
         )
-        .nest(
-            "/channel",
-            make_routes_channel(
-                rres.clone(),
-                ca_ingest_ctrls.clone(),
-                connset_cmd_tx.clone(),
-                stats_set.clone(),
-            ),
-        )
-        .nest(
-            "/ingest",
-            make_routes_ingest(rres.clone(), dcom.clone(), connset_cmd_tx.clone(), stats_set.clone()),
-        )
+        .nest("/channel", make_routes_channel(ca_ingest_ctrls.clone()))
+        .nest("/ingest", make_routes_ingest(post_ingest_ctrls.clone()))
         .nest(
             "/private",
-            make_routes_daqingest_private(rres.clone(), connset_cmd_tx.clone(), stats_set.clone()),
+            make_routes_daqingest_private(ca_ingest_ctrls.clone(), post_ingest_ctrls.clone()),
         )
-        .route(
-            "/metricbeat",
-            get({
-                let stats_set = stats_set.clone();
-                || async move { metricbeat(&stats_set) }
-            }),
-        )
-        .nest("/ui", make_routes_daqingest_ui_node(rres))
+        .route("/metricbeat", get({ || async move { metricbeat() } }))
+        .nest("/ui", ui::make_routes_daqingest_ui_node())
 }
 
-fn make_routes(
-    ca_ingest_ctrls: Arc<dyn CaIngestCtrls>,
-    post_ingest_ctrls: Arc<dyn PostIngestCtrls>,
-    rres: Arc<RoutesResources>,
-    dcom: Arc<DaemonComm>,
-    connset_cmd_tx: Sender<CaConnSetEvent>,
-    stats_set: StatsSet,
-) -> axum::Router {
+fn make_routes(ca_ingest_ctrls: Arc<dyn CaIngestCtrls>, post_ingest_ctrls: Arc<dyn PostIngestCtrls>) -> axum::Router {
     use axum::Router;
     use axum::extract;
     use axum::routing::{get, post, put};
@@ -644,17 +520,7 @@ fn make_routes(
             info!("Fallback for {} {}", req.method(), req.uri());
             StatusCode::NOT_FOUND
         })
-        .nest(
-            "/daqingest",
-            make_routes_daqingest(
-                ca_ingest_ctrls,
-                post_ingest_ctrls,
-                rres,
-                dcom.clone(),
-                connset_cmd_tx,
-                stats_set.clone(),
-            ),
-        )
+        .nest("/daqingest", make_routes_daqingest(ca_ingest_ctrls, post_ingest_ctrls))
         .route(
             "/daqingest/always-error/",
             get(|Query(params): Query<HashMap<String, String>>| always_error(params)),
@@ -669,39 +535,17 @@ fn make_routes(
         )
         .route(
             "/daqingest/insert_frac",
-            get({
-                let insert_frac = stats_set.insert_frac.clone();
-                || async move { axum::Json(insert_frac.load(Ordering::Acquire)) }
-            })
-            .put({
-                let insert_frac = stats_set.insert_frac.clone();
-                |v: extract::Json<u64>| async move {
-                    insert_frac.store(v.0, Ordering::Release);
-                }
-            }),
+            get({ || async move { axum::Json("unused") } })
+                .put({ |v: extract::Json<u64>| async move { axum::Json("unused") } }),
         )
         .route(
             "/daqingest/extra_inserts_conf",
-            get({ || async move { axum::Json(serde_json::to_value(&"TODO").unwrap()) } }).put({
-                let dcom = dcom.clone();
-                |v: extract::Json<ExtraInsertsConf>| extra_inserts_conf_set(v.0)
-            }),
-        )
-        .route(
-            "/daqingest/insert_ivl_min",
-            put({
-                let dcom = dcom.clone();
-                |v: extract::Json<u64>| async move {}
-            }),
+            get({ || async move { axum::Json(serde_json::to_value(&"TODO").unwrap()) } })
+                .put({ |v: extract::Json<ExtraInsertsConf>| extra_inserts_conf_set(v.0) }),
         )
 }
 
-fn make_routes_channel(
-    rres: Arc<RoutesResources>,
-    ca_ingest_ctrls: Arc<dyn CaIngestCtrls>,
-    connset_cmd_tx: Sender<CaConnSetEvent>,
-    stats_set: StatsSet,
-) -> axum::Router {
+fn make_routes_channel(ca_ingest_ctrls: Arc<dyn CaIngestCtrls>) -> axum::Router {
     use axum::Router;
     use axum::extract;
     use axum::routing::{get, post, put};
@@ -710,16 +554,13 @@ fn make_routes_channel(
         .fallback(|| async { axum::Json(json!({"subcommands":["states"]})) })
         .route(
             "/error_handler_test",
-            get({
-                let tx = connset_cmd_tx.clone();
-                |Query(params): Query<HashMap<String, String>>| status::error_handler_test()
-            }),
+            get({ |Query(params): Query<HashMap<String, String>>| status::error_handler_test() }),
         )
         .route(
             "/states",
             get({
-                let tx = connset_cmd_tx.clone();
-                |Query(params): Query<HashMap<String, String>>| status::channel_states(params, tx)
+                let ca_ingest_ctrls = ca_ingest_ctrls.clone();
+                |Query(params): Query<HashMap<String, String>>| status::channel_states(params, ca_ingest_ctrls)
             }),
         )
         .route(
@@ -738,20 +579,17 @@ fn make_routes_channel(
         )
 }
 
-fn make_routes_private_channel(
-    rres: Arc<RoutesResources>,
-    connset_cmd_tx: Sender<CaConnSetEvent>,
-    stats_set: StatsSet,
-) -> axum::Router {
+fn make_routes_private_channel(post_ingest_ctrls: Arc<dyn PostIngestCtrls>) -> axum::Router {
+    use axum::Router;
+    use axum::extract;
     use axum::routing::{get, post, put};
-    use axum::{Router, extract};
     use http::StatusCode;
     Router::new().route(
         "/delete",
         post({
-            let rres = rres.clone();
+            let post_ingest_ctrls = post_ingest_ctrls.clone();
             move |(headers, params, body): (HeaderMap, Query<HashMap<String, String>>, axum::body::Body)| {
-                delete::delete((headers, params, body), rres)
+                delete::delete((headers, params, body), post_ingest_ctrls)
             }
         }),
     )
@@ -759,26 +597,15 @@ fn make_routes_private_channel(
 
 pub async fn metrics_service(
     bind_to: String,
-    dcom: Arc<DaemonComm>,
-    connset_cmd_tx: Sender<CaConnSetEvent>,
-    stats_set: StatsSet,
     shutdown_signal: Receiver<u32>,
-    rres: Arc<RoutesResources>,
     ca_ingest_ctrls: Arc<dyn CaIngestCtrls>,
     post_ingest_ctrls: Arc<dyn PostIngestCtrls>,
 ) -> Result<(), Error> {
     info!("metrics service start  {}", bind_to);
     let addr: SocketAddr = bind_to.parse().map_err(Error::from_string)?;
-    let router = make_routes(
-        ca_ingest_ctrls,
-        post_ingest_ctrls,
-        rres,
-        dcom,
-        connset_cmd_tx,
-        stats_set,
-    )
-    .layer(tower_http::compression::CompressionLayer::new().gzip(true))
-    .into_make_service();
+    let router = make_routes(ca_ingest_ctrls, post_ingest_ctrls)
+        .layer(tower_http::compression::CompressionLayer::new().gzip(true))
+        .into_make_service();
     let listener = TcpListener::bind(addr).await?;
     // into_make_service_with_connect_info
     axum::serve(listener, router)
@@ -786,5 +613,6 @@ pub async fn metrics_service(
             let _ = shutdown_signal.recv().await;
         })
         .await?;
+    info!("-----------------  metrics service done");
     Ok(())
 }

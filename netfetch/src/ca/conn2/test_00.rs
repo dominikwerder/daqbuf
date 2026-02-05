@@ -1,8 +1,13 @@
 use super::super::conn2;
+use crate as netfetch;
 use crate::ca::conn2::asynchan;
 use crate::ca::connset2::connset::ConnSet;
+use crate::conf::ChannelConfig;
+use crate::daemon_common::ChannelName;
 use core::panic;
 use futures::StreamExt;
+use std::pin::Pin;
+use std::sync::Arc;
 use std::sync::RwLock;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
@@ -17,6 +22,7 @@ autoerr::create_error_v1!(
     enum variants {
         SignalHandlerSet,
         SignalHandlerUnset,
+        Msg(String),
     },
 );
 
@@ -37,6 +43,119 @@ fn handler_sigint(_: libc::c_int, _: *const libc::siginfo_t, _: *const libc::c_v
                 std::process::exit(84);
             }
         }
+    }
+}
+
+#[derive(Clone)]
+struct Conn2Ctrls {
+    cmder: crate::ca::connset2::connset::ConnSetCmder,
+}
+
+impl Conn2Ctrls {
+    fn new(cmder: crate::ca::connset2::connset::ConnSetCmder) -> Self {
+        Self { cmder }
+    }
+}
+
+impl netfetch::metrics::Conn2Ctrls for Conn2Ctrls {
+    fn connection_list_get_v1(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = Result<crate::metrics::ConnectionListV1, Box<dyn std::error::Error>>> + Send>>
+    {
+        let cmder = self.cmder.clone();
+        let fut = async move {
+            let ret = cmder.connection_list_get_v1().await?;
+            Ok(ret)
+        };
+        Box::pin(fut)
+    }
+}
+
+struct CaIngestCtrls {
+    conn2_ctrls: Conn2Ctrls,
+}
+
+impl CaIngestCtrls {
+    fn new(conn2_ctrls: Conn2Ctrls) -> Self {
+        Self { conn2_ctrls }
+    }
+}
+
+impl netfetch::metrics::CaIngestCtrls for CaIngestCtrls {
+    fn timer_tick(&self, v: u32) -> Box<dyn Future<Output = u32>> {
+        todo!()
+    }
+
+    fn get_metrics(
+        &self,
+    ) -> Pin<
+        Box<
+            dyn Future<Output = Result<netfetch::metrics::types::MetricsPrometheusShort, Box<dyn std::error::Error>>>
+                + Send,
+        >,
+    > {
+        todo!()
+    }
+
+    fn channel_add(
+        &self,
+        conf: ChannelConfig,
+    ) -> Pin<Box<dyn Future<Output = Result<(), Box<dyn std::error::Error>>> + Send>> {
+        todo!()
+    }
+
+    fn channel_remove(
+        &self,
+        name: ChannelName,
+    ) -> Pin<Box<dyn Future<Output = Result<(), Box<dyn std::error::Error>>> + Send>> {
+        todo!()
+    }
+
+    fn config_reload(&self) -> Pin<Box<dyn Future<Output = Result<(), Box<dyn std::error::Error>>> + Send>> {
+        todo!()
+    }
+
+    fn shutdown(&self) -> Pin<Box<dyn Future<Output = Result<(), Box<dyn std::error::Error>>> + Send>> {
+        let fut = async move {
+            let e = Error::Msg(format!("TODO ctrl shutdown"));
+            Err(Box::new(e) as _)
+        };
+        Box::pin(fut)
+    }
+
+    fn channel_states(
+        &self,
+        name: String,
+        limit: u64,
+    ) -> Pin<
+        Box<
+            dyn Future<Output = Result<crate::ca::connset::ChannelStatusesResponse, Box<dyn std::error::Error>>> + Send,
+        >,
+    > {
+        todo!()
+    }
+
+    fn conn2_ctrls(&self) -> Pin<Box<dyn Future<Output = Option<Box<dyn crate::metrics::Conn2Ctrls>>> + Send>> {
+        let x = self.conn2_ctrls.clone();
+        let fut = async move { Some(Box::new(x) as _) };
+        Box::pin(fut)
+    }
+}
+
+struct PostIngestCtrls {}
+
+impl PostIngestCtrls {
+    fn new() -> Self {
+        Self {}
+    }
+}
+
+impl netfetch::metrics::PostIngestCtrls for PostIngestCtrls {
+    fn resources(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = Result<Arc<netfetch::metrics::RoutesResources>, Box<dyn std::error::Error>>> + Send>>
+    {
+        todo!()
     }
 }
 
@@ -109,10 +228,21 @@ pub async fn test_01() {
             let ingest_opts: crate::conf::CaIngestOpts = serde_yaml::from_slice(&buf).unwrap();
         }
         let (ingest_opts, channels_config) = crate::conf::parse_config("daqingest.yml").await.unwrap();
-        let mut connset = ConnSet::new(ingest_opts.backend().into(), "".into(), ingest_opts)
+        let mut connset = ConnSet::new(ingest_opts.backend().into(), "".into(), ingest_opts.clone())
             .await
             .unwrap();
         let cmder = connset.cmder().clone();
+        let conn2_ctrls = Conn2Ctrls::new(cmder.clone());
+        let (metrics_shutdown_tx, metrics_shutdown_rx) = async_channel::bounded(16);
+        let metrics_jh = {
+            let fut = netfetch::metrics::metrics_service(
+                ingest_opts.api_bind(),
+                metrics_shutdown_rx,
+                Arc::new(CaIngestCtrls::new(conn2_ctrls)),
+                Arc::new(PostIngestCtrls::new()),
+            );
+            tokio::task::spawn(fut)
+        };
         {
             let cmder = cmder.clone();
             tokio::spawn(async move {
