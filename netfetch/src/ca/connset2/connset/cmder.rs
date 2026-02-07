@@ -3,6 +3,7 @@ use super::ChannelRemove;
 use super::ConnSetCmd;
 use super::ConnSetCmdKind;
 use crate::ca::conn2::asynchan;
+use std::net::SocketAddrV4;
 
 macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
 macro_rules! warn { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
@@ -85,6 +86,20 @@ impl ConnSetCmder {
         let (tx, mut rx) = asynchan::bounded(2, "connection_list_get_v1");
         let cmd = ConnSetCmd {
             kind: ConnSetCmdKind::ConnectionListGetV1(tx),
+        };
+        let _ = dtx.send(cmd).await?;
+        let ret = rx.recv().await?;
+        Ok(ret)
+    }
+
+    pub async fn channels_for_addr_v1(
+        &self,
+        addr: SocketAddrV4,
+    ) -> Result<crate::metrics::ChannelsForAddrInfoV1, Error> {
+        let mut dtx = self.tx.clone();
+        let (tx, mut rx) = asynchan::bounded(2, "ChannelsForAddrInfoV1");
+        let cmd = ConnSetCmd {
+            kind: ConnSetCmdKind::ChannelsForAddrInfoV1(addr, tx),
         };
         let _ = dtx.send(cmd).await?;
         let ret = rx.recv().await?;

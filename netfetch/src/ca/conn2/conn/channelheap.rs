@@ -348,6 +348,26 @@ impl ChannelHeap {
         StatusInfo { handlers }
     }
 
+    pub fn channel_info_v1(&mut self) -> crate::metrics::ChannelsForAddrInfoV1 {
+        let mut ret = crate::metrics::ChannelsForAddrInfoV1::new();
+        match &mut self.state {
+            State::Running => {
+                self.by_cid
+                    .iter_mut()
+                    .map(|(_, che)| match &mut che.ch_handler {
+                        ChHandler::ChHandlerActive(hh) => {
+                            let x = hh.handler.channel_info_v1();
+                            ret.channels.push(x);
+                        }
+                        ChHandler::Done => {}
+                    })
+                    .for_each(|_| {});
+            }
+            State::Done => {}
+        }
+        ret
+    }
+
     pub fn mett_take(&mut self) -> CaConnConnectedMetrics {
         for (cid, ee) in self.by_cid.iter_mut() {
             match &mut ee.ch_handler {

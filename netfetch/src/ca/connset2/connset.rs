@@ -41,6 +41,7 @@ use std::time::Duration;
 use taskrun::tokio;
 use taskrun::tokio::task::JoinHandle;
 
+use crate::metrics::ChannelsForAddrInfoV1;
 pub use cmder::ConnSetCmder;
 use std::net::Ipv4Addr;
 
@@ -102,6 +103,7 @@ enum ConnSetCmdKind {
     ChannelRemove(ChannelRemove),
     Shutdown,
     ConnectionListGetV1(asynchan::Sender<crate::metrics::ConnectionListV1>),
+    ChannelsForAddrInfoV1(SocketAddrV4, asynchan::Sender<crate::metrics::ChannelsForAddrInfoV1>),
 }
 
 #[derive(Debug)]
@@ -538,19 +540,25 @@ impl ConnSet {
                 // TODO maybe better return the future from here and let caller place it.
                 self.cmder_cmd_fut = Some(ErasedFuture::new(fut));
                 error!("TODO connection tear down logic");
-                // self.ca_conns;
             }
             ConnSetCmdKind::Shutdown => {
                 self.as_mut().trigger_shutdown();
                 info!("shutdown triggered");
             }
             ConnSetCmdKind::ConnectionListGetV1(mut tx) => {
-                let mut ret = crate::metrics::ConnectionListV1 { list: Vec::new() };
+                let mut ret = crate::metrics::ConnectionListV1 {
+                    ingest_name: ingest_linux::net::local_hostname(),
+                    list: Vec::new(),
+                };
                 for (addr, conn) in self.ca_conns.iter() {
-                    ret.list.push((*addr, format!("todo-resolve")));
+                    ret.list.push(crate::metrics::ConnectionListV1Conn1 {
+                        ip: addr.ip().clone(),
+                        port: addr.port(),
+                        name: format!("todo-resolve"),
+                    });
                 }
                 let fut = async move {
-                    let z: Vec<_> = ret.list.iter().map(|x| x.0.ip()).collect();
+                    let z: Vec<_> = ret.list.iter().map(|c| c.ip).collect();
                     let args = ["hosts".to_string()]
                         .into_iter()
                         .chain(z.iter().take(20).map(ToString::to_string));
@@ -566,27 +574,18 @@ impl ConnSet {
                         .filter_map({
                             let re1 = regex::Regex::new(r"([^ ]+) +([^ ]+)").unwrap();
                             move |line| {
-                                let cc: Vec<_> = re1
-                                    .captures_iter(line)
+                                re1.captures_iter(line)
                                     .map(|c| c.iter().map(|x| x.map(|x| x.as_str().to_string())).collect::<Vec<_>>())
-                                    .collect();
-                                if let Some(p) = cc.into_iter().next() {
-                                    let mut it2 = p.into_iter();
-                                    it2.next();
-                                    if let (Some(addr), Some(name)) = (it2.next(), it2.next()) {
-                                        if let (Some(addr), Some(name)) = (addr, name) {
-                                            Some((addr, name))
-                                        } else {
-                                            None
-                                        }
-                                    } else {
-                                        None
-                                    }
-                                } else {
-                                    None
-                                }
+                                    .filter_map(|x| {
+                                        let mut it2 = x.into_iter();
+                                        it2.next();
+                                        it2.next().zip(it2.next()).map(|x| x.0.into_iter().zip(x.1).next())
+                                    })
+                                    .map(|x| x)
+                                    .next()
                             }
                         })
+                        .filter_map(|x| x)
                         .filter_map(|(addr, name)| {
                             if let Ok(x) = addr.parse::<Ipv4Addr>() {
                                 Some((x, name))
@@ -596,11 +595,32 @@ impl ConnSet {
                         })
                         .collect();
                     for e in ret.list.iter_mut() {
-                        if let Some(y) = m.get(&e.0.ip()) {
-                            e.1 = y.to_string();
+                        if let Some(y) = m.get(&e.ip) {
+                            e.name = y.to_string();
                         }
                     }
                     let _ = tx.send(ret).await;
+                    Ok(())
+                };
+                // TODO maybe better return the future from here and let caller place it.
+                self.cmder_cmd_fut = Some(ErasedFuture::new(fut));
+            }
+            ConnSetCmdKind::ChannelsForAddrInfoV1(addr, mut tx) => {
+                let cmdtxs: Vec<_> = self
+                    .ca_conns
+                    .iter()
+                    .filter(|x| *x.0 == addr)
+                    .map(|x| x.1.comm.clone())
+                    .collect();
+                let fut = async move {
+                    let mut a = ChannelsForAddrInfoV1 { channels: Vec::new() };
+                    for mut cmdtx in cmdtxs {
+                        let r = cmdtx.channels_info_v1().await?;
+                        for x in r.channels {
+                            a.channels.push(x);
+                        }
+                    }
+                    let _ = tx.send(a).await;
                     Ok(())
                 };
                 // TODO maybe better return the future from here and let caller place it.

@@ -416,4 +416,8 @@ impl ActiveCa {
     pub fn poll_next_unpin(&mut self, cmd_rx: &mut CtChan<CaCommand>, cx: &mut Context) -> Poll<Option<StreamItem>> {
         Pin::new(self).poll_next(cmd_rx, cx)
     }
+
+    pub fn channel_info_v1(&mut self) -> crate::metrics::ChannelsForAddrInfoV1 {
+        self.chanheap.channel_info_v1()
+    }
 }

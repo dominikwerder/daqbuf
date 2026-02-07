@@ -69,6 +69,19 @@ impl netfetch::metrics::Conn2Ctrls for Conn2Ctrls {
         };
         Box::pin(fut)
     }
+
+    fn channels_for_addr_v1(
+        &self,
+        addr: std::net::SocketAddrV4,
+    ) -> Pin<Box<dyn Future<Output = Result<crate::metrics::ChannelsForAddrInfoV1, Box<dyn std::error::Error>>> + Send>>
+    {
+        let cmder = self.cmder.clone();
+        let fut = async move {
+            let ret = cmder.channels_for_addr_v1(addr).await?;
+            Ok(ret)
+        };
+        Box::pin(fut)
+    }
 }
 
 struct CaIngestCtrls {

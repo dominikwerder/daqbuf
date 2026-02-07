@@ -40,6 +40,8 @@ use serde::Serialize;
 use serde_json::json;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
+use std::collections::VecDeque;
+use std::net::Ipv4Addr;
 use std::net::SocketAddr;
 use std::net::SocketAddrV4;
 use std::path::PathBuf;
@@ -75,14 +77,44 @@ impl ToPublicErrorMsg for err::Error {
 }
 
 #[derive(Serialize)]
+pub struct ConnectionListV1Conn1 {
+    pub ip: Ipv4Addr,
+    pub port: u16,
+    pub name: String,
+}
+
+#[derive(Serialize)]
 pub struct ConnectionListV1 {
-    pub list: Vec<(SocketAddrV4, String)>,
+    pub ingest_name: String,
+    pub list: Vec<ConnectionListV1Conn1>,
+}
+
+#[derive(Serialize)]
+pub struct ChannelInfoV1 {
+    pub name: String,
+    pub state_short: String,
+    pub config1: serde_json::Value,
+}
+
+#[derive(Serialize)]
+pub struct ChannelsForAddrInfoV1 {
+    pub channels: Vec<ChannelInfoV1>,
+}
+
+impl ChannelsForAddrInfoV1 {
+    pub fn new() -> Self {
+        Self { channels: Vec::new() }
+    }
 }
 
 pub trait Conn2Ctrls: Send + Sync {
     fn connection_list_get_v1(
         &self,
     ) -> Pin<Box<dyn Future<Output = Result<ConnectionListV1, Box<dyn std::error::Error>>> + Send>>;
+    fn channels_for_addr_v1(
+        &self,
+        addr: SocketAddrV4,
+    ) -> Pin<Box<dyn Future<Output = Result<ChannelsForAddrInfoV1, Box<dyn std::error::Error>>> + Send>>;
 }
 
 pub trait CaIngestCtrls: Send + Sync {
@@ -419,6 +451,21 @@ fn make_routes_daqingest_private(
                 || async move {
                     if let Some(c2) = ca_ingest_ctrls.conn2_ctrls().await {
                         let ret = c2.connection_list_get_v1().await.unwrap();
+                        axum::Json(serde_json::to_value(&ret).unwrap())
+                    } else {
+                        axum::Json(json!({"error": "no ctrl"}))
+                    }
+                }
+            }),
+        )
+        .route(
+            "/conn2/channels_for_addr_v1/{*p1}",
+            get({
+                let ca_ingest_ctrls = ca_ingest_ctrls.clone();
+                |extract::Path(p1): extract::Path<String>| async move {
+                    let addr = p1.parse().unwrap_or("0.0.0.0:1".parse().unwrap());
+                    if let Some(c2) = ca_ingest_ctrls.conn2_ctrls().await {
+                        let ret = c2.channels_for_addr_v1(addr).await.unwrap();
                         axum::Json(serde_json::to_value(&ret).unwrap())
                     } else {
                         axum::Json(json!({"error": "no ctrl"}))

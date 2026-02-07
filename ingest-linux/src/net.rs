@@ -12,15 +12,13 @@ autoerr::create_error_v1!(
 
 pub fn local_hostname() -> String {
     let mut buf = vec![0u8; 128];
-    let hostname = unsafe {
-        let ec = libc::gethostname(buf.as_mut_ptr() as _, buf.len() - 2);
-        if ec != 0 {
-            panic!();
-        }
-        let hostname = CStr::from_ptr(&buf[0] as *const _ as _);
-        hostname.to_str().unwrap()
-    };
-    hostname.into()
+    let ec = unsafe { libc::gethostname(buf.as_mut_ptr() as _, buf.len() - 2) };
+    if ec != 0 {
+        "(gethostname-error)".into()
+    } else {
+        let hostname = unsafe { CStr::from_ptr(&buf[0] as *const _ as _) };
+        String::from_utf8_lossy(hostname.to_bytes()).into()
+    }
 }
 
 #[test]

@@ -58,12 +58,19 @@ autoerr::create_error_v1!(
         Handshake(#[from] handshake::Error),
         Connected(#[from] connected::Error),
         ChanSend,
+        ChanRecv,
     },
 );
 
 impl<T> From<asynchan::SendError<T>> for Error {
     fn from(value: asynchan::SendError<T>) -> Self {
         Self::ChanSend
+    }
+}
+
+impl From<asynchan::RecvError> for Error {
+    fn from(value: asynchan::RecvError) -> Self {
+        Self::ChanRecv
     }
 }
 
@@ -211,6 +218,7 @@ enum CaConnCmdKind {
     ChannelAdd(ChannelConfig, asynchan::Sender<u32>),
     ChannelRemove(ChannelConfig, asynchan::Sender<u32>),
     DisconnectOnIdle(asynchan::Sender<u32>),
+    ChannelsForAddrInfoV1(asynchan::Sender<crate::metrics::ChannelsForAddrInfoV1>),
 }
 
 #[derive(Debug)]
@@ -221,12 +229,11 @@ pub struct CaConnCmd {
 #[derive(Debug, Clone)]
 pub struct CaConnComm {
     cmd_tx: asynchan::Sender<CaConnCmd>,
-    // rx: asynchan::Receiver<Result<CaConnItem, Error>>,
 }
 
 impl CaConnComm {
     pub async fn channel_add(&mut self, conf: ChannelConfig) -> Result<(), Error> {
-        let (done_tx, mut done_rx) = asynchan::bounded(1, "CaConnComm-channel_add-done");
+        let (done_tx, mut done_rx) = asynchan::bounded(1, "CaConnComm-channel_add");
         let cmd = CaConnCmd {
             kind: CaConnCmdKind::ChannelAdd(conf, done_tx),
         };
@@ -236,7 +243,7 @@ impl CaConnComm {
     }
 
     pub async fn channel_remove(&mut self, conf: ChannelConfig) -> Result<(), Error> {
-        let (done_tx, mut done_rx) = asynchan::bounded(1, "CaConnComm-channel_add-done");
+        let (done_tx, mut done_rx) = asynchan::bounded(1, "CaConnComm-channel_remove");
         let cmd = CaConnCmd {
             kind: CaConnCmdKind::ChannelRemove(conf, done_tx),
         };
@@ -248,13 +255,23 @@ impl CaConnComm {
     pub async fn trigger_disconnect_on_idle(&mut self) -> Result<(), Error> {
         // The confirmation will get sent on command receive.
         // User then waits until the future is done.
-        let (done_tx, mut done_rx) = asynchan::bounded(1, "CaConnComm-trigger_disconnect_on_idle-done");
+        let (done_tx, mut done_rx) = asynchan::bounded(1, "CaConnComm-trigger_disconnect_on_idle");
         let cmd = CaConnCmd {
             kind: CaConnCmdKind::DisconnectOnIdle(done_tx),
         };
         self.cmd_tx.send(cmd).await?;
-        let _ = done_rx.next().await;
+        let ret = done_rx.recv().await?;
         Ok(())
+    }
+
+    pub async fn channels_info_v1(&mut self) -> Result<crate::metrics::ChannelsForAddrInfoV1, Error> {
+        let (tx, mut rx) = asynchan::bounded(1, "CaConnComm-channels_info_v1");
+        let cmd = CaConnCmd {
+            kind: CaConnCmdKind::ChannelsForAddrInfoV1(tx),
+        };
+        self.cmd_tx.send(cmd).await?;
+        let ret = rx.recv().await?;
+        Ok(ret)
     }
 }
 
@@ -416,6 +433,14 @@ impl CaConn {
         }
         Ok(hpp)
     }
+
+    fn channel_info_v1(&mut self) -> crate::metrics::ChannelsForAddrInfoV1 {
+        match &mut self.state {
+            State::Connecting(st1) => crate::metrics::ChannelsForAddrInfoV1::new(),
+            State::Connected(st1) => st1.channel_info_v1(),
+            State::Done => crate::metrics::ChannelsForAddrInfoV1::new(),
+        }
+    }
 }
 
 macro_rules! handle_poll_res {
@@ -509,6 +534,15 @@ impl Stream for CaConn {
                                     let fut = async move {
                                         tx.send(cmd).await?;
                                         // The is-done-sender is already passed to inner handler.
+                                        Ok(())
+                                    };
+                                    self2.ca_cmd_tx_fut = Some(ErasedFuture::new(fut));
+                                }
+                                CaConnCmdKind::ChannelsForAddrInfoV1(mut tx) => {
+                                    trace!("{selfname}:Received:ChannelsForAddrInfoV1");
+                                    let ret = self2.channel_info_v1();
+                                    let fut = async move {
+                                        tx.send(ret).await?;
                                         Ok(())
                                     };
                                     self2.ca_cmd_tx_fut = Some(ErasedFuture::new(fut));

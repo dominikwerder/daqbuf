@@ -497,6 +497,21 @@ enum State {
     Dummy,
 }
 
+impl State {
+    fn name_short(&self) -> &str {
+        match self {
+            State::Init(..) => "Init",
+            State::Creating(..) => "Creating",
+            State::Running(..) => "Running",
+            State::Closing1(..) => "Closing1",
+            State::Closing2(..) => "Closing2",
+            State::Done1 => "Done1",
+            State::Done => "Done",
+            State::Dummy => "Dummy",
+        }
+    }
+}
+
 async fn channel_create(
     cid: u32,
     name: String,
@@ -648,6 +663,18 @@ impl ChannelHandler {
     pub fn status_info(&self) -> StatusInfo {
         StatusInfo {
             counters: self.counters.clone(),
+        }
+    }
+
+    pub fn channel_info_v1(&mut self) -> crate::metrics::ChannelInfoV1 {
+        let name = self.conf.name().into();
+        let config1 = serde_json::json!({
+            "userconfig": &self.conf,
+        });
+        crate::metrics::ChannelInfoV1 {
+            name,
+            state_short: self.state.name_short().into(),
+            config1: serde_json::to_value(&config1).unwrap(),
         }
     }
 

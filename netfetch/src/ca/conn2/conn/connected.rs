@@ -189,6 +189,16 @@ impl Connected {
         self.protowrap.close();
         self.state = State::Done;
     }
+
+    pub fn channel_info_v1(&mut self) -> crate::metrics::ChannelsForAddrInfoV1 {
+        let empty = crate::metrics::ChannelsForAddrInfoV1::new();
+        match &mut self.state {
+            State::Init(..) => empty,
+            State::Handshake(..) => empty,
+            State::ActiveCa(st, ..) => st.channel_info_v1(),
+            State::Done => empty,
+        }
+    }
 }
 
 impl Stream for Connected {
