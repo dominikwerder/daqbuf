@@ -93,7 +93,6 @@ pub struct ConnectionListV1 {
 pub struct ChannelInfoV1 {
     pub name: String,
     pub state_short: String,
-    pub config1: serde_json::Value,
 }
 
 #[derive(Serialize)]
@@ -107,14 +106,41 @@ impl ChannelsForAddrInfoV1 {
     }
 }
 
+#[derive(Serialize)]
+pub struct ChannelInfoV2 {
+    pub name: String,
+    pub state: serde_json::Value,
+    pub config: serde_json::Value,
+}
+
+#[derive(Serialize)]
+pub struct ChannelsForAddrInfoV2 {
+    pub channels: Vec<ChannelInfoV2>,
+}
+
+impl ChannelsForAddrInfoV2 {
+    pub fn new() -> Self {
+        Self { channels: Vec::new() }
+    }
+}
+
 pub trait Conn2Ctrls: Send + Sync {
     fn connection_list_get_v1(
         &self,
     ) -> Pin<Box<dyn Future<Output = Result<ConnectionListV1, Box<dyn std::error::Error>>> + Send>>;
+
+    // TODO add command to list all channels that ConnSet knows about via its internal handlers
+
     fn channels_for_addr_v1(
         &self,
         addr: SocketAddrV4,
     ) -> Pin<Box<dyn Future<Output = Result<ChannelsForAddrInfoV1, Box<dyn std::error::Error>>> + Send>>;
+
+    fn channels_for_addr_v2(
+        &self,
+        addr: SocketAddrV4,
+        name: String,
+    ) -> Pin<Box<dyn Future<Output = Result<ChannelsForAddrInfoV2, Box<dyn std::error::Error>>> + Send>>;
 }
 
 pub trait CaIngestCtrls: Send + Sync {
@@ -466,6 +492,24 @@ fn make_routes_daqingest_private(
                     let addr = p1.parse().unwrap_or("0.0.0.0:1".parse().unwrap());
                     if let Some(c2) = ca_ingest_ctrls.conn2_ctrls().await {
                         let ret = c2.channels_for_addr_v1(addr).await.unwrap();
+                        axum::Json(serde_json::to_value(&ret).unwrap())
+                    } else {
+                        axum::Json(json!({"error": "no ctrl"}))
+                    }
+                }
+            }),
+        )
+        .route(
+            "/conn2/channel_info_v2",
+            get({
+                let ca_ingest_ctrls = ca_ingest_ctrls.clone();
+                |Query(params): Query<HashMap<String, String>>| async move {
+                    let addr0 = "0.0.0.0:1".parse().unwrap();
+                    let addr = params.get("addr").map(|x| x.parse().unwrap_or(addr0)).unwrap_or(addr0);
+                    let name = params.get("name").map(String::from).unwrap_or("(noname)".into());
+                    info!("channel_info_v2  {addr:?}  {name:?}");
+                    if let Some(c2) = ca_ingest_ctrls.conn2_ctrls().await {
+                        let ret = c2.channels_for_addr_v2(addr, name).await.unwrap();
                         axum::Json(serde_json::to_value(&ret).unwrap())
                     } else {
                         axum::Json(json!({"error": "no ctrl"}))

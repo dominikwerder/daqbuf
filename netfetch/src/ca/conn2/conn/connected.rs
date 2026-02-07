@@ -199,6 +199,16 @@ impl Connected {
             State::Done => empty,
         }
     }
+
+    pub fn channel_info_v2(&mut self, name: String) -> crate::metrics::ChannelsForAddrInfoV2 {
+        let empty = crate::metrics::ChannelsForAddrInfoV2::new();
+        match &mut self.state {
+            State::Init(..) => empty,
+            State::Handshake(..) => empty,
+            State::ActiveCa(st, ..) => st.channel_info_v2(name),
+            State::Done => empty,
+        }
+    }
 }
 
 impl Stream for Connected {

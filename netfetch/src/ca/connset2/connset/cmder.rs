@@ -105,4 +105,19 @@ impl ConnSetCmder {
         let ret = rx.recv().await?;
         Ok(ret)
     }
+
+    pub async fn channels_for_addr_v2(
+        &self,
+        addr: SocketAddrV4,
+        name: String,
+    ) -> Result<crate::metrics::ChannelsForAddrInfoV2, Error> {
+        let mut dtx = self.tx.clone();
+        let (tx, mut rx) = asynchan::bounded(2, "ChannelsForAddrInfoV2");
+        let cmd = ConnSetCmd {
+            kind: ConnSetCmdKind::ChannelsForAddrInfoV2(addr, name, tx),
+        };
+        let _ = dtx.send(cmd).await?;
+        let ret = rx.recv().await?;
+        Ok(ret)
+    }
 }

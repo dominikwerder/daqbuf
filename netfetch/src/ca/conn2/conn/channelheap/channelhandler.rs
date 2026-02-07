@@ -668,13 +668,21 @@ impl ChannelHandler {
 
     pub fn channel_info_v1(&mut self) -> crate::metrics::ChannelInfoV1 {
         let name = self.conf.name().into();
-        let config1 = serde_json::json!({
-            "userconfig": &self.conf,
-        });
         crate::metrics::ChannelInfoV1 {
             name,
             state_short: self.state.name_short().into(),
-            config1: serde_json::to_value(&config1).unwrap(),
+        }
+    }
+
+    pub fn channel_info_v2(&mut self) -> crate::metrics::ChannelInfoV2 {
+        let name = self.conf.name().into();
+        let config = serde_json::json!({
+            "userconfig": &self.conf,
+        });
+        crate::metrics::ChannelInfoV2 {
+            name,
+            state: self.state.name_short().into(),
+            config: serde_json::to_value(&config).unwrap(),
         }
     }
 

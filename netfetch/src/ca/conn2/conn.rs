@@ -219,6 +219,7 @@ enum CaConnCmdKind {
     ChannelRemove(ChannelConfig, asynchan::Sender<u32>),
     DisconnectOnIdle(asynchan::Sender<u32>),
     ChannelsForAddrInfoV1(asynchan::Sender<crate::metrics::ChannelsForAddrInfoV1>),
+    ChannelsForAddrInfoV2(String, asynchan::Sender<crate::metrics::ChannelsForAddrInfoV2>),
 }
 
 #[derive(Debug)]
@@ -268,6 +269,16 @@ impl CaConnComm {
         let (tx, mut rx) = asynchan::bounded(1, "CaConnComm-channels_info_v1");
         let cmd = CaConnCmd {
             kind: CaConnCmdKind::ChannelsForAddrInfoV1(tx),
+        };
+        self.cmd_tx.send(cmd).await?;
+        let ret = rx.recv().await?;
+        Ok(ret)
+    }
+
+    pub async fn channels_info_v2(&mut self, name: String) -> Result<crate::metrics::ChannelsForAddrInfoV2, Error> {
+        let (tx, mut rx) = asynchan::bounded(1, "CaConnComm-channels_info_v2");
+        let cmd = CaConnCmd {
+            kind: CaConnCmdKind::ChannelsForAddrInfoV2(name, tx),
         };
         self.cmd_tx.send(cmd).await?;
         let ret = rx.recv().await?;
@@ -436,9 +447,17 @@ impl CaConn {
 
     fn channel_info_v1(&mut self) -> crate::metrics::ChannelsForAddrInfoV1 {
         match &mut self.state {
-            State::Connecting(st1) => crate::metrics::ChannelsForAddrInfoV1::new(),
-            State::Connected(st1) => st1.channel_info_v1(),
+            State::Connecting(..) => crate::metrics::ChannelsForAddrInfoV1::new(),
+            State::Connected(st) => st.channel_info_v1(),
             State::Done => crate::metrics::ChannelsForAddrInfoV1::new(),
+        }
+    }
+
+    fn channel_info_v2(&mut self, name: String) -> crate::metrics::ChannelsForAddrInfoV2 {
+        match &mut self.state {
+            State::Connecting(..) => crate::metrics::ChannelsForAddrInfoV2::new(),
+            State::Connected(st) => st.channel_info_v2(name),
+            State::Done => crate::metrics::ChannelsForAddrInfoV2::new(),
         }
     }
 }
@@ -541,6 +560,15 @@ impl Stream for CaConn {
                                 CaConnCmdKind::ChannelsForAddrInfoV1(mut tx) => {
                                     trace!("{selfname}:Received:ChannelsForAddrInfoV1");
                                     let ret = self2.channel_info_v1();
+                                    let fut = async move {
+                                        tx.send(ret).await?;
+                                        Ok(())
+                                    };
+                                    self2.ca_cmd_tx_fut = Some(ErasedFuture::new(fut));
+                                }
+                                CaConnCmdKind::ChannelsForAddrInfoV2(name, mut tx) => {
+                                    trace!("{selfname}:Received:ChannelsForAddrInfoV2");
+                                    let ret = self2.channel_info_v2(name);
                                     let fut = async move {
                                         tx.send(ret).await?;
                                         Ok(())

@@ -22,6 +22,7 @@ use crate::conf::ChannelConfig;
 use crate::futwrap::FutDbg;
 use crate::futwrap::FutDbgBox;
 use crate::misc::todoval;
+pub use cmder::ConnSetCmder;
 use dbpg::seriesbychannel::ChannelInfoQuery;
 use dbpg::seriesbychannel::ChannelInfoQuerySender;
 pub use futs::FutShutdown;
@@ -33,6 +34,7 @@ use futures::future::ready;
 use scywr::insertqueues::InsertQueuesTx;
 use std::collections::BTreeMap;
 use std::collections::VecDeque;
+use std::net::Ipv4Addr;
 use std::net::SocketAddrV4;
 use std::pin::Pin;
 use std::task::Context;
@@ -40,10 +42,6 @@ use std::task::Poll;
 use std::time::Duration;
 use taskrun::tokio;
 use taskrun::tokio::task::JoinHandle;
-
-use crate::metrics::ChannelsForAddrInfoV1;
-pub use cmder::ConnSetCmder;
-use std::net::Ipv4Addr;
 
 macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
 macro_rules! warn { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
@@ -104,6 +102,11 @@ enum ConnSetCmdKind {
     Shutdown,
     ConnectionListGetV1(asynchan::Sender<crate::metrics::ConnectionListV1>),
     ChannelsForAddrInfoV1(SocketAddrV4, asynchan::Sender<crate::metrics::ChannelsForAddrInfoV1>),
+    ChannelsForAddrInfoV2(
+        SocketAddrV4,
+        String,
+        asynchan::Sender<crate::metrics::ChannelsForAddrInfoV2>,
+    ),
 }
 
 #[derive(Debug)]
@@ -613,9 +616,30 @@ impl ConnSet {
                     .map(|x| x.1.comm.clone())
                     .collect();
                 let fut = async move {
-                    let mut a = ChannelsForAddrInfoV1 { channels: Vec::new() };
+                    let mut a = crate::metrics::ChannelsForAddrInfoV1 { channels: Vec::new() };
                     for mut cmdtx in cmdtxs {
                         let r = cmdtx.channels_info_v1().await?;
+                        for x in r.channels {
+                            a.channels.push(x);
+                        }
+                    }
+                    let _ = tx.send(a).await;
+                    Ok(())
+                };
+                // TODO maybe better return the future from here and let caller place it.
+                self.cmder_cmd_fut = Some(ErasedFuture::new(fut));
+            }
+            ConnSetCmdKind::ChannelsForAddrInfoV2(addr, name, mut tx) => {
+                let cmdtxs: Vec<_> = self
+                    .ca_conns
+                    .iter()
+                    .filter(|x| *x.0 == addr)
+                    .map(|x| x.1.comm.clone())
+                    .collect();
+                let fut = async move {
+                    let mut a = crate::metrics::ChannelsForAddrInfoV2 { channels: Vec::new() };
+                    for mut cmdtx in cmdtxs {
+                        let r = cmdtx.channels_info_v2(name.clone()).await?;
                         for x in r.channels {
                             a.channels.push(x);
                         }

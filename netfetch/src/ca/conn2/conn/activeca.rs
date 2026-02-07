@@ -420,4 +420,8 @@ impl ActiveCa {
     pub fn channel_info_v1(&mut self) -> crate::metrics::ChannelsForAddrInfoV1 {
         self.chanheap.channel_info_v1()
     }
+
+    pub fn channel_info_v2(&mut self, name: String) -> crate::metrics::ChannelsForAddrInfoV2 {
+        self.chanheap.channel_info_v2(name)
+    }
 }
