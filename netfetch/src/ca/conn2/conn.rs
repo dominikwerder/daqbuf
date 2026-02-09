@@ -220,6 +220,7 @@ enum CaConnCmdKind {
     DisconnectOnIdle(asynchan::Sender<u32>),
     ChannelsForAddrInfoV1(asynchan::Sender<crate::metrics::ChannelsForAddrInfoV1>),
     ChannelsForAddrInfoV2(String, asynchan::Sender<crate::metrics::ChannelsForAddrInfoV2>),
+    ChannelsByRegexV1(String, String, asynchan::Sender<Vec<serde_json::Value>>),
 }
 
 #[derive(Debug)]
@@ -279,6 +280,16 @@ impl CaConnComm {
         let (tx, mut rx) = asynchan::bounded(1, "CaConnComm-channels_info_v2");
         let cmd = CaConnCmd {
             kind: CaConnCmdKind::ChannelsForAddrInfoV2(name, tx),
+        };
+        self.cmd_tx.send(cmd).await?;
+        let ret = rx.recv().await?;
+        Ok(ret)
+    }
+
+    pub async fn channels_by_regex_v1(&mut self, kind: String, regex: String) -> Result<Vec<serde_json::Value>, Error> {
+        let (tx, mut rx) = asynchan::bounded(1, "CaConnComm-ChannelsByRegexV1");
+        let cmd = CaConnCmd {
+            kind: CaConnCmdKind::ChannelsByRegexV1(kind, regex, tx),
         };
         self.cmd_tx.send(cmd).await?;
         let ret = rx.recv().await?;
@@ -460,6 +471,14 @@ impl CaConn {
             State::Done => crate::metrics::ChannelsForAddrInfoV2::new(),
         }
     }
+
+    fn channels_by_regex_v1(&mut self, kind: String, reg: String) -> Vec<serde_json::Value> {
+        match &mut self.state {
+            State::Connecting(..) => Vec::new(),
+            State::Connected(st) => st.channels_by_regex_v1(kind, reg),
+            State::Done => Vec::new(),
+        }
+    }
 }
 
 macro_rules! handle_poll_res {
@@ -575,6 +594,15 @@ impl Stream for CaConn {
                                     };
                                     self2.ca_cmd_tx_fut = Some(ErasedFuture::new(fut));
                                 }
+                                CaConnCmdKind::ChannelsByRegexV1(kind, reg, mut tx) => {
+                                    trace!("{selfname}:Received:ChannelsByRegexV1");
+                                    let ret = self2.channels_by_regex_v1(kind, reg);
+                                    let fut = async move {
+                                        tx.send(ret).await?;
+                                        Ok(())
+                                    };
+                                    self2.ca_cmd_tx_fut = Some(ErasedFuture::new(fut));
+                                }
                             }
                         }
                         None => {}
@@ -591,7 +619,7 @@ impl Stream for CaConn {
                             trace!("{selfname}:Connecting:Ready");
                             // ok, we replace the full state
                             let ca_cmd_rx = std::mem::replace(&mut st1.ca_cmd_rx, asynchan::bounded(1, "dummy").1);
-                            let stn = Connected::new(x, self.remote_addr, tsloop, ca_cmd_rx);
+                            let stn = Connected::new(self2.backend.clone(), x, self.remote_addr, tsloop, ca_cmd_rx);
                             self.state = State::Connected(stn);
                             hpp.mark_progress();
                         }

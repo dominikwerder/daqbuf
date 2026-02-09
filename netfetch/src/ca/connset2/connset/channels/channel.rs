@@ -19,6 +19,7 @@ use futures::StreamExt;
 use netpod::ScalarType;
 use netpod::SeriesKind;
 use netpod::Shape;
+use serde::Serialize;
 use series::ChannelStatusSeriesId;
 use std::net::SocketAddrV4;
 use std::pin::Pin;
@@ -54,6 +55,7 @@ async fn addr_search(conf: ChannelConfig, ress: &mut PollRess<'_>) -> Result<Soc
 
 #[derive(Debug)]
 struct Observing {
+    cssid: ChannelStatusSeriesId,
     addr: SocketAddrV4,
 }
 
@@ -64,11 +66,12 @@ impl Observing {
 }
 
 #[derive(Debug, Clone)]
-pub struct RemovingInfo {
+pub struct RemovingCommon {
+    cssid: Option<ChannelStatusSeriesId>,
     addr: Option<SocketAddrV4>,
 }
 
-impl RemovingInfo {
+impl RemovingCommon {
     pub fn addr(&self) -> Option<SocketAddrV4> {
         self.addr.clone()
     }
@@ -80,17 +83,52 @@ enum State {
     CssidReq(ErasedFuture<Result<ChannelInfoResult, Error>, 0x150>),
     AddrSearch(ChannelStatusSeriesId, ErasedFuture<Result<SocketAddrV4, Error>, 0x200>),
     Observing(Observing),
-    Removing0(RemovingInfo),
-    Removing1(RemovingInfo, FutDbg<Result<(), Error>>),
-    Removing2(RemovingInfo, FutDbg<Result<(), Error>>),
+    Removing0(RemovingCommon),
+    Removing1(RemovingCommon, FutDbg<Result<(), Error>>),
+    Removing2(RemovingCommon, FutDbg<Result<(), Error>>),
     Removed,
     Done,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AddrSearchInfo {
+    cssid: ChannelStatusSeriesId,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ObservingInfo {
+    cssid: ChannelStatusSeriesId,
+    addr: SocketAddrV4,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RemovingInfo2 {
+    cssid: Option<ChannelStatusSeriesId>,
+    addr: Option<SocketAddrV4>,
+}
+
+#[derive(Debug, Serialize)]
+pub enum StateInfo {
+    Init,
+    CssidReq,
+    AddrSearch(AddrSearchInfo),
+    Observing(ObservingInfo),
+    Removing0(RemovingInfo2),
+    Removing1(RemovingInfo2),
+    Removing2(RemovingInfo2),
+    Removed,
+    Done,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ChannelInfo {
+    state: StateInfo,
 }
 
 #[derive(Debug)]
 pub enum ChannelActionItem {
     AddToCaConn(ChannelConfig, SocketAddrV4),
-    RemoveFromCaConn(ChannelConfig, RemovingInfo, asynchan::Sender<u32>),
+    RemoveFromCaConn(ChannelConfig, RemovingCommon, asynchan::Sender<u32>),
 }
 
 #[derive(Debug)]
@@ -116,6 +154,34 @@ impl Channel {
         self.conf.name()
     }
 
+    pub fn channel_info(&self) -> ChannelInfo {
+        ChannelInfo {
+            state: match &self.state {
+                State::Init => StateInfo::Init,
+                State::CssidReq(_) => StateInfo::CssidReq,
+                State::AddrSearch(cssid, _) => StateInfo::AddrSearch(AddrSearchInfo { cssid: cssid.clone() }),
+                State::Observing(st) => StateInfo::Observing(ObservingInfo {
+                    cssid: st.cssid.clone(),
+                    addr: st.addr.clone(),
+                }),
+                State::Removing0(st) => StateInfo::Removing0(RemovingInfo2 {
+                    cssid: st.cssid.clone(),
+                    addr: st.addr.clone(),
+                }),
+                State::Removing1(st, _) => StateInfo::Removing1(RemovingInfo2 {
+                    cssid: st.cssid.clone(),
+                    addr: st.addr.clone(),
+                }),
+                State::Removing2(st, _) => StateInfo::Removing2(RemovingInfo2 {
+                    cssid: st.cssid.clone(),
+                    addr: st.addr.clone(),
+                }),
+                State::Removed => StateInfo::Removed,
+                State::Done => StateInfo::Done,
+            },
+        }
+    }
+
     fn transition_to_removing(&mut self) {
         let selfname = "transition_to_removing";
         debug!("{selfname} called");
@@ -124,10 +190,18 @@ impl Channel {
         // Correct? More to do?
         // Must be safe to be called in any state.
         let addr = match &self.state {
-            State::Observing(obs) => Some(obs.addr),
+            State::Observing(st) => Some(st.addr),
             _ => None,
         };
-        self.state = State::Removing0(RemovingInfo { addr });
+        let cssid = match &self.state {
+            State::AddrSearch(cssid, _) => Some(cssid.clone()),
+            State::Observing(st) => Some(st.cssid.clone()),
+            State::Removing0(st) => st.cssid.clone(),
+            State::Removing1(st, _) => st.cssid.clone(),
+            State::Removing2(st, _) => st.cssid.clone(),
+            _ => None,
+        };
+        self.state = State::Removing0(RemovingCommon { addr, cssid });
     }
 
     fn handle_command(mut self: Pin<&mut Self>, cmd: Cmd, cx: &mut Context) -> Result<(), Error> {
@@ -226,7 +300,10 @@ impl PollCstm for Channel {
                             trace!("State::AddrSearch  found {x}");
                             trace!("State::AddrSearch  TODO  issue channel-add and then monitor for status updates");
                             hpp.mark_progress();
-                            self.state = State::Observing(Observing { addr: x });
+                            self.state = State::Observing(Observing {
+                                cssid: cssid.clone(),
+                                addr: x,
+                            });
                             let item = ChannelActionItem::AddToCaConn(self.conf.clone(), x);
                             break Ready(Some(Ok(item)));
                         }

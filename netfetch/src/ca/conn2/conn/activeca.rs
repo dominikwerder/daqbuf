@@ -123,6 +123,7 @@ type StreamItem = Result<ActiveCaItem, Error>;
 
 #[derive(Debug)]
 pub struct ActiveCa {
+    backend: String,
     tsbeg: Instant,
     addr: SocketAddrV4,
     state: State,
@@ -140,6 +141,7 @@ pub struct ActiveCa {
 
 impl ActiveCa {
     pub fn new(
+        backend: String,
         proto_rx: asynchan::Receiver<CaMsg>,
         proto_tx: asynchan::Sender<CaMsg>,
         // cmd_rx: Receiver<CaCommand>,
@@ -150,10 +152,11 @@ impl ActiveCa {
         let (proto_2_tx, proto_2_rx) = asynchan::bounded(120, "ActiveCa-proto2");
         let (chanheap_cmd_tx, chanheap_cmd_rx) = asynchan::bounded(16, "ActiveCa-ChannelHeap-cmd");
         Self {
+            chanheap: ChannelHeap::new(backend.clone(), proto_tx.clone(), proto_2_rx),
+            backend,
             tsbeg: tsnow,
             addr,
             state: State::new(),
-            chanheap: ChannelHeap::new(proto_tx.clone(), proto_2_rx),
             proto_tx,
             proto_rx,
             proto_rx_buf: VecDeque::with_capacity(16),
@@ -423,5 +426,9 @@ impl ActiveCa {
 
     pub fn channel_info_v2(&mut self, name: String) -> crate::metrics::ChannelsForAddrInfoV2 {
         self.chanheap.channel_info_v2(name)
+    }
+
+    pub fn channels_by_regex_v1(&mut self, kind: String, reg: String) -> Vec<serde_json::Value> {
+        self.chanheap.channels_by_regex_v1(kind, reg)
     }
 }

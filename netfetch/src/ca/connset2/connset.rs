@@ -32,6 +32,7 @@ use futures::StreamExt;
 use futures::TryFutureExt;
 use futures::future::ready;
 use scywr::insertqueues::InsertQueuesTx;
+use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::collections::VecDeque;
 use std::net::Ipv4Addr;
@@ -61,6 +62,7 @@ autoerr::create_error_v1!(
         Conn(#[from] conn2::conn::Error),
         Send,
         Timeout(#[from] timeoutable::TimeoutError),
+        Command(String),
         Logic,
     },
 );
@@ -107,6 +109,7 @@ enum ConnSetCmdKind {
         String,
         asynchan::Sender<crate::metrics::ChannelsForAddrInfoV2>,
     ),
+    CmdDynV1(String, asynchan::Sender<String>),
 }
 
 #[derive(Debug)]
@@ -488,6 +491,119 @@ impl ConnSet {
         }
     }
 
+    fn handle_cmd_dyn_v1(
+        self: Pin<&mut Self>,
+        cmd: String,
+        mut tx: asynchan::Sender<String>,
+        cx: &mut Context,
+    ) -> Option<Box<dyn Future<Output = Result<(), Error>>>> {
+        match serde_json::from_str::<crate::metrics::CmdType>(&cmd) {
+            Ok(cmdty) => {
+                if cmdty.ty == "ChannelsByRegexV1" {
+                    match serde_json::from_str::<crate::metrics::CmdChannelsByRegex>(&cmd) {
+                        Ok(cmd) => match regex::Regex::new(&cmd.regex) {
+                            Ok(re1) => {
+                                if cmd.src == "CaConn" {
+                                    let cmdtxs: Vec<_> = self
+                                        .ca_conns
+                                        .iter()
+                                        .filter(|(addr, _)| true || addr.port() == 123)
+                                        .map(|(addr, reg)| (addr.clone(), reg.comm.clone()))
+                                        .collect();
+                                    let fut = async move {
+                                        let mut a = Vec::new();
+                                        for (addr, mut cmdtx) in cmdtxs {
+                                            let r =
+                                                cmdtx.channels_by_regex_v1(cmd.kind.clone(), cmd.regex.clone()).await?;
+                                            for x in r {
+                                                let name = if let Some(x) = x.get("name") {
+                                                    x.as_str().unwrap_or("(nil)")
+                                                } else {
+                                                    "(nil)"
+                                                };
+                                                let x = crate::metrics::ChannelInfoV3 {
+                                                    name: name.into(),
+                                                    addr: Some(addr.into()),
+                                                    chinfo_a: x,
+                                                };
+                                                a.push(x);
+                                            }
+                                        }
+                                        let val = serde_json::json!({
+                                            "channels": a,
+                                        });
+                                        let s = serde_json::to_string(&val).unwrap();
+                                        let _ = tx.send(s).await;
+                                        Ok(())
+                                    };
+                                    Some(Box::new(fut))
+                                } else {
+                                    let channels: Vec<_> = self
+                                        .channels
+                                        .iter()
+                                        .filter(|x| re1.is_match(x.channel.name()))
+                                        .map(|x| {
+                                            let chi = x.channel.channel_info();
+                                            crate::metrics::ChannelInfoV3 {
+                                                name: x.channel.name().into(),
+                                                addr: x.channel.addr().map(Into::into),
+                                                chinfo_a: serde_json::to_value(&chi).unwrap(),
+                                            }
+                                        })
+                                        .collect();
+                                    let val = serde_json::json!({
+                                        "channels": channels,
+                                    });
+                                    let s = serde_json::to_string(&val).unwrap();
+                                    let fut = async move {
+                                        let _ = tx.send(s).await;
+                                        Ok(())
+                                    };
+                                    Some(Box::new(fut))
+                                }
+                            }
+                            Err(e) => {
+                                let s = serde_json::to_string(&serde_json::json!({
+                                    "type": "error",
+                                    "msg": format!("{e}"),
+                                }))
+                                .unwrap();
+                                let _ = tx.try_send(s);
+                                None
+                            }
+                        },
+                        Err(e) => {
+                            let s = serde_json::to_string(&serde_json::json!({
+                                "type": "error",
+                                "msg": format!("{e}"),
+                            }))
+                            .unwrap();
+                            let _ = tx.try_send(s);
+                            None
+                        }
+                    }
+                } else {
+                    let s = serde_json::to_string(&serde_json::json!({
+                        "type": "error",
+                        "msg": format!("unknown: {}", cmdty.ty),
+                    }))
+                    .unwrap();
+                    let _ = tx.try_send(s);
+                    None
+                }
+            }
+            Err(e) => {
+                let s = serde_json::to_string(&serde_json::json!({
+                    "type": "error",
+                    "msg": format!("{e}"),
+                }))
+                .unwrap();
+                let _ = tx.try_send(s);
+                None
+            }
+        }
+    }
+
     fn handle_cmder_cmd(mut self: Pin<&mut Self>, cmd: ConnSetCmd, cx: &mut Context) {
         let selfname = "handle_cmder_cmd";
         assert!(self.cmder_cmd_fut.is_none());
@@ -649,6 +765,12 @@ impl ConnSet {
                 };
                 // TODO maybe better return the future from here and let caller place it.
                 self.cmder_cmd_fut = Some(ErasedFuture::new(fut));
+            }
+            ConnSetCmdKind::CmdDynV1(cmd, tx) => {
+                // TODO maybe better return the future from here and let caller place it.
+                if let Some(fut) = self.as_mut().handle_cmd_dyn_v1(cmd, tx, cx) {
+                    self.cmder_cmd_fut = Some(ErasedFuture::new(Box::into_pin(fut)));
+                }
             }
         }
     }

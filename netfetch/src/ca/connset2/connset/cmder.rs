@@ -120,4 +120,15 @@ impl ConnSetCmder {
         let ret = rx.recv().await?;
         Ok(ret)
     }
+
+    pub async fn cmd_dyn_v1(&self, cmd: String) -> Result<String, Error> {
+        let mut dtx = self.tx.clone();
+        let (tx, mut rx) = asynchan::bounded(2, "CmdDynV1");
+        let cmd = ConnSetCmd {
+            kind: ConnSetCmdKind::CmdDynV1(cmd, tx),
+        };
+        let _ = dtx.send(cmd).await?;
+        let ret = rx.recv().await?;
+        Ok(ret)
+    }
 }

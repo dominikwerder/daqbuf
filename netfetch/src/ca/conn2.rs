@@ -1,5 +1,6 @@
 pub mod asynchan1;
 pub mod asynchan2;
+mod ca_writer_value;
 mod caids;
 mod channelstateinfo;
 pub(super) mod conn;

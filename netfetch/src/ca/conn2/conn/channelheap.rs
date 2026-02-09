@@ -284,6 +284,7 @@ enum PollHandlerItemB {
 
 #[derive(Debug)]
 pub struct ChannelHeap {
+    backend: String,
     state: State,
     proto_tx: asynchan::Sender<CaMsg>,
     proto_rx: asynchan::Receiver<CaMsg>,
@@ -303,9 +304,10 @@ pub struct ChannelHeap {
 }
 
 impl ChannelHeap {
-    pub fn new(proto_tx: asynchan::Sender<CaMsg>, proto_rx: asynchan::Receiver<CaMsg>) -> Self {
+    pub fn new(backend: String, proto_tx: asynchan::Sender<CaMsg>, proto_rx: asynchan::Receiver<CaMsg>) -> Self {
         let (ch_hp_tx, ch_hp_rx) = asynchan::bounded(12, "ChannelHandler-to-ChannelHeap");
         Self {
+            backend,
             state: State::Running,
             proto_tx,
             proto_rx,
@@ -394,6 +396,33 @@ impl ChannelHeap {
         ret
     }
 
+    pub fn channels_by_regex_v1(&mut self, kind: String, reg: String) -> Vec<serde_json::Value> {
+        let mut ret = Vec::new();
+        let re1 = match regex::Regex::new(&reg) {
+            Ok(x) => x,
+            Err(_) => return ret,
+        };
+        match &mut self.state {
+            State::Running => {
+                self.by_cid
+                    .iter_mut()
+                    .map(|(_, che)| che)
+                    .filter(move |che| re1.is_match(&che.name))
+                    .map(|che| match &mut che.ch_handler {
+                        ChHandler::ChHandlerActive(hh) => {
+                            let x = hh.handler.channel_info_v2();
+                            let x = serde_json::to_value(&x).unwrap();
+                            ret.push(x);
+                        }
+                        ChHandler::Done => {}
+                    })
+                    .for_each(|_| {});
+            }
+            State::Done => {}
+        }
+        ret
+    }
+
     pub fn mett_take(&mut self) -> CaConnConnectedMetrics {
         for (cid, ee) in self.by_cid.iter_mut() {
             match &mut ee.ch_handler {
@@ -413,8 +442,9 @@ impl ChannelHeap {
         trace!("channel_add {conf:?}");
         let name = conf.name().into();
         let (tx, rx) = asynchan::bounded(12, "ChannelHeap-channeladd");
+        error!("TODO do something with this rx");
         self.mett.channel_handler_new().inc();
-        let handler = ChannelHandler::new(conf, self.proto_tx.clone(), rx, self.ch_hp_tx.clone());
+        let handler = ChannelHandler::new(self.backend.clone(), conf, self.proto_tx.clone(), self.ch_hp_tx.clone());
         let cid = handler.cid();
         if self.by_cid.contains_key(&cid) {
             error!("ChannelHeap::channel_add: channel with cid {cid:?} already in map");
@@ -483,6 +513,10 @@ impl ChannelHeap {
                                 };
                                 PollHandlerItem::ChannelHeapItem(item)
                             }
+                            channelhandler::ItemInner::ProtoOutCid(item, cid) => {
+                                // TODO metrics on cid?
+                                PollHandlerItem::ProtoOut(item)
+                            }
                             channelhandler::ItemInner::ProtoOutIoid(mut ca_msg, sid) => {
                                 if let Some(sid2) = handler.sid() {
                                     if sid2 != sid {
@@ -498,6 +532,10 @@ impl ChannelHeap {
                                     warn!("ProtoOutIoid but handler missing sid");
                                     PollHandlerItem::None
                                 }
+                            }
+                            channelhandler::ItemInner::ChannelInfoQuery(qu) => {
+                                error!("\n\n\n  TODO forward the ChannelInfoQuery  \n\n\n");
+                                PollHandlerItem::None
                             }
                         };
                         break Ready(Some(Ok(item)));
@@ -576,35 +614,17 @@ impl ChannelHeap {
             if let Some(cid) = disp_cid {
                 if let Some(e) = self2.by_cid.get_mut(&cid) {
                     match &mut e.ch_handler {
-                        ChHandler::ChHandlerActive(st2) => {
-                            use asynchan::SendPoll;
-                            use asynchan::SendPollError;
-                            match st2.proto_tx.poll_send_unpin(item, cx) {
-                                Ok(()) => {
-                                    trace!("{selfname}  ChannelHeap:Dispatch:Sent {cid}");
-                                    self2.wakeup_cids.insert(cid, ());
-                                    hpp.mark_progress();
-                                }
-                                Err(e) => match e {
-                                    SendPollError::Full(item) => {
-                                        trace_pending!("{selfname}  ChannelHeap:Dispatch {cid}");
-                                        self2.inp_buf.push_front(item);
-                                        hpp.mark_pending();
-                                    }
-                                    SendPollError::Closed(item) => {
-                                        trace!("{selfname}  ChannelHeap:Dispatch:Closed {cid}");
-                                        let _ = item;
-                                        hpp.mark_progress();
-                                        self2.state = State::Done;
-                                        warn!("{selfname}  TODO handle closed channel handler gracefully");
-                                        let e = Error::Msg(format!(
-                                            "{selfname}  ChannelHeap: channel handler for {cid} closed"
-                                        ));
-                                        return Ready(Some(Err(e)));
-                                    }
-                                },
+                        ChHandler::ChHandlerActive(st2) => match Pin::new(&mut st2.handler).inp_push_try(item) {
+                            Some(item) => {
+                                trace_pending!("{selfname}  ChannelHeap:Dispatch {cid}");
+                                self2.inp_buf.push_front(item);
+                                hpp.mark_pending();
                             }
-                        }
+                            None => {
+                                hpp.mark_progress();
+                                self2.wakeup_cids.insert(cid, ());
+                            }
+                        },
                         ChHandler::Done => {
                             // Can not handle this msg.
                             // TODO count for metrics.
@@ -953,19 +973,23 @@ impl ChannelHeap {
                     }
                     if self.inp_buf.len() < self.inp_buf.capacity() {
                         match self.proto_rx.poll_next_unpin(cx) {
-                            Ready(x) => match x {
-                                Some(item) => {
-                                    trace3!("ChannelHeap:CaInp:Rx:Ok");
-                                    hpp.mark_progress();
-                                    self.inp_buf.push_back(item);
-                                }
-                                None => {
-                                    debug!("ChannelHeap:CaInp:Rx:Err");
-                                    hpp.mark_progress();
-                                    self.state = State::Done;
-                                    break Ready(Some(Err(Error::ProtoRxClosed)));
-                                }
-                            },
+                            Ready(Some(item)) => {
+                                trace3!("ChannelHeap:CaInp:Rx:Ok");
+                                hpp.mark_progress();
+                                self.inp_buf.push_back(item);
+                            }
+                            Ready(None) => {
+                                debug!("ChannelHeap:CaInp:Rx:Err");
+                                self.by_cid.iter_mut().for_each(|(_, ce)| match &mut ce.ch_handler {
+                                    ChHandler::ChHandlerActive(h1) => {
+                                        h1.handler.inp_done();
+                                    }
+                                    ChHandler::Done => {}
+                                });
+                                hpp.mark_progress();
+                                self.state = State::Done;
+                                break Ready(Some(Err(Error::ProtoRxClosed)));
+                            }
                             Pending => {
                                 trace_pending!("ChannelHeap:CaInp:Rx");
                                 hpp.mark_pending();

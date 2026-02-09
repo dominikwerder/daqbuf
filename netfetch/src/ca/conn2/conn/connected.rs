@@ -91,6 +91,7 @@ pub struct StatusInfo {
 
 #[derive(Debug)]
 pub struct Connected {
+    backend: String,
     tsbeg: Instant,
     addr: SocketAddrV4,
     protowrap: protowrap::ProtoPusher,
@@ -104,6 +105,7 @@ pub struct Connected {
 
 impl Connected {
     pub fn new(
+        backend: String,
         tcp: TcpStream,
         addr: SocketAddrV4,
         tsnow: Instant,
@@ -129,6 +131,7 @@ impl Connected {
         // There are N channels, one for each Cid (which can be General).
 
         Self {
+            backend,
             tsbeg: tsnow,
             addr,
             protowrap,
@@ -206,6 +209,16 @@ impl Connected {
             State::Init(..) => empty,
             State::Handshake(..) => empty,
             State::ActiveCa(st, ..) => st.channel_info_v2(name),
+            State::Done => empty,
+        }
+    }
+
+    pub fn channels_by_regex_v1(&mut self, kind: String, reg: String) -> Vec<serde_json::Value> {
+        let empty = Vec::new();
+        match &mut self.state {
+            State::Init(..) => empty,
+            State::Handshake(..) => empty,
+            State::ActiveCa(st, ..) => st.channels_by_regex_v1(kind, reg),
             State::Done => empty,
         }
     }
@@ -298,7 +311,7 @@ impl Stream for Connected {
                         let st1 = std::mem::replace(st1, st1.to_dummy());
                         let tx = self2.out_tx.clone();
                         let (rx,) = st1.dismantle();
-                        let stn = ActiveCa::new(rx, tx, tsnow, self2.addr, cx);
+                        let stn = ActiveCa::new(self2.backend.clone(), rx, tx, tsnow, self2.addr, cx);
                         self.state = State::ActiveCa(stn, ca_cmd_rx);
                         hpp.mark_progress();
                     }

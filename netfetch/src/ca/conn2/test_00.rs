@@ -96,6 +96,18 @@ impl netfetch::metrics::Conn2Ctrls for Conn2Ctrls {
         };
         Box::pin(fut)
     }
+
+    fn cmd_dyn_v1(
+        &self,
+        cmd: String,
+    ) -> Pin<Box<dyn Future<Output = Result<String, Box<dyn std::error::Error>>> + Send>> {
+        let cmder = self.cmder.clone();
+        let fut = async move {
+            let ret = cmder.cmd_dyn_v1(cmd).await?;
+            Ok(ret)
+        };
+        Box::pin(fut)
+    }
 }
 
 struct CaIngestCtrls {

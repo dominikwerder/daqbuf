@@ -124,6 +124,28 @@ impl ChannelsForAddrInfoV2 {
     }
 }
 
+#[derive(Serialize)]
+pub struct ChannelInfoV3 {
+    pub name: String,
+    pub addr: Option<SocketAddr>,
+    pub chinfo_a: serde_json::Value,
+}
+
+#[derive(Deserialize)]
+pub struct CmdType {
+    #[serde(rename = "type")]
+    pub ty: String,
+}
+
+#[derive(Deserialize)]
+pub struct CmdChannelsByRegex {
+    #[serde(rename = "type")]
+    pub ty: String,
+    pub regex: String,
+    pub src: String,
+    pub kind: String,
+}
+
 pub trait Conn2Ctrls: Send + Sync {
     fn connection_list_get_v1(
         &self,
@@ -141,6 +163,11 @@ pub trait Conn2Ctrls: Send + Sync {
         addr: SocketAddrV4,
         name: String,
     ) -> Pin<Box<dyn Future<Output = Result<ChannelsForAddrInfoV2, Box<dyn std::error::Error>>> + Send>>;
+
+    fn cmd_dyn_v1(
+        &self,
+        cmd: String,
+    ) -> Pin<Box<dyn Future<Output = Result<String, Box<dyn std::error::Error>>> + Send>>;
 }
 
 pub trait CaIngestCtrls: Send + Sync {
@@ -511,6 +538,31 @@ fn make_routes_daqingest_private(
                     if let Some(c2) = ca_ingest_ctrls.conn2_ctrls().await {
                         let ret = c2.channels_for_addr_v2(addr, name).await.unwrap();
                         axum::Json(serde_json::to_value(&ret).unwrap())
+                    } else {
+                        axum::Json(json!({"error": "no ctrl"}))
+                    }
+                }
+            }),
+        )
+        .route(
+            "/conn2/channels_by_regex_v1",
+            get({
+                let ca_ingest_ctrls = ca_ingest_ctrls.clone();
+                |Query(params): Query<HashMap<String, String>>| async move {
+                    let name = params.get("name").map(String::from).unwrap_or("(noname)".into());
+                    let src = params.get("src").map(String::from).unwrap_or("ConnSet".into());
+                    info!("channel_info_v2  {name:?}");
+                    if let Some(c2) = ca_ingest_ctrls.conn2_ctrls().await {
+                        let cmd = serde_json::json!({
+                            "type": "ChannelsByRegexV1",
+                            "regex": name,
+                            "src": src,
+                            "kind": "",
+                        });
+                        let cmd = serde_json::to_string(&cmd).unwrap();
+                        let ret = c2.cmd_dyn_v1(cmd).await.unwrap();
+                        let ret: serde_json::Value = serde_json::from_str(&ret).unwrap();
+                        axum::Json(ret)
                     } else {
                         axum::Json(json!({"error": "no ctrl"}))
                     }
