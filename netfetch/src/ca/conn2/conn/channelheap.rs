@@ -45,7 +45,7 @@ macro_rules! debug { ($($arg:tt)*) => { if true { log::debug!($($arg)*); } }; }
 macro_rules! trace { ($($arg:tt)*) => { if true { log::trace!($($arg)*); } }; }
 macro_rules! trace2 { ($($arg:tt)*) => { if true { log::trace!($($arg)*); } }; }
 macro_rules! trace3 { ($($arg:tt)*) => { if true { log::trace!($($arg)*); } }; }
-macro_rules! trace4 { ($($arg:tt)*) => { if true { log::trace!($($arg)*); } }; }
+macro_rules! trace4 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
 macro_rules! trace_pending { ($($arg:tt)*) => { if false { trace!("{}  Pending", format_args!($($arg)*)); } }; }
 
 autoerr::create_error_v1!(
@@ -243,7 +243,7 @@ type Cb1Box = Box<dyn FnOnce(&mut ChannelHeap) -> () + Send>;
 
 #[derive(Debug)]
 struct IoidRegistry {
-    ioids: HashMap<Ioid, (Cid, Sid, Instant)>,
+    ioids: HashMap<Ioid, (Cid, Sid, Instant, Instant)>,
     current: Ioid,
 }
 
@@ -255,23 +255,24 @@ impl IoidRegistry {
         }
     }
 
-    fn register(&mut self, sid: Sid, ioid: Ioid, cid: Cid, tsnow: Instant) {
+    fn register(&mut self, sid: Sid, ioid: Ioid, cid: Cid, tscmd: Instant, tsreg: Instant) {
         // TODO count errors for metrics
         self.ioids
             .entry(ioid.clone())
             .and_modify(|e| {
                 // mett.ioid_read_error_exists().inc();
                 trace2!("IoidRegistry  register  update  {}  {}  {}", sid, ioid, cid);
-                e.2 = tsnow;
+                e.2 = tscmd;
+                e.3 = tsreg;
             })
             .or_insert_with(|| {
                 // mett.ioid_read_begin().inc();
                 trace2!("IoidRegistry  register  fresh  {}  {}  {}", sid, ioid, cid);
-                (cid, sid, tsnow)
+                (cid, sid, tscmd, tsreg)
             });
     }
 
-    fn take(&mut self, ioid: Ioid) -> Option<(Cid, Sid, Instant)> {
+    fn take(&mut self, ioid: Ioid) -> Option<(Cid, Sid, Instant, Instant)> {
         if let Some(x) = self.ioids.remove(&ioid) {
             Some(x)
         } else {
@@ -522,18 +523,18 @@ impl ChannelHeap {
                                     };
                                     PollHandlerItem::ChannelHeapItem(item)
                                 }
-                                channelhandler::ItemInner::ProtoOutCid(item, cid) => {
-                                    // TODO metrics on cid?
+                                channelhandler::ItemInner::ProtoOut(item) => {
+                                    //
                                     PollHandlerItem::ProtoOut(item)
                                 }
-                                channelhandler::ItemInner::ProtoOutIoid(mut ca_msg, sid) => {
+                                channelhandler::ItemInner::ProtoOutIoid(mut ca_msg, sid, tscmd) => {
                                     if let Some(sid2) = handler.sid() {
                                         if sid2 != sid {
                                             warn!("ProtoOutIoid but handler sid differs");
                                             PollHandlerItem::None
                                         } else {
                                             let ioid = ioid_reg.current().inc();
-                                            ioid_reg.register(sid, ioid.clone(), cid, tsnow);
+                                            ioid_reg.register(sid, ioid.clone(), cid, tscmd, tsnow);
                                             ca_msg.overwrite_ioid(ioid.to_u32());
                                             PollHandlerItem::ProtoOut(ca_msg)
                                         }
@@ -611,12 +612,16 @@ impl ChannelHeap {
                     None
                 }
             } else if let Some(ioid) = item.ioid() {
-                if let Some((cid, _sid, ts)) = self2.ioid_reg.take(Ioid::new(ioid)) {
+                if let Some((cid, _sid, tscmd, tsreg)) = self2.ioid_reg.take(Ioid::new(ioid)) {
                     // TODO metrics
-                    let dt = Instant::now().duration_since(ts);
-                    let dtms = 1e3 * dt.as_secs_f32();
                     debug!("--------------------------------------------------------");
-                    debug!("resolve incoming Ioid  dt {:.0} ms", dtms);
+                    {
+                        let dt = Instant::now().duration_since(tscmd);
+                        let dtcmd = 1e3 * dt.as_secs_f32();
+                        let dt = Instant::now().duration_since(tsreg);
+                        let dtreg = 1e3 * dt.as_secs_f32();
+                        debug!("resolve incoming Ioid  dtcmd {:.3} ms  dtreg {:.3} ms", dtcmd, dtreg);
+                    }
                     Some(cid)
                 } else {
                     debug!("{selfname}  ioid  {ioid}  unknown");

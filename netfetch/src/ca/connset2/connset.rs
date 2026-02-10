@@ -259,8 +259,6 @@ impl ConnSet {
                         comm.trigger_disconnect_on_idle();
                     }
                 }
-                let fut = async move { Ok(()) };
-                self.shutdown_fut = Some(fut.box2());
             }
             State::Shutdown(_) => {}
             State::Shutdown2 => {}
@@ -842,14 +840,15 @@ impl ConnSet {
             None => {
                 if self.is_accept_cmds() {
                     match self.poll_cmder_rx(cx) {
-                        Ready(Some(x)) => match x {
-                            Ok(()) => {
-                                hpp.mark_progress();
+                        Ready(Some(x)) => {
+                            hpp.mark_progress();
+                            match x {
+                                Ok(()) => {}
+                                Err(e) => {
+                                    return Ready(Some(Err(e)));
+                                }
                             }
-                            Err(e) => {
-                                return Ready(Some(Err(e)));
-                            }
-                        },
+                        }
                         Ready(None) => {}
                         Pending => {
                             hpp.mark_pending();
@@ -937,7 +936,7 @@ impl ConnSet {
         trace4!("{selfname}");
         use Poll::*;
         let mut hpp = HaveProgressPending::new();
-        if let Some(fut) = self.conn_idle_disconnect_futs.get_mut(0) {
+        if let Some(fut) = self.conn_idle_disconnect_futs.front_mut() {
             match fut.poll_unpin(cx) {
                 Ready(x) => {
                     hpp.mark_progress();
@@ -1010,20 +1009,20 @@ impl ConnSet {
         }
     }
 
-    fn poll_if_not_done(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Result<(), Error>>> {
-        let selfname = "poll_if_not_done";
+    fn poll_common(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Result<(), Error>>> {
+        let selfname = "poll_common";
         use Poll::*;
         let mut hpp = HaveProgressPending::new();
-        // TODO move these polls out of Done.
         match self.as_mut().poll_cmder(cx) {
-            Ready(Some(x)) => match x {
-                Ok(()) => {
-                    hpp.mark_progress();
+            Ready(Some(x)) => {
+                hpp.mark_progress();
+                match x {
+                    Ok(()) => {}
+                    Err(e) => {
+                        return Ready(Some(Err(e)));
+                    }
                 }
-                Err(e) => {
-                    return Ready(Some(Err(e)));
-                }
-            },
+            }
             Ready(None) => {}
             Pending => {
                 hpp.mark_pending();
@@ -1114,6 +1113,7 @@ impl ConnSet {
             let self2 = self.as_mut().get_mut();
             for ch in self2.channels.iter_mut() {
                 if ch.remove_on_shutdown_sent == false {
+                    hpp.mark_progress();
                     ch.remove_on_shutdown_sent = true;
                     let (done_tx, mut done_rx) = asynchan::bounded(4, "ConnSetShutdownRemove");
                     let mut tx = ch.cmd_tx.clone();
@@ -1138,6 +1138,7 @@ impl ConnSet {
 
 macro_rules! poll_a {
     ($poll:expr, $hpp:expr) => {{
+        use Poll::*;
         match $poll {
             Ready(Some(x)) => {
                 $hpp.mark_progress();
@@ -1226,16 +1227,11 @@ impl Stream for ConnSet {
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         use Poll::*;
         loop {
-            trace4!("ConnSet  poll_next  loop begin  {}", self.state.name());
+            trace3!("ConnSet  poll_next  loop begin  {}", self.state.name());
             let mut hpp = HaveProgressPending::new();
             match &mut self.state {
                 State::Running => {
-                    poll_a!(self.as_mut().poll_if_not_done(cx), hpp);
-                    // poll_map_ok!(self.int_rx.poll_next_unpin(cx), hpp, self, |x| {
-                    //     self.as_mut().trigger_shutdown();
-                    //     info!("shutdown triggered");
-                    //     Ok(None)
-                    // });
+                    poll_a!(self.as_mut().poll_common(cx), hpp);
                 }
                 State::Shutdown(st2) => {
                     match st2.timeout.poll_unpin(cx) {
@@ -1246,7 +1242,7 @@ impl Stream for ConnSet {
                             hpp.mark_pending();
                         }
                     }
-                    poll_a!(self.as_mut().poll_if_not_done(cx), hpp);
+                    poll_a!(self.as_mut().poll_common(cx), hpp);
                     if false {
                         poll_opt_fut_map!(self.shutdown_fut, cx, hpp, self, break, |x| { Ok(None) }, {}, {});
                     }
@@ -1263,9 +1259,14 @@ impl Stream for ConnSet {
                     );
                 }
                 State::Shutdown2 => {
-                    trace2!("Shutdown2 --> Done");
-                    hpp.mark_progress();
-                    self.state = State::Done;
+                    // TODO wait until all channels are gone.
+                    // How do we wait for that?
+                    // In state Shutdown1, we should have achieved already that all ConnSet channels started
+                    // to remove themselves.
+                    poll_a!(self.as_mut().poll_common(cx), hpp);
+                    // trace2!("Shutdown2 --> Done");
+                    // hpp.mark_progress();
+                    // self.state = State::Done;
                 }
                 State::Done => {}
             }
@@ -1275,7 +1276,7 @@ impl Stream for ConnSet {
             } else if hpp.have_pending() {
                 Pending
             } else {
-                trace4!("ConnSet  poll_next  Done");
+                trace!("HPP:Done");
                 Ready(None)
             };
         }

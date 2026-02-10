@@ -6,6 +6,7 @@ use crate::ca::conn2::caids::Cid;
 use crate::ca::conn2::caids::Ioid;
 use crate::ca::conn2::caids::Sid;
 use crate::ca::conn2::caids::SubidOwned;
+use crate::ca::conn2::conn::channelheap::channelhandler::fetchmpx;
 use crate::ca::conn2::timeoutable;
 use crate::ca::futstack::ErasedFuture;
 use crate::ca::progpend::HaveProgressPending;
@@ -21,6 +22,7 @@ use channelheap::channelhandler::ItemInner;
 use dbpg::seriesbychannel::ChannelInfoResult;
 use futures::FutureExt;
 use futures::Stream;
+use futures::StreamExt;
 use futures::TryFutureExt;
 use netpod::ScalarType;
 use netpod::Shape;
@@ -71,6 +73,8 @@ impl From<async_channel::RecvError> for Error {
 
 #[derive(Debug)]
 pub enum RunningItem {
+    CaMsgOut(CaMsg),
+    CaMsgOutIoid(CaMsg, Sid, Instant),
     ScyllaWrite,
 }
 
@@ -121,6 +125,28 @@ impl Running {
 
     pub fn trigger_remove(&mut self, done_tx: asynchan::Sender<u32>) {
         error!("TODO set up teardown, signal via done_tx");
+        return;
+        // TODO
+        // Tear down, but ChannelHandler must do the channel close when we are Done.
+        // add necessary commands to outbuf.
+        // in poll loop, check for outbuf and poll emit.
+        // handle:
+        // CA_PROTO_EVENT_CANCEL leads to 0-size CA_PROTO_EVENT_ADD response
+        // CA_PROTO_CLEAR_CHANNEL leads to CA_PROTO_CLEAR_CHANNEL response
+        // and flag when those messages come in "removing" mode.
+        // Otherwise, the IOC may also shut down of course.
+        // TODO make sure the IOC disconnect triggers correct logic in ingest. (log!)
+        // When we are in removing mode, and received all cleanup confirmations, then trigger state change.
+        let sid = Sid::new(todo!());
+        let cid = Cid::new(todo!());
+        let tsnow = Instant::now();
+        let item = CaMsg::from_ty_ts(
+            proto::CaMsgTy::ChannelClose(proto::ChannelClose {
+                sid: sid.to_u32(),
+                cid: cid.to_u32(),
+            }),
+            tsnow,
+        );
     }
 
     pub fn inp_push_try(&mut self, item: CaMsg) -> Option<CaMsg> {
@@ -150,37 +176,45 @@ impl Running {
             match &mut self2.state {
                 State::Normal(st2) => {
                     if let Some(item) = self2.inp_buf.pop_front() {
-                        trace2!("have item  {item:?}");
-                        warn!("TODO decide which messages to forward to Fetchmpx");
-                        match &item.ty {
-                            proto::CaMsgTy::EventAddRes(item2) => {
-                                if item2.payload_len == 0 {
-                                    debug!("{selfname}  empty  EventAddRes");
+                        trace3!("{selfname}  have item  {item:?}");
+                        let to_mpx = match &item.ty {
+                            proto::CaMsgTy::EventAddRes(_) => true,
+                            proto::CaMsgTy::EventAddResEmpty(_) => true,
+                            proto::CaMsgTy::ReadNotifyRes(_) => true,
+                            _ => false,
+                        };
+                        if to_mpx {
+                            match st2.inp_push_try(item) {
+                                Some(item) => {
+                                    hpp.mark_pending();
+                                    self2.inp_buf.push_front(item);
                                 }
-                                error!("TODO handle EventAddRes {item2:?}");
-                                hpp.mark_progress();
-                            }
-                            proto::CaMsgTy::EventAddResEmpty(item2) => {
-                                warn!("TODO ------- {} {:?}", "EventAddResEmpty", item2);
-                                hpp.mark_progress();
-                            }
-                            proto::CaMsgTy::ChannelCloseRes(item2) => {
-                                if self.removing {
-                                    debug!("NOTE ----  while removing  ---- {} {item2:?}", "ChannelCloseRes");
-                                    self.chan_close_ack = true;
-                                } else {
-                                    error!("TODO not removing but got {} {item2:?}", "ChannelCloseRes");
-                                    // TODO abort?
+                                None => {
+                                    hpp.mark_progress();
                                 }
-                                hpp.mark_progress();
                             }
-                            proto::CaMsgTy::ReadNotifyRes(msg) => {
-                                hpp.mark_progress();
-                            }
-                            _ => {
-                                trace!("channel_create: unexpected message {item:?}");
-                                let e = Error::CreateMonitorUnexpectedMessage;
-                                break Ready(Some(Err(e)));
+                        } else {
+                            match &item.ty {
+                                proto::CaMsgTy::ChannelCloseRes(item2) => {
+                                    error!("{selfname}  TODO revisit the ChannelClose procedure");
+                                    if self.removing {
+                                        debug!(
+                                            "{selfname}  NOTE ----  while removing  ---- {} {item2:?}",
+                                            "ChannelCloseRes"
+                                        );
+                                        self.chan_close_ack = true;
+                                    } else {
+                                        error!("{selfname}  TODO not removing but got {} {item2:?}", "ChannelCloseRes");
+                                        // TODO abort?
+                                    }
+                                    hpp.mark_progress();
+                                }
+                                _ => {
+                                    hpp.mark_progress();
+                                    error!("{selfname}  TODO unexpected message {item:?}");
+                                    let e = Error::CreateMonitorUnexpectedMessage;
+                                    break Ready(Some(Err(e)));
+                                }
                             }
                         }
                     } else if self.inp_done {
@@ -230,6 +264,41 @@ impl Stream for Running {
                 Pending => {
                     hpp.mark_pending();
                 }
+            }
+            match &mut self.state {
+                State::Normal(fetchmpx) => {
+                    //
+                    match fetchmpx.poll_next_unpin(cx) {
+                        Ready(Some(x)) => match x {
+                            Ok(x) => {
+                                hpp.mark_progress();
+                                match x {
+                                    fetchmpx::FetchmpxItem::CaMsgOut(msg) => {
+                                        let g = RunningItem::CaMsgOut(msg);
+                                        break Ready(Some(Ok(g)));
+                                    }
+                                    fetchmpx::FetchmpxItem::CaMsgOutIoid(msg, sid, tscmd) => {
+                                        let g = RunningItem::CaMsgOutIoid(msg, sid, tscmd);
+                                        break Ready(Some(Ok(g)));
+                                    }
+                                    fetchmpx::FetchmpxItem::ScyllaWrite => {
+                                        error!("TODO ScyllaWrite");
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                error!("TODO handle error {e}");
+                                self.state = State::Done;
+                                hpp.mark_progress();
+                            }
+                        },
+                        Ready(None) => {}
+                        Pending => {
+                            hpp.mark_pending();
+                        }
+                    }
+                }
+                State::Done => {}
             }
             // {
             //     let pres = FetchMethodPollRes {

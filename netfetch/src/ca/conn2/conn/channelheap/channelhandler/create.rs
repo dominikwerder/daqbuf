@@ -59,7 +59,7 @@ impl From<async_channel::RecvError> for Error {
 
 #[derive(Debug)]
 pub enum CreatingItem {
-    CaMsgOut(CaMsg, Cid),
+    CaMsgOut(CaMsg),
     ChannelInfoQuery(dbpg::seriesbychannel::ChannelInfoQuery),
     Done(
         (
@@ -173,7 +173,7 @@ impl Stream for Creating {
                         }
                     }
                     if let Some(item) = msgs.pop_front() {
-                        let item = CreatingItem::CaMsgOut(item, self2.cid.clone());
+                        let item = CreatingItem::CaMsgOut(item);
                         break Ready(Some(Ok(item)));
                     } else {
                         hpp.mark_progress();

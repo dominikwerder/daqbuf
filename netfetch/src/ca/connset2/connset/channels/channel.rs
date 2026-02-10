@@ -406,6 +406,7 @@ impl PollCstm for Channel {
             } else if hpp.have_pending() {
                 Pending
             } else {
+                trace!("HPP:Done");
                 Ready(None)
             };
         }

@@ -162,18 +162,167 @@ struct FetchData {
     // binwriter: BinWriter,
 }
 
-const EFP1: usize = 300;
-
 #[derive(Debug)]
-enum FetchPollingReq {
-    Idle(ErasedFuture<(), EFP1>),
-    SendReq(ErasedFuture<(), EFP1>),
-    WaitRes(ErasedFuture<(), EFP1>),
+enum FetchPollingState {
+    Idle(FutDbg<()>),
+    SendReq,
+    WaitRes(FutDbg<()>),
 }
 
 #[derive(Debug)]
 struct FetchPolling {
-    req: FetchPollingReq,
+    state: FetchPollingState,
+    sid: Sid,
+    scalar_type: ScalarType,
+    shape: Shape,
+    ca_dbr_ty: CaDbrTy,
+    interval: Duration,
+    poll_next_ts_exact: Instant,
+    poll_next_ts_jitter: Instant,
+    inp_buf: VecDeque<CaMsg>,
+    inp_done: bool,
+    mett: ChannelHandlerMetrics,
+}
+
+impl FetchPolling {
+    fn new(sid: Sid, scalar_type: ScalarType, shape: Shape, ca_dbr_ty: CaDbrTy) -> Self {
+        let poll_next_ts_exact = Instant::now() + Duration::from_millis(200);
+        let poll_next_ts_jitter = poll_next_ts_exact;
+        Self {
+            // TODO the first poll should be random-soon
+            state: FetchPollingState::Idle(
+                {
+                    let ts = poll_next_ts_jitter;
+                    async move {
+                        // TODO add jitter
+                        tokio::time::sleep_until(ts.into()).await
+                    }
+                }
+                .box2(),
+            ),
+            sid,
+            scalar_type,
+            shape,
+            ca_dbr_ty,
+            interval: Duration::from_millis(3000),
+            poll_next_ts_exact,
+            poll_next_ts_jitter,
+            inp_buf: VecDeque::with_capacity(16),
+            inp_done: false,
+            mett: ChannelHandlerMetrics::new(),
+        }
+    }
+
+    pub fn inp_push_try(&mut self, item: CaMsg) -> Option<CaMsg> {
+        trace3!("FetchPolling  inp_push_try");
+        let v = &mut self.inp_buf;
+        if v.len() < v.capacity() {
+            v.push_back(item);
+            None
+        } else {
+            Some(item)
+        }
+    }
+
+    pub fn inp_done(&mut self) {
+        trace3!("FetchPolling  inp_done");
+        self.inp_done = true;
+    }
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Result<FetchMethodPollOutput, Error>>> {
+        let selfname = "FetchPolling::poll_next_unpin";
+        trace3!("{selfname}");
+        use Poll::*;
+        let mut hpp = HaveProgressPending::new();
+        {
+            if let Some(item) = self.inp_buf.pop_front() {
+                match &mut self.state {
+                    FetchPollingState::Idle(_) => {
+                        warn!("TODO item while in Idle  {item:?}");
+                        hpp.mark_progress();
+                    }
+                    FetchPollingState::SendReq => {
+                        warn!("TODO item while in SendReq  {item:?}");
+                        hpp.mark_progress();
+                    }
+                    FetchPollingState::WaitRes(_) => {
+                        warn!("TODO item while in WaitRes  {item:?}");
+                        hpp.mark_progress();
+                        let tsnow = Instant::now();
+                        self.poll_next_ts_exact = self.poll_next_ts_exact + self.interval;
+                        if self.poll_next_ts_exact < tsnow {
+                            // TODO add more jitter in this case
+                            self.poll_next_ts_exact = tsnow;
+                        }
+                        self.poll_next_ts_jitter = self.poll_next_ts_exact;
+                        let ts = self.poll_next_ts_jitter;
+                        let fut = async move {
+                            tokio::time::sleep_until(ts.into()).await;
+                        };
+                        self.state = FetchPollingState::Idle(fut.box2());
+                    }
+                }
+            } else if self.inp_done {
+            } else {
+                hpp.mark_pending();
+            }
+        }
+        match &mut self.state {
+            FetchPollingState::Idle(fut) => match fut.poll_unpin(cx) {
+                Ready(()) => {
+                    hpp.mark_progress();
+                    trace2!("{selfname}  Idle  Ready");
+                    self.state = FetchPollingState::SendReq;
+                }
+                Pending => {
+                    hpp.mark_pending();
+                }
+            },
+            FetchPollingState::SendReq => {
+                hpp.mark_progress();
+                trace2!("{selfname}  SendReq  Ready");
+                let tsnow = Instant::now();
+                let msg = CaMsg::from_ty_ts(
+                    CaMsgTy::ReadNotify(proto::ReadNotify {
+                        data_type: self.ca_dbr_ty.to_u16(),
+                        data_count: self.shape.to_ca_count().unwrap(),
+                        sid: self.sid.to_u32(),
+                        // ioid: ioid.to_u32(),
+                        ioid: 0,
+                    }),
+                    tsnow,
+                );
+                self.mett.read_notify_send().inc();
+                let fut = async { tokio::time::sleep(Duration::from_millis(3000)).await };
+                self.state = FetchPollingState::WaitRes(fut.box2());
+                let ret = FetchMethodPollOutput::ProtoOutIoid(msg, self.sid.clone());
+                return Ready(Some(Ok(ret)));
+            }
+            FetchPollingState::WaitRes(to) => match to.poll_unpin(cx) {
+                Ready(()) => {
+                    info!("{selfname}  WaitRes  Timeout");
+                    hpp.mark_progress();
+                    error!("\n\n\n  TODO  FetchPollingState::WaitRes  Timeout  fad6ffb3b  \n\n\n");
+                    // TODO choose random backoff
+                    let fut = async { tokio::time::sleep(Duration::from_millis(20000)).await };
+                    self.state = FetchPollingState::WaitRes(fut.box2());
+                }
+                Pending => {
+                    hpp.mark_pending();
+                }
+            },
+        }
+        if hpp.have_progress() {
+            trace!("{selfname}  HPP:Progress");
+            Ready(Some(Ok(FetchMethodPollOutput::None)))
+        } else if hpp.have_pending() {
+            trace_pending!("{selfname}  HPP");
+            Pending
+        } else {
+            trace!("{selfname}  HPP:Done");
+            Ready(None)
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -189,14 +338,17 @@ struct SomeData;
 
 enum FetchMethodPollOutput {
     None,
-    CallbackOnRunning(Box<dyn FnOnce(&mut SomeData)>, Vec<ChannelHandlerItem>),
+    ProtoOut(CaMsg),
+    ProtoOutIoid(CaMsg, Sid),
+    // ScyllaWrite,
+    // CallbackOnRunning(Box<dyn FnOnce(&mut SomeData)>, Vec<ChannelHandlerItem>),
 }
 
-fn make_cb<F>(f: F) -> FetchMethodPollOutput
+fn make_cb<F>(f: F) -> Box<dyn FnOnce(&mut SomeData)>
 where
     F: FnOnce(&mut SomeData) + 'static,
 {
-    FetchMethodPollOutput::CallbackOnRunning(Box::new(f), Vec::new())
+    Box::new(f)
 }
 
 fn make_cb2<F>(f: F) -> Box<dyn FnOnce(&mut SomeData)>
@@ -309,8 +461,8 @@ impl FetchMethod {
                     hpp.mark_pending();
                 }
             },
-            FetchMethod::Polling(st3) => match &mut st3.req {
-                FetchPollingReq::Idle(fut) => match fut.poll_unpin(cx) {
+            FetchMethod::Polling(st3) => match &mut st3.state {
+                FetchPollingState::Idle(fut) => match fut.poll_unpin(cx) {
                     Ready(()) => {
                         trace4!("{selfname}  Polling Idle Done");
                         // let ioid = pres.fetch_data.ioid.inc();
@@ -346,7 +498,7 @@ impl FetchMethod {
 
                         let items = vec![ChannelHandlerItem {
                             ts_create: tsnow,
-                            inner: ItemInner::ProtoOutIoid(msg, pres.sid.clone()),
+                            inner: ItemInner::ProtoOutIoid(msg, pres.sid.clone(), tsnow),
                         }];
 
                         error!("\n\n\n  TODO  create monitor  0c976c2cb  \n\n\n");
@@ -366,29 +518,7 @@ impl FetchMethod {
                         hpp.mark_pending();
                     }
                 },
-                FetchPollingReq::SendReq(fut) => match fut.poll_unpin(cx) {
-                    Ready(()) => {
-                        debug!("{selfname}  Polling SendReq Done");
-                        hpp.mark_progress();
-                        error!("\n\n\n  TODO  create monitor  22e511ee2  \n\n\n");
-                        // let items = Vec::new();
-                        // let cb = make_cb2(move |st2| {
-                        //     st2.fetch_method = FetchMethod::Polling(FetchPolling {
-                        //         req: FetchPollingReq::WaitRes(ErasedFuture::new(async move {
-                        //             tokio::time::sleep(Duration::from_millis(3000)).await;
-                        //             // TODO handle timeout, change state, metrics.
-                        //             warn!("poll timeout");
-                        //         })),
-                        //     })
-                        // });
-                        // let ret = FetchMethodPollOutput::CallbackOnRunning(cb, items);
-                        // return Ready(Some(Ok(ret)));
-                    }
-                    Pending => {
-                        hpp.mark_pending();
-                    }
-                },
-                FetchPollingReq::WaitRes(fut) => match fut.poll_unpin(cx) {
+                FetchPollingState::WaitRes(fut) => match fut.poll_unpin(cx) {
                     Ready(()) => {
                         info!("{selfname}  Polling WaitRes Done");
                         hpp.mark_progress();
@@ -406,6 +536,9 @@ impl FetchMethod {
                         hpp.mark_pending();
                     }
                 },
+                _ => {
+                    error!("TODO case not implemented");
+                }
             },
         }
         if hpp.have_progress() {
@@ -423,6 +556,8 @@ impl FetchMethod {
 
 #[derive(Debug)]
 pub enum FetchmpxItem {
+    CaMsgOut(CaMsg),
+    CaMsgOutIoid(CaMsg, Sid, Instant),
     ScyllaWrite,
 }
 
@@ -436,6 +571,7 @@ enum State {
 pub struct Fetchmpx {
     state: State,
     sid: Sid,
+    polling: FetchPolling,
     inp_buf: VecDeque<CaMsg>,
     inp_done: bool,
     mett: ChannelHandlerMetrics,
@@ -446,6 +582,7 @@ impl Fetchmpx {
         Self {
             state: State::Normal,
             sid,
+            polling: FetchPolling::new(sid, scalar_type, shape, ca_dbr_ty),
             inp_buf: VecDeque::with_capacity(8),
             inp_done: false,
             mett: ChannelHandlerMetrics::new(),
@@ -457,6 +594,7 @@ impl Fetchmpx {
     }
 
     pub fn inp_push_try(&mut self, item: CaMsg) -> Option<CaMsg> {
+        trace3!("inp_push_try");
         let v = &mut self.inp_buf;
         if v.len() < v.capacity() {
             v.push_back(item);
@@ -467,11 +605,13 @@ impl Fetchmpx {
     }
 
     pub fn inp_done(&mut self) {
+        trace3!("inp_done");
         self.inp_done = true;
     }
 
     fn poll_inp_dispatch(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Result<(), Error>>> {
         let selfname = "poll_inp_dispatch";
+        trace3!("{selfname}");
         use Poll::*;
         loop {
             let mut hpp = HaveProgressPending::new();
@@ -485,56 +625,20 @@ impl Fetchmpx {
                                 if item2.payload_len == 0 {
                                     debug!("{selfname}  empty  EventAddRes");
                                 }
-                                // match &mut self2.fetch_method {
-                                //     FetchMethod::CreateMonitor(st3) => {
-                                //         // TODO metrics count here the first monitor event?
-                                //         trace!(
-                                //             "ChannelHandler:Running:ProtoDispatch:Ready:Some:CreateMonitor  try_send"
-                                //         );
-                                //         match Pin::new(st3).poll_msg_inp(item, cx) {
-                                //             Some(x) => {
-                                //                 hpp.mark_pending();
-                                //                 self2.inp_buf.push_front(x);
-                                //             }
-                                //             None => {
-                                //                 hpp.mark_progress();
-                                //             }
-                                //         }
-                                //     }
-                                //     FetchMethod::Monitor(st3) => {
-                                //         self.mett.monitor_read_expected().inc();
-                                //         trace!(
-                                //             "ChannelHandler:Running:ProtoDispatch:Ready:Some:Monitor    TODO handle monitor update  {item:?}"
-                                //         );
-                                //     }
-                                //     _ => {
-                                //         error!("ChannelHandler:Running:Ready:Ok  TODO handle {item:?}");
-                                //     }
+                                self.mett.monitor_read_expected().inc();
+                                error!("TODO forward EventAddRes to Monitoring");
                                 hpp.mark_progress();
                             }
-                            proto::CaMsgTy::EventAddResEmpty(item2) => {
-                                hpp.mark_progress();
-                            }
-                            proto::CaMsgTy::ChannelCloseRes(item2) => {
-                                hpp.mark_progress();
-                            }
-                            proto::CaMsgTy::ReadNotifyRes(msg) => {
-                                // trace3!("TODO  handle {item:?}");
-                                // match &mut self2.fetch_method {
-                                //     FetchMethod::Polling(st3) => {
-                                //         self2.mett.read_notify_recv().inc();
-                                //         debug!("FetchMethod::Polling  recvd  go back to idle");
-                                //         warn!("TODO use the correct idle time");
-                                //         st3.req = FetchPollingReq::Idle(ErasedFuture::new(tokio::time::sleep(
-                                //             Duration::from_millis(3000),
-                                //         )))
-                                //     }
-                                //     _ => {
-                                //         error!("unexpected ReadNotifyRes");
-                                //     }
-                                // }
-                                hpp.mark_progress();
-                            }
+                            proto::CaMsgTy::ReadNotifyRes(_) => match self2.polling.inp_push_try(item) {
+                                Some(x) => {
+                                    hpp.mark_pending();
+                                    self2.inp_buf.push_front(x);
+                                }
+                                None => {
+                                    hpp.mark_progress();
+                                    self2.mett.read_notify_recv().inc();
+                                }
+                            },
                             _ => {
                                 trace!("channel_create: unexpected message {item:?}");
                                 let e = Error::CreateMonitorUnexpectedMessage;
@@ -588,43 +692,33 @@ impl Stream for Fetchmpx {
                     hpp.mark_pending();
                 }
             }
-            {
-                // TODO poll internals of the fetch method logic.
-                // That poll can return also a future that we must drive.
-                // TODO monitoring and polling are mutually exclusive because we can anyway not distinguish
-                // replies from the IOC on the same Cid.
-                // Maybe Running state can for diagnostics also issue read-notify and remember the Ioid for itself.
-
-                // TODO start here by polling the FetchMethod, which should initiate the timed states.
-
-                // match self.fetch_method.poll_next_unpin(pres, cx) {
-                //     Ready(Some(x)) => {
-                //         hpp.mark_progress();
-                //         match x {
-                //             Ok(x) => match x {
-                //                 FetchMethodPollOutput::None => {}
-                //                 FetchMethodPollOutput::CallbackOnRunning(cb, mut items) => {
-                //                     cb(st2);
-                //                     if items.len() > 1 {
-                //                         self2.outbuf.extend(items);
-                //                     } else if let Some(item) = items.pop() {
-                //                         break Ready(Some(Ok(item)));
-                //                     } else {
-                //                     }
-                //                 }
-                //             },
-                //             Err(e) => {
-                //                 hpp.mark_progress();
-                //                 self2.state = State::Done;
-                //                 break Ready(Some(Err(e)));
-                //             }
-                //         }
-                //     }
-                //     Ready(None) => {}
-                //     Pending => {
-                //         hpp.mark_pending();
-                //     }
-                // }
+            match Pin::new(&mut self.polling).poll_next(cx) {
+                Ready(Some(x)) => match x {
+                    Ok(x) => match x {
+                        FetchMethodPollOutput::None => {
+                            hpp.mark_progress();
+                        }
+                        FetchMethodPollOutput::ProtoOut(msg) => {
+                            hpp.mark_progress();
+                            let g = FetchmpxItem::CaMsgOut(msg);
+                            break Ready(Some(Ok(g)));
+                        }
+                        FetchMethodPollOutput::ProtoOutIoid(msg, sid) => {
+                            hpp.mark_progress();
+                            let g = FetchmpxItem::CaMsgOutIoid(msg, sid, Instant::now());
+                            break Ready(Some(Ok(g)));
+                        }
+                    },
+                    Err(e) => {
+                        error!("polling error {e}");
+                        self.state = State::Done;
+                        hpp.mark_progress();
+                    }
+                },
+                Ready(None) => {}
+                Pending => {
+                    hpp.mark_pending();
+                }
             }
             break if hpp.have_progress() {
                 trace4!("HPP:Progress");

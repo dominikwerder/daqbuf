@@ -411,7 +411,7 @@ impl ActiveCa {
                 trace_pending!("HPP");
                 Pending
             } else {
-                trace3!("HPP:Done");
+                trace!("HPP:Done");
                 Ready(None)
             };
         }
