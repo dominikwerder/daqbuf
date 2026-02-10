@@ -1,4 +1,6 @@
 mod create;
+mod fetchmpx;
+mod running;
 
 use crate::ca::conn2::asynchan;
 use crate::ca::conn2::caids::CaDbrTy;
@@ -10,6 +12,7 @@ use crate::ca::conn2::caids::Subid;
 use crate::ca::conn2::caids::SubidOwned;
 use crate::ca::conn2::conn::channelheap::ChHeapCmd;
 use crate::ca::conn2::conn::channelheap::channelhandler::create::Creating;
+use crate::ca::conn2::conn::channelheap::channelhandler::running::Running;
 use crate::ca::conn2::timeoutable;
 use crate::ca::futstack::ErasedFuture;
 use crate::ca::progpend::HaveProgressPending;
@@ -59,6 +62,7 @@ autoerr::create_error_v1!(
         Recv,
         TimeoutError(#[from] timeoutable::TimeoutError),
         Creating(#[from] create::Error),
+        Running(#[from] running::Error),
         Logic,
     },
 );
@@ -80,6 +84,7 @@ struct Init {}
 
 #[derive(Debug)]
 struct Closing1 {
+    chan_close_ack: bool,
     fut: FutDbg<Result<(), Error>>,
     done_tx: Option<asynchan::Sender<u32>>,
 }
@@ -87,420 +92,6 @@ struct Closing1 {
 #[derive(Debug)]
 struct Closing2 {
     done_tx: Option<asynchan::Sender<u32>>,
-}
-
-#[derive(Debug)]
-struct CreateMonitor {
-    fut: FutDbg<Result<(SubidOwned,), Error>>,
-    inp_buf: VecDeque<CaMsg>,
-}
-
-impl CreateMonitor {
-    fn new(
-        cid: Cid,
-        sid: Sid,
-        ca_dbr_ty: CaDbrTy,
-        shape: Shape,
-        out_tx: asynchan::Sender<CaMsg>,
-        mut ch_hp_tx: asynchan::Sender<ChHeapCmd>,
-        chconf: ChannelConfig,
-    ) -> Self {
-        let mut proto_tx = out_tx;
-        let fut = async move {
-            let subid = SubidOwned::new();
-            {
-                let (reg_tx, mut reg_rx) = asynchan::bounded(4, "RegisterSubidResp");
-                ch_hp_tx
-                    .send(ChHeapCmd::RegisterSubid(cid.clone(), subid.to_subid(), reg_tx))
-                    .await
-                    .map_err(|_| Error::ProtoTxClosed)?;
-                let _reg_res = reg_rx.recv().await?;
-                trace!("CreateMonitor: registered subid {subid:?}");
-            }
-            let msg = CaMsg::from_ty_ts(
-                proto::CaMsgTy::EventAdd(proto::EventAdd::new(
-                    ca_dbr_ty.to_u16(),
-                    shape.to_ca_count().unwrap(),
-                    sid.to_u32(),
-                    subid.to_u32(),
-                )),
-                Instant::now(),
-            );
-            proto_tx.send(msg).await.map_err(|_| Error::ProtoTxClosed)?;
-            Ok((subid,))
-        };
-        Self {
-            fut: fut.box2(),
-            inp_buf: VecDeque::with_capacity(1),
-        }
-    }
-
-    fn poll_msg_inp(mut self: Pin<&mut Self>, msg: CaMsg, cx: &mut Context) -> Option<CaMsg> {
-        if self.inp_buf.len() < self.inp_buf.capacity() {
-            self.inp_buf.push_back(msg);
-            None
-        } else {
-            Some(msg)
-        }
-    }
-}
-
-#[derive(Debug)]
-struct CreatePolling {
-    out_tx: asynchan::Sender<CaMsg>,
-    inp_tx: asynchan::Sender<CaMsg>,
-    fut: FutDbg<Result<(), Error>>,
-}
-
-impl CreatePolling {
-    fn new(
-        cid: Cid,
-        sid: Sid,
-        out_tx: asynchan::Sender<CaMsg>,
-        inp_tx: asynchan::Sender<CaMsg>,
-        mut inp_rx: asynchan::Receiver<CaMsg>,
-        mut ch_hp_tx: asynchan::Sender<ChHeapCmd>,
-        chconf: ChannelConfig,
-    ) -> Self {
-        let fut = { async move { Ok(()) } };
-        Self {
-            out_tx,
-            inp_tx,
-            fut: fut.box2(),
-        }
-    }
-}
-
-#[derive(Debug)]
-struct Monitor {
-    subid: SubidOwned,
-}
-
-#[derive(Debug)]
-struct FetchData {
-    ioid: Ioid,
-    scalar_type: ScalarType,
-    shape: Shape,
-    ca_dbr_ty: CaDbrTy,
-    // evwriter: crate::ca::conn2::ca_writer_value::CaRtWriter,
-    // binwriter: BinWriter,
-}
-
-const EFP1: usize = 300;
-
-#[derive(Debug)]
-enum FetchPollingReq {
-    Idle(ErasedFuture<(), EFP1>),
-    SendReq(ErasedFuture<(), EFP1>),
-    WaitRes(ErasedFuture<(), EFP1>),
-}
-
-#[derive(Debug)]
-struct FetchPolling {
-    req: FetchPollingReq,
-}
-
-#[derive(Debug)]
-enum FetchMethod {
-    None,
-    CreateMonitor(CreateMonitor),
-    Monitor(Monitor),
-    CreatePolling(CreatePolling),
-    Polling(FetchPolling),
-}
-
-enum FetchMethodPollOutput {
-    None,
-    CallbackOnRunning(Box<dyn FnOnce(&mut Running)>, Vec<ChannelHandlerItem>),
-}
-
-struct FetchMethodPollRes<'a> {
-    fetch_data: &'a mut FetchData,
-    conf: &'a ChannelConfig,
-    cid: Cid,
-    sid: Sid,
-    proto_tx: &'a asynchan::Sender<CaMsg>,
-    ch_hp_tx: &'a asynchan::Sender<ChHeapCmd>,
-    mett: &'a mut ChannelHandlerMetrics,
-}
-
-impl FetchMethod {
-    fn poll_next_unpin(
-        mut self: Pin<&mut Self>,
-        pres: FetchMethodPollRes,
-        cx: &mut Context,
-    ) -> Poll<Option<Result<FetchMethodPollOutput, Error>>> {
-        let selfname = "FetchMethod::poll_next_unpin";
-        use Poll::*;
-        let mut hpp = HaveProgressPending::new();
-        fn make_cb<F>(f: F) -> FetchMethodPollOutput
-        where
-            F: FnOnce(&mut Running) + 'static,
-        {
-            FetchMethodPollOutput::CallbackOnRunning(Box::new(f), Vec::new())
-        }
-        fn make_cb2<F>(f: F) -> Box<dyn FnOnce(&mut Running)>
-        where
-            F: FnOnce(&mut Running) + 'static,
-        {
-            Box::new(f)
-        }
-        match self.as_mut().get_mut() {
-            FetchMethod::None => {
-                trace!("{selfname}  None\n\n\n====================== {}", pres.conf.is_polled());
-                hpp.mark_progress();
-                if pres.conf.is_polled() {
-                    let (inp_tx, inp_rx) = asynchan::bounded(4, "CreatePolling");
-                    let create = CreatePolling::new(
-                        pres.cid.clone(),
-                        pres.sid.clone(),
-                        pres.proto_tx.clone(),
-                        inp_tx,
-                        inp_rx,
-                        pres.ch_hp_tx.clone(),
-                        pres.conf.clone(),
-                    );
-                    let ret = make_cb(move |st2| {
-                        st2.fetch_method = FetchMethod::CreatePolling(create);
-                    });
-                    return Ready(Some(Ok(ret)));
-                } else {
-                    let create = CreateMonitor::new(
-                        pres.cid.clone(),
-                        pres.sid.clone(),
-                        pres.fetch_data.ca_dbr_ty.clone(),
-                        pres.fetch_data.shape.clone(),
-                        pres.proto_tx.clone(),
-                        pres.ch_hp_tx.clone(),
-                        pres.conf.clone(),
-                    );
-                    let ret = make_cb(move |st2| {
-                        st2.fetch_method = FetchMethod::CreateMonitor(create);
-                    });
-                    return Ready(Some(Ok(ret)));
-                }
-            }
-            FetchMethod::CreateMonitor(st3) => {
-                trace!("{selfname}  CreateMonitor");
-                match st3.fut.poll_unpin(cx) {
-                    Ready(x) => match x {
-                        Ok((subid,)) => {
-                            trace!("{selfname}  CreateMonitor:Ready:Ok");
-                            trace!("{selfname}  :Ready:Ok  TODO implement monitor handling");
-                            hpp.mark_progress();
-                            let ret = make_cb(move |st2| {
-                                st2.fetch_method = FetchMethod::Monitor(Monitor { subid });
-                            });
-                            return Ready(Some(Ok(ret)));
-                        }
-                        Err(e) => {
-                            error!("{selfname}  CreateMonitor:Ready:Err  TODO  handle  {e}");
-                            hpp.mark_progress();
-                            return Ready(Some(Err(e)));
-                        }
-                    },
-                    Pending => {
-                        trace_pending!("{selfname}  CreateMonitor");
-                        hpp.mark_pending();
-                    }
-                }
-            }
-            FetchMethod::Monitor(st3) => {
-                // At the moment, nothing to do here.
-                // TODO here, probably good to do some housekeeping on timeout:
-                // like promote last written value to next longer retention time.
-                // TODO when we leave monitoring, must remove monitoring by the subid.
-                let _ = &st3.subid;
-            }
-            FetchMethod::CreatePolling(st3) => match st3.fut.poll_unpin(cx) {
-                Ready(x) => {
-                    hpp.mark_progress();
-                    match x {
-                        Ok(()) => {
-                            let ret = make_cb(move |st2| {
-                                st2.fetch_method = FetchMethod::Polling(FetchPolling {
-                                    req: FetchPollingReq::Idle(ErasedFuture::new(tokio::time::sleep(
-                                        Duration::from_millis(3000),
-                                    ))),
-                                });
-                            });
-                            return Ready(Some(Ok(ret)));
-                        }
-                        Err(e) => {
-                            return Ready(Some(Err(e)));
-                        }
-                    }
-                }
-                Pending => {
-                    hpp.mark_pending();
-                }
-            },
-            FetchMethod::Polling(st3) => match &mut st3.req {
-                FetchPollingReq::Idle(fut) => match fut.poll_unpin(cx) {
-                    Ready(()) => {
-                        trace4!("{selfname}  Polling Idle Done");
-                        // let ioid = pres.fetch_data.ioid.inc();
-                        let tsnow = Instant::now();
-                        let msg = CaMsg::from_ty_ts(
-                            CaMsgTy::ReadNotify(proto::ReadNotify {
-                                data_type: pres.fetch_data.ca_dbr_ty.to_u16(),
-                                data_count: pres.fetch_data.shape.to_ca_count().unwrap(),
-                                sid: pres.sid.to_u32(),
-                                // ioid: ioid.to_u32(),
-                                ioid: 0,
-                            }),
-                            tsnow,
-                        );
-                        // {
-                        //     // TODO emit channel status, but not on each poll
-                        //     let item = ChannelStatusItem {
-                        //         ts: self.tmp_ts_poll,
-                        //         cssid: st2.channel.cssid.clone(),
-                        //         status: ChannelStatus::MonitoringSilenceReadStart,
-                        //     };
-                        //     conf.wrst.emit_channel_status_item(
-                        //         item,
-                        //         Self::channel_status_qu(&mut self.iqdqs),
-                        //         &mut self.mett,
-                        //     )?;
-                        // }
-
-                        //
-
-                        hpp.mark_progress();
-                        pres.mett.read_notify_send().inc();
-
-                        let items = vec![ChannelHandlerItem {
-                            ts_create: tsnow,
-                            inner: ItemInner::ProtoOutIoid(msg, pres.sid.clone()),
-                        }];
-
-                        let cb = make_cb2(move |st2| {
-                            st2.fetch_method = FetchMethod::Polling(FetchPolling {
-                                req: FetchPollingReq::SendReq(ErasedFuture::new(async move {
-                                    // tokio::time::sleep(Duration::from_millis(3000)).await;
-                                    // TODO handle timeout, change state, metrics.
-                                    // warn!("poll timeout");
-                                })),
-                            })
-                        });
-                        let ret = FetchMethodPollOutput::CallbackOnRunning(cb, items);
-                        return Ready(Some(Ok(ret)));
-                    }
-                    Pending => {
-                        hpp.mark_pending();
-                    }
-                },
-                FetchPollingReq::SendReq(fut) => match fut.poll_unpin(cx) {
-                    Ready(()) => {
-                        debug!("{selfname}  Polling SendReq Done");
-                        hpp.mark_progress();
-                        let items = Vec::new();
-                        let cb = make_cb2(move |st2| {
-                            st2.fetch_method = FetchMethod::Polling(FetchPolling {
-                                req: FetchPollingReq::WaitRes(ErasedFuture::new(async move {
-                                    tokio::time::sleep(Duration::from_millis(3000)).await;
-                                    // TODO handle timeout, change state, metrics.
-                                    warn!("poll timeout");
-                                })),
-                            })
-                        });
-                        let ret = FetchMethodPollOutput::CallbackOnRunning(cb, items);
-                        return Ready(Some(Ok(ret)));
-                    }
-                    Pending => {
-                        hpp.mark_pending();
-                    }
-                },
-                FetchPollingReq::WaitRes(fut) => match fut.poll_unpin(cx) {
-                    Ready(()) => {
-                        info!("{selfname}  Polling WaitRes Done");
-                        hpp.mark_progress();
-                        let ret = make_cb(move |st2| {
-                            st2.fetch_method = FetchMethod::Polling(FetchPolling {
-                                req: FetchPollingReq::Idle(ErasedFuture::new(tokio::time::sleep(
-                                    Duration::from_millis(3000),
-                                ))),
-                            })
-                        });
-                        return Ready(Some(Ok(ret)));
-                    }
-                    Pending => {
-                        hpp.mark_pending();
-                    }
-                },
-            },
-        }
-        if hpp.have_progress() {
-            trace!("{selfname}  HPP:Progress");
-            Ready(Some(Ok(FetchMethodPollOutput::None)))
-        } else if hpp.have_pending() {
-            trace_pending!("{selfname}  HPP");
-            Pending
-        } else {
-            trace!("{selfname}  HPP:Done");
-            Ready(None)
-        }
-    }
-}
-
-#[derive(Debug)]
-struct Running {
-    fetch_method: FetchMethod,
-    fetch_data: FetchData,
-    sid: Sid,
-    proto_rx: asynchan::Receiver<CaMsg>,
-    removing: bool,
-    chan_close_ack: bool,
-    outbuf: VecDeque<CaMsg>,
-    remove_done_tx: Option<asynchan::Sender<u32>>,
-}
-
-impl Running {
-    fn new(
-        sid: Sid,
-        scalar_type: ScalarType,
-        shape: Shape,
-        ca_dbr_ty: CaDbrTy,
-        proto_rx: asynchan::Receiver<CaMsg>,
-    ) -> Self {
-        Self {
-            fetch_method: FetchMethod::None,
-            fetch_data: FetchData {
-                ioid: Ioid::new(0),
-                scalar_type,
-                shape,
-                ca_dbr_ty,
-                // binwriter: BinWriter::new(
-                //     beg,
-                //     min_quiets,
-                //     is_polled,
-                //     emit_znt_zero_default,
-                //     do_discard_front,
-                //     cssid,
-                //     sid,
-                //     scalar_type,
-                //     shape,
-                //     chname,
-                // ),
-                // evwriter: crate::ca::conn2::ca_writer_value::CaRtWriter::new(
-                //     series,
-                //     scalar_type,
-                //     shape,
-                //     min_quiets,
-                //     is_polled,
-                //     do_st_rf1,
-                //     emit_state_new,
-                // ),
-            },
-            sid,
-            proto_rx,
-            removing: false,
-            chan_close_ack: false,
-            outbuf: VecDeque::new(),
-            remove_done_tx: None,
-        }
-    }
 }
 
 #[derive(Debug)]
@@ -528,97 +119,6 @@ impl State {
             State::Dummy => "Dummy",
         }
     }
-}
-
-async fn channel_create(
-    cid: u32,
-    name: String,
-    backend: String,
-    mut tx: asynchan::Sender<CaMsg>,
-    mut proto_rx: asynchan::Receiver<CaMsg>,
-    tsnow: Instant,
-) -> Result<(Sid, ScalarType, Shape, CaDbrTy, asynchan::Receiver<CaMsg>), Error> {
-    let msg = CaMsg::from_ty_ts(
-        proto::CaMsgTy::CreateChan(proto::CreateChan {
-            cid,
-            channel: name.clone(),
-        }),
-        tsnow,
-    );
-    let to = Duration::from_millis(5000);
-    trace!("channel_create  sending CreateChan");
-    tx.send(msg).timeout(to).await?.map_err(|_| Error::ProtoTxClosed)?;
-    trace!("channel_create  sending CreateChan done");
-    // TODO make this more resilient to other messages
-    let res1 = loop {
-        let x = proto_rx.recv().await;
-        let item = x?;
-        use proto::CaMsgTy;
-        match &item.ty {
-            CaMsgTy::CreateChanRes(k) => {
-                trace!("CreateMonitor:CreateChanRes {k:?}");
-                if k.data_type > 6 {
-                    error!(
-                        "CreateChanRes with unexpected data_type {} count {}",
-                        k.data_type, k.data_count
-                    );
-                    return Err(Error::CreateMonitorUnexpectedMessage);
-                }
-                // Ask for DBR_TIME_...
-                let ca_dbr_type = CaDbrTy::new(k.data_type + 14);
-                let scalar_type = match ScalarType::from_ca_id(k.data_type) {
-                    Ok(x) => x,
-                    Err(e) => {
-                        error!(
-                            "CreateChanRes with unexpected data_type {} count {}",
-                            k.data_type, k.data_count
-                        );
-                        return Err(Error::CreateMonitorUnexpectedMessage);
-                    }
-                };
-                let shape = match Shape::from_ca_count(k.data_count) {
-                    Ok(x) => x,
-                    Err(e) => {
-                        error!(
-                            "CreateChanRes with unexpected data_type {} count {}",
-                            k.data_type, k.data_count
-                        );
-                        return Err(Error::CreateMonitorUnexpectedMessage);
-                    }
-                };
-                let ret = (Sid::new(k.sid), scalar_type, shape, ca_dbr_type, proto_rx);
-                break Ok::<_, Error>(ret);
-            }
-            CaMsgTy::CreateChanFail(k) => {
-                trace!("CreateMonitor:CreateChanFail {k:?}");
-                // TODO
-                // Must cause a re-search of the channel
-                return Err(Error::CreateMonitorUnexpectedMessage);
-            }
-            CaMsgTy::AccessRightsRes(k) => {
-                trace!("CreateMonitor:AccessRightsRes {k:?}");
-            }
-            _ => {
-                trace!("channel_create: unexpected message {item:?}");
-                return Err(Error::CreateMonitorUnexpectedMessage);
-            }
-        }
-    }?;
-    debug!("-------------------  DO GET SERIES ID");
-    let (tx, rx) = async_channel::bounded(4);
-    let scalar_type = res1.1.clone();
-    let shape = res1.2.clone();
-    let item = dbpg::seriesbychannel::ChannelInfoQuery {
-        backend,
-        channel: name,
-        kind: netpod::SeriesKind::ChannelData,
-        scalar_type,
-        shape,
-        tx: Box::pin(tx),
-    };
-    let res2 = rx.recv().await?;
-    debug!("-------------------  DO GET SERIES ID  {res2:?}");
-    Ok(res1)
 }
 
 #[derive(Debug)]
@@ -658,6 +158,40 @@ pub enum Cmd {
 }
 
 #[derive(Debug)]
+struct LocalLog {
+    enable: bool,
+    buf: VecDeque<(Instant, String)>,
+}
+
+impl LocalLog {
+    pub fn new() -> Self {
+        Self {
+            enable: false,
+            buf: VecDeque::new(),
+        }
+    }
+
+    pub fn enable(&mut self) {
+        if !self.enable {
+            self.enable = true;
+            self.buf = VecDeque::with_capacity(32);
+        }
+    }
+
+    pub fn disable(&mut self) {
+        if self.enable {
+            self.enable = false;
+            self.buf = VecDeque::new();
+        }
+    }
+
+    pub fn push(&mut self, s: String) {
+        let ts = Instant::now();
+        self.buf.push_back((ts, s));
+    }
+}
+
+#[derive(Debug)]
 pub struct ChannelHandler {
     state: State,
     cid: CidOwned,
@@ -672,6 +206,7 @@ pub struct ChannelHandler {
     cmd_rx: asynchan::Receiver<Cmd>,
     outbuf: VecDeque<ChannelHandlerItem>,
     mett: ChannelHandlerMetrics,
+    llog: LocalLog,
 }
 
 impl ChannelHandler {
@@ -699,6 +234,7 @@ impl ChannelHandler {
             cmd_rx,
             outbuf: VecDeque::new(),
             mett: ChannelHandlerMetrics::new(),
+            llog: LocalLog::new(),
         }
     }
 
@@ -740,7 +276,7 @@ impl ChannelHandler {
         match &self.state {
             State::Init(_) => None,
             State::Creating(_) => None,
-            State::Running(st) => Some(st.sid.clone()),
+            State::Running(st) => Some(st.sid()),
             State::Closing1(_) => None,
             State::Closing2(_) => None,
             State::Done1 => None,
@@ -799,6 +335,7 @@ impl ChannelHandler {
                         */
                     }
                     State::Running(st2) => {
+                        st2.trigger_remove(done_tx);
                         /*
                         let Running {
                             fetch_method,
@@ -812,8 +349,8 @@ impl ChannelHandler {
                             panic!()
                         };
                         */
-                        let sid = st2.sid.clone();
-                        let cid = self.cid.to_cid();
+                        let sid = Sid::new(todo!());
+                        let cid = Cid::new(todo!());
                         // TODO
                         // add necessary commands to outbuf.
                         // in poll loop, check for outbuf and poll emit.
@@ -825,9 +362,6 @@ impl ChannelHandler {
                         // TODO make sure the IOC disconnect triggers correct logic in ingest. (log!)
                         // When we are in removing mode, and received all cleanup confirmations, then trigger state change.
 
-                        st2.removing = true;
-                        st2.remove_done_tx = Some(done_tx);
-
                         let tsnow = Instant::now();
                         let item = CaMsg::from_ty_ts(
                             proto::CaMsgTy::ChannelClose(proto::ChannelClose {
@@ -836,7 +370,7 @@ impl ChannelHandler {
                             }),
                             tsnow,
                         );
-                        st2.outbuf.push_back(item);
+                        // st2.outbuf.push_back(item);
 
                         /*
                         let sid = sid.clone();
@@ -965,23 +499,21 @@ impl ChannelHandler {
                         hpp.mark_progress();
                     }
                 }
-            } else if *done == false {
+            } else if *done {
+                break Ready(Some(Err(Error::ProtoRxClosed)));
+            } else {
                 hpp.mark_pending();
             }
-            if hpp.have_progress() {
+            break if hpp.have_progress() {
                 trace!("{selfname}  HPP:Progress");
                 continue;
             } else if hpp.have_pending() {
                 trace_pending!("{selfname}  HPP");
-                if idp != 0 {
-                    break Ready(Some(Ok(idp)));
-                } else {
-                    break Pending;
-                }
+                if idp != 0 { Ready(Some(Ok(idp))) } else { Pending }
             } else {
                 trace!("{selfname}  HPP:Done");
-                break Ready(None);
-            }
+                Ready(None)
+            };
         }
     }
 
@@ -998,146 +530,14 @@ impl ChannelHandler {
     pub fn inp_done(&mut self) {
         self.proto_inp_done = true;
         match &mut self.state {
-            State::Init(inistt) => todo!(),
+            State::Init(st) => {}
             State::Creating(st) => st.inp_done(),
-            State::Running(st) => todo!(),
+            State::Running(st) => st.inp_done(),
             State::Closing1(st) => todo!(),
             State::Closing2(st) => todo!(),
-            State::Done1 => todo!(),
-            State::Done => todo!(),
-            State::Dummy => todo!(),
-        }
-    }
-}
-
-struct PollProtoRx<'a> {
-    cid: Cid,
-    counters: &'a mut Counters,
-    mett: &'a mut ChannelHandlerMetrics,
-    inp: &'a mut VecDeque<CaMsg>,
-    done: &'a mut bool,
-}
-
-impl<'a> PollProtoRx<'a> {
-    fn proto_rx_handle_dispatch_running(
-        mut self: Pin<&mut Self>,
-        st2: &mut Running,
-        item: CaMsg,
-        cx: &mut Context<'_>,
-    ) -> Result<Option<CaMsg>, Error> {
-        let selfname = "proto_rx_handle_dispatch";
-        match &item.ty {
-            proto::CaMsgTy::EventAddRes(item2) => {
-                if item2.payload_len == 0 {
-                    debug!("{selfname}  empty  EventAddRes");
-                }
-                match &mut st2.fetch_method {
-                    FetchMethod::CreateMonitor(st3) => {
-                        // TODO metrics count here the first monitor event?
-                        trace!("ChannelHandler:Running:ProtoDispatch:Ready:Some:CreateMonitor  try_send");
-                        match Pin::new(st3).poll_msg_inp(item, cx) {
-                            Some(x) => Ok(Some(x)),
-                            None => Ok(None),
-                        }
-                    }
-                    FetchMethod::Monitor(st3) => {
-                        self.mett.monitor_read_expected().inc();
-                        trace!(
-                            "ChannelHandler:Running:ProtoDispatch:Ready:Some:Monitor    TODO handle monitor update  {item:?}"
-                        );
-                        self.counters.event_add_res_cnt += 1;
-                        Ok(None)
-                    }
-                    _ => {
-                        error!("ChannelHandler:Running:Ready:Ok  TODO handle {item:?}");
-                        Ok(None)
-                    }
-                }
-            }
-            proto::CaMsgTy::EventAddResEmpty(item2) => {
-                warn!("TODO ------- {}", "EventAddResEmpty");
-                Ok(None)
-            }
-            proto::CaMsgTy::ChannelCloseRes(item2) => {
-                if st2.removing {
-                    trace!("NOTE -------- {}", "ChannelCloseRes");
-                    st2.chan_close_ack = true;
-                } else {
-                    error!("TODO not removing but got {}", "ChannelCloseRes");
-                    // TODO abort?
-                }
-                Ok(None)
-            }
-            proto::CaMsgTy::ReadNotifyRes(msg) => {
-                trace3!("TODO  handle {item:?}");
-                match &mut st2.fetch_method {
-                    FetchMethod::Polling(st3) => {
-                        self.mett.read_notify_recv().inc();
-                        debug!("FetchMethod::Polling  recvd  go back to idle");
-                        warn!("TODO use the correct idle time");
-                        st3.req =
-                            FetchPollingReq::Idle(ErasedFuture::new(tokio::time::sleep(Duration::from_millis(3000))))
-                    }
-                    _ => {
-                        error!("unexpected ReadNotifyRes");
-                    }
-                }
-                Ok(None)
-            }
-            _ => {
-                warn!("---------->> ChannelHandler:Running:ProtoDispatch:Ready:Some  TODO handle {item:?}");
-                Ok(None)
-            }
-        }
-    }
-
-    fn poll_proto_rx_running(
-        mut self: Pin<&mut Self>,
-        st2: &mut Running,
-        cx: &mut Context<'_>,
-    ) -> Poll<Option<Result<u32, Error>>> {
-        let selfname = "poll_proto_rx_running";
-        use Poll::*;
-        trace4!("{selfname}  {}", self.cid);
-        let mut idp = 0;
-        loop {
-            let mut hpp = HaveProgressPending::new();
-            if let Some(item) = self.inp.pop_front() {
-                match self.as_mut().proto_rx_handle_dispatch_running(st2, item, cx) {
-                    Ok(x) => match x {
-                        Some(item) => {
-                            trace2!("{selfname}  item came back");
-                            self.inp.push_front(item);
-                            hpp.mark_pending();
-                        }
-                        None => {
-                            trace2!("{selfname}  item delivered");
-                            idp += 1;
-                            hpp.mark_progress();
-                        }
-                    },
-                    Err(e) => {
-                        error!("{selfname}  {e}");
-                        break Ready(Some(Err(e)));
-                    }
-                }
-            } else if *self.done == false {
-                hpp.mark_pending();
-            }
-            break if hpp.have_progress() {
-                trace!("{selfname}  HPP:Progress");
-                continue;
-            } else if hpp.have_pending() {
-                if idp != 0 {
-                    Ready(Some(Ok(idp)))
-                } else {
-                    trace_pending!("{selfname}  HPP");
-                    Pending
-                }
-            } else {
-                trace!("{selfname}  HPP:Done");
-                Ready(None)
-            };
+            State::Done1 => {}
+            State::Done => {}
+            State::Dummy => {}
         }
     }
 }
@@ -1183,7 +583,11 @@ impl Stream for ChannelHandler {
             match &mut self2.state {
                 State::Init(st2) => {
                     trace!("ChannelHandler:Init");
-                    self2.state = State::Creating(Creating::new(self2.cid.to_cid(), self2.conf.name().into()));
+                    self2.state = State::Creating(Creating::new(
+                        self2.cid.to_cid(),
+                        self2.conf.name().into(),
+                        self2.backend.clone(),
+                    ));
                     hpp.mark_progress();
                 }
                 State::Creating(st1) => {
@@ -1218,19 +622,26 @@ impl Stream for ChannelHandler {
                             match x {
                                 Ok(x) => match x {
                                     create::CreatingItem::CaMsgOut(item, cid) => {
-                                        break Ready(Some(Ok(ChannelHandlerItem {
+                                        let item = ChannelHandlerItem {
                                             ts_create: tsnow,
                                             inner: ItemInner::ProtoOutCid(item, cid),
-                                        })));
+                                        };
+                                        break Ready(Some(Ok(item)));
                                     }
-                                    create::CreatingItem::Done((sid, scalar_type, shape, ca_dbr_ty)) => {
-                                        todo!("TODO handle Creating result")
-                                        //     self2.state = State::Running(Running::new(sid, scalar_type, shape, ca_dbr_ty, proto_rx));
-                                        //     hpp.mark_progress();
+                                    create::CreatingItem::ChannelInfoQuery(item) => {
+                                        let item = ChannelHandlerItem {
+                                            ts_create: tsnow,
+                                            inner: ItemInner::ChannelInfoQuery(item),
+                                        };
+                                        break Ready(Some(Ok(item)));
+                                    }
+                                    create::CreatingItem::Done((sid, scalar_type, shape, ca_dbr_ty, chi)) => {
+                                        self2.state =
+                                            State::Running(Running::new(sid, scalar_type, shape, ca_dbr_ty, chi));
                                     }
                                 },
                                 Err(e) => {
-                                    debug!("ChannelHandler:Creating:Ready:Err {e}");
+                                    info!("ChannelHandler:Creating:Ready:Err {e}");
                                     self2.state = State::Done;
                                     break Ready(Some(Err(e.into())));
                                 }
@@ -1244,100 +655,53 @@ impl Stream for ChannelHandler {
                     }
                 }
                 State::Running(st2) => {
-                    if st2.removing {
-                        if let Some(item) = st2.outbuf.pop_front() {
-                            match self2.proto_tx.poll_send_unpin(item, cx) {
-                                Ok(()) => {
-                                    hpp.mark_progress();
-                                }
-                                Err(e) => match e {
-                                    SendPollError::Full(x) => {
-                                        hpp.mark_pending();
-                                        st2.outbuf.push_front(x);
-                                    }
-                                    SendPollError::Closed(_) => {
-                                        hpp.mark_progress();
-                                        error!("{selfname}  can not close channel, no proto");
-                                        // TODO handle better? metrics.
-                                        st2.chan_close_ack = true;
-                                        st2.outbuf.clear();
-                                    }
-                                },
+                    if let Some(item) = self2.proto_inp_buf.pop_front() {
+                        match st2.inp_push_try(item) {
+                            Some(x) => {
+                                hpp.mark_pending();
+                                self2.proto_inp_buf.push_front(x);
+                            }
+                            None => {
+                                hpp.mark_progress();
                             }
                         }
+                    } else if self2.proto_inp_done {
+                    } else {
+                        hpp.mark_pending();
                     }
+                    // TODO poll the Running struct, there can be CaMsg to forward.
                     {
-                        let mut pr = PollProtoRx {
-                            cid: self2.cid.to_cid(),
-                            counters: &mut self2.counters,
-                            mett: &mut self2.mett,
-                            inp: &mut self2.proto_inp_buf,
-                            done: &mut self2.proto_inp_done,
-                        };
-                        match Pin::new(&mut pr).poll_proto_rx_running(st2, cx) {
+                        match st2.poll_next_unpin(cx) {
                             Ready(Some(x)) => {
                                 hpp.mark_progress();
                                 match x {
-                                    Ok(idp) => {
-                                        // metrics?
-                                    }
+                                    Ok(x) => match x {
+                                        running::RunningItem::ScyllaWrite => todo!(),
+                                    },
                                     Err(e) => {
-                                        break Ready(Some(Err(e)));
+                                        info!("ChannelHandler:Creating:Ready:Err {e}");
+                                        self2.state = State::Done;
+                                        break Ready(Some(Err(e.into())));
                                     }
                                 }
                             }
-                            Ready(None) => {}
+                            Ready(None) => {
+                                hpp.mark_progress();
+                                error!("TODO pass on the done_tx to Closing1 state");
+                                let fut = async move { Ok(()) };
+                                self.state = State::Closing1(Closing1 {
+                                    // TODO let Closing state wait for the channel close ACK.
+                                    // TODO channel close may be also already received from server in Running state.
+                                    // TODO handle the remove done tx in better way.
+                                    chan_close_ack: false,
+                                    fut: fut.box2(),
+                                    done_tx: None,
+                                });
+                            }
                             Pending => {
                                 hpp.mark_pending();
                             }
                         }
-                    }
-                    let pres = FetchMethodPollRes {
-                        fetch_data: &mut st2.fetch_data,
-                        conf: &self2.conf,
-                        cid: self2.cid.to_cid(),
-                        sid: st2.sid.clone(),
-                        proto_tx: &self2.proto_tx,
-                        ch_hp_tx: &self2.ch_hp_tx,
-                        mett: &mut self2.mett,
-                    };
-                    match Pin::new(&mut st2.fetch_method).poll_next_unpin(pres, cx) {
-                        Ready(Some(x)) => {
-                            hpp.mark_progress();
-                            match x {
-                                Ok(x) => match x {
-                                    FetchMethodPollOutput::None => {}
-                                    FetchMethodPollOutput::CallbackOnRunning(cb, mut items) => {
-                                        cb(st2);
-                                        if items.len() > 1 {
-                                            self2.outbuf.extend(items);
-                                        } else if let Some(item) = items.pop() {
-                                            break Ready(Some(Ok(item)));
-                                        } else {
-                                        }
-                                    }
-                                },
-                                Err(e) => {
-                                    hpp.mark_progress();
-                                    self2.state = State::Done;
-                                    break Ready(Some(Err(e)));
-                                }
-                            }
-                        }
-                        Ready(None) => {}
-                        Pending => {
-                            hpp.mark_pending();
-                        }
-                    }
-                    if st2.outbuf.len() == 0 && st2.chan_close_ack {
-                        info!("{selfname}  -----------------------------------------------------------");
-                        info!("{selfname}  State::Running  chan_close_ack");
-                        hpp.mark_progress();
-                        let fut = async move { Ok(()) };
-                        self.state = State::Closing1(Closing1 {
-                            fut: fut.box2(),
-                            done_tx: st2.remove_done_tx.take(),
-                        });
                     }
                 }
                 State::Closing1(st2) => match st2.fut.poll_unpin(cx) {
@@ -1352,7 +716,7 @@ impl Stream for ChannelHandler {
                             }
                             Err(e) => {
                                 info!("Closing1  {e}");
-                                break Ready(Some(Err(e)));
+                                break Ready(Some(Err(e.into())));
                             }
                         }
                     }

@@ -166,7 +166,6 @@ impl State {
 
 const EF1: usize = 0x600;
 const EF2: usize = 0x500;
-const EF3: usize = 0x500;
 
 #[derive(Debug)]
 pub struct ConnSet {
@@ -177,7 +176,7 @@ pub struct ConnSet {
     cmd_rx: asynchan::Receiver<ConnSetCmd>,
     cmder_cmd_fut: Option<ErasedFuture<Result<(), Error>, EF1>>,
     cmd_fut_channel: Option<ErasedFuture<Result<(), Error>, EF2>>,
-    cmd_fut_comm: Option<ErasedFuture<Result<(), Error>, EF3>>,
+    cmd_fut_comm: Option<FutDbg<Result<(), Error>>>,
     finder_handle: FinderHandleV02,
     channels: VecDeque<ChannelCat>,
     ch_info_tx: ChannelInfoQuerySender,
@@ -205,11 +204,9 @@ impl ConnSet {
         let (cmd_tx, cmd_rx) = asynchan::bounded(100, "ConnSetCmder");
         let cmder = ConnSetCmder::new(cmd_tx);
         let ch_info_tx = {
-            let (channel_info_query_tx, jhs, jh) = dbpg::seriesbychannel::start_lookup_workers::<
-                dbpg::seriesbychannel::SalterRandom,
-            >(2, ingest_opts.postgresql_config())
-            .await?;
-            ChannelInfoQuerySender::new(channel_info_query_tx)
+            let start = dbpg::seriesbychannel::start_lookup_workers::<dbpg::seriesbychannel::SalterRandom>;
+            let (tx, jhs, jh) = start(2, ingest_opts.postgresql_config()).await?;
+            ChannelInfoQuerySender::new(tx)
         };
         let ret = ConnSet {
             backend,
@@ -373,7 +370,7 @@ impl ConnSet {
         e1: conn2::conn::StatusInfo,
         cmder: &ConnSetCmder,
         cx: &mut Context,
-    ) -> Result<Option<ErasedFuture<Result<(), Error>, EF3>>, Error> {
+    ) -> Result<Option<FutDbg<Result<(), Error>>>, Error> {
         let selfname = "handle_conn_comm_status_info";
         match e1.state {
             conn2::conn::StatusState::Connecting => {}
@@ -388,12 +385,13 @@ impl ConnSet {
                                     if false {
                                         if e6.counters.event_add_res_cnt > 6 {
                                             trace!("{selfname}  channel counter reach limit");
+                                            let cmder = cmder.clone();
                                             let fut = async move {
                                                 cmder.channel_remove(&e5.name).await;
                                                 trace!("{selfname}  channel removed  {}", e5.name);
                                                 Ok(())
                                             };
-                                            return Ok(Some(ErasedFuture::new(fut)));
+                                            return Ok(Some(fut.box2()));
                                         }
                                     }
                                 }
@@ -419,10 +417,9 @@ impl ConnSet {
                 match fut.poll_unpin(cx) {
                     Ready(x) => {
                         hpp.mark_progress();
+                        self.cmd_fut_comm = None;
                         match x {
-                            Ok(()) => {
-                                self.cmd_fut_comm = None;
-                            }
+                            Ok(()) => {}
                             Err(e) => {
                                 break Ready(Some(Err(e)));
                             }
@@ -455,6 +452,21 @@ impl ConnSet {
                                             }
                                         }
                                     }
+                                    conn2::conn::CaConnItem::ChannelInfoQuery(item) => {
+                                        debug!("===================   recv  {item:?}");
+                                        let mut tx = self2.ch_info_tx.clone();
+                                        let fut = async move {
+                                            match tx.send(item).await {
+                                                Ok(()) => {}
+                                                Err(e) => {
+                                                    // TODO metrics
+                                                    error!("ChannelInfoQuery channel send error");
+                                                }
+                                            }
+                                            Ok(())
+                                        };
+                                        self2.cmd_fut_comm = Some(fut.box2());
+                                    }
                                 },
                                 Err(e) => {
                                     todo!("{selfname}  ERROR from CaConnComm  {e}");
@@ -468,7 +480,7 @@ impl ConnSet {
                                 // TODO need to emit status event.
                                 Ok(())
                             };
-                            self2.cmd_fut_comm = Some(ErasedFuture::new(fut));
+                            self2.cmd_fut_comm = Some(fut.box2());
                             error!("{selfname}  TODO  Conn seems done, must modify data structure");
                             addr_found_done.push(*addr);
                         }

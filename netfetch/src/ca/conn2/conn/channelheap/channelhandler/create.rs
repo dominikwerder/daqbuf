@@ -10,6 +10,7 @@ use ca_proto::ca::proto;
 use ca_proto::ca::proto::CaMsg;
 use futures::FutureExt;
 use futures::Stream;
+use futures::TryFutureExt;
 use netpod::ScalarType;
 use netpod::Shape;
 use std::collections::VecDeque;
@@ -31,7 +32,7 @@ macro_rules! trace4 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; 
 macro_rules! trace_pending { ($($arg:tt)*) => { if false { trace!("{}  Pending", format_args!($($arg)*)); } }; }
 
 autoerr::create_error_v1!(
-    name(Error, "ChannelHandler"),
+    name(Error, "ChannelHandlerCreating"),
     enum variants {
         ProtoTxClosed,
         ProtoRxClosed,
@@ -40,6 +41,7 @@ autoerr::create_error_v1!(
         Recv,
         Timeout,
         Logic,
+        Register(#[from] dbpg::seriesbychannel::Error),
     },
 );
 
@@ -58,28 +60,48 @@ impl From<async_channel::RecvError> for Error {
 #[derive(Debug)]
 pub enum CreatingItem {
     CaMsgOut(CaMsg, Cid),
-    Done((Sid, ScalarType, Shape, CaDbrTy)),
+    ChannelInfoQuery(dbpg::seriesbychannel::ChannelInfoQuery),
+    Done(
+        (
+            Sid,
+            ScalarType,
+            Shape,
+            CaDbrTy,
+            dbpg::seriesbychannel::ChannelInfoResult,
+        ),
+    ),
 }
 
 #[derive(Debug)]
 enum State {
     CreateChanSend(VecDeque<CaMsg>, FutDbg<()>),
-    CreateChanRecv,
+    CreateChanRecv(FutDbg<()>),
+    SeriesIdRecv(
+        FutDbg<(
+            Result<Result<dbpg::seriesbychannel::ChannelInfoResult, dbpg::seriesbychannel::Error>, Error>,
+            Sid,
+            ScalarType,
+            Shape,
+            CaDbrTy,
+        )>,
+        FutDbg<()>,
+    ),
     Done,
 }
 
 #[derive(Debug)]
 pub struct Creating {
     cid: Cid,
+    name: String,
+    backend: String,
     state: State,
     removing: bool,
     inp_buf: VecDeque<CaMsg>,
     inp_done: bool,
-    fut: Option<FutDbg<Result<(Sid, ScalarType, Shape, CaDbrTy, asynchan::Receiver<CaMsg>), Error>>>,
 }
 
 impl Creating {
-    pub fn new(cid: Cid, name: String) -> Self {
+    pub fn new(cid: Cid, name: String, backend: String) -> Self {
         let tsnow = Instant::now();
         let msg = CaMsg::from_ty_ts(
             proto::CaMsgTy::CreateChan(proto::CreateChan {
@@ -89,14 +111,15 @@ impl Creating {
             tsnow,
         );
         let msgs = VecDeque::from([msg]);
-        let to = tokio::time::sleep(Duration::from_millis(3000));
+        let to = tokio::time::sleep(Duration::from_millis(8000));
         Self {
             cid,
+            name,
+            backend,
             state: State::CreateChanSend(msgs, to.box2()),
             removing: false,
             inp_buf: VecDeque::with_capacity(16),
             inp_done: false,
-            fut: None,
         }
     }
 
@@ -132,15 +155,17 @@ impl Stream for Creating {
     type Item = Result<CreatingItem, Error>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let selfname = "Creating::poll_next";
+        trace4!("{selfname}");
         use Poll::*;
         loop {
             let mut hpp = HaveProgressPending::new();
-            match &mut self.state {
+            let self2 = self.as_mut().get_mut();
+            match &mut self2.state {
                 State::CreateChanSend(msgs, to) => {
-                    //
                     match to.poll_unpin(cx) {
                         Ready(()) => {
-                            self.state = State::Done;
+                            self2.state = State::Done;
                             break Ready(Some(Err(Error::Timeout)));
                         }
                         Pending => {
@@ -148,10 +173,147 @@ impl Stream for Creating {
                         }
                     }
                     if let Some(item) = msgs.pop_front() {
-                        break Ready(Some(Ok(CreatingItem::CaMsgOut(item, self.cid.clone()))));
+                        let item = CreatingItem::CaMsgOut(item, self2.cid.clone());
+                        break Ready(Some(Ok(item)));
+                    } else {
+                        hpp.mark_progress();
+                        let to = std::mem::replace(to, async {}.box2());
+                        self2.state = State::CreateChanRecv(to);
                     }
                 }
-                State::CreateChanRecv => todo!(),
+                State::CreateChanRecv(to) => {
+                    match to.poll_unpin(cx) {
+                        Ready(()) => {
+                            self2.state = State::Done;
+                            break Ready(Some(Err(Error::Timeout)));
+                        }
+                        Pending => {
+                            hpp.mark_pending();
+                        }
+                    }
+                    if let Some(item) = self2.inp_buf.pop_front() {
+                        hpp.mark_progress();
+                        trace3!("CreateChanRecv  have item  {item:?}");
+                        use proto::CaMsgTy;
+                        match &item.ty {
+                            CaMsgTy::CreateChanRes(k) => {
+                                trace!("CreateMonitor:CreateChanRes {k:?}");
+                                if k.data_type > 6 {
+                                    error!(
+                                        "CreateChanRes with unexpected data_type {} count {}",
+                                        k.data_type, k.data_count
+                                    );
+                                    let e = Error::CreateMonitorUnexpectedMessage;
+                                    break Ready(Some(Err(e)));
+                                }
+                                // Ask for DBR_TIME_...
+                                let ca_dbr_type = CaDbrTy::new(k.data_type + 14);
+                                let scalar_type = match ScalarType::from_ca_id(k.data_type) {
+                                    Ok(x) => x,
+                                    Err(e) => {
+                                        error!(
+                                            "CreateChanRes with unexpected data_type {} count {}",
+                                            k.data_type, k.data_count
+                                        );
+                                        let e = Error::CreateMonitorUnexpectedMessage;
+                                        break Ready(Some(Err(e)));
+                                    }
+                                };
+                                let shape = match Shape::from_ca_count(k.data_count) {
+                                    Ok(x) => x,
+                                    Err(e) => {
+                                        error!(
+                                            "CreateChanRes with unexpected data_type {} count {}",
+                                            k.data_type, k.data_count
+                                        );
+                                        let e = Error::CreateMonitorUnexpectedMessage;
+                                        break Ready(Some(Err(e)));
+                                    }
+                                };
+                                let to = std::mem::replace(to, async {}.box2());
+                                let sid = Sid::new(k.sid);
+                                let (tx, rx) = async_channel::bounded(1);
+                                let item = dbpg::seriesbychannel::ChannelInfoQuery {
+                                    backend: self2.backend.clone(),
+                                    channel: self2.name.clone(),
+                                    kind: netpod::SeriesKind::ChannelData,
+                                    scalar_type: scalar_type.clone(),
+                                    shape: shape.clone(),
+                                    tx: Box::pin(tx),
+                                };
+                                hpp.mark_progress();
+                                let fut = async move {
+                                    let chi = rx.recv().map_err(|e| Error::Recv).await;
+                                    (chi, sid, scalar_type, shape, ca_dbr_type)
+                                };
+                                self.state = State::SeriesIdRecv(fut.box2(), to);
+                                let item = CreatingItem::ChannelInfoQuery(item);
+                                trace3!("--- EMIT --- {item:?}");
+                                break Ready(Some(Ok(item)));
+                            }
+                            CaMsgTy::CreateChanFail(k) => {
+                                trace!("CreateMonitor:CreateChanFail {k:?}");
+                                // TODO
+                                // Must cause a re-search of the channel
+                                let e = Error::CreateMonitorUnexpectedMessage;
+                                break Ready(Some(Err(e)));
+                            }
+                            CaMsgTy::AccessRightsRes(k) => {
+                                trace!("CreateMonitor:AccessRightsRes {k:?}");
+                            }
+                            _ => {
+                                trace!("channel_create: unexpected message {item:?}");
+                                let e = Error::CreateMonitorUnexpectedMessage;
+                                break Ready(Some(Err(e)));
+                            }
+                        }
+                    } else if self.inp_done {
+                        // TODO status event
+                        hpp.mark_progress();
+                        self.state = State::Done;
+                    } else {
+                        hpp.mark_pending();
+                    }
+                }
+                State::SeriesIdRecv(rx, to) => {
+                    debug!("State::SeriesIdRecv  polling");
+                    match to.poll_unpin(cx) {
+                        Ready(()) => {
+                            hpp.mark_progress();
+                            self2.state = State::Done;
+                            break Ready(Some(Err(Error::Timeout)));
+                        }
+                        Pending => {
+                            hpp.mark_pending();
+                        }
+                    }
+                    match rx.poll_unpin(cx) {
+                        Ready((x, sid, scalar_type, shape, ca_dbr_type)) => {
+                            hpp.mark_progress();
+                            trace3!("received channel info {x:?}");
+                            self2.state = State::Done;
+                            match x {
+                                Ok(x) => match x {
+                                    Ok(x) => {
+                                        let item = CreatingItem::Done((sid, scalar_type, shape, ca_dbr_type, x));
+                                        break Ready(Some(Ok(item)));
+                                    }
+                                    Err(e) => {
+                                        self2.state = State::Done;
+                                        break Ready(Some(Err(e.into())));
+                                    }
+                                },
+                                Err(e) => {
+                                    self2.state = State::Done;
+                                    break Ready(Some(Err(e)));
+                                }
+                            }
+                        }
+                        Pending => {
+                            hpp.mark_pending();
+                        }
+                    }
+                }
                 State::Done => break Ready(Some(Err(Error::Logic))),
             };
             break if hpp.have_progress() {

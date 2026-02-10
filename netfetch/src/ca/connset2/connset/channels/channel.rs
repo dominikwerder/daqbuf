@@ -295,33 +295,32 @@ impl PollCstm for Channel {
                     }
                 },
                 State::AddrSearch(cssid, fut) => match fut.poll_unpin(cx) {
-                    Ready(x) => match x {
-                        Ok(x) => {
-                            trace!("State::AddrSearch  found {x}");
-                            trace!("State::AddrSearch  TODO  issue channel-add and then monitor for status updates");
-                            hpp.mark_progress();
-                            self.state = State::Observing(Observing {
-                                cssid: cssid.clone(),
-                                addr: x,
-                            });
-                            let item = ChannelActionItem::AddToCaConn(self.conf.clone(), x);
-                            break Ready(Some(Ok(item)));
-                        }
-                        Err(e) => {
-                            match e {
-                                Error::AddrNotFound(_) => {
-                                    // TODO instead, back off and try again. Count metrics.
-                                    self.state = State::Removed;
-                                    hpp.mark_progress();
-                                }
-                                e => {
-                                    warn!("State::AddrSearch  finder error {e}");
-                                    self.state = State::Removed;
-                                    hpp.mark_progress();
+                    Ready(x) => {
+                        hpp.mark_progress();
+                        match x {
+                            Ok(x) => {
+                                trace!("State::AddrSearch  found {x}");
+                                self.state = State::Observing(Observing {
+                                    cssid: cssid.clone(),
+                                    addr: x,
+                                });
+                                let item = ChannelActionItem::AddToCaConn(self.conf.clone(), x);
+                                break Ready(Some(Ok(item)));
+                            }
+                            Err(e) => {
+                                match e {
+                                    Error::AddrNotFound(_) => {
+                                        // TODO instead, back off and try again. Count metrics.
+                                        self.state = State::Removed;
+                                    }
+                                    e => {
+                                        warn!("State::AddrSearch  finder error {e}");
+                                        self.state = State::Removed;
+                                    }
                                 }
                             }
                         }
-                    },
+                    }
                     Pending => {
                         hpp.mark_pending();
                     }

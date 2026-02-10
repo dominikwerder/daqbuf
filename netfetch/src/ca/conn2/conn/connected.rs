@@ -27,6 +27,7 @@ use taskrun::tokio;
 use tokio::net::TcpStream;
 
 macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
+macro_rules! debug { ($($arg:tt)*) => { if true { log::debug!($($arg)*); } }; }
 macro_rules! trace { ($($arg:tt)*) => { if true { log::trace!($($arg)*); } }; }
 macro_rules! trace2 { ($($arg:tt)*) => { if true { log::trace!($($arg)*); } }; }
 macro_rules! trace3 { ($($arg:tt)*) => { if true { log::trace!($($arg)*); } }; }
@@ -55,14 +56,15 @@ enum State {
 
 #[derive(Debug)]
 pub enum ItemInner {
+    ChannelInfoQuery(dbpg::seriesbychannel::ChannelInfoQuery),
     ScyllaWrite,
 }
 
 #[derive(Debug)]
 pub struct ConnectedItem {
     // Only for performance measurement:
-    ts_create: Instant,
-    inner: ItemInner,
+    pub ts_create: Instant,
+    pub inner: ItemInner,
 }
 
 #[derive(Debug)]
@@ -348,9 +350,11 @@ impl Stream for Connected {
                             hpp.mark_progress();
                             match x {
                                 Ok(item) => {
-                                    trace!("ActiveCa:Ready");
-                                    error!("ActiveCa:Ready  TODO do something with item");
                                     let item = match item.inner {
+                                        activeca::ItemInner::ChannelInfoQuery(item2) => ConnectedItem {
+                                            ts_create: item.ts_create,
+                                            inner: ItemInner::ChannelInfoQuery(item2),
+                                        },
                                         activeca::ItemInner::ScyllaWrite => ConnectedItem {
                                             ts_create: item.ts_create,
                                             inner: ItemInner::ScyllaWrite,

@@ -43,11 +43,12 @@ const OUT_QUEUE_LEN_MAX: usize = 64;
 macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
 macro_rules! warn { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
 macro_rules! info { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
+macro_rules! debug { ($($arg:tt)*) => { if true { log::debug!($($arg)*); } }; }
 macro_rules! conn_err { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
-macro_rules! trace { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
-macro_rules! trace2 { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
-macro_rules! trace3 { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
-macro_rules! trace4 { ($($arg:tt)*) => { if false { log::info!($($arg)*); } }; }
+macro_rules! trace { ($($arg:tt)*) => { if true { log::trace!($($arg)*); } }; }
+macro_rules! trace2 { ($($arg:tt)*) => { if true { log::trace!($($arg)*); } }; }
+macro_rules! trace3 { ($($arg:tt)*) => { if true { log::trace!($($arg)*); } }; }
+macro_rules! trace4 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
 macro_rules! trace_pending { ($($arg:tt)*) => { if false { trace!("{}  Pending", format_args!($($arg)*)); } }; }
 
 autoerr::create_error_v1!(
@@ -314,6 +315,7 @@ pub struct StatusInfo {
 #[derive(Debug)]
 pub enum CaConnItem {
     StatusInfo(StatusInfo),
+    ChannelInfoQuery(ChannelInfoQuery),
 }
 
 const EF4: usize = 0x500;
@@ -385,15 +387,15 @@ impl CaConn {
         // We only consider state which is sync available here.
         // For other information, we take the last known values.
         match &self.state {
-            State::Connecting(connecting) => StatusInfo {
+            State::Connecting(st) => StatusInfo {
                 ts: time::UtcDateTime::now(),
                 addr: self.remote_addr,
                 state: StatusState::Connecting,
             },
-            State::Connected(connected) => StatusInfo {
+            State::Connected(st) => StatusInfo {
                 ts: time::UtcDateTime::now(),
                 addr: self.remote_addr,
-                state: StatusState::Connected(connected.status_info()),
+                state: StatusState::Connected(st.status_info()),
             },
             State::Done => StatusInfo {
                 ts: time::UtcDateTime::now(),
@@ -407,18 +409,17 @@ impl CaConn {
         use Poll::*;
         if true {
             match &mut self.state {
-                State::Connecting(st1) => {
+                State::Connecting(st) => {
                     // TODO
                 }
-                State::Connected(st1) => {
-                    let m = st1.mett_take();
+                State::Connected(st) => {
+                    let m = st.mett_take();
                     self.mett.ingest(m);
                 }
                 State::Done => {
                     // TODO
                 }
             }
-            info!("CURRENT METRICS  {:?}", self.mett);
         }
         if self.out_qu.len() < OUT_QUEUE_LEN_MAX {
             trace!("TODO  poll_own_ticker  emit status info");
@@ -634,20 +635,27 @@ impl Stream for CaConn {
                         }
                     },
                     State::Connected(st1) => match st1.poll_next_unpin(cx) {
-                        Ready(Some(x)) => match x {
-                            Ok(x) => {
-                                trace!("{selfname}:Connected:Ready");
-                                error!("{selfname}:Connected:Ready  TODO handle the item {x:?}");
-                                hpp.mark_progress();
+                        Ready(Some(x)) => {
+                            hpp.mark_progress();
+                            match x {
+                                Ok(x) => {
+                                    debug!("{selfname}:Connected:Ready  {x:?}");
+                                    match x.inner {
+                                        connected::ItemInner::ChannelInfoQuery(item) => {
+                                            let item = CaConnItem::ChannelInfoQuery(item);
+                                            break Ready(Some(Ok(item)));
+                                        }
+                                        connected::ItemInner::ScyllaWrite => todo!("TODO handle ScyllaWrite"),
+                                    }
+                                }
+                                Err(e) => {
+                                    trace!("{selfname}:Connected:Err:{e}");
+                                    error!("{selfname}:Connected:Err:  TODO handle error and shutdown");
+                                    self.state = State::Done;
+                                    break Ready(Some(Err(e.into())));
+                                }
                             }
-                            Err(e) => {
-                                trace!("{selfname}:Connected:Err:{e}");
-                                error!("{selfname}:Connected:Err:  TODO handle error and shutdown");
-                                self.state = State::Done;
-                                hpp.mark_progress();
-                                break Ready(Some(Err(e.into())));
-                            }
-                        },
+                        }
                         Ready(None) => {
                             trace!("{selfname}:Connected:Done");
                             error!("{selfname}:Connected:Done  TODO handle shutdown");
@@ -872,7 +880,9 @@ impl Future for CaConnTask {
         loop {
             break if let Some(x) = self.t1.take() {
                 match self.out_tx.poll_send_unpin(x, cx) {
-                    Ok(()) => continue,
+                    Ok(()) => {
+                        continue;
+                    }
                     Err(e) => match e {
                         asynchan::SendPollError::Full(x) => {
                             self.t1 = Some(x);
@@ -886,13 +896,11 @@ impl Future for CaConnTask {
                 }
             } else {
                 match self.conn.poll_next_unpin(cx) {
-                    Ready(x) => match x {
-                        Some(x) => {
-                            self.t1 = Some(x);
-                            continue;
-                        }
-                        None => Ready(Ok(())),
-                    },
+                    Ready(Some(x)) => {
+                        self.t1 = Some(x);
+                        continue;
+                    }
+                    Ready(None) => Ready(Ok(())),
                     Pending => Pending,
                 }
             };

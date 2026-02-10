@@ -5,7 +5,7 @@ use chrono::Utc;
 use core::fmt;
 use futures_util::Future;
 use futures_util::TryFutureExt;
-use log::*;
+use log;
 use md5::Digest;
 use netpod::Database;
 use netpod::ScalarType;
@@ -21,23 +21,13 @@ use tokio::task::JoinHandle;
 use tokio_postgres::Client as PgClient;
 use tokio_postgres::Statement as PgStatement;
 
-#[allow(unused)]
-macro_rules! trace2 {
-    ($($arg:tt)*) => {
-        if false {
-            trace!($($arg)*);
-        }
-    };
-}
-
-#[allow(unused)]
-macro_rules! trace3 {
-    ($($arg:tt)*) => {
-        if false {
-            trace!($($arg)*);
-        }
-    };
-}
+macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
+macro_rules! warn { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
+macro_rules! info { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
+macro_rules! debug { ($($arg:tt)*) => { if true { log::debug!($($arg)*); } }; }
+macro_rules! trace1 { ($($arg:tt)*) => { if true { log::trace!($($arg)*); } }; }
+macro_rules! trace2 { ($($arg:tt)*) => { if true { log::trace!($($arg)*); } }; }
+macro_rules! trace3 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
 
 autoerr::create_error_v1!(
     name(Error, "PgSeries"),
@@ -164,6 +154,11 @@ impl ChannelInfoQuerySender {
         let res = rx.recv().await.map_err(|_| Error::ChannelError)??;
         Ok(res)
     }
+
+    pub async fn send(&mut self, item: ChannelInfoQuery) -> Result<(), Error> {
+        self.tx.send(item).await.map_err(|_| Error::ChannelError)?;
+        Ok(())
+    }
 }
 
 impl Clone for ChannelInfoQuerySender {
@@ -246,7 +241,7 @@ impl Worker {
             // stats.recv_batch().inc();
             // stats.recv_items().add(batch.len() as _);
             for x in &batch {
-                trace3!(
+                trace2!(
                     "search for {}  {}  {:?}  {:?}",
                     x.backend,
                     x.channel,
@@ -280,7 +275,7 @@ impl Worker {
                 }
             };
         }
-        trace!("Worker2 done");
+        trace1!("Worker2 done");
         Ok(())
     }
 
@@ -340,10 +335,13 @@ impl Worker {
             };
             let item = Ok(item);
             match e.0.tx.make_send(item).await {
-                Ok(()) => {}
+                Ok(()) => {
+                    trace2!("------- SENT RESULT");
+                }
                 Err(_) => {
                     // TODO
                     // stats.res_tx_fail.inc();
+                    trace2!("=========== SENT RESULT ERROR");
                 }
             };
         }
@@ -604,7 +602,7 @@ impl Worker {
             .prepare_typed(sql, &[tokio_postgres::types::Type::INT8_ARRAY])
             .await?;
         let n = self.pg.execute(&qu, &[&sid]).await?;
-        trace!("update_used_before  n {}", n);
+        trace1!("update_used_before  n {}", n);
         Ok(())
     }
 }

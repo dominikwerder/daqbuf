@@ -98,6 +98,7 @@ impl fmt::Debug for CommandFut {
 
 #[derive(Debug)]
 pub enum ItemInner {
+    ChannelInfoQuery(dbpg::seriesbychannel::ChannelInfoQuery),
     ScyllaWrite,
 }
 
@@ -128,11 +129,9 @@ pub struct ActiveCa {
     addr: SocketAddrV4,
     state: State,
     chanheap: ChannelHeap,
-    proto_tx: Sender<CaMsg>,
     proto_rx: asynchan::Receiver<CaMsg>,
     proto_rx_buf: VecDeque<CaMsg>,
     proto_2_tx: asynchan::Sender<CaMsg>,
-    // cmd_rx: Receiver<CaCommand>,
     cmd_fut: Option<CommandFut>,
     chanheap_cmd_tx: asynchan::Sender<channelheap::Cmd>,
     chanheap_cmd_rx: asynchan::Receiver<channelheap::Cmd>,
@@ -152,25 +151,19 @@ impl ActiveCa {
         let (proto_2_tx, proto_2_rx) = asynchan::bounded(120, "ActiveCa-proto2");
         let (chanheap_cmd_tx, chanheap_cmd_rx) = asynchan::bounded(16, "ActiveCa-ChannelHeap-cmd");
         Self {
-            chanheap: ChannelHeap::new(backend.clone(), proto_tx.clone(), proto_2_rx),
+            chanheap: ChannelHeap::new(backend.clone(), proto_tx, proto_2_rx),
             backend,
             tsbeg: tsnow,
             addr,
             state: State::new(),
-            proto_tx,
             proto_rx,
             proto_rx_buf: VecDeque::with_capacity(16),
             proto_2_tx,
-            // cmd_rx,
             cmd_fut: None,
             chanheap_cmd_tx,
             chanheap_cmd_rx,
             mett: CaConnConnectedMetrics::new(),
         }
-    }
-
-    pub fn dismantle(self) -> (asynchan::Receiver<CaMsg>,) {
-        (self.proto_rx,)
     }
 
     pub fn status_info(&self) -> StatusInfo {
@@ -375,9 +368,17 @@ impl ActiveCa {
                             hpp.mark_progress();
                             match x {
                                 Ok(item) => {
-                                    trace!("ActiveCa:ChannelHeap:Done");
-                                    error!("ActiveCa:ChannelHeap:Done  TODO do something with item  {item:?}");
-                                    panic!("ActiveCa:ChannelHeap:Done");
+                                    trace!("ActiveCa:ChannelHeap:Some");
+                                    match item.inner {
+                                        channelheap::ItemInner::ChannelInfoQuery(item2) => {
+                                            let item = ActiveCaItem {
+                                                ts_create: item.ts_create,
+                                                inner: ItemInner::ChannelInfoQuery(item2),
+                                            };
+                                            break Ready(Some(Ok(item)));
+                                        }
+                                        channelheap::ItemInner::ScyllaWrite => todo!("handle ScyllaWrite"),
+                                    }
                                 }
                                 Err(e) => {
                                     error!("ActiveCa:ChannelHeap:Error {e}");
