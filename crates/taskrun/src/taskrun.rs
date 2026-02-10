@@ -234,7 +234,7 @@ fn tracing_init_inner(mode: TracingMode) -> Result<(), Error> {
             if *meta.level() >= tracing::Level::TRACE {
                 check_target(meta, ctx, &tracing_trace, &mut tmp1)
             } else if *meta.level() >= tracing::Level::DEBUG {
-                check_target(meta, ctx, &tracing_debug, &mut tmp1)
+                check_target(meta, ctx, &tracing_debug, &mut tmp1) || check_target(meta, ctx, &tracing_trace, &mut tmp1)
             } else {
                 true
             }
