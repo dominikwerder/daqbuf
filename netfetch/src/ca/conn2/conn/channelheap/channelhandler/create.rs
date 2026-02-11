@@ -315,7 +315,7 @@ impl Stream for Creating {
                     }
                 }
                 State::Done => break Ready(Some(Err(Error::Logic))),
-            };
+            }
             break if hpp.have_progress() {
                 trace4!("HPP:Progress");
                 continue;

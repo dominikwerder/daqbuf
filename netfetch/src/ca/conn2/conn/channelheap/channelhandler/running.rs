@@ -8,7 +8,6 @@ use crate::ca::conn2::caids::Sid;
 use crate::ca::conn2::caids::SubidOwned;
 use crate::ca::conn2::conn::channelheap::channelhandler::fetchmpx;
 use crate::ca::conn2::timeoutable;
-use crate::ca::futstack::ErasedFuture;
 use crate::ca::progpend::HaveProgressPending;
 use crate::conf::ChannelConfig;
 use crate::futwrap::FutDbg;
@@ -16,7 +15,6 @@ use crate::futwrap::FutDbgBox;
 use ca_proto::ca::proto;
 use ca_proto::ca::proto::CaMsg;
 use ca_proto::ca::proto::CaMsgTy;
-use channelheap::ChHeapCmd;
 use channelheap::channelhandler::ChannelHandlerItem;
 use channelheap::channelhandler::ItemInner;
 use dbpg::seriesbychannel::ChannelInfoResult;
@@ -92,7 +90,6 @@ pub struct Running {
     removing: bool,
     chan_close_ack: bool,
     outbuf: VecDeque<CaMsg>,
-    remove_done_tx: Option<asynchan::Sender<u32>>,
     inp_buf: VecDeque<CaMsg>,
     inp_done: bool,
     mett: ChannelHandlerMetrics,
@@ -112,7 +109,6 @@ impl Running {
             removing: false,
             chan_close_ack: false,
             outbuf: VecDeque::new(),
-            remove_done_tx: None,
             inp_buf: VecDeque::with_capacity(16),
             inp_done: false,
             mett: ChannelHandlerMetrics::new(),
@@ -123,9 +119,15 @@ impl Running {
         self.sid.clone()
     }
 
-    pub fn trigger_remove(&mut self, done_tx: asynchan::Sender<u32>) {
-        error!("TODO set up teardown, signal via done_tx");
-        return;
+    pub fn trigger_remove(&mut self) {
+        error!("TODO set up teardown");
+        self.removing = true;
+        match &mut self.state {
+            State::Normal(x) => {
+                x.trigger_remove();
+            }
+            State::Done => {}
+        }
         // TODO
         // Tear down, but ChannelHandler must do the channel close when we are Done.
         // add necessary commands to outbuf.
@@ -137,16 +139,6 @@ impl Running {
         // Otherwise, the IOC may also shut down of course.
         // TODO make sure the IOC disconnect triggers correct logic in ingest. (log!)
         // When we are in removing mode, and received all cleanup confirmations, then trigger state change.
-        let sid = Sid::new(todo!());
-        let cid = Cid::new(todo!());
-        let tsnow = Instant::now();
-        let item = CaMsg::from_ty_ts(
-            proto::CaMsgTy::ChannelClose(proto::ChannelClose {
-                sid: sid.to_u32(),
-                cid: cid.to_u32(),
-            }),
-            tsnow,
-        );
     }
 
     pub fn inp_push_try(&mut self, item: CaMsg) -> Option<CaMsg> {
@@ -247,96 +239,63 @@ impl Stream for Running {
         use Poll::*;
         loop {
             let mut hpp = HaveProgressPending::new();
-            match self.as_mut().poll_inp_dispatch(cx) {
-                Ready(Some(x)) => match x {
-                    Ok(()) => {}
-                    Err(e) => {
-                        error!("TODO handle error {e}");
-                        self.state = State::Done;
+            match &self.state {
+                State::Done => {}
+                _ => match self.as_mut().poll_inp_dispatch(cx) {
+                    Ready(Some(x)) => match x {
+                        Ok(()) => {}
+                        Err(e) => {
+                            error!("TODO handle error {e}");
+                            self.state = State::Done;
+                            hpp.mark_progress();
+                        }
+                    },
+                    Ready(None) => {
+                        error!("TODO even on input abort, continue with clean shutdown");
                         hpp.mark_progress();
+                        self.state = State::Done;
+                    }
+                    Pending => {
+                        hpp.mark_pending();
                     }
                 },
-                Ready(None) => {
-                    error!("TODO even on input abort, continue with clean shutdown");
-                    hpp.mark_progress();
-                    self.state = State::Done;
-                }
-                Pending => {
-                    hpp.mark_pending();
-                }
             }
             match &mut self.state {
-                State::Normal(fetchmpx) => {
-                    //
-                    match fetchmpx.poll_next_unpin(cx) {
-                        Ready(Some(x)) => match x {
-                            Ok(x) => {
-                                hpp.mark_progress();
-                                match x {
-                                    fetchmpx::FetchmpxItem::CaMsgOut(msg) => {
-                                        let g = RunningItem::CaMsgOut(msg);
-                                        break Ready(Some(Ok(g)));
-                                    }
-                                    fetchmpx::FetchmpxItem::CaMsgOutIoid(msg, sid, tscmd) => {
-                                        let g = RunningItem::CaMsgOutIoid(msg, sid, tscmd);
-                                        break Ready(Some(Ok(g)));
-                                    }
-                                    fetchmpx::FetchmpxItem::ScyllaWrite => {
-                                        error!("TODO ScyllaWrite");
-                                    }
+                State::Normal(fetchmpx) => match fetchmpx.poll_next_unpin(cx) {
+                    Ready(Some(x)) => match x {
+                        Ok(x) => {
+                            hpp.mark_progress();
+                            match x {
+                                fetchmpx::FetchmpxItem::CaMsgOut(msg) => {
+                                    let g = RunningItem::CaMsgOut(msg);
+                                    break Ready(Some(Ok(g)));
+                                }
+                                fetchmpx::FetchmpxItem::CaMsgOutIoid(msg, sid, tscmd) => {
+                                    let g = RunningItem::CaMsgOutIoid(msg, sid, tscmd);
+                                    break Ready(Some(Ok(g)));
+                                }
+                                fetchmpx::FetchmpxItem::ScyllaWrite => {
+                                    error!("TODO ScyllaWrite");
                                 }
                             }
-                            Err(e) => {
-                                error!("TODO handle error {e}");
-                                self.state = State::Done;
-                                hpp.mark_progress();
-                            }
-                        },
-                        Ready(None) => {}
-                        Pending => {
-                            hpp.mark_pending();
                         }
+                        Err(e) => {
+                            error!("TODO handle error {e}");
+                            self.state = State::Done;
+                            hpp.mark_progress();
+                        }
+                    },
+                    Ready(None) => {
+                        hpp.mark_progress();
+                        warn!("------------------------------- ========  TODO introduce another cleanup state?");
+                        self.state = State::Done;
                     }
-                }
+                    Pending => {
+                        hpp.mark_pending();
+                    }
+                },
                 State::Done => {}
             }
-            // {
-            //     let pres = FetchMethodPollRes {
-            //         fetch_data: &mut self.fetch_data,
-            //         conf: &self.conf,
-            //         cid: self.cid.to_cid(),
-            //         sid: self.sid.clone(),
-            //         mett: &mut self.mett,
-            //     };
-            //     match self.fetch_method.poll_next_unpin(pres, cx) {
-            //         Ready(Some(x)) => {
-            //             hpp.mark_progress();
-            //             match x {
-            //                 Ok(x) => match x {
-            //                     FetchMethodPollOutput::None => {}
-            //                     FetchMethodPollOutput::CallbackOnRunning(cb, mut items) => {
-            //                         cb(st2);
-            //                         if items.len() > 1 {
-            //                             self2.outbuf.extend(items);
-            //                         } else if let Some(item) = items.pop() {
-            //                             break Ready(Some(Ok(item)));
-            //                         } else {
-            //                         }
-            //                     }
-            //                 },
-            //                 Err(e) => {
-            //                     hpp.mark_progress();
-            //                     self2.state = State::Done;
-            //                     break Ready(Some(Err(e)));
-            //                 }
-            //             }
-            //         }
-            //         Ready(None) => {}
-            //         Pending => {
-            //             hpp.mark_pending();
-            //         }
-            //     }
-            // }
             break if hpp.have_progress() {
                 trace4!("HPP:Progress");
                 continue;

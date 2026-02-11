@@ -41,6 +41,7 @@ autoerr::create_error_v1!(
         IO(#[from] std::io::Error),
         ProtoTxClosed,
         ChannelHeap(#[from] channelheap::Error),
+        Send,
     },
 );
 
@@ -195,6 +196,7 @@ impl ActiveCa {
                 CommandFut(Box::pin(fut))
             }
             CaCommandKind::ChannelRemove(name, mut done_tx) => {
+                debug!("{selfname}  ChannelRemove");
                 let mut chanheap_cmd_tx = self.chanheap_cmd_tx.clone();
                 let fut = async move {
                     let (done_2_tx, mut done_2_rx) = asynchan::bounded(2, "ChannelHeap-Done");
@@ -212,8 +214,8 @@ impl ActiveCa {
                             Ok(())
                         }
                         Err(e) => {
-                            error!("{selfname} ChannelRemove Future: failed to send RemoveChannel command");
-                            todo!()
+                            error!("{selfname}  TODO  ChannelRemove Future: failed to send RemoveChannel command");
+                            Err(Error::Send)
                         }
                     }
                 }

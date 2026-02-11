@@ -499,7 +499,6 @@ impl ChannelHeap {
         mut handler: Pin<&mut ChannelHandler>,
         cx: &mut Context,
         cid: Cid,
-        // st1: &mut ChannelEntry,
         ioid_reg: &mut IoidRegistry,
         tsnow: Instant,
     ) -> Poll<Option<Result<PollHandlerItem, Error>>> {
@@ -524,7 +523,7 @@ impl ChannelHeap {
                                     PollHandlerItem::ChannelHeapItem(item)
                                 }
                                 channelhandler::ItemInner::ProtoOut(item) => {
-                                    //
+                                    trace!("received channelhandler::ItemInner::ProtoOut {item:?}");
                                     PollHandlerItem::ProtoOut(item)
                                 }
                                 channelhandler::ItemInner::ProtoOutIoid(mut ca_msg, sid, tscmd) => {
@@ -583,97 +582,98 @@ impl ChannelHeap {
         }
     }
 
-    fn dispatch_input_to_channels(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Result<(), Error>>> {
+    fn dispatch_input_to_channels(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Result<(), Error>>> {
         let selfname = "dispatch_input_to_channels";
         use Poll::*;
-        let mut hpp = HaveProgressPending::new();
-        let self2 = self.get_mut();
         loop {
-            let item = if let Some(x) = self2.inp_buf.pop_front() {
-                x
+            let mut hpp = HaveProgressPending::new();
+            let self2 = self.as_mut().get_mut();
+            let mut idp = 0;
+            if let Some(item) = self2.inp_buf.pop_front() {
+                let disp_cid = if let Some(cid) = item.cid() {
+                    trace!("{selfname}  resolved via cid");
+                    Some(Cid::new(cid))
+                } else if let Some(subid) = item.subid() {
+                    if let Some(cid) = self2.by_subid.get(&Subid::new(subid)) {
+                        trace!("{selfname}  resolved via subid");
+                        Some(cid.clone())
+                    } else {
+                        trace!("{selfname}  TODO  msg has unknown subid");
+                        None
+                    }
+                } else if let Some(ioid) = item.ioid() {
+                    if let Some((cid, _sid, tscmd, tsreg)) = self2.ioid_reg.take(Ioid::new(ioid)) {
+                        // TODO metrics
+                        debug!("--------------------------------------------------------");
+                        {
+                            let dt = Instant::now().duration_since(tscmd);
+                            let dtcmd = 1e3 * dt.as_secs_f32();
+                            let dt = Instant::now().duration_since(tsreg);
+                            let dtreg = 1e3 * dt.as_secs_f32();
+                            debug!("resolve incoming Ioid  dtcmd {:.3} ms  dtreg {:.3} ms", dtcmd, dtreg);
+                        }
+                        Some(cid)
+                    } else {
+                        debug!("{selfname}  ioid  {ioid}  unknown");
+                        None
+                    }
+                } else if let Some(sid) = item.sid() {
+                    debug!("{selfname}  TODO  msg has sid, map to cid not yet implemented");
+                    None
+                } else {
+                    debug!("{selfname}  TODO  msg has no routing id");
+                    None
+                };
+                if let Some(cid) = disp_cid {
+                    if let Some(e) = self2.by_cid.get_mut(&cid) {
+                        match &mut e.ch_handler {
+                            ChHandler::ChHandlerActive(st2) => {
+                                let sdbg = format!("{item:?}");
+                                match Pin::new(&mut st2.handler).inp_push_try(item) {
+                                    Some(item) => {
+                                        hpp.mark_pending();
+                                        trace2!("{selfname}  ChannelHeap:Dispatch:Pending  {cid}  {sdbg}");
+                                        self2.inp_buf.push_front(item);
+                                    }
+                                    None => {
+                                        hpp.mark_progress();
+                                        idp += 1;
+                                        trace2!("{selfname}  ChannelHeap:Dispatch:Done  {cid}  {sdbg}");
+                                        self2.wakeup_cids.insert(cid, ());
+                                    }
+                                }
+                            }
+                            ChHandler::Done => {
+                                // Can not handle this msg.
+                                // TODO count for metrics.
+                                hpp.mark_progress();
+                                idp += 1;
+                                warn!("{selfname}  ChannelHeap: channel handler Done  {cid}  {item:?}");
+                            }
+                        }
+                    } else {
+                        hpp.mark_progress();
+                        idp += 1;
+                        warn!("{selfname}  ChannelHeap: no channel handler  {cid}  {item:?}");
+                    }
+                } else {
+                    hpp.mark_progress();
+                    idp += 1;
+                    warn!("{selfname}  TODO no idea how to handle this  {item:?}");
+                }
             } else {
                 if self2.inp_done {
                 } else {
                     hpp.mark_pending();
                 }
-                break;
-            };
-            // Some message can be dispatched by Cid.
-            // Others need translation from Subid.
-            let disp_cid = if let Some(cid) = item.cid() {
-                trace!("{selfname}  resolved via cid");
-                Some(Cid::new(cid))
-            } else if let Some(subid) = item.subid() {
-                if let Some(cid) = self2.by_subid.get(&Subid::new(subid)) {
-                    trace!("{selfname}  resolved via subid");
-                    Some(cid.clone())
-                } else {
-                    trace!("{selfname}  TODO  msg has unknown subid");
-                    None
-                }
-            } else if let Some(ioid) = item.ioid() {
-                if let Some((cid, _sid, tscmd, tsreg)) = self2.ioid_reg.take(Ioid::new(ioid)) {
-                    // TODO metrics
-                    debug!("--------------------------------------------------------");
-                    {
-                        let dt = Instant::now().duration_since(tscmd);
-                        let dtcmd = 1e3 * dt.as_secs_f32();
-                        let dt = Instant::now().duration_since(tsreg);
-                        let dtreg = 1e3 * dt.as_secs_f32();
-                        debug!("resolve incoming Ioid  dtcmd {:.3} ms  dtreg {:.3} ms", dtcmd, dtreg);
-                    }
-                    Some(cid)
-                } else {
-                    debug!("{selfname}  ioid  {ioid}  unknown");
-                    None
-                }
-            } else if let Some(sid) = item.sid() {
-                debug!("{selfname}  TODO  msg has sid, map to cid not yet implemented");
-                None
-            } else {
-                debug!("{selfname}  TODO  msg has no routing id");
-                None
-            };
-            if let Some(cid) = disp_cid {
-                if let Some(e) = self2.by_cid.get_mut(&cid) {
-                    match &mut e.ch_handler {
-                        ChHandler::ChHandlerActive(st2) => {
-                            let sdbg = format!("{item:?}");
-                            match Pin::new(&mut st2.handler).inp_push_try(item) {
-                                Some(item) => {
-                                    hpp.mark_pending();
-                                    trace2!("{selfname}  ChannelHeap:Dispatch:Pending  {cid}  {sdbg}");
-                                    self2.inp_buf.push_front(item);
-                                }
-                                None => {
-                                    hpp.mark_progress();
-                                    trace2!("{selfname}  ChannelHeap:Dispatch:Done  {cid}  {sdbg}");
-                                    self2.wakeup_cids.insert(cid, ());
-                                }
-                            }
-                        }
-                        ChHandler::Done => {
-                            // Can not handle this msg.
-                            // TODO count for metrics.
-                            hpp.mark_progress();
-                            warn!("{selfname}  ChannelHeap: channel handler Done  {cid}  {item:?}");
-                        }
-                    }
-                } else {
-                    hpp.mark_progress();
-                    warn!("{selfname}  ChannelHeap: no channel handler  {cid}  {item:?}");
-                }
-            } else {
-                hpp.mark_progress();
-                warn!("{selfname}  TODO no idea how to handle this  {item:?}");
             }
-        }
-        if hpp.have_progress() {
-            Ready(Some(Ok(())))
-        } else if hpp.have_pending() {
-            Pending
-        } else {
-            Ready(None)
+            break if hpp.have_progress() {
+                continue;
+            } else if hpp.have_pending() {
+                if idp != 0 { Ready(Some(Ok(()))) } else { Pending }
+            } else {
+                Ready(None)
+            };
         }
     }
 

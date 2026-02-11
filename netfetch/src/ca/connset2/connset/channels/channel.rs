@@ -28,7 +28,7 @@ use std::task::Poll;
 
 macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
 macro_rules! warn { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
-macro_rules! debug { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
+macro_rules! debug { ($($arg:tt)*) => { if true { log::debug!($($arg)*); } }; }
 macro_rules! trace { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
 macro_rules! trace2 { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
 macro_rules! trace3 { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
@@ -209,6 +209,7 @@ impl Channel {
         debug!("{selfname} called");
         match cmd {
             Cmd::Remove(cmd) => {
+                debug!("{lf}{selfname}  Remove  {}{lf}", self.name(), lf = "\n\n");
                 self.transition_to_removing();
                 let mut tx = cmd.done_tx;
                 if tx.try_send(Ok(())).is_err() {

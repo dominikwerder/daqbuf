@@ -80,19 +80,24 @@ impl From<async_channel::RecvError> for Error {
 }
 
 #[derive(Debug)]
+pub enum ClosingReason {
+    ErrorMsg(String),
+    InputDone,
+    Command,
+}
+
+#[derive(Debug)]
 struct Init {}
 
 #[derive(Debug)]
 struct Closing1 {
     chan_close_ack: bool,
-    fut: FutDbg<Result<(), Error>>,
-    done_tx: Option<asynchan::Sender<u32>>,
+    fut: Option<FutDbg<Result<(), Error>>>,
+    to: FutDbg<()>,
 }
 
 #[derive(Debug)]
-struct Closing2 {
-    done_tx: Option<asynchan::Sender<u32>>,
-}
+struct Closing2 {}
 
 #[derive(Debug)]
 enum State {
@@ -194,7 +199,7 @@ impl LocalLog {
 #[derive(Debug)]
 pub struct ChannelHandler {
     state: State,
-    removing: bool,
+    removing: Option<asynchan::Sender<u32>>,
     cid: CidOwned,
     backend: String,
     conf: ChannelConfig,
@@ -223,7 +228,7 @@ impl ChannelHandler {
         let (cmd_tx, cmd_rx) = asynchan::bounded(16, "ChannelHandler-cmd");
         Self {
             state: State::Init(Init {}),
-            removing: false,
+            removing: None,
             cid,
             backend,
             conf,
@@ -291,58 +296,66 @@ impl ChannelHandler {
         &self.cmd_tx
     }
 
+    fn handle_cmd_remove(&mut self, done_tx: asynchan::Sender<u32>) {
+        let selfname = "handle_cmd_remove";
+        debug!("{selfname}");
+        self.removing = Some(done_tx);
+        match &mut self.state {
+            State::Init(_st2) => {
+                self.state = State::Done1;
+            }
+            State::Creating(_) => {
+                let Creating { .. } = if let State::Creating(st2) = std::mem::replace(&mut self.state, State::Dummy) {
+                    st2
+                } else {
+                    panic!()
+                };
+                error!("TODO impl Cmd::Remove for State::Creating");
+                panic!("TODO impl Cmd::Remove for State::Creating");
+                // TODO add flags to Creating so that we now what proto messages we still expect
+                // TODO add timeout to Creating (anyways!)
+            }
+            State::Running(st2) => {
+                st2.trigger_remove();
+            }
+            State::Closing1(st2) => {
+                error!("{selfname} received Remove in State::Closing1");
+            }
+            State::Closing2(st2) => {
+                error!("{selfname} received Remove in State::Closing2");
+            }
+            State::Done1 => {
+                error!("{selfname} received Remove in State::Done1");
+                panic!()
+            }
+            State::Done => {
+                error!("{selfname} received Remove in State::Done");
+                panic!()
+            }
+            State::Dummy => panic!(),
+        }
+        // TODO send proto msg to cancel monitors.
+        // TODO check if we have some open IO, and wait for some timeout.
+        // There is already IO in the "normal" code path.
+        // Must not duplicate code there.
+        // So, maybe this means simply waiting and periodically checking?
+        // Or: register a optional callback on-io-done. In that callback, we can signal progress?
+        // TODO async send to proto to close the channel.
+        // TODO wait for channel close confirm, under timeout.
+        // TODO async write status event and final stats.
+        // TODO done tx send in response to this command.
+        // TODO transition to Done.
+    }
+
     fn handle_cmd(&mut self, cmd: Cmd) {
         let selfname = "handle_cmd";
         match cmd {
             Cmd::Remove(done_tx) => {
-                self.removing = true;
-                match &mut self.state {
-                    State::Init(_st2) => {
-                        self.state = State::Done;
-                    }
-                    State::Creating(_) => {
-                        let Creating { .. } =
-                            if let State::Creating(st2) = std::mem::replace(&mut self.state, State::Dummy) {
-                                st2
-                            } else {
-                                panic!()
-                            };
-                        error!("TODO impl Cmd::Remove for State::Creating");
-                        panic!("TODO impl Cmd::Remove for State::Creating");
-                        // TODO add flags to Creating so that we now what proto messages we still expect
-                        // TODO add timeout to Creating (anyways!)
-                        // TODO keep done_tx and signal when channel remove done
-                    }
-                    State::Running(st2) => {
-                        st2.trigger_remove(done_tx);
-                    }
-                    State::Closing1(st2) => {
-                        error!("{selfname} received Remove in State::Closing1");
-                    }
-                    State::Closing2(st2) => {
-                        error!("{selfname} received Remove in State::Closing2");
-                    }
-                    State::Done1 => {
-                        error!("{selfname} received Remove in State::Done1");
-                        panic!()
-                    }
-                    State::Done => {
-                        error!("{selfname} received Remove in State::Done");
-                        panic!()
-                    }
-                    State::Dummy => panic!(),
+                if self.removing.is_some() {
+                    warn!("already removing")
+                } else {
+                    self.handle_cmd_remove(done_tx);
                 }
-                // TODO send proto msg to cancel monitors.
-                // TODO check if we have some open IO, and wait for some timeout.
-                // There is already IO in the "normal" code path.
-                // Must not duplicate code there.
-                // So, maybe this means simply waiting and periodically checking?
-                // Or: register a optional callback on-io-done. In that callback, we can signal progress?
-                // TODO async send to proto to close the channel.
-                // TODO wait for channel close confirm, under timeout.
-                // TODO async write status event and final stats.
-                // TODO done tx send in response to this command.
-                // TODO transition to Done.
             }
         }
     }
@@ -429,29 +442,22 @@ impl Stream for ChannelHandler {
             if let Some(item) = self2.outbuf.pop_front() {
                 break Ready(Some(Ok(item)));
             }
-            match &mut self2.state {
-                State::Done => match self2.cmd_rx.poll_next_unpin(cx) {
-                    Ready(Some(_)) => {
-                        hpp.mark_progress();
-                        warn!("received command while Done");
-                        // TODO count metrics
-                        // ignore commands when Done
+            match self2.cmd_rx.poll_next_unpin(cx) {
+                Ready(Some(x)) => {
+                    hpp.mark_progress();
+                    match &mut self2.state {
+                        State::Done => {
+                            warn!("ignore command in Done");
+                        }
+                        _ => {
+                            self2.handle_cmd(x);
+                        }
                     }
-                    Ready(None) => {}
-                    Pending => {
-                        hpp.mark_pending();
-                    }
-                },
-                _ => match self2.cmd_rx.poll_next_unpin(cx) {
-                    Ready(Some(x)) => {
-                        hpp.mark_progress();
-                        self2.handle_cmd(x);
-                    }
-                    Ready(None) => {}
-                    Pending => {
-                        hpp.mark_pending();
-                    }
-                },
+                }
+                Ready(None) => {}
+                Pending => {
+                    hpp.mark_pending();
+                }
             }
             match &mut self2.state {
                 State::Init(st2) => {
@@ -479,7 +485,7 @@ impl Stream for ChannelHandler {
                                 }
                                 Err(e) => {
                                     debug!("ChannelHandler:Creating:Ready:Err {e}");
-                                    self2.state = State::Done;
+                                    self2.state = State::Done1;
                                     break Ready(Some(Err(e.into())));
                                 }
                             }
@@ -515,7 +521,7 @@ impl Stream for ChannelHandler {
                                 },
                                 Err(e) => {
                                     info!("ChannelHandler:Creating:Ready:Err {e}");
-                                    self2.state = State::Done;
+                                    self2.state = State::Done1;
                                     break Ready(Some(Err(e.into())));
                                 }
                             }
@@ -565,80 +571,120 @@ impl Stream for ChannelHandler {
                                 },
                                 Err(e) => {
                                     info!("ChannelHandler:Creating:Ready:Err {e}");
-                                    self2.state = State::Done;
+                                    self2.state = State::Done1;
                                     break Ready(Some(Err(e.into())));
                                 }
                             }
                         }
                         Ready(None) => {
                             hpp.mark_progress();
-                            if self.removing {
-                                // this is good
-                            } else {
-                                // TODO handle error, unscheduled end
+                            debug!(" =-= =-= =-= =-= =-= =-= =-= =-= =-=  move to Closing1");
+                            debug!(" =-= =-= =-= =-= =-= =-= =-= =-= =-=  move to Closing1");
+                            if self2.removing.is_none() {
+                                warn!("closing, but apparently not on user command");
                             }
-                            error!("TODO pass on the done_tx to Closing1 state");
+                            let item = if let Some(sid) = self2.sid() {
+                                let msg = CaMsg::from_ty_ts(
+                                    CaMsgTy::ChannelClose(proto::ChannelClose {
+                                        sid: sid.to_u32(),
+                                        cid: self2.cid.to_u32(),
+                                    }),
+                                    tsnow,
+                                );
+                                Some(ChannelHandlerItem {
+                                    ts_create: tsnow,
+                                    inner: ItemInner::ProtoOut(msg),
+                                })
+                            } else {
+                                warn!("can not close channel, maybe never fully created");
+                                // seems like the channel got never created.
+                                // TODO except in the case when we send create but did not receive response.
+                                None
+                            };
                             let fut = async move { Ok(()) };
-                            self.state = State::Closing1(Closing1 {
-                                // TODO let Closing state wait for the channel close ACK.
+                            self2.state = State::Closing1(Closing1 {
                                 // TODO channel close may be also already received from server in Running state.
                                 // TODO handle the remove done tx in better way.
                                 chan_close_ack: false,
-                                fut: fut.box2(),
-                                done_tx: None,
+                                fut: Some(fut.box2()),
+                                to: tokio::time::sleep(Duration::from_millis(2000)).box2(),
                             });
+                            if let Some(item) = item {
+                                break Ready(Some(Ok(item)));
+                            }
                         }
                         Pending => {
                             hpp.mark_pending();
                         }
                     }
                 }
-                State::Closing1(st2) => match st2.fut.poll_unpin(cx) {
-                    Ready(x) => {
+                State::Closing1(st2) => {
+                    if let Some(item) = self2.proto_inp_buf.pop_front() {
                         hpp.mark_progress();
-                        match x {
-                            Ok(()) => {
-                                trace2!("Closing1 done");
-                                self.state = State::Closing2(Closing2 {
-                                    done_tx: st2.done_tx.take(),
-                                });
+                        match item.ty {
+                            CaMsgTy::ChannelClose(x) => {
+                                warn!("TODO  maybe  ChannelClose");
                             }
-                            Err(e) => {
-                                info!("Closing1  {e}");
-                                break Ready(Some(Err(e.into())));
+                            CaMsgTy::ChannelCloseRes(x) => {
+                                debug!("{lf}GREAT SUCCESS ChannelCloseRes{lf}", lf = "\n\n");
+                                st2.chan_close_ack = true;
                             }
+                            CaMsgTy::ChannelDisconnect(x) => {
+                                warn!("TODO  maybe  ChannelDisconnect");
+                            }
+                            _ => {}
                         }
-                    }
-                    Pending => {
+                    } else if self2.proto_inp_done {
+                    } else {
                         hpp.mark_pending();
                     }
-                },
-                State::Closing2(st2) => {
-                    if let Some(tx) = &mut st2.done_tx {
-                        match tx.poll_send_unpin(0, cx) {
-                            Ok(()) => {
-                                hpp.mark_progress();
-                                self.state = State::Done1;
-                            }
-                            Err(e) => match e {
-                                SendPollError::Full(_) => {
+                    {
+                        let futopt = &mut st2.fut;
+                        if let Some(fut) = futopt {
+                            match fut.poll_unpin(cx) {
+                                Ready(x) => {
+                                    *futopt = None;
+                                    hpp.mark_progress();
+                                    match x {
+                                        Ok(()) => {}
+                                        Err(e) => {
+                                            info!("Closing1  {e}");
+                                            break Ready(Some(Err(e.into())));
+                                        }
+                                    }
+                                }
+                                Pending => {
                                     hpp.mark_pending();
                                 }
-                                SendPollError::Closed(_) => {
-                                    hpp.mark_progress();
-                                    error!("{selfname}  can not signal Remove Done");
-                                    // TODO metrics
-                                    self.state = State::Done1;
-                                }
-                            },
+                            }
                         }
-                    } else {
-                        hpp.mark_progress();
-                        self.state = State::Done1;
                     }
+                    if st2.chan_close_ack && st2.fut.is_none() {
+                        hpp.mark_progress();
+                        trace2!("Closing1 done");
+                        self2.state = State::Closing2(Closing2 {});
+                    } else {
+                        match st2.to.poll_unpin(cx) {
+                            Ready(()) => {
+                                hpp.mark_progress();
+                                warn!("channel close timeout");
+                                self2.state = State::Closing2(Closing2 {});
+                            }
+                            Pending => {
+                                hpp.mark_pending();
+                            }
+                        }
+                    }
+                }
+                State::Closing2(st2) => {
+                    hpp.mark_progress();
+                    self.state = State::Done1;
                 }
                 State::Done1 => {
                     trace!("ChannelHandler:Done1");
+                    if let Some(tx) = self.removing.as_mut() {
+                        let _ = tx.try_send(0);
+                    }
                     self.state = State::Done;
                     hpp.mark_progress();
                 }

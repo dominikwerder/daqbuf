@@ -5,6 +5,7 @@ use crate::ca::conn2::caids::Ioid;
 use crate::ca::conn2::caids::Sid;
 use crate::ca::conn2::caids::SubidOwned;
 use crate::ca::conn2::conn::channelheap::ChHeapCmd;
+use crate::ca::conn2::conn::channelheap::channelhandler;
 use crate::ca::conn2::conn::channelheap::channelhandler::ChannelHandlerItem;
 use crate::ca::conn2::conn::channelheap::channelhandler::ItemInner;
 use crate::ca::futstack::ErasedFuture;
@@ -564,7 +565,9 @@ pub enum FetchmpxItem {
 #[derive(Debug)]
 enum State {
     Normal,
+    Closing1,
     Done,
+    Done2,
 }
 
 #[derive(Debug)]
@@ -589,8 +592,20 @@ impl Fetchmpx {
         }
     }
 
-    pub fn sid(&self) -> Sid {
-        self.sid.clone()
+    fn trigger_closing(&mut self, reason: channelhandler::ClosingReason) {
+        match &mut self.state {
+            State::Normal => {
+                warn!("TODO collect all information that we want to store or log and move into future");
+                self.state = State::Closing1;
+            }
+            State::Closing1 => {}
+            State::Done => {}
+            State::Done2 => {}
+        }
+    }
+
+    pub fn trigger_remove(&mut self) {
+        self.trigger_closing(channelhandler::ClosingReason::Command);
     }
 
     pub fn inp_push_try(&mut self, item: CaMsg) -> Option<CaMsg> {
@@ -645,24 +660,28 @@ impl Fetchmpx {
                                 return Ready(Some(Err(e)));
                             }
                         }
-                    } else if self.inp_done {
-                        // TODO status event
+                    } else if self2.inp_done {
                         hpp.mark_progress();
-                        self.state = State::Done;
+                        // TODO status event about this specific case
+                        self2.trigger_closing(channelhandler::ClosingReason::InputDone);
                     } else {
                         hpp.mark_pending();
                     }
                 }
+                State::Closing1 => {
+                    debug!("{selfname}  TODO  no input to parse in Closing1");
+                }
                 State::Done => {}
+                State::Done2 => {}
             }
             break if hpp.have_progress() {
-                trace4!("HPP:Progress");
+                trace4!("{selfname}  HPP:Progress");
                 continue;
             } else if hpp.have_pending() {
-                trace_pending!("HPP");
+                trace_pending!("{selfname}  HPP");
                 Pending
             } else {
-                trace!("HPP:Done");
+                trace!("{selfname}  HPP:Done");
                 Ready(None)
             };
         }
@@ -678,46 +697,62 @@ impl Stream for Fetchmpx {
         use Poll::*;
         loop {
             let mut hpp = HaveProgressPending::new();
-            match self.as_mut().poll_inp_dispatch(cx) {
-                Ready(Some(x)) => match x {
-                    Ok(()) => {}
-                    Err(e) => {
-                        error!("TODO handle error {e}");
-                        self.state = State::Done;
-                        hpp.mark_progress();
+            let self2 = self.as_mut().get_mut();
+            match &mut self2.state {
+                State::Normal => {
+                    match self.as_mut().poll_inp_dispatch(cx) {
+                        Ready(Some(x)) => match x {
+                            Ok(()) => {}
+                            Err(e) => {
+                                error!("TODO handle error {e}");
+                                self.state = State::Done;
+                                hpp.mark_progress();
+                            }
+                        },
+                        Ready(None) => {}
+                        Pending => {
+                            hpp.mark_pending();
+                        }
                     }
-                },
-                Ready(None) => {}
-                Pending => {
-                    hpp.mark_pending();
+                    match Pin::new(&mut self.polling).poll_next(cx) {
+                        Ready(Some(x)) => match x {
+                            Ok(x) => match x {
+                                FetchMethodPollOutput::None => {
+                                    hpp.mark_progress();
+                                }
+                                FetchMethodPollOutput::ProtoOut(msg) => {
+                                    hpp.mark_progress();
+                                    let g = FetchmpxItem::CaMsgOut(msg);
+                                    break Ready(Some(Ok(g)));
+                                }
+                                FetchMethodPollOutput::ProtoOutIoid(msg, sid) => {
+                                    hpp.mark_progress();
+                                    let g = FetchmpxItem::CaMsgOutIoid(msg, sid, Instant::now());
+                                    break Ready(Some(Ok(g)));
+                                }
+                            },
+                            Err(e) => {
+                                error!("polling error {e}");
+                                self.state = State::Done;
+                                hpp.mark_progress();
+                            }
+                        },
+                        Ready(None) => {}
+                        Pending => {
+                            hpp.mark_pending();
+                        }
+                    }
                 }
-            }
-            match Pin::new(&mut self.polling).poll_next(cx) {
-                Ready(Some(x)) => match x {
-                    Ok(x) => match x {
-                        FetchMethodPollOutput::None => {
-                            hpp.mark_progress();
-                        }
-                        FetchMethodPollOutput::ProtoOut(msg) => {
-                            hpp.mark_progress();
-                            let g = FetchmpxItem::CaMsgOut(msg);
-                            break Ready(Some(Ok(g)));
-                        }
-                        FetchMethodPollOutput::ProtoOutIoid(msg, sid) => {
-                            hpp.mark_progress();
-                            let g = FetchmpxItem::CaMsgOutIoid(msg, sid, Instant::now());
-                            break Ready(Some(Ok(g)));
-                        }
-                    },
-                    Err(e) => {
-                        error!("polling error {e}");
-                        self.state = State::Done;
-                        hpp.mark_progress();
-                    }
-                },
-                Ready(None) => {}
-                Pending => {
-                    hpp.mark_pending();
+                State::Closing1 => {
+                    debug!("{selfname}  TODO  nothing to do yet, go directly to Done");
+                    hpp.mark_progress();
+                    self.state = State::Done;
+                }
+                State::Done => {
+                    self.state = State::Done2;
+                }
+                State::Done2 => {
+                    error!("{lf}{selfname}  polled after done{lf}", lf = "\n\n");
                 }
             }
             break if hpp.have_progress() {
