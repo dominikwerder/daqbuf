@@ -470,15 +470,17 @@ impl ConnSet {
                             }
                         }
                         Ready(None) => {
-                            error!("{selfname}  TODO  Conn seems done, must process this here");
+                            hpp.mark_progress();
+                            let addr = *addr;
+                            debug!("{selfname}  CaConn done {addr}");
+                            addr_found_done.push(addr);
                             let fut = async move {
-                                error!("{selfname}  TODO  Conn seems done, must emit status event here");
+                                warn!("{selfname}  TODO  CaConn {addr} done, emit status event.");
                                 // TODO need to emit status event.
                                 Ok(())
                             };
                             self2.cmd_fut_comm = Some(fut.box2());
-                            error!("{selfname}  TODO  Conn seems done, must modify data structure");
-                            addr_found_done.push(*addr);
+                            break;
                         }
                         Pending => {
                             hpp.mark_pending();
@@ -486,7 +488,12 @@ impl ConnSet {
                     }
                 }
                 for addr in addr_found_done {
-                    self.ca_conns.remove(&addr);
+                    if let Some(conn) = self.ca_conns.remove(&addr) {
+                        // TODO await the jh
+                        let jh = conn.jh;
+                    } else {
+                        error!("finished connection not in registry");
+                    }
                 }
             }
             break if hpp.have_progress() {
@@ -938,16 +945,26 @@ impl ConnSet {
             match fut.poll_unpin(cx) {
                 Ready(x) => {
                     hpp.mark_progress();
-                    self.conn_idle_disconnect_futs.pop_front();
+                    let _ = self.conn_idle_disconnect_futs.pop_front();
                     match x {
                         Ok(()) => {
                             error!(
                                 "{selfname}  TODO  idle disconnect triggered, but we must also await that it gets done"
                             );
                         }
-                        Err(e) => {
-                            error!("{selfname}  TODO")
-                        }
+                        Err(e) => match e {
+                            Error::Conn(e2) => match e2 {
+                                conn2::conn::Error::ChanRecv => {
+                                    // TODO metrics. can be because racy.
+                                }
+                                _ => {
+                                    error!("{selfname}  TODO  ERROR  {e2}");
+                                }
+                            },
+                            _ => {
+                                error!("{selfname}  TODO  ERROR  {e}");
+                            }
+                        },
                     }
                 }
                 Pending => {
@@ -1011,20 +1028,31 @@ impl ConnSet {
         let selfname = "poll_common";
         use Poll::*;
         let mut hpp = HaveProgressPending::new();
-        match self.as_mut().poll_cmder(cx) {
-            Ready(Some(x)) => {
-                hpp.mark_progress();
-                match x {
-                    Ok(()) => {}
-                    Err(e) => {
-                        return Ready(Some(Err(e)));
+        let poll_input = match &self.state {
+            State::Running => true,
+            State::Shutdown(_) => true,
+            State::Shutdown2 => false,
+            State::Done => false,
+        };
+        if poll_input {
+            match self.as_mut().poll_cmder(cx) {
+                Ready(Some(x)) => {
+                    hpp.mark_progress();
+                    match x {
+                        Ok(()) => {}
+                        Err(e) => {
+                            return Ready(Some(Err(e)));
+                        }
                     }
                 }
+                Ready(None) => {}
+                Pending => {
+                    hpp.mark_pending();
+                }
             }
-            Ready(None) => {}
-            Pending => {
-                hpp.mark_pending();
-            }
+        }
+        if !poll_input {
+            debug!("FLAGS  {}  {}", hpp.have_progress(), hpp.have_pending());
         }
         match self.as_mut().poll_channels_outer(cx) {
             Ready(Some(x)) => {
@@ -1042,6 +1070,9 @@ impl ConnSet {
                 hpp.mark_pending();
             }
         }
+        if !poll_input {
+            debug!("FLAGS  {}  {}", hpp.have_progress(), hpp.have_pending());
+        }
         match self.as_mut().poll_conn_comm(cx) {
             Ready(Some(x)) => match x {
                 Ok(()) => {
@@ -1056,6 +1087,9 @@ impl ConnSet {
                 hpp.mark_pending();
             }
         }
+        if !poll_input {
+            debug!("FLAGS  {}  {}", hpp.have_progress(), hpp.have_pending());
+        }
         match self.as_mut().check_idle_caconn(cx) {
             Ready(Some(())) => {
                 hpp.mark_progress();
@@ -1064,6 +1098,9 @@ impl ConnSet {
             Pending => {
                 hpp.mark_pending();
             }
+        }
+        if !poll_input {
+            debug!("FLAGS  {}  {}", hpp.have_progress(), hpp.have_pending());
         }
         match self.as_mut().poll_conn_idle_disconnect_futs(cx) {
             Ready(Some(())) => {
