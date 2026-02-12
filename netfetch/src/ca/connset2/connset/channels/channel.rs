@@ -204,7 +204,7 @@ impl Channel {
         self.state = State::Removing0(RemovingCommon { addr, cssid });
     }
 
-    fn handle_command(mut self: Pin<&mut Self>, cmd: Cmd, cx: &mut Context) -> Result<(), Error> {
+    fn handle_command(&mut self, cmd: Cmd) -> Result<(), Error> {
         let selfname = "handle_command";
         debug!("{selfname} called");
         match cmd {
@@ -233,6 +233,22 @@ impl Channel {
             State::Done => None,
         }
     }
+
+    fn poll_cmd(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Result<(), Error>>> {
+        use Poll::*;
+        let self2 = self.as_mut().get_mut();
+        match &self2.state {
+            State::Done => Ready(None),
+            _ => match self2.cmd_rx.poll_next_unpin(cx) {
+                Ready(Some(cmd)) => match self2.handle_command(cmd) {
+                    Ok(()) => Ready(Some(Ok(()))),
+                    Err(e) => Ready(Some(Err(e))),
+                },
+                Ready(None) => Ready(None),
+                Pending => Pending,
+            },
+        }
+    }
 }
 
 impl PollCstm for Channel {
@@ -242,13 +258,13 @@ impl PollCstm for Channel {
         use Poll::*;
         loop {
             let mut hpp = HaveProgressPending::new();
-            match self.as_mut().cmd_rx.poll_next_unpin(cx) {
-                Ready(Some(cmd)) => {
-                    match self.as_mut().handle_command(cmd, cx) {
+            match self.as_mut().poll_cmd(cx) {
+                Ready(Some(x)) => {
+                    hpp.mark_progress();
+                    match x {
                         Ok(()) => {}
                         Err(e) => break Ready(Some(Err(e))),
                     }
-                    hpp.mark_progress();
                 }
                 Ready(None) => {}
                 Pending => {

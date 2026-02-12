@@ -985,6 +985,11 @@ impl ConnSet {
         let selfname = "poll_channels_outer";
         trace4!("{selfname}");
         use Poll::*;
+        {
+            for ch in self.channels.iter() {
+                debug!("{selfname}  {}  ->  {:?}", ch.channel.name(), ch.channel.channel_info());
+            }
+        }
         // let mut hpp = HaveProgressPending::new();
         let opt = &mut self.cmd_fut_channel;
         if let Some(fut) = opt {
