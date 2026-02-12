@@ -163,40 +163,6 @@ pub enum Cmd {
 }
 
 #[derive(Debug)]
-struct LocalLog {
-    enable: bool,
-    buf: VecDeque<(Instant, String)>,
-}
-
-impl LocalLog {
-    pub fn new() -> Self {
-        Self {
-            enable: false,
-            buf: VecDeque::new(),
-        }
-    }
-
-    pub fn enable(&mut self) {
-        if !self.enable {
-            self.enable = true;
-            self.buf = VecDeque::with_capacity(32);
-        }
-    }
-
-    pub fn disable(&mut self) {
-        if self.enable {
-            self.enable = false;
-            self.buf = VecDeque::new();
-        }
-    }
-
-    pub fn push(&mut self, s: String) {
-        let ts = Instant::now();
-        self.buf.push_back((ts, s));
-    }
-}
-
-#[derive(Debug)]
 pub struct ChannelHandler {
     state: State,
     removing: Option<asynchan::Sender<u32>>,
@@ -212,7 +178,6 @@ pub struct ChannelHandler {
     cmd_rx: asynchan::Receiver<Cmd>,
     outbuf: VecDeque<ChannelHandlerItem>,
     mett: ChannelHandlerMetrics,
-    llog: LocalLog,
 }
 
 impl ChannelHandler {
@@ -241,7 +206,6 @@ impl ChannelHandler {
             cmd_rx,
             outbuf: VecDeque::new(),
             mett: ChannelHandlerMetrics::new(),
-            llog: LocalLog::new(),
         }
     }
 

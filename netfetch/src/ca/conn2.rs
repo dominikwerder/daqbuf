@@ -7,6 +7,7 @@ pub(super) mod conn;
 mod conncmd;
 mod connevent;
 mod connfut;
+pub mod locallog;
 mod protowrap;
 mod scywritequeue;
 mod statefut;
