@@ -338,7 +338,16 @@ pub async fn test_01() {
         };
         tokio::spawn(fut);
         while let Some(e) = connset.next().await {
-            trace!("test_01 connset item {e:?}");
+            match e {
+                Ok(x) => match x {
+                    crate::ca::connset2::connset::ConnSetItem::TestValue(x) => {
+                        info!("{x}");
+                    }
+                },
+                _ => {
+                    trace!("test_01 connset item {e:?}");
+                }
+            }
         }
     }
 }

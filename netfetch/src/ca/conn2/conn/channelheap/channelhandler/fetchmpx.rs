@@ -5,6 +5,7 @@ use crate::ca::conn2::caids::Ioid;
 use crate::ca::conn2::caids::Sid;
 use crate::ca::conn2::caids::SubidOwned;
 use crate::ca::conn2::conn::channelheap::ChHeapCmd;
+use crate::ca::conn2::conn::channelheap::ProtoRxItem;
 use crate::ca::conn2::conn::channelheap::channelhandler;
 use crate::ca::conn2::conn::channelheap::channelhandler::ChannelHandlerItem;
 use crate::ca::conn2::conn::channelheap::channelhandler::ItemInner;
@@ -180,7 +181,7 @@ struct FetchPolling {
     interval: Duration,
     poll_next_ts_exact: Instant,
     poll_next_ts_jitter: Instant,
-    inp_buf: VecDeque<CaMsg>,
+    inp_buf: VecDeque<ProtoRxItem>,
     inp_done: bool,
     mett: ChannelHandlerMetrics,
 }
@@ -214,7 +215,7 @@ impl FetchPolling {
         }
     }
 
-    pub fn inp_push_try(&mut self, item: CaMsg) -> Option<CaMsg> {
+    pub fn inp_push_try(&mut self, item: ProtoRxItem) -> Option<ProtoRxItem> {
         trace3!("FetchPolling  inp_push_try");
         let v = &mut self.inp_buf;
         if v.len() < v.capacity() {
@@ -248,15 +249,20 @@ impl FetchPolling {
                     }
                     FetchPollingState::WaitRes(_) => {
                         hpp.mark_progress();
-                        match item.ty {
+                        match item.msg.ty {
                             CaMsgTy::ReadNotifyRes(v) => {
-                                let valf32 = v.value.f32_for_binning();
                                 let tsnow = Instant::now();
+                                let dttrig = item.tscmd.saturating_duration_since(self.poll_next_ts_jitter);
+                                let dtcmd = tsnow.saturating_duration_since(item.tscmd);
+                                let dtreg = tsnow.saturating_duration_since(item.tsreg);
+                                let dtdisp = tsnow.saturating_duration_since(item.tsdisp);
+                                let valf32 = v.value.f32_for_binning();
                                 self.poll_next_ts_exact = self.poll_next_ts_exact + self.interval;
                                 if self.poll_next_ts_exact < tsnow {
                                     // TODO add more jitter in this case
                                     self.poll_next_ts_exact = tsnow;
                                 }
+                                // TODO actually add random jitter
                                 self.poll_next_ts_jitter = self.poll_next_ts_exact;
                                 let ts = self.poll_next_ts_jitter;
                                 let fut = async move {
@@ -265,6 +271,10 @@ impl FetchPolling {
                                 self.state = FetchPollingState::Idle(fut.box2());
                                 let item = FetchMethodPollOutput::TestValue(crate::ca::connset2::connset::TestValue {
                                     val: valf32,
+                                    dttrig: 1e3 * dttrig.as_secs_f32(),
+                                    dtcmd: 1e3 * dtcmd.as_secs_f32(),
+                                    dtreg: 1e3 * dtreg.as_secs_f32(),
+                                    dtdisp: 1e3 * dtdisp.as_secs_f32(),
                                 });
                                 return Ready(Some(Ok(item)));
                             }
@@ -299,7 +309,6 @@ impl FetchPolling {
                         data_type: self.ca_dbr_ty.to_u16(),
                         data_count: self.shape.to_ca_count().unwrap(),
                         sid: self.sid.to_u32(),
-                        // ioid: ioid.to_u32(),
                         ioid: 0,
                     }),
                     tsnow,
@@ -307,7 +316,7 @@ impl FetchPolling {
                 self.mett.read_notify_send().inc();
                 let fut = async { tokio::time::sleep(Duration::from_millis(3000)).await };
                 self.state = FetchPollingState::WaitRes(fut.box2());
-                let ret = FetchMethodPollOutput::ProtoOutIoid(msg, self.sid.clone());
+                let ret = FetchMethodPollOutput::ProtoOutIoid(msg, self.sid.clone(), tsnow);
                 return Ready(Some(Ok(ret)));
             }
             FetchPollingState::WaitRes(to) => match to.poll_unpin(cx) {
@@ -351,7 +360,7 @@ struct SomeData;
 enum FetchMethodPollOutput {
     None,
     ProtoOut(CaMsg),
-    ProtoOutIoid(CaMsg, Sid),
+    ProtoOutIoid(CaMsg, Sid, Instant),
     // ScyllaWrite,
     // CallbackOnRunning(Box<dyn FnOnce(&mut SomeData)>, Vec<ChannelHandlerItem>),
     TestValue(crate::ca::connset2::connset::TestValue),
@@ -509,11 +518,6 @@ impl FetchMethod {
                         hpp.mark_progress();
                         pres.mett.read_notify_send().inc();
 
-                        let items = vec![ChannelHandlerItem {
-                            ts_create: tsnow,
-                            inner: ItemInner::ProtoOutIoid(msg, pres.sid.clone(), tsnow),
-                        }];
-
                         error!("\n\n\n  TODO  create monitor  0c976c2cb  \n\n\n");
                         // let cb = make_cb2(move |st2| {
                         //     st2.fetch_method = FetchMethod::Polling(FetchPolling {
@@ -588,7 +592,7 @@ pub struct Fetchmpx {
     state: State,
     sid: Sid,
     polling: FetchPolling,
-    inp_buf: VecDeque<CaMsg>,
+    inp_buf: VecDeque<ProtoRxItem>,
     inp_done: bool,
     mett: ChannelHandlerMetrics,
 }
@@ -621,7 +625,7 @@ impl Fetchmpx {
         self.trigger_closing(channelhandler::ClosingReason::Command);
     }
 
-    pub fn inp_push_try(&mut self, item: CaMsg) -> Option<CaMsg> {
+    pub fn inp_push_try(&mut self, item: ProtoRxItem) -> Option<ProtoRxItem> {
         trace3!("inp_push_try");
         let v = &mut self.inp_buf;
         if v.len() < v.capacity() {
@@ -648,7 +652,7 @@ impl Fetchmpx {
                 State::Normal => {
                     if let Some(item) = self2.inp_buf.pop_front() {
                         trace2!("{selfname}  ITEM  {item:?}");
-                        match &item.ty {
+                        match &item.msg.ty {
                             proto::CaMsgTy::EventAddRes(item2) => {
                                 if item2.payload_len == 0 {
                                     debug!("{selfname}  empty  EventAddRes");
@@ -738,9 +742,9 @@ impl Stream for Fetchmpx {
                                     let g = FetchmpxItem::CaMsgOut(msg);
                                     break Ready(Some(Ok(g)));
                                 }
-                                FetchMethodPollOutput::ProtoOutIoid(msg, sid) => {
+                                FetchMethodPollOutput::ProtoOutIoid(msg, sid, ts) => {
                                     hpp.mark_progress();
-                                    let g = FetchmpxItem::CaMsgOutIoid(msg, sid, Instant::now());
+                                    let g = FetchmpxItem::CaMsgOutIoid(msg, sid, ts);
                                     break Ready(Some(Ok(g)));
                                 }
                                 FetchMethodPollOutput::TestValue(x) => {

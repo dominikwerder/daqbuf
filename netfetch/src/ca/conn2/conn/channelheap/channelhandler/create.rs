@@ -2,6 +2,7 @@ use crate::ca::conn2::asynchan2 as asynchan;
 use crate::ca::conn2::caids::CaDbrTy;
 use crate::ca::conn2::caids::Cid;
 use crate::ca::conn2::caids::Sid;
+use crate::ca::conn2::conn::channelheap::ProtoRxItem;
 use crate::ca::conn2::timeoutable;
 use crate::ca::progpend::HaveProgressPending;
 use crate::futwrap::FutDbg;
@@ -96,7 +97,7 @@ pub struct Creating {
     backend: String,
     state: State,
     removing: bool,
-    inp_buf: VecDeque<CaMsg>,
+    inp_buf: VecDeque<ProtoRxItem>,
     inp_done: bool,
 }
 
@@ -135,7 +136,7 @@ impl Creating {
         self.removing = true;
     }
 
-    pub fn poll_inp_push(&mut self, item: CaMsg) -> Option<CaMsg> {
+    pub fn poll_inp_push(&mut self, item: ProtoRxItem) -> Option<ProtoRxItem> {
         let v = &mut self.inp_buf;
         if v.len() < v.capacity() {
             v.push_back(item);
@@ -195,7 +196,7 @@ impl Stream for Creating {
                         hpp.mark_progress();
                         trace3!("CreateChanRecv  have item  {item:?}");
                         use proto::CaMsgTy;
-                        match &item.ty {
+                        match &item.msg.ty {
                             CaMsgTy::CreateChanRes(k) => {
                                 trace!("CreateMonitor:CreateChanRes {k:?}");
                                 if k.data_type > 6 {

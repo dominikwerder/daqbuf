@@ -36,6 +36,7 @@ use scywr::insertqueues::InsertQueuesTx;
 use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::collections::VecDeque;
+use std::fmt;
 use std::net::Ipv4Addr;
 use std::net::SocketAddrV4;
 use std::pin::Pin;
@@ -158,6 +159,20 @@ struct Shutdown {
 #[derive(Debug)]
 pub struct TestValue {
     pub val: f32,
+    pub dttrig: f32,
+    pub dtcmd: f32,
+    pub dtreg: f32,
+    pub dtdisp: f32,
+}
+
+impl fmt::Display for TestValue {
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            fmt,
+            "val {:8.3}  dt  {:5.1}  {:5.1}  {:5.1}  {:5.1}",
+            self.val, self.dttrig, self.dtcmd, self.dtreg, self.dtdisp
+        )
+    }
 }
 
 #[derive(Debug)]
@@ -680,7 +695,6 @@ impl ConnSet {
         match cmd.kind {
             ConnSetCmdKind::ChannelAdd(mut cmd) => {
                 if self.channels.contains_key(cmd.ch_cfg.name()) {
-                    error!("TODO return error that channel exists");
                     let e = Error::Command(format!("channel already added"));
                     let _ = cmd.done_tx.try_send(Err(e));
                 } else {

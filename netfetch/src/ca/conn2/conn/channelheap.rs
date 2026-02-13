@@ -60,6 +60,14 @@ autoerr::create_error_v1!(
 );
 
 #[derive(Debug)]
+pub struct ProtoRxItem {
+    pub msg: CaMsg,
+    pub tscmd: Instant,
+    pub tsreg: Instant,
+    pub tsdisp: Instant,
+}
+
+#[derive(Debug)]
 struct ChHandlerActive {
     handler: ChannelHandler,
     waker: task::Waker,
@@ -590,17 +598,18 @@ impl ChannelHeap {
         let selfname = "dispatch_input_to_channels";
         use Poll::*;
         loop {
+            let tsnow = Instant::now();
             let mut hpp = HaveProgressPending::new();
             let self2 = self.as_mut().get_mut();
             let mut idp = 0;
             if let Some(item) = self2.inp_buf.pop_front() {
-                let disp_cid = if let Some(cid) = item.cid() {
+                let disp = if let Some(cid) = item.cid() {
                     trace!("{selfname}  resolved via cid");
-                    Some(Cid::new(cid))
+                    Some((Cid::new(cid), tsnow, tsnow))
                 } else if let Some(subid) = item.subid() {
                     if let Some(cid) = self2.by_subid.get(&Subid::new(subid)) {
                         trace!("{selfname}  resolved via subid");
-                        Some(cid.clone())
+                        Some((cid.clone(), tsnow, tsnow))
                     } else {
                         trace!("{selfname}  TODO  msg has unknown subid");
                         None
@@ -608,7 +617,6 @@ impl ChannelHeap {
                 } else if let Some(ioid) = item.ioid() {
                     if let Some((cid, _sid, tscmd, tsreg)) = self2.ioid_reg.take(Ioid::new(ioid)) {
                         // TODO metrics
-                        debug!("--------------------------------------------------------");
                         {
                             let dt = Instant::now().duration_since(tscmd);
                             let dtcmd = 1e3 * dt.as_secs_f32();
@@ -616,7 +624,7 @@ impl ChannelHeap {
                             let dtreg = 1e3 * dt.as_secs_f32();
                             debug!("resolve incoming Ioid  dtcmd {:.3} ms  dtreg {:.3} ms", dtcmd, dtreg);
                         }
-                        Some(cid)
+                        Some((cid, tscmd, tsreg))
                     } else {
                         debug!("{selfname}  ioid  {ioid}  unknown");
                         None
@@ -628,12 +636,18 @@ impl ChannelHeap {
                     debug!("{selfname}  TODO  msg has no routing id");
                     None
                 };
-                if let Some(cid) = disp_cid {
+                if let Some((cid, tscmd, tsreg)) = disp {
                     if let Some(e) = self2.by_cid.get_mut(&cid) {
                         match &mut e.ch_handler {
                             ChHandler::ChHandlerActive(st2) => {
                                 let sdbg = format!("{item:?}");
-                                match Pin::new(&mut st2.handler).inp_push_try(item) {
+                                let u = ProtoRxItem {
+                                    msg: item,
+                                    tscmd,
+                                    tsreg,
+                                    tsdisp: tsnow,
+                                };
+                                match Pin::new(&mut st2.handler).inp_push_try(u) {
                                     Some(item) => {
                                         hpp.mark_pending();
                                         trace2!("{selfname}  ChannelHeap:Dispatch:Pending  {cid}  {sdbg}");

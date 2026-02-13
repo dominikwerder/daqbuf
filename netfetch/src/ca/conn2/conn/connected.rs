@@ -314,7 +314,7 @@ impl Stream for Connected {
                         let st1 = std::mem::replace(st1, st1.to_dummy());
                         let tx = self2.out_tx.clone();
                         let (rx,) = st1.dismantle();
-                        let stn = ActiveCa::new(self2.backend.clone(), rx, tx, tsnow, self2.addr, cx);
+                        let stn = ActiveCa::new(self2.backend.clone(), rx, tx, tsnow, self2.addr);
                         self.state = State::ActiveCa(stn, ca_cmd_rx);
                         hpp.mark_progress();
                     }

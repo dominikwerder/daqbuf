@@ -11,6 +11,7 @@ use crate::ca::conn2::caids::Sid;
 use crate::ca::conn2::caids::Subid;
 use crate::ca::conn2::caids::SubidOwned;
 use crate::ca::conn2::conn::channelheap::ChHeapCmd;
+use crate::ca::conn2::conn::channelheap::ProtoRxItem;
 use crate::ca::conn2::conn::channelheap::channelhandler::create::Creating;
 use crate::ca::conn2::conn::channelheap::channelhandler::running::Running;
 use crate::ca::conn2::timeoutable;
@@ -171,7 +172,7 @@ pub struct ChannelHandler {
     backend: String,
     conf: ChannelConfig,
     proto_tx: asynchan::Sender<CaMsg>,
-    proto_inp_buf: VecDeque<CaMsg>,
+    proto_inp_buf: VecDeque<ProtoRxItem>,
     proto_inp_done: bool,
     ch_hp_tx: asynchan::Sender<ChHeapCmd>,
     counters: Counters,
@@ -327,7 +328,7 @@ impl ChannelHandler {
 
     fn poll_proto_rx_creating(
         mut st1: Pin<&mut Creating>,
-        buf: &mut VecDeque<CaMsg>,
+        buf: &mut VecDeque<ProtoRxItem>,
         done: &mut bool,
         cx: &mut Context<'_>,
     ) -> Poll<Option<Result<u32, Error>>> {
@@ -368,13 +369,13 @@ impl ChannelHandler {
         }
     }
 
-    pub fn inp_push_try(mut self: Pin<&mut Self>, item: CaMsg) -> Option<CaMsg> {
+    pub fn inp_push_try(mut self: Pin<&mut Self>, item: ProtoRxItem) -> Option<CaMsg> {
         let v = &mut self.proto_inp_buf;
         if v.len() < v.capacity() {
             v.push_back(item);
             None
         } else {
-            Some(item)
+            Some(item.msg)
         }
     }
 
@@ -591,7 +592,7 @@ impl Stream for ChannelHandler {
                 State::Closing1(st2) => {
                     if let Some(item) = self2.proto_inp_buf.pop_front() {
                         hpp.mark_progress();
-                        match item.ty {
+                        match item.msg.ty {
                             CaMsgTy::ChannelClose(x) => {
                                 warn!("TODO  maybe  ChannelClose");
                             }

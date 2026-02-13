@@ -6,6 +6,7 @@ use crate::ca::conn2::caids::Cid;
 use crate::ca::conn2::caids::Ioid;
 use crate::ca::conn2::caids::Sid;
 use crate::ca::conn2::caids::SubidOwned;
+use crate::ca::conn2::conn::channelheap::ProtoRxItem;
 use crate::ca::conn2::conn::channelheap::channelhandler::fetchmpx;
 use crate::ca::conn2::timeoutable;
 use crate::ca::progpend::HaveProgressPending;
@@ -91,7 +92,7 @@ pub struct Running {
     removing: bool,
     chan_close_ack: bool,
     outbuf: VecDeque<CaMsg>,
-    inp_buf: VecDeque<CaMsg>,
+    inp_buf: VecDeque<ProtoRxItem>,
     inp_done: bool,
     mett: ChannelHandlerMetrics,
 }
@@ -142,7 +143,7 @@ impl Running {
         // When we are in removing mode, and received all cleanup confirmations, then trigger state change.
     }
 
-    pub fn inp_push_try(&mut self, item: CaMsg) -> Option<CaMsg> {
+    pub fn inp_push_try(&mut self, item: ProtoRxItem) -> Option<ProtoRxItem> {
         let v = &mut self.inp_buf;
         if v.len() < v.capacity() {
             v.push_back(item);
@@ -170,7 +171,7 @@ impl Running {
                 State::Normal(st2) => {
                     if let Some(item) = self2.inp_buf.pop_front() {
                         trace3!("{selfname}  have item  {item:?}");
-                        let to_mpx = match &item.ty {
+                        let to_mpx = match &item.msg.ty {
                             proto::CaMsgTy::EventAddRes(_) => true,
                             proto::CaMsgTy::EventAddResEmpty(_) => true,
                             proto::CaMsgTy::ReadNotifyRes(_) => true,
@@ -187,7 +188,7 @@ impl Running {
                                 }
                             }
                         } else {
-                            match &item.ty {
+                            match &item.msg.ty {
                                 proto::CaMsgTy::ChannelCloseRes(item2) => {
                                     error!("{selfname}  TODO revisit the ChannelClose procedure");
                                     if self.removing {

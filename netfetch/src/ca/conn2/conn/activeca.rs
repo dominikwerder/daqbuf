@@ -133,6 +133,7 @@ pub struct ActiveCa {
     chanheap: ChannelHeap,
     proto_rx: asynchan::Receiver<CaMsg>,
     proto_rx_buf: VecDeque<CaMsg>,
+    proto_rx_buf_done: bool,
     proto_2_tx: asynchan::Sender<CaMsg>,
     cmd_fut: Option<CommandFut>,
     chanheap_cmd_tx: asynchan::Sender<channelheap::Cmd>,
@@ -145,10 +146,8 @@ impl ActiveCa {
         backend: String,
         proto_rx: asynchan::Receiver<CaMsg>,
         proto_tx: asynchan::Sender<CaMsg>,
-        // cmd_rx: Receiver<CaCommand>,
         tsnow: Instant,
         addr: SocketAddrV4,
-        cx: &mut Context,
     ) -> Self {
         let (proto_2_tx, proto_2_rx) = asynchan::bounded(120, "ActiveCa-proto2");
         let (chanheap_cmd_tx, chanheap_cmd_rx) = asynchan::bounded(16, "ActiveCa-ChannelHeap-cmd");
@@ -160,6 +159,7 @@ impl ActiveCa {
             state: State::new(),
             proto_rx,
             proto_rx_buf: VecDeque::with_capacity(16),
+            proto_rx_buf_done: false,
             proto_2_tx,
             cmd_fut: None,
             chanheap_cmd_tx,
@@ -282,6 +282,55 @@ impl ActiveCa {
         }
     }
 
+    fn poll_dispatch(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Result<(), Error>>> {
+        use Poll::*;
+        let selfname = "poll_dispatch";
+        trace4!("{selfname}");
+        loop {
+            let mut hpp = HaveProgressPending::new();
+            if let Some(item) = self.proto_rx_buf.pop_front() {
+                let dispatch = item.cid().is_some() || item.subid().is_some() || item.ioid().is_some();
+                if dispatch {
+                    use asynchan::SendPoll;
+                    use asynchan::SendPollError;
+                    match self.proto_2_tx.poll_send_unpin(item, cx) {
+                        Ok(()) => {
+                            trace!("{selfname}  Sent");
+                            hpp.mark_progress();
+                        }
+                        Err(e) => match e {
+                            SendPollError::Full(item) => {
+                                trace_pending!("{selfname}  Pending");
+                                hpp.mark_pending();
+                                self.proto_rx_buf.push_front(item);
+                            }
+                            SendPollError::Closed(item) => {
+                                trace!("{selfname}  Closed");
+                                error!("{selfname}  TODO handle Closed better?");
+                            }
+                        },
+                    }
+                } else {
+                    error!("TODO handle incoming item internally: {item:?}");
+                    hpp.mark_progress();
+                }
+            } else if self.proto_rx_buf_done {
+            } else {
+                hpp.mark_pending();
+            }
+            break if hpp.have_progress() {
+                trace4!("{selfname}  HPP:Progress");
+                continue;
+            } else if hpp.have_pending() {
+                trace_pending!("{selfname}  HPP");
+                Pending
+            } else {
+                trace!("{selfname}  HPP:Done");
+                Ready(None)
+            };
+        }
+    }
+
     fn poll_next(
         mut self: Pin<&mut Self>,
         cmd_rx: &mut CtChan<CaCommand>,
@@ -291,7 +340,6 @@ impl ActiveCa {
         trace4!("ActiveCa:poll_next");
         loop {
             let mut hpp = HaveProgressPending::new();
-            // let self2 = self.as_mut().get_mut();
             match &mut self.state {
                 State::Running => {
                     match self.as_mut().poll_command_input(cmd_rx, cx, &mut hpp) {
@@ -325,44 +373,19 @@ impl ActiveCa {
                     } else {
                         // TODO maybe count for metrics?
                     }
-                    loop {
-                        if let Some(item) = self.proto_rx_buf.pop_front() {
-                            let dispatch = if item.cid().is_some() {
-                                true
-                            } else if item.subid().is_some() {
-                                true
-                            } else if item.ioid().is_some() {
-                                true
-                            } else {
-                                false
-                            };
-                            if dispatch {
-                                use asynchan::SendPoll;
-                                use asynchan::SendPollError;
-                                match self.proto_2_tx.poll_send_unpin(item, cx) {
-                                    Ok(()) => {
-                                        trace!("Proto2Tx:Sent");
-                                        hpp.mark_progress();
-                                    }
-                                    Err(e) => match e {
-                                        SendPollError::Full(item) => {
-                                            trace_pending!("Proto2Tx");
-                                            self.proto_rx_buf.push_front(item);
-                                            hpp.mark_pending();
-                                        }
-                                        SendPollError::Closed(item) => {
-                                            trace!("Proto2Tx:Closed");
-                                            self.proto_rx_buf.push_front(item);
-                                            error!("TODO handle Proto2Tx:Closed");
-                                        }
-                                    },
+                    match self.as_mut().poll_dispatch(cx) {
+                        Ready(Some(x)) => {
+                            hpp.mark_progress();
+                            match x {
+                                Ok(()) => {}
+                                Err(e) => {
+                                    break Ready(Some(Err(e)));
                                 }
-                            } else {
-                                error!("TODO handle incoming item internally: {item:?}");
-                                hpp.mark_progress();
                             }
-                        } else {
-                            break;
+                        }
+                        Ready(None) => {}
+                        Pending => {
+                            hpp.mark_pending();
                         }
                     }
                     let self2 = self.as_mut().get_mut();
