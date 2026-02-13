@@ -185,6 +185,7 @@ mod waker1 {
 pub enum ItemInner {
     ChannelInfoQuery(dbpg::seriesbychannel::ChannelInfoQuery),
     ScyllaWrite,
+    TestValue(crate::ca::connset2::connset::TestValue),
 }
 
 #[derive(Debug)]
@@ -205,6 +206,7 @@ enum PollHandlerItem {
     ChHandlerMod,
     ProtoOut(CaMsg),
     ChannelInfoQuery(dbpg::seriesbychannel::ChannelInfoQuery),
+    TestValue(crate::ca::connset2::connset::TestValue),
 }
 
 #[derive(Debug)]
@@ -290,6 +292,7 @@ enum PollHandlerItemB {
     Fut(FutDbg<Result<(), Error>>),
     ProtoOut(CaMsg),
     ChannelInfoQuery(dbpg::seriesbychannel::ChannelInfoQuery),
+    TestValue(crate::ca::connset2::connset::TestValue),
 }
 
 #[derive(Debug)]
@@ -546,6 +549,7 @@ impl ChannelHeap {
                                     //
                                     PollHandlerItem::ChannelInfoQuery(item)
                                 }
+                                channelhandler::ItemInner::TestValue(x) => PollHandlerItem::TestValue(x),
                             };
                             break Ready(Some(Ok(item)));
                         }
@@ -726,6 +730,9 @@ impl ChannelHeap {
                                         PollHandlerItem::ChannelInfoQuery(item) => {
                                             break Ready(Some(Ok(PollHandlerItemB::ChannelInfoQuery(item))));
                                         }
+                                        PollHandlerItem::TestValue(x) => {
+                                            break Ready(Some(Ok(PollHandlerItemB::TestValue(x))));
+                                        }
                                     },
                                     Err(e) => {
                                         todo!("TODO handle Self::poll_handler  Err  {e}");
@@ -822,6 +829,9 @@ impl ChannelHeap {
                                 }
                                 PollHandlerItemB::ChannelInfoQuery(x) => {
                                     break Ready(Some(Ok(PollHandlerItem::ChannelInfoQuery(x))));
+                                }
+                                PollHandlerItemB::TestValue(x) => {
+                                    break Ready(Some(Ok(PollHandlerItem::TestValue(x))));
                                 }
                             },
                             Err(e) => {
@@ -1078,6 +1088,15 @@ impl ChannelHeap {
                                         PollHandlerItem::ChannelInfoQuery(item) => {
                                             let tsnow = Instant::now();
                                             let inner = ItemInner::ChannelInfoQuery(item);
+                                            let item = ChannelHeapItem {
+                                                ts_create: tsnow,
+                                                inner,
+                                            };
+                                            break Ready(Some(Ok(item)));
+                                        }
+                                        PollHandlerItem::TestValue(x) => {
+                                            let tsnow = Instant::now();
+                                            let inner = ItemInner::TestValue(x);
                                             let item = ChannelHeapItem {
                                                 ts_create: tsnow,
                                                 inner,

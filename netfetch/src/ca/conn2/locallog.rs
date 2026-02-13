@@ -13,16 +13,20 @@ macro_rules! local_log_llog {
 
 pub use crate::local_log_llog as llog;
 
+pub type Entry = (u32, DateTime<Utc>, String);
+
 #[derive(Debug)]
 pub struct LocalLog {
     enable: bool,
-    buf: VecDeque<(Instant, String)>,
+    cnt: u32,
+    buf: VecDeque<((), Entry)>,
 }
 
 impl LocalLog {
     pub fn new() -> Self {
         Self {
             enable: false,
+            cnt: 0,
             buf: VecDeque::new(),
         }
     }
@@ -46,18 +50,40 @@ impl LocalLog {
             self.buf.truncate(99);
         }
         let ts = Instant::now();
-        self.buf.push_back((ts, s));
+        let i = self.cnt;
+        self.cnt += 1;
+        let stnow = Utc::now();
+        self.buf.push_back(((), (i, stnow, s)));
     }
 
-    pub fn to_vec_string(&self) -> Vec<(DateTime<Utc>, String)> {
+    pub fn to_vec_string(&self) -> Vec<Entry> {
         let tsnow = Instant::now();
         let stnow = Utc::now();
         self.buf
             .iter()
-            .map(|(ts, s)| {
-                let dt = tsnow.saturating_duration_since(*ts);
-                (stnow - dt, s.clone())
+            .map(|(ts, (i, st, s))| {
+                // let dt = tsnow.saturating_duration_since(*ts);
+                // let _st = stnow - dt;
+                (*i, *st, s.clone())
             })
             .collect()
+    }
+
+    pub fn pop(&mut self) -> Option<Entry> {
+        if let Some((ts, (i, st, s))) = self.buf.pop_front() {
+            Some((i, st, s))
+        } else {
+            None
+        }
+    }
+
+    pub fn push_entry(&mut self, e: Entry) {
+        self.buf.push_back(((), e));
+    }
+
+    fn check_truncate(&mut self) {
+        if self.buf.len() >= 120 {
+            self.buf.truncate(99);
+        }
     }
 }

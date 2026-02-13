@@ -168,6 +168,16 @@ pub trait Conn2Ctrls: Send + Sync {
         &self,
         cmd: String,
     ) -> Pin<Box<dyn Future<Output = Result<String, Box<dyn std::error::Error>>> + Send>>;
+
+    fn channel_add_v1(
+        &self,
+        name: String,
+    ) -> Pin<Box<dyn Future<Output = Result<(), Box<dyn std::error::Error>>> + Send>>;
+
+    fn channel_remove_v1(
+        &self,
+        name: String,
+    ) -> Pin<Box<dyn Future<Output = Result<(), Box<dyn std::error::Error>>> + Send>>;
 }
 
 pub trait CaIngestCtrls: Send + Sync {
@@ -481,6 +491,7 @@ fn make_routes_daqingest_private(
     use axum::routing::get;
     Router::new()
         .nest("/channel", make_routes_private_channel(post_ingest_ctrls.clone()))
+        .nest("/conn2", make_routes_conn2(ca_ingest_ctrls.clone()))
         .route(
             "/channel/states",
             get({
@@ -497,8 +508,15 @@ fn make_routes_daqingest_private(
                 axum::Json(json!({"ts":s}))
             }),
         )
+}
+
+fn make_routes_conn2(ca_ingest_ctrls: Arc<dyn CaIngestCtrls>) -> axum::Router {
+    use axum::Router;
+    use axum::extract;
+    use axum::routing::get;
+    Router::new()
         .route(
-            "/conn2/connections",
+            "/connections",
             get({
                 let ca_ingest_ctrls = ca_ingest_ctrls.clone();
                 || async move {
@@ -512,7 +530,7 @@ fn make_routes_daqingest_private(
             }),
         )
         .route(
-            "/conn2/channels_for_addr_v1/{*p1}",
+            "/channels_for_addr_v1/{*p1}",
             get({
                 let ca_ingest_ctrls = ca_ingest_ctrls.clone();
                 |extract::Path(p1): extract::Path<String>| async move {
@@ -527,7 +545,7 @@ fn make_routes_daqingest_private(
             }),
         )
         .route(
-            "/conn2/channel_info_v2",
+            "/channel_info_v2",
             get({
                 let ca_ingest_ctrls = ca_ingest_ctrls.clone();
                 |Query(params): Query<HashMap<String, String>>| async move {
@@ -545,7 +563,26 @@ fn make_routes_daqingest_private(
             }),
         )
         .route(
-            "/conn2/channels_by_regex_v1",
+            "/connset_llog_v1",
+            get({
+                let ca_ingest_ctrls = ca_ingest_ctrls.clone();
+                || async move {
+                    if let Some(c2) = ca_ingest_ctrls.conn2_ctrls().await {
+                        let cmd = serde_json::json!({
+                            "type": "ConnSetLlogV1",
+                        });
+                        let cmd = serde_json::to_string(&cmd).unwrap();
+                        let ret = c2.cmd_dyn_v1(cmd).await.unwrap();
+                        let ret: serde_json::Value = serde_json::from_str(&ret).unwrap();
+                        axum::Json(ret)
+                    } else {
+                        axum::Json(json!({"error": "no ctrl"}))
+                    }
+                }
+            }),
+        )
+        .route(
+            "/channels_by_regex_v1",
             get({
                 let ca_ingest_ctrls = ca_ingest_ctrls.clone();
                 |Query(params): Query<HashMap<String, String>>| async move {
@@ -565,6 +602,46 @@ fn make_routes_daqingest_private(
                         axum::Json(ret)
                     } else {
                         axum::Json(json!({"error": "no ctrl"}))
+                    }
+                }
+            }),
+        )
+        .route(
+            "/channel_add_v1",
+            get({
+                let ca_ingest_ctrls = ca_ingest_ctrls.clone();
+                |Query(params): Query<HashMap<String, String>>| async move {
+                    if let Some(name) = params.get("name").map(String::from) {
+                        info!("channel_add_v1  {name:?}");
+                        if let Some(c2) = ca_ingest_ctrls.conn2_ctrls().await {
+                            let ret = c2.channel_add_v1(name).await;
+                            let ret: serde_json::Value = serde_json::Value::String(format!("{ret:?}"));
+                            axum::Json(ret)
+                        } else {
+                            axum::Json(json!({"error": "no ctrl"}))
+                        }
+                    } else {
+                        axum::Json(json!({"error": "no name"}))
+                    }
+                }
+            }),
+        )
+        .route(
+            "/channel_remove_v1",
+            get({
+                let ca_ingest_ctrls = ca_ingest_ctrls.clone();
+                |Query(params): Query<HashMap<String, String>>| async move {
+                    if let Some(name) = params.get("name").map(String::from) {
+                        info!("channel_remove_v1  {name:?}");
+                        if let Some(c2) = ca_ingest_ctrls.conn2_ctrls().await {
+                            let ret = c2.channel_remove_v1(name).await;
+                            let ret: serde_json::Value = serde_json::Value::String(format!("{ret:?}"));
+                            axum::Json(ret)
+                        } else {
+                            axum::Json(json!({"error": "no ctrl"}))
+                        }
+                    } else {
+                        axum::Json(json!({"error": "no name"}))
                     }
                 }
             }),

@@ -132,6 +132,7 @@ pub enum ItemInner {
     ProtoOut(CaMsg),
     ProtoOutIoid(CaMsg, Sid, Instant),
     ScyllaWrite,
+    TestValue(crate::ca::connset2::connset::TestValue),
 }
 
 #[derive(Debug)]
@@ -525,13 +526,18 @@ impl Stream for ChannelHandler {
                                         })));
                                     }
                                     running::RunningItem::CaMsgOutIoid(msg, sid, tscmd) => {
-                                        let item = msg;
                                         break Ready(Some(Ok(ChannelHandlerItem {
                                             ts_create: Instant::now(),
-                                            inner: ItemInner::ProtoOutIoid(item, sid, tscmd),
+                                            inner: ItemInner::ProtoOutIoid(msg, sid, tscmd),
                                         })));
                                     }
                                     running::RunningItem::ScyllaWrite => todo!(),
+                                    running::RunningItem::TestValue(x) => {
+                                        break Ready(Some(Ok(ChannelHandlerItem {
+                                            ts_create: Instant::now(),
+                                            inner: ItemInner::TestValue(x),
+                                        })));
+                                    }
                                 },
                                 Err(e) => {
                                     info!("ChannelHandler:Creating:Ready:Err {e}");

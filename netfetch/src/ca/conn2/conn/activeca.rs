@@ -101,6 +101,7 @@ impl fmt::Debug for CommandFut {
 pub enum ItemInner {
     ChannelInfoQuery(dbpg::seriesbychannel::ChannelInfoQuery),
     ScyllaWrite,
+    TestValue(crate::ca::connset2::connset::TestValue),
 }
 
 #[derive(Debug)]
@@ -380,6 +381,13 @@ impl ActiveCa {
                                             break Ready(Some(Ok(item)));
                                         }
                                         channelheap::ItemInner::ScyllaWrite => todo!("handle ScyllaWrite"),
+                                        channelheap::ItemInner::TestValue(x) => {
+                                            let item = ActiveCaItem {
+                                                ts_create: item.ts_create,
+                                                inner: ItemInner::TestValue(x),
+                                            };
+                                            break Ready(Some(Ok(item)));
+                                        }
                                     }
                                 }
                                 Err(e) => {

@@ -58,6 +58,7 @@ enum State {
 pub enum ItemInner {
     ChannelInfoQuery(dbpg::seriesbychannel::ChannelInfoQuery),
     ScyllaWrite,
+    TestValue(crate::ca::connset2::connset::TestValue),
 }
 
 #[derive(Debug)]
@@ -358,6 +359,10 @@ impl Stream for Connected {
                                         activeca::ItemInner::ScyllaWrite => ConnectedItem {
                                             ts_create: item.ts_create,
                                             inner: ItemInner::ScyllaWrite,
+                                        },
+                                        activeca::ItemInner::TestValue(x) => ConnectedItem {
+                                            ts_create: item.ts_create,
+                                            inner: ItemInner::TestValue(x),
                                         },
                                     };
                                     break Ready(Some(Ok(item)));

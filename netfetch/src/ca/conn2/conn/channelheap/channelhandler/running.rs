@@ -74,6 +74,7 @@ pub enum RunningItem {
     CaMsgOut(CaMsg),
     CaMsgOutIoid(CaMsg, Sid, Instant),
     ScyllaWrite,
+    TestValue(crate::ca::connset2::connset::TestValue),
 }
 
 #[derive(Debug)]
@@ -276,6 +277,10 @@ impl Stream for Running {
                                 }
                                 fetchmpx::FetchmpxItem::ScyllaWrite => {
                                     error!("TODO ScyllaWrite");
+                                }
+                                fetchmpx::FetchmpxItem::TestValue(x) => {
+                                    let g = RunningItem::TestValue(x);
+                                    break Ready(Some(Ok(g)));
                                 }
                             }
                         }

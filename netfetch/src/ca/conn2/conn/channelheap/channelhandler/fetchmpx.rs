@@ -247,20 +247,31 @@ impl FetchPolling {
                         hpp.mark_progress();
                     }
                     FetchPollingState::WaitRes(_) => {
-                        warn!("TODO item while in WaitRes  {item:?}");
                         hpp.mark_progress();
-                        let tsnow = Instant::now();
-                        self.poll_next_ts_exact = self.poll_next_ts_exact + self.interval;
-                        if self.poll_next_ts_exact < tsnow {
-                            // TODO add more jitter in this case
-                            self.poll_next_ts_exact = tsnow;
+                        match item.ty {
+                            CaMsgTy::ReadNotifyRes(v) => {
+                                let valf32 = v.value.f32_for_binning();
+                                let tsnow = Instant::now();
+                                self.poll_next_ts_exact = self.poll_next_ts_exact + self.interval;
+                                if self.poll_next_ts_exact < tsnow {
+                                    // TODO add more jitter in this case
+                                    self.poll_next_ts_exact = tsnow;
+                                }
+                                self.poll_next_ts_jitter = self.poll_next_ts_exact;
+                                let ts = self.poll_next_ts_jitter;
+                                let fut = async move {
+                                    tokio::time::sleep_until(ts.into()).await;
+                                };
+                                self.state = FetchPollingState::Idle(fut.box2());
+                                let item = FetchMethodPollOutput::TestValue(crate::ca::connset2::connset::TestValue {
+                                    val: valf32,
+                                });
+                                return Ready(Some(Ok(item)));
+                            }
+                            _ => {
+                                warn!("TODO item while in WaitRes  {item:?}");
+                            }
                         }
-                        self.poll_next_ts_jitter = self.poll_next_ts_exact;
-                        let ts = self.poll_next_ts_jitter;
-                        let fut = async move {
-                            tokio::time::sleep_until(ts.into()).await;
-                        };
-                        self.state = FetchPollingState::Idle(fut.box2());
                     }
                 }
             } else if self.inp_done {
@@ -343,6 +354,7 @@ enum FetchMethodPollOutput {
     ProtoOutIoid(CaMsg, Sid),
     // ScyllaWrite,
     // CallbackOnRunning(Box<dyn FnOnce(&mut SomeData)>, Vec<ChannelHandlerItem>),
+    TestValue(crate::ca::connset2::connset::TestValue),
 }
 
 fn make_cb<F>(f: F) -> Box<dyn FnOnce(&mut SomeData)>
@@ -560,6 +572,7 @@ pub enum FetchmpxItem {
     CaMsgOut(CaMsg),
     CaMsgOutIoid(CaMsg, Sid, Instant),
     ScyllaWrite,
+    TestValue(crate::ca::connset2::connset::TestValue),
 }
 
 #[derive(Debug)]
@@ -728,6 +741,11 @@ impl Stream for Fetchmpx {
                                 FetchMethodPollOutput::ProtoOutIoid(msg, sid) => {
                                     hpp.mark_progress();
                                     let g = FetchmpxItem::CaMsgOutIoid(msg, sid, Instant::now());
+                                    break Ready(Some(Ok(g)));
+                                }
+                                FetchMethodPollOutput::TestValue(x) => {
+                                    hpp.mark_progress();
+                                    let g = FetchmpxItem::TestValue(x);
                                     break Ready(Some(Ok(g)));
                                 }
                             },

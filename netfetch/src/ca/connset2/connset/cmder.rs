@@ -3,6 +3,8 @@ use super::ChannelRemove;
 use super::ConnSetCmd;
 use super::ConnSetCmdKind;
 use crate::ca::conn2::asynchan;
+use crate::conf::ChannelConfig;
+use libc::NAME_MAX;
 use std::net::SocketAddrV4;
 
 macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
@@ -129,6 +131,30 @@ impl ConnSetCmder {
         };
         let _ = dtx.send(cmd).await?;
         let ret = rx.recv().await?;
+        Ok(ret)
+    }
+
+    pub async fn channel_add_v1(&self, name: String) -> Result<(), Error> {
+        let mut dtx = self.tx.clone();
+        let (tx, mut rx) = asynchan::bounded(2, "ChannelAdd");
+        let cmd2 = crate::ca::connset2::connset::ChannelAdd::new(ChannelConfig::polled_2_20_120(name, "web-api"), tx);
+        let cmd = ConnSetCmd {
+            kind: ConnSetCmdKind::ChannelAdd(cmd2),
+        };
+        let _ = dtx.send(cmd).await?;
+        let ret = rx.recv().await??;
+        Ok(ret)
+    }
+
+    pub async fn channel_remove_v1(&self, name: String) -> Result<(), Error> {
+        let mut dtx = self.tx.clone();
+        let (tx, mut rx) = asynchan::bounded(2, "ChannelRemove");
+        let cmd2 = crate::ca::connset2::connset::ChannelRemove::new(name, tx);
+        let cmd = ConnSetCmd {
+            kind: ConnSetCmdKind::ChannelRemove(cmd2),
+        };
+        let _ = dtx.send(cmd).await?;
+        let ret = rx.recv().await??;
         Ok(ret)
     }
 }

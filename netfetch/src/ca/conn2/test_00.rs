@@ -108,6 +108,30 @@ impl netfetch::metrics::Conn2Ctrls for Conn2Ctrls {
         };
         Box::pin(fut)
     }
+
+    fn channel_add_v1(
+        &self,
+        name: String,
+    ) -> Pin<Box<dyn Future<Output = Result<(), Box<dyn std::error::Error>>> + Send>> {
+        let cmder = self.cmder.clone();
+        let fut = async move {
+            let ret = cmder.channel_add_v1(name).await?;
+            Ok(ret)
+        };
+        Box::pin(fut)
+    }
+
+    fn channel_remove_v1(
+        &self,
+        name: String,
+    ) -> Pin<Box<dyn Future<Output = Result<(), Box<dyn std::error::Error>>> + Send>> {
+        let cmder = self.cmder.clone();
+        let fut = async move {
+            let ret = cmder.channel_remove_v1(name).await?;
+            Ok(ret)
+        };
+        Box::pin(fut)
+    }
 }
 
 struct CaIngestCtrls {
@@ -290,7 +314,6 @@ pub async fn test_01() {
             });
         }
         let fut = async move {
-            trace!("test_01 adding channel");
             if false {
                 let channels = [
                     "TEST:SLOW:SCALAR:F32:000000",
@@ -302,6 +325,7 @@ pub async fn test_01() {
                     // "X04SA-UIND:GAP-RBV",
                 ];
                 for chname in channels {
+                    trace!("test_01 adding channel {chname}");
                     let conf = crate::conf::ChannelConfig::st_monitor(chname, "TEST");
                     cmder.channel_add(conf).await.unwrap();
                 }
@@ -311,7 +335,6 @@ pub async fn test_01() {
                     cmder.channel_add(chconf.clone()).await.unwrap();
                 }
             }
-            trace!("test_01 added channel");
         };
         tokio::spawn(fut);
         while let Some(e) = connset.next().await {

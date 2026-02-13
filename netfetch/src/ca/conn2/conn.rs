@@ -11,6 +11,7 @@ use crate::ca::conn::CaConnOpts;
 use crate::ca::conn2::asynchan;
 use crate::ca::conn2::asynchan::SendPoll;
 use crate::ca::conn2::statetrans::conn::IocConnStateBase;
+use crate::ca::connset2::connset::TestValue;
 use crate::ca::futstack::ErasedFuture;
 use crate::ca::progpend::HaveProgressPending;
 use crate::conf::ChannelConfig;
@@ -316,6 +317,7 @@ pub struct StatusInfo {
 pub enum CaConnItem {
     StatusInfo(StatusInfo),
     ChannelInfoQuery(ChannelInfoQuery),
+    TestValue(TestValue),
 }
 
 const EF4: usize = 0x500;
@@ -646,6 +648,10 @@ impl Stream for CaConn {
                                             break Ready(Some(Ok(item)));
                                         }
                                         connected::ItemInner::ScyllaWrite => todo!("TODO handle ScyllaWrite"),
+                                        connected::ItemInner::TestValue(x) => {
+                                            let item = CaConnItem::TestValue(x);
+                                            break Ready(Some(Ok(item)));
+                                        }
                                     }
                                 }
                                 Err(e) => {

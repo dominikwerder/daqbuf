@@ -15,9 +15,11 @@ use crate::futwrap::FutDbgBox;
 use channels::pollcstm::Cmd;
 use channels::pollcstm::PollCstm;
 use channels::pollcstm::PollRess;
+use dbpg::seriesbychannel::ChannelInfoQuerySender;
 use dbpg::seriesbychannel::ChannelInfoResult;
 use futures::FutureExt;
 use futures::StreamExt;
+use futures::TryFutureExt;
 use netpod::ScalarType;
 use netpod::SeriesKind;
 use netpod::Shape;
@@ -48,6 +50,7 @@ autoerr::create_error_v1!(
         Finder(#[from] crate::ca::finder::Error),
         AddrNotFound(String),
         LogicSendBlock,
+        Lookup(#[from] dbpg::seriesbychannel::Error),
     },
 );
 
@@ -100,6 +103,12 @@ impl fmt::Debug for Backoff {
 }
 
 #[derive(Debug)]
+struct CssidReq {
+    fut: FutDbg<Result<ChannelInfoResult, Error>>,
+    to: FutDbg<()>,
+}
+
+#[derive(Debug)]
 struct AddrSearch {
     cssid: ChannelStatusSeriesId,
     chi: ChannelInfoResult,
@@ -111,7 +120,7 @@ struct AddrSearch {
 enum State {
     Init,
     Backoff(Backoff),
-    CssidReq(FutDbg<Result<ChannelInfoResult, Error>>),
+    CssidReq(CssidReq),
     AddrSearch(AddrSearch),
     Observing(Observing),
     Removing0(RemovingCommon),
@@ -178,13 +187,14 @@ pub enum StateInfo {
 #[derive(Debug, Serialize)]
 pub struct ChannelInfo {
     state: StateInfo,
-    local_log: Vec<(chrono::DateTime<chrono::Utc>, String)>,
+    local_log: Vec<(u32, chrono::DateTime<chrono::Utc>, String)>,
 }
 
 #[derive(Debug)]
 pub enum ChannelActionItem {
     AddToCaConn(ChannelConfig, SocketAddrV4),
     RemoveFromCaConn(ChannelConfig, RemovingCommon, asynchan::Sender<u32>),
+    LocalLog(locallog::Entry),
 }
 
 #[derive(Debug)]
@@ -275,6 +285,22 @@ impl Channel {
         self.state = stn;
     }
 
+    fn produce_cssid_req_state(&mut self, mut ch_info: ChannelInfoQuerySender) -> State {
+        let backend = self.backend.clone();
+        let name = self.conf.name().into();
+        let to = tokio::time::sleep(Duration::from_millis(2000)).box2();
+        State::CssidReq(CssidReq {
+            fut: async move {
+                ch_info
+                    .query(backend, name, SeriesKind::ChannelStatus, ScalarType::U64, Shape::Scalar)
+                    .map_err(Error::from)
+                    .await
+            }
+            .box2(),
+            to,
+        })
+    }
+
     fn produce_addr_search_state(&mut self, chi: ChannelInfoResult, fh: FinderHandleV02) -> State {
         let cssid = ChannelStatusSeriesId::new(chi.series.to_series().id());
         let conf = self.conf.clone();
@@ -342,6 +368,9 @@ impl PollCstm for Channel {
         use Poll::*;
         loop {
             let mut hpp = HaveProgressPending::new();
+            if let Some(x) = self.llog.pop() {
+                break Ready(Some(Ok(ChannelActionItem::LocalLog(x))));
+            }
             match self.as_mut().poll_cmd(cx) {
                 Ready(Some(x)) => {
                     hpp.mark_progress();
@@ -358,23 +387,7 @@ impl PollCstm for Channel {
             let self2 = self.as_mut().get_mut();
             match &mut self2.state {
                 State::Init => {
-                    let backend = self2.backend.clone();
-                    let conf = self2.conf.clone();
-                    let mut ch_info = ress.ch_info.clone();
-                    let fut = async move {
-                        let x = ch_info
-                            .query(
-                                backend,
-                                conf.name().into(),
-                                SeriesKind::ChannelStatus,
-                                ScalarType::U64,
-                                Shape::Scalar,
-                            )
-                            .await;
-                        // TODO return the value
-                        Ok(x.unwrap())
-                    };
-                    let stn = State::CssidReq(fut.box2());
+                    let stn = self2.produce_cssid_req_state(ress.ch_info.clone());
                     llog!(self2, "transition {} -> {}", self2.state, stn);
                     self2.state = stn;
                     hpp.mark_progress();
@@ -395,32 +408,62 @@ impl PollCstm for Channel {
                         hpp.mark_pending();
                     }
                 },
-                State::CssidReq(fut) => match fut.poll_unpin(cx) {
-                    Ready(x) => {
-                        hpp.mark_progress();
-                        match x {
-                            Ok(chi) => {
-                                let stn = self2.produce_addr_search_state(chi, ress.finder_handle.clone());
-                                llog!(self2, "transition {} -> {}", self2.state, stn);
-                                self2.state = stn;
-                            }
-                            Err(e) => {
-                                warn!("can not get channel status series id  {e}");
-                                // TODO instead, back off and try again. Count metrics.
-                                let stn = State::Removed;
-                                llog!(self2, "transition {} -> {}", self2.state, stn);
-                                self2.state = stn;
+                State::CssidReq(st1) => {
+                    match st1.fut.poll_unpin(cx) {
+                        Ready(x) => {
+                            hpp.mark_progress();
+                            self2.backoff_i = 0;
+                            match x {
+                                Ok(chi) => {
+                                    let stn = self2.produce_addr_search_state(chi, ress.finder_handle.clone());
+                                    llog!(self2, "transition {} -> {}", self2.state, stn);
+                                    self2.state = stn;
+                                    continue;
+                                }
+                                Err(e) => {
+                                    warn!("can not get channel status series id  {e}");
+                                    // TODO instead, back off and try again. Count metrics.
+                                    let stn = State::Removed;
+                                    llog!(self2, "transition {} -> {}", self2.state, stn);
+                                    self2.state = stn;
+                                    continue;
+                                }
                             }
                         }
+                        Pending => {
+                            hpp.mark_pending();
+                        }
                     }
-                    Pending => {
-                        hpp.mark_pending();
+                    match st1.to.poll_unpin(cx) {
+                        Ready(()) => {
+                            hpp.mark_progress();
+                            // TODO emtrics instead of log
+                            warn!("CssidReq timeout");
+                            let to = {
+                                self2.backoff_i += 1;
+                                let x = 2000. * (self2.backoff_i as f32).powf(0.5);
+                                debug!("backoff {x:.1} ms");
+                                tokio::time::sleep(Duration::from_millis(x as u64))
+                            }
+                            .box2();
+                            let ch_info = ress.ch_info.clone();
+                            let stn = State::Backoff(Backoff {
+                                to,
+                                make_state: Box::new(move |this: &mut Self| this.produce_cssid_req_state(ch_info)),
+                            });
+                            llog!(self2, "transition {} -> {}", self2.state, stn);
+                            self2.state = stn;
+                        }
+                        Pending => {
+                            hpp.mark_pending();
+                        }
                     }
-                },
+                }
                 State::AddrSearch(st1) => {
                     match st1.fut.poll_unpin(cx) {
                         Ready(x) => {
                             hpp.mark_progress();
+                            self2.backoff_i = 0;
                             match x {
                                 Ok(x) => {
                                     trace!("State::AddrSearch  found {x}");

@@ -984,6 +984,21 @@ impl ChannelConfig {
         }
     }
 
+    pub fn polled_2_20_120<S: Into<String>>(name: S, config_file_basename: &str) -> Self {
+        Self {
+            name: name.into(),
+            arch: IngestConfigArchiving {
+                replication: true,
+                short_term: Some(ChannelReadConfig::Poll(Duration::from_millis(1000 * 2))),
+                medium_term: Some(ChannelReadConfig::Poll(Duration::from_millis(1000 * 20))),
+                long_term: Some(ChannelReadConfig::Poll(Duration::from_millis(1000 * 120))),
+                is_polled: true,
+                timestamp: ChannelTimestamp::Archiver,
+            },
+            config_file_basename: config_file_basename.into(),
+        }
+    }
+
     pub fn name(&self) -> &str {
         &self.name
     }
