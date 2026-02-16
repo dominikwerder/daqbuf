@@ -101,6 +101,11 @@ impl Subid {
     pub fn to_u32(&self) -> u32 {
         self.0
     }
+
+    pub fn inc(&mut self) -> Self {
+        self.0 = self.0.wrapping_add(1);
+        self.clone()
+    }
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]

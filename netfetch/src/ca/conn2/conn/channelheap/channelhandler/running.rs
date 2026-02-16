@@ -74,6 +74,7 @@ impl From<async_channel::RecvError> for Error {
 pub enum RunningItem {
     CaMsgOut(CaMsg),
     CaMsgOutIoid(CaMsg, Sid, Instant),
+    CaMsgOutSubid(CaMsg, Instant),
     ScyllaWrite,
     TestValue(crate::ca::connset2::connset::TestValue),
 }
@@ -274,6 +275,10 @@ impl Stream for Running {
                                 }
                                 fetchmpx::FetchmpxItem::CaMsgOutIoid(msg, sid, tscmd) => {
                                     let g = RunningItem::CaMsgOutIoid(msg, sid, tscmd);
+                                    break Ready(Some(Ok(g)));
+                                }
+                                fetchmpx::FetchmpxItem::CaMsgOutSubid(msg, tscmd) => {
+                                    let g = RunningItem::CaMsgOutSubid(msg, tscmd);
                                     break Ready(Some(Ok(g)));
                                 }
                                 fetchmpx::FetchmpxItem::ScyllaWrite => {

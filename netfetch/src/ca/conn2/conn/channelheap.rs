@@ -203,11 +203,6 @@ pub struct ChannelHeapItem {
     pub inner: ItemInner,
 }
 
-#[derive(Debug)]
-pub enum ChHeapCmd {
-    RegisterSubid(Cid, Subid, asynchan::Sender<u32>),
-}
-
 enum PollHandlerItem {
     None,
     ChannelHeapItem(ChannelHeapItem),
@@ -295,6 +290,52 @@ impl IoidRegistry {
     }
 }
 
+#[derive(Debug)]
+struct SubidRegistry {
+    subids: HashMap<Subid, (Cid, Instant)>,
+    rev: HashMap<Cid, Subid>,
+    current: Subid,
+}
+
+impl SubidRegistry {
+    fn new() -> Self {
+        Self {
+            subids: HashMap::new(),
+            rev: HashMap::new(),
+            current: Subid::new(0),
+        }
+    }
+
+    fn register(&mut self, cid: Cid, tsreg: Instant) -> Subid {
+        // TODO count hits and misses for metrics
+        if let Some(subid) = self.rev.get(&cid) {
+            subid.clone()
+        } else {
+            let subid = self.current.inc();
+            self.subids.insert(subid, (cid.clone(), tsreg));
+            self.rev.insert(cid, subid);
+            subid
+        }
+    }
+
+    fn lookup(&mut self, subid: Subid) -> Option<(Cid, Instant)> {
+        if let Some(x) = self.subids.get(&subid) {
+            Some(x.clone())
+        } else {
+            None
+        }
+    }
+
+    fn remove(&mut self, cid: Cid) -> usize {
+        if let Some(subid) = self.rev.remove(&cid) {
+            self.subids.remove(&subid);
+            1
+        } else {
+            0
+        }
+    }
+}
+
 enum PollHandlerItemB {
     None,
     Fut(FutDbg<Result<(), Error>>),
@@ -311,23 +352,20 @@ pub struct ChannelHeap {
     proto_rx: asynchan::Receiver<CaMsg>,
     proto_tx_buf: VecDeque<CaMsg>,
     by_cid: HashMap<Cid, ChannelEntry>,
-    by_subid: HashMap<Subid, Cid>,
     inp_buf: VecDeque<CaMsg>,
     inp_done: bool,
     wakeup_cids: Arc<dashmap::DashMap<Cid, ()>>,
     wakeup_cids_tmp: Vec<Cid>,
-    ch_hp_tx: asynchan::Sender<ChHeapCmd>,
-    ch_hp_rx: asynchan::Receiver<ChHeapCmd>,
     cmd_exec_fut: Option<FutDbg<Result<(Cb1Box,), Error>>>,
     disconnect_on_idle: bool,
     ioid_reg: IoidRegistry,
+    subid_reg: SubidRegistry,
     poll_handler_fut: Option<FutDbg<Result<(), Error>>>,
     mett: CaConnConnectedMetrics,
 }
 
 impl ChannelHeap {
     pub fn new(backend: String, proto_tx: asynchan::Sender<CaMsg>, proto_rx: asynchan::Receiver<CaMsg>) -> Self {
-        let (ch_hp_tx, ch_hp_rx) = asynchan::bounded(12, "ChannelHandler-to-ChannelHeap");
         Self {
             backend,
             state: State::Running,
@@ -335,16 +373,14 @@ impl ChannelHeap {
             proto_rx,
             proto_tx_buf: VecDeque::with_capacity(16),
             by_cid: HashMap::new(),
-            by_subid: HashMap::new(),
             inp_buf: VecDeque::with_capacity(INP_BUF_CAP),
             inp_done: false,
             wakeup_cids: Arc::new(dashmap::DashMap::new()),
             wakeup_cids_tmp: Vec::new(),
-            ch_hp_tx,
-            ch_hp_rx,
             cmd_exec_fut: None,
             disconnect_on_idle: false,
             ioid_reg: IoidRegistry::new(),
+            subid_reg: SubidRegistry::new(),
             poll_handler_fut: None,
             mett: CaConnConnectedMetrics::new(),
         }
@@ -465,7 +501,7 @@ impl ChannelHeap {
         trace!("channel_add {conf:?}");
         let name = conf.name().into();
         self.mett.channel_handler_new().inc();
-        let handler = ChannelHandler::new(self.backend.clone(), conf, self.proto_tx.clone(), self.ch_hp_tx.clone());
+        let handler = ChannelHandler::new(self.backend.clone(), conf, self.proto_tx.clone());
         let cid = handler.cid();
         if self.by_cid.contains_key(&cid) {
             error!("ChannelHeap::channel_add: channel with cid {cid:?} already in map");
@@ -491,17 +527,9 @@ impl ChannelHeap {
     fn remove_cid(&mut self, cid: Cid) {
         let selfname = "remove_cid";
         self.by_cid.remove(&cid);
-        let subids: Vec<_> = self
-            .by_subid
-            .iter()
-            .filter(|(_, v)| **v == cid)
-            .map(|x| x.0.clone())
-            .collect();
-        if subids.len() != 0 {
-            error!("{selfname} subids discovered");
-            for subid in subids {
-                self.by_subid.remove(&subid);
-            }
+        let nrem = self.subid_reg.remove(cid.clone());
+        if nrem != 0 {
+            error!("{selfname}  {nrem} subids still removed");
         }
         self.wakeup_cids.remove(&cid);
     }
@@ -511,6 +539,7 @@ impl ChannelHeap {
         cx: &mut Context,
         cid: Cid,
         ioid_reg: &mut IoidRegistry,
+        subid_reg: &mut SubidRegistry,
         tsnow: Instant,
     ) -> Poll<Option<Result<PollHandlerItem, Error>>> {
         let selfname = "poll_handler";
@@ -552,6 +581,11 @@ impl ChannelHeap {
                                         warn!("ProtoOutIoid but handler missing sid");
                                         PollHandlerItem::None
                                     }
+                                }
+                                channelhandler::ItemInner::ProtoOutSubid(mut ca_msg, tscmd) => {
+                                    let subid = subid_reg.register(cid, tsnow);
+                                    ca_msg.overwrite_subid(subid.to_u32());
+                                    PollHandlerItem::ProtoOut(ca_msg)
                                 }
                                 channelhandler::ItemInner::ChannelInfoQuery(item) => {
                                     //
@@ -607,7 +641,7 @@ impl ChannelHeap {
                     trace!("{selfname}  resolved via cid");
                     Some((Cid::new(cid), tsnow, tsnow))
                 } else if let Some(subid) = item.subid() {
-                    if let Some(cid) = self2.by_subid.get(&Subid::new(subid)) {
+                    if let Some((cid, tsreg)) = self2.subid_reg.lookup(Subid::new(subid)) {
                         trace!("{selfname}  resolved via subid");
                         Some((cid.clone(), tsnow, tsnow))
                     } else {
@@ -726,7 +760,14 @@ impl ChannelHeap {
                     ChHandler::ChHandlerActive(st2) => {
                         let cx2 = &mut Context::from_waker(&st2.waker);
                         let handler = Pin::new(&mut st2.handler);
-                        match Self::poll_handler(handler, cx2, cid.clone(), &mut self2.ioid_reg, tsnow) {
+                        match Self::poll_handler(
+                            handler,
+                            cx2,
+                            cid.clone(),
+                            &mut self2.ioid_reg,
+                            &mut self2.subid_reg,
+                            tsnow,
+                        ) {
                             Ready(Some(x)) => {
                                 add_wakeup.push(cid);
                                 match x {
@@ -994,51 +1035,6 @@ impl ChannelHeap {
                         }
                         Ready(None) => {}
                         Pending => {
-                            hpp.mark_pending();
-                        }
-                    }
-                    match self.ch_hp_rx.poll_next_unpin(cx) {
-                        Ready(Some(cmd)) => {
-                            trace!("ChannelHeap:ChHpCmd:Got");
-                            hpp.mark_progress();
-                            match cmd {
-                                ChHeapCmd::RegisterSubid(cid, subid, mut resp_tx) => {
-                                    trace!("ChannelHeap:ChHpCmd:RegisterSubid  {cid}  {subid}");
-                                    let mut existed = false;
-                                    self.by_subid
-                                        .entry(subid.clone())
-                                        .and_modify(|_| {
-                                            existed = true;
-                                        })
-                                        .or_insert_with(|| cid.clone());
-                                    if existed {
-                                        warn!(
-                                            "ChannelHeap:ChHpCmd:RegisterSubid:SubidExists  {subid}  TODO handle error"
-                                        );
-                                    } else {
-                                        trace!("ChannelHeap:ChHpCmd:RegisterSubid:Ok  {subid}");
-                                        use asynchan::SendPoll;
-                                        use asynchan::SendPollError;
-                                        match resp_tx.poll_send_unpin(1, cx) {
-                                            Ok(()) => {}
-                                            Err(_) => {
-                                                // TODO should never happen
-                                                error!(
-                                                    "ChannelHeap:ChHpCmd:RegisterSubid  TODO  response channel unavailable"
-                                                );
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        Ready(None) => {
-                            trace!("ChannelHeap:ChHpCmd:Done");
-                            hpp.mark_progress();
-                            // TODO handle closed command channel
-                        }
-                        Pending => {
-                            trace_pending!("ChannelHeap:ChHpCmd");
                             hpp.mark_pending();
                         }
                     }

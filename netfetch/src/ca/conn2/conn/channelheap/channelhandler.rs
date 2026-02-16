@@ -10,7 +10,6 @@ use crate::ca::conn2::caids::Ioid;
 use crate::ca::conn2::caids::Sid;
 use crate::ca::conn2::caids::Subid;
 use crate::ca::conn2::caids::SubidOwned;
-use crate::ca::conn2::conn::channelheap::ChHeapCmd;
 use crate::ca::conn2::conn::channelheap::ProtoRxItem;
 use crate::ca::conn2::conn::channelheap::channelhandler::create::Creating;
 use crate::ca::conn2::conn::channelheap::channelhandler::running::Running;
@@ -132,6 +131,7 @@ pub enum ItemInner {
     ChannelInfoQuery(dbpg::seriesbychannel::ChannelInfoQuery),
     ProtoOut(CaMsg),
     ProtoOutIoid(CaMsg, Sid, Instant),
+    ProtoOutSubid(CaMsg, Instant),
     ScyllaWrite,
     TestValue(crate::ca::connset2::connset::TestValue),
 }
@@ -174,7 +174,6 @@ pub struct ChannelHandler {
     proto_tx: asynchan::Sender<CaMsg>,
     proto_inp_buf: VecDeque<ProtoRxItem>,
     proto_inp_done: bool,
-    ch_hp_tx: asynchan::Sender<ChHeapCmd>,
     counters: Counters,
     cmd_tx: asynchan::Sender<Cmd>,
     cmd_rx: asynchan::Receiver<Cmd>,
@@ -188,7 +187,6 @@ impl ChannelHandler {
         conf: ChannelConfig,
         // TODO remove the asyc proto channels.
         proto_tx: asynchan::Sender<CaMsg>,
-        ch_hp_tx: asynchan::Sender<ChHeapCmd>,
     ) -> Self {
         let cid = CidOwned::new();
         trace!("ChannelHandler::new  {cid:?}  {conf:?}");
@@ -202,7 +200,6 @@ impl ChannelHandler {
             proto_tx,
             proto_inp_buf: VecDeque::with_capacity(16),
             proto_inp_done: false,
-            ch_hp_tx,
             counters: Counters::new(),
             cmd_tx,
             cmd_rx,
@@ -530,6 +527,12 @@ impl Stream for ChannelHandler {
                                         break Ready(Some(Ok(ChannelHandlerItem {
                                             ts_create: Instant::now(),
                                             inner: ItemInner::ProtoOutIoid(msg, sid, tscmd),
+                                        })));
+                                    }
+                                    running::RunningItem::CaMsgOutSubid(msg, tscmd) => {
+                                        break Ready(Some(Ok(ChannelHandlerItem {
+                                            ts_create: Instant::now(),
+                                            inner: ItemInner::ProtoOutSubid(msg, tscmd),
                                         })));
                                     }
                                     running::RunningItem::ScyllaWrite => todo!(),
