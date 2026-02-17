@@ -8,6 +8,7 @@ use crate::ca::conn2::asynchan;
 use crate::ca::conn2::asynchan::SendPoll;
 use crate::ca::conn2::conn::CaConn;
 use crate::ca::conn2::conn::CaConnComm;
+use crate::ca::conn2::locallog;
 use crate::ca::conn2::locallog::LocalLog;
 use crate::ca::conn2::timeoutable;
 use crate::ca::conn2::timeoutable::Timeoutable;
@@ -519,8 +520,11 @@ impl ConnSet {
                                         };
                                         self2.cmd_fut_comm = Some(fut.box2());
                                     }
-                                    conn2::conn::CaConnItem::TestValue(v) => {
-                                        return Ready(Some(Ok(ConnSetItem::TestValue(v))));
+                                    conn2::conn::CaConnItem::TestValue(x) => {
+                                        return Ready(Some(Ok(ConnSetItem::TestValue(x))));
+                                    }
+                                    conn2::conn::CaConnItem::LocalLog(x) => {
+                                        self2.llog.push_entry(x);
                                     }
                                 },
                                 Err(e) => {
@@ -646,6 +650,62 @@ impl ConnSet {
                                 None
                             }
                         },
+                        Err(e) => {
+                            let s = serde_json::to_string(&serde_json::json!({
+                                "type": "error",
+                                "msg": format!("{e}"),
+                            }))
+                            .unwrap();
+                            let _ = tx.try_send(s);
+                            None
+                        }
+                    }
+                } else if cmdty.ty == "ChannelHandlerCmd" {
+                    match serde_json::from_str::<serde_json::Value>(&cmd) {
+                        Ok(cmd) => {
+                            info!("ChannelHandlerCmd {cmd:?}");
+                            if let Some(name) = cmd.get("name").and_then(|x| x.as_str()) {
+                                let mut retfut = None;
+                                for addr in self.channels.iter().filter(|x| x.0 == name).map(|x| x.1.channel.addr()) {
+                                    if let Some(addr) = addr {
+                                        let cmdtxs: Vec<_> = self
+                                            .ca_conns
+                                            .iter()
+                                            .filter(|x| *x.0 == addr)
+                                            .map(|x| (x.0.clone(), x.1.comm.clone()))
+                                            .collect();
+                                        if cmdtxs.len() > 1 {
+                                            error!("TODO ChannelHandlerCmd allow only unique channel names");
+                                        }
+                                        let fut = async move {
+                                            let mut val = serde_json::Value::Null;
+                                            for (addr, mut cmdtx) in cmdtxs {
+                                                val = cmdtx.channel_handler_cmd(cmd).await;
+                                                if let Some(v2) = val.as_object_mut() {
+                                                    v2.insert(
+                                                        "__connaddr".into(),
+                                                        serde_json::Value::String(format!("{}", addr)),
+                                                    );
+                                                }
+                                                break;
+                                            }
+                                            let s = serde_json::to_string(&val).unwrap();
+                                            let _ = tx.send(s).await;
+                                            Ok(())
+                                        };
+                                        retfut = Some(Box::new(fut));
+                                        break;
+                                    } else {
+                                        // TODO dispatch message even though not connected.
+                                        warn!("TODO dispatch ChannelHandlerCmd {cmd:?} even though no addr");
+                                    }
+                                }
+                                if let Some(fut) = retfut { Some(fut as _) } else { None }
+                            } else {
+                                info!("TODO return error if channel not found {cmd:?}");
+                                None
+                            }
+                        }
                         Err(e) => {
                             let s = serde_json::to_string(&serde_json::json!({
                                 "type": "error",

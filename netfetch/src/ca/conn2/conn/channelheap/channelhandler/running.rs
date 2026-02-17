@@ -8,6 +8,7 @@ use crate::ca::conn2::caids::Sid;
 use crate::ca::conn2::caids::SubidOwned;
 use crate::ca::conn2::conn::channelheap::ProtoRxItem;
 use crate::ca::conn2::conn::channelheap::channelhandler::fetchmpx;
+use crate::ca::conn2::locallog;
 use crate::ca::conn2::timeoutable;
 use crate::ca::progpend::HaveProgressPending;
 use crate::conf::ChannelConfig;
@@ -77,12 +78,22 @@ pub enum RunningItem {
     CaMsgOutSubid(CaMsg, Instant),
     ScyllaWrite,
     TestValue(crate::ca::connset2::connset::TestValue),
+    LocalLog(locallog::Entry),
 }
 
 #[derive(Debug)]
 enum State {
     Normal(Fetchmpx),
     Done,
+}
+
+impl State {
+    fn str(&self) -> &str {
+        match self {
+            State::Normal(..) => "Normal",
+            State::Done => "Done",
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -142,6 +153,17 @@ impl Running {
         // Otherwise, the IOC may also shut down of course.
         // TODO make sure the IOC disconnect triggers correct logic in ingest. (log!)
         // When we are in removing mode, and received all cleanup confirmations, then trigger state change.
+    }
+
+    pub fn handle_channel_handler_cmd(&mut self, cmd: super::super::super::ChannelHandlerCmd) {
+        match &mut self.state {
+            State::Normal(st) => {
+                st.handle_channel_handler_cmd(cmd);
+            }
+            State::Done => {
+                warn!("TODO handle while in {} {:?}", self.state.str(), cmd);
+            }
+        }
     }
 
     pub fn inp_push_try(&mut self, item: ProtoRxItem) -> Option<ProtoRxItem> {
@@ -286,6 +308,10 @@ impl Stream for Running {
                                 }
                                 fetchmpx::FetchmpxItem::TestValue(x) => {
                                     let g = RunningItem::TestValue(x);
+                                    break Ready(Some(Ok(g)));
+                                }
+                                fetchmpx::FetchmpxItem::LocalLog(x) => {
+                                    let g = RunningItem::LocalLog(x);
                                     break Ready(Some(Ok(g)));
                                 }
                             }

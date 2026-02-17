@@ -3,6 +3,7 @@ use crate::ca::conn2::asynchan;
 use crate::ca::conn2::conn::activeca;
 use crate::ca::conn2::conn::activeca::ActiveCa;
 use crate::ca::conn2::conn::ctchan::CtChan;
+use crate::ca::conn2::locallog;
 use crate::ca::conn2::protowrap;
 use crate::ca::progpend::HaveProgressPending;
 use ca_proto::ca::proto::CaItem;
@@ -27,6 +28,7 @@ use taskrun::tokio;
 use tokio::net::TcpStream;
 
 macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
+macro_rules! warn { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
 macro_rules! debug { ($($arg:tt)*) => { if true { log::debug!($($arg)*); } }; }
 macro_rules! trace { ($($arg:tt)*) => { if true { log::trace!($($arg)*); } }; }
 macro_rules! trace2 { ($($arg:tt)*) => { if true { log::trace!($($arg)*); } }; }
@@ -59,6 +61,7 @@ pub enum ItemInner {
     ChannelInfoQuery(dbpg::seriesbychannel::ChannelInfoQuery),
     ScyllaWrite,
     TestValue(crate::ca::connset2::connset::TestValue),
+    LocalLog(locallog::Entry),
 }
 
 #[derive(Debug)]
@@ -225,6 +228,23 @@ impl Connected {
             State::Done => empty,
         }
     }
+
+    pub fn handle_channel_handler_cmd(&mut self, cmd: super::ChannelHandlerCmd) {
+        match &mut self.state {
+            State::Init(..) => {
+                warn!("TODO handle while in Init {cmd:?}");
+            }
+            State::Handshake(..) => {
+                warn!("TODO handle while in Handshake {cmd:?}");
+            }
+            State::ActiveCa(st, ..) => {
+                st.handle_channel_handler_cmd(cmd);
+            }
+            State::Done => {
+                warn!("TODO handle while in Done {cmd:?}");
+            }
+        }
+    }
 }
 
 impl Stream for Connected {
@@ -363,6 +383,10 @@ impl Stream for Connected {
                                         activeca::ItemInner::TestValue(x) => ConnectedItem {
                                             ts_create: item.ts_create,
                                             inner: ItemInner::TestValue(x),
+                                        },
+                                        activeca::ItemInner::LocalLog(x) => ConnectedItem {
+                                            ts_create: item.ts_create,
+                                            inner: ItemInner::LocalLog(x),
                                         },
                                     };
                                     break Ready(Some(Ok(item)));

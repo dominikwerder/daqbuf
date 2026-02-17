@@ -13,6 +13,7 @@ use crate::ca::conn2::caids::SubidOwned;
 use crate::ca::conn2::conn::channelheap::ProtoRxItem;
 use crate::ca::conn2::conn::channelheap::channelhandler::create::Creating;
 use crate::ca::conn2::conn::channelheap::channelhandler::running::Running;
+use crate::ca::conn2::locallog;
 use crate::ca::conn2::timeoutable;
 use crate::ca::futstack::ErasedFuture;
 use crate::ca::progpend::HaveProgressPending;
@@ -112,6 +113,12 @@ enum State {
 }
 
 impl State {
+    fn str(&self) -> &str {
+        self.name_short()
+    }
+}
+
+impl State {
     fn name_short(&self) -> &str {
         match self {
             State::Init(..) => "Init",
@@ -134,6 +141,7 @@ pub enum ItemInner {
     ProtoOutSubid(CaMsg, Instant),
     ScyllaWrite,
     TestValue(crate::ca::connset2::connset::TestValue),
+    LocalLog(locallog::Entry),
 }
 
 #[derive(Debug)]
@@ -211,6 +219,17 @@ impl ChannelHandler {
     pub fn status_info(&self) -> StatusInfo {
         StatusInfo {
             counters: self.counters.clone(),
+        }
+    }
+
+    pub fn handle_channel_handler_cmd(&mut self, cmd: super::super::ChannelHandlerCmd) {
+        match &mut self.state {
+            State::Running(st) => {
+                st.handle_channel_handler_cmd(cmd);
+            }
+            _ => {
+                warn!("TODO handle while in {} {:?}", self.state.str(), cmd);
+            }
         }
     }
 
@@ -399,7 +418,7 @@ impl Stream for ChannelHandler {
         let selfname = "ChannelHandler::poll_next";
         trace4!("{selfname}  {}", self.cid);
         loop {
-            let tsnow = Instant::now();
+            let tsloop = Instant::now();
             let mut hpp = HaveProgressPending::new();
             let self2 = self.as_mut().get_mut();
             if let Some(item) = self2.outbuf.pop_front() {
@@ -465,14 +484,14 @@ impl Stream for ChannelHandler {
                                 Ok(x) => match x {
                                     create::CreatingItem::CaMsgOut(item) => {
                                         let item = ChannelHandlerItem {
-                                            ts_create: tsnow,
+                                            ts_create: tsloop,
                                             inner: ItemInner::ProtoOut(item),
                                         };
                                         break Ready(Some(Ok(item)));
                                     }
                                     create::CreatingItem::ChannelInfoQuery(item) => {
                                         let item = ChannelHandlerItem {
-                                            ts_create: tsnow,
+                                            ts_create: tsloop,
                                             inner: ItemInner::ChannelInfoQuery(item),
                                         };
                                         break Ready(Some(Ok(item)));
@@ -519,27 +538,33 @@ impl Stream for ChannelHandler {
                                     running::RunningItem::CaMsgOut(msg) => {
                                         let item = msg;
                                         break Ready(Some(Ok(ChannelHandlerItem {
-                                            ts_create: Instant::now(),
+                                            ts_create: tsloop,
                                             inner: ItemInner::ProtoOut(item),
                                         })));
                                     }
                                     running::RunningItem::CaMsgOutIoid(msg, sid, tscmd) => {
                                         break Ready(Some(Ok(ChannelHandlerItem {
-                                            ts_create: Instant::now(),
+                                            ts_create: tsloop,
                                             inner: ItemInner::ProtoOutIoid(msg, sid, tscmd),
                                         })));
                                     }
                                     running::RunningItem::CaMsgOutSubid(msg, tscmd) => {
                                         break Ready(Some(Ok(ChannelHandlerItem {
-                                            ts_create: Instant::now(),
+                                            ts_create: tsloop,
                                             inner: ItemInner::ProtoOutSubid(msg, tscmd),
                                         })));
                                     }
                                     running::RunningItem::ScyllaWrite => todo!(),
                                     running::RunningItem::TestValue(x) => {
                                         break Ready(Some(Ok(ChannelHandlerItem {
-                                            ts_create: Instant::now(),
+                                            ts_create: tsloop,
                                             inner: ItemInner::TestValue(x),
+                                        })));
+                                    }
+                                    running::RunningItem::LocalLog(x) => {
+                                        break Ready(Some(Ok(ChannelHandlerItem {
+                                            ts_create: tsloop,
+                                            inner: ItemInner::LocalLog(x),
                                         })));
                                     }
                                 },
@@ -563,10 +588,10 @@ impl Stream for ChannelHandler {
                                         sid: sid.to_u32(),
                                         cid: self2.cid.to_u32(),
                                     }),
-                                    tsnow,
+                                    tsloop,
                                 );
                                 Some(ChannelHandlerItem {
-                                    ts_create: tsnow,
+                                    ts_create: tsloop,
                                     inner: ItemInner::ProtoOut(msg),
                                 })
                             } else {

@@ -513,7 +513,7 @@ fn make_routes_daqingest_private(
 fn make_routes_conn2(ca_ingest_ctrls: Arc<dyn CaIngestCtrls>) -> axum::Router {
     use axum::Router;
     use axum::extract;
-    use axum::routing::get;
+    use axum::routing::{get, post};
     Router::new()
         .route(
             "/connections",
@@ -642,6 +642,32 @@ fn make_routes_conn2(ca_ingest_ctrls: Arc<dyn CaIngestCtrls>) -> axum::Router {
                         }
                     } else {
                         axum::Json(json!({"error": "no name"}))
+                    }
+                }
+            }),
+        )
+        .route(
+            "/channel_handler_cmd_v1",
+            post({
+                let ca_ingest_ctrls = ca_ingest_ctrls.clone();
+                |Query(params): Query<HashMap<String, String>>,
+                 axum::extract::Json(mut cmd): axum::extract::Json<serde_json::Value>| async move {
+                    info!("channel_handler_cmd_v1  {cmd:?}");
+                    if let Some(c2) = ca_ingest_ctrls.conn2_ctrls().await {
+                        if let Some(v2) = cmd.as_object_mut() {
+                            v2.insert("type".into(), serde_json::Value::String("ChannelHandlerCmd".into()));
+                            let s = serde_json::to_string(&cmd).unwrap();
+                            match c2.cmd_dyn_v1(s).await {
+                                Ok(x) => axum::Json(serde_json::to_value(&x).unwrap()),
+                                Err(e) => axum::Json(json!({
+                                    "error": e.to_string(),
+                                })),
+                            }
+                        } else {
+                            axum::Json(json!({"error": "cmd is not a json object"}))
+                        }
+                    } else {
+                        axum::Json(json!({"error": "no ctrl"}))
                     }
                 }
             }),

@@ -6,6 +6,7 @@ use crate::ca::conn2::conn::channelheap;
 use crate::ca::conn2::conn::channelheap::ChannelHeap;
 use crate::ca::conn2::conn::ctchan::CtChan;
 use crate::ca::conn2::conn::ctchan::CtChanRc;
+use crate::ca::conn2::locallog;
 use crate::ca::progpend::HaveProgressPending;
 use crate::conf::ChannelConfig;
 use ca_proto::ca::proto::CaMsg;
@@ -102,6 +103,7 @@ pub enum ItemInner {
     ChannelInfoQuery(dbpg::seriesbychannel::ChannelInfoQuery),
     ScyllaWrite,
     TestValue(crate::ca::connset2::connset::TestValue),
+    LocalLog(locallog::Entry),
 }
 
 #[derive(Debug)]
@@ -181,6 +183,17 @@ impl ActiveCa {
 
     pub fn mett_take(&mut self) -> CaConnConnectedMetrics {
         self.chanheap.mett_take()
+    }
+
+    pub fn handle_channel_handler_cmd(&mut self, cmd: super::ChannelHandlerCmd) {
+        match &mut self.state {
+            State::Running => {
+                self.chanheap.handle_channel_handler_cmd(cmd);
+            }
+            State::Done => {
+                warn!("TODO handle while in Done {cmd:?}");
+            }
+        }
     }
 
     fn handle_command(&mut self, cmd: CaCommand, cx: &mut Context) -> CommandFut {
@@ -408,6 +421,13 @@ impl ActiveCa {
                                             let item = ActiveCaItem {
                                                 ts_create: item.ts_create,
                                                 inner: ItemInner::TestValue(x),
+                                            };
+                                            break Ready(Some(Ok(item)));
+                                        }
+                                        channelheap::ItemInner::LocalLog(x) => {
+                                            let item = ActiveCaItem {
+                                                ts_create: item.ts_create,
+                                                inner: ItemInner::LocalLog(x),
                                             };
                                             break Ready(Some(Ok(item)));
                                         }

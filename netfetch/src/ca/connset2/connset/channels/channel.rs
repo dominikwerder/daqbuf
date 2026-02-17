@@ -187,7 +187,7 @@ pub enum StateInfo {
 #[derive(Debug, Serialize)]
 pub struct ChannelInfo {
     state: StateInfo,
-    local_log: Vec<(u32, chrono::DateTime<chrono::Utc>, String)>,
+    local_log: Vec<locallog::Entry>,
 }
 
 #[derive(Debug)]

@@ -46,10 +46,7 @@ impl LocalLog {
     }
 
     pub fn push(&mut self, s: String) {
-        if self.buf.len() >= 120 {
-            self.buf.truncate(99);
-        }
-        let ts = Instant::now();
+        self.check_truncate();
         let i = self.cnt;
         self.cnt += 1;
         let stnow = Utc::now();
@@ -57,16 +54,7 @@ impl LocalLog {
     }
 
     pub fn to_vec_string(&self) -> Vec<Entry> {
-        let tsnow = Instant::now();
-        let stnow = Utc::now();
-        self.buf
-            .iter()
-            .map(|(ts, (i, st, s))| {
-                // let dt = tsnow.saturating_duration_since(*ts);
-                // let _st = stnow - dt;
-                (*i, *st, s.clone())
-            })
-            .collect()
+        self.buf.iter().map(|(ts, (i, st, s))| (*i, *st, s.clone())).collect()
     }
 
     pub fn pop(&mut self) -> Option<Entry> {
@@ -78,12 +66,13 @@ impl LocalLog {
     }
 
     pub fn push_entry(&mut self, e: Entry) {
+        self.check_truncate();
         self.buf.push_back(((), e));
     }
 
     fn check_truncate(&mut self) {
         if self.buf.len() >= 120 {
-            self.buf.truncate(99);
+            self.buf.drain(..20).for_each(|_| ());
         }
     }
 }

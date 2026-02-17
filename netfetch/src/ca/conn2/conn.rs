@@ -10,11 +10,14 @@ use super::connevent::EndOfStreamReason;
 use crate::ca::conn::CaConnOpts;
 use crate::ca::conn2::asynchan;
 use crate::ca::conn2::asynchan::SendPoll;
+use crate::ca::conn2::locallog;
 use crate::ca::conn2::statetrans::conn::IocConnStateBase;
 use crate::ca::connset2::connset::TestValue;
 use crate::ca::futstack::ErasedFuture;
 use crate::ca::progpend::HaveProgressPending;
 use crate::conf::ChannelConfig;
+use crate::futwrap::FutDbg;
+use crate::futwrap::FutDbgBox;
 use crate::misc::todoval;
 use connected::Connected;
 use dbpg::seriesbychannel::ChannelInfoQuery;
@@ -27,6 +30,7 @@ use hashbrown::HashMap;
 use scywr::insertqueues::InsertDeques;
 use scywr::insertqueues::InsertQueuesTx;
 use scywr::iteminsertqueue::QueryItem;
+use serde::Deserialize;
 use serde::Serialize;
 use stats::rand_xoshiro::Xoshiro128PlusPlus;
 use std::collections::VecDeque;
@@ -216,6 +220,13 @@ impl Future for Connecting {
 }
 
 #[derive(Debug)]
+pub struct ChannelHandlerCmd {
+    name: String,
+    cmd: serde_json::Value,
+    tx: asynchan::Sender<serde_json::Value>,
+}
+
+#[derive(Debug)]
 enum CaConnCmdKind {
     ChannelAdd(ChannelConfig, asynchan::Sender<u32>),
     ChannelRemove(ChannelConfig, asynchan::Sender<u32>),
@@ -223,6 +234,7 @@ enum CaConnCmdKind {
     ChannelsForAddrInfoV1(asynchan::Sender<crate::metrics::ChannelsForAddrInfoV1>),
     ChannelsForAddrInfoV2(String, asynchan::Sender<crate::metrics::ChannelsForAddrInfoV2>),
     ChannelsByRegexV1(String, String, asynchan::Sender<Vec<serde_json::Value>>),
+    ChannelHandlerCmd(ChannelHandlerCmd),
 }
 
 #[derive(Debug)]
@@ -237,7 +249,7 @@ pub struct CaConnComm {
 
 impl CaConnComm {
     pub async fn channel_add(&mut self, conf: ChannelConfig) -> Result<(), Error> {
-        let (done_tx, mut done_rx) = asynchan::bounded(1, "CaConnComm-channel_add");
+        let (done_tx, mut done_rx) = asynchan::bounded(1, "CaConnComm-ChannelAdd");
         let cmd = CaConnCmd {
             kind: CaConnCmdKind::ChannelAdd(conf, done_tx),
         };
@@ -247,7 +259,7 @@ impl CaConnComm {
     }
 
     pub async fn channel_remove(&mut self, conf: ChannelConfig) -> Result<(), Error> {
-        let (done_tx, mut done_rx) = asynchan::bounded(1, "CaConnComm-channel_remove");
+        let (done_tx, mut done_rx) = asynchan::bounded(1, "CaConnComm-ChannelRemove");
         let cmd = CaConnCmd {
             kind: CaConnCmdKind::ChannelRemove(conf, done_tx),
         };
@@ -259,7 +271,7 @@ impl CaConnComm {
     pub async fn trigger_disconnect_on_idle(&mut self) -> Result<(), Error> {
         // The confirmation will get sent on command receive.
         // User then waits until the future is done.
-        let (done_tx, mut done_rx) = asynchan::bounded(1, "CaConnComm-trigger_disconnect_on_idle");
+        let (done_tx, mut done_rx) = asynchan::bounded(1, "CaConnComm-DisconnectOnIdle");
         let cmd = CaConnCmd {
             kind: CaConnCmdKind::DisconnectOnIdle(done_tx),
         };
@@ -269,7 +281,7 @@ impl CaConnComm {
     }
 
     pub async fn channels_info_v1(&mut self) -> Result<crate::metrics::ChannelsForAddrInfoV1, Error> {
-        let (tx, mut rx) = asynchan::bounded(1, "CaConnComm-channels_info_v1");
+        let (tx, mut rx) = asynchan::bounded(1, "CaConnComm-ChannelsForAddrInfoV1");
         let cmd = CaConnCmd {
             kind: CaConnCmdKind::ChannelsForAddrInfoV1(tx),
         };
@@ -279,7 +291,7 @@ impl CaConnComm {
     }
 
     pub async fn channels_info_v2(&mut self, name: String) -> Result<crate::metrics::ChannelsForAddrInfoV2, Error> {
-        let (tx, mut rx) = asynchan::bounded(1, "CaConnComm-channels_info_v2");
+        let (tx, mut rx) = asynchan::bounded(1, "CaConnComm-ChannelsForAddrInfoV2");
         let cmd = CaConnCmd {
             kind: CaConnCmdKind::ChannelsForAddrInfoV2(name, tx),
         };
@@ -296,6 +308,38 @@ impl CaConnComm {
         self.cmd_tx.send(cmd).await?;
         let ret = rx.recv().await?;
         Ok(ret)
+    }
+
+    pub async fn channel_handler_cmd(&mut self, cmd: serde_json::Value) -> serde_json::Value {
+        let (tx, mut rx) = asynchan::bounded(1, "CaConnComm-ChannelHandlerCmd");
+        if let Some(name) = cmd.get("name").and_then(|x| x.as_str()) {
+            let cmd = ChannelHandlerCmd {
+                name: name.into(),
+                cmd,
+                tx,
+            };
+            let cmd = CaConnCmd {
+                kind: CaConnCmdKind::ChannelHandlerCmd(cmd),
+            };
+            if self.cmd_tx.send(cmd).await.is_err() {
+                serde_json::json!({
+                    "error": "can not send command",
+                })
+            } else {
+                match rx.recv().await {
+                    Ok(x) => x,
+                    Err(_) => {
+                        serde_json::json!({
+                            "error": "can not receive result",
+                        })
+                    }
+                }
+            }
+        } else {
+            serde_json::json!({
+                "error": "no channel name in command",
+            })
+        }
     }
 }
 
@@ -318,9 +362,8 @@ pub enum CaConnItem {
     StatusInfo(StatusInfo),
     ChannelInfoQuery(ChannelInfoQuery),
     TestValue(TestValue),
+    LocalLog(locallog::Entry),
 }
-
-const EF4: usize = 0x500;
 
 #[derive(Debug)]
 pub struct CaConn {
@@ -336,7 +379,7 @@ pub struct CaConn {
     cmd_tx: asynchan::Sender<CaConnCmd>,
     cmd_rx: asynchan::Receiver<CaConnCmd>,
     ca_cmd_tx: asynchan::Sender<activeca::CaCommand>,
-    ca_cmd_tx_fut: Option<ErasedFuture<Result<(), Error>, EF4>>,
+    ca_cmd_tx_fut: Option<FutDbg<Result<(), Error>>>,
     out_qu: VecDeque<Result<CaConnItem, Error>>,
 }
 
@@ -555,7 +598,7 @@ impl Stream for CaConn {
                                         // The is-done-sender is already passed to inner handler.
                                         Ok(())
                                     };
-                                    self2.ca_cmd_tx_fut = Some(ErasedFuture::new(fut));
+                                    self2.ca_cmd_tx_fut = Some(fut.box2());
                                 }
                                 CaConnCmdKind::ChannelRemove(conf, done_tx) => {
                                     trace!("{selfname}:Received:ChannelRemove  {conf:?}");
@@ -566,7 +609,7 @@ impl Stream for CaConn {
                                         // The is-done-sender is already passed to inner handler.
                                         Ok(())
                                     };
-                                    self2.ca_cmd_tx_fut = Some(ErasedFuture::new(fut));
+                                    self2.ca_cmd_tx_fut = Some(fut.box2());
                                 }
                                 CaConnCmdKind::DisconnectOnIdle(done_tx) => {
                                     trace!("{selfname}:Received:DisconnectOnIdle");
@@ -577,7 +620,20 @@ impl Stream for CaConn {
                                         // The is-done-sender is already passed to inner handler.
                                         Ok(())
                                     };
-                                    self2.ca_cmd_tx_fut = Some(ErasedFuture::new(fut));
+                                    self2.ca_cmd_tx_fut = Some(fut.box2());
+                                }
+                                CaConnCmdKind::ChannelHandlerCmd(cmd) => {
+                                    trace!("{selfname}:Received:ChannelHandlerCmd  {cmd:?}");
+                                    match &mut self2.state {
+                                        State::Connecting(st1) => {
+                                            warn!("TODO handle cmd while Connecting {cmd:?}");
+                                        }
+                                        State::Connected(st1) => {
+                                            st1.handle_channel_handler_cmd(cmd);
+                                            // self2.ca_cmd_tx_fut = Some(fut.box2());
+                                        }
+                                        State::Done => {}
+                                    }
                                 }
                                 CaConnCmdKind::ChannelsForAddrInfoV1(mut tx) => {
                                     trace!("{selfname}:Received:ChannelsForAddrInfoV1");
@@ -586,7 +642,7 @@ impl Stream for CaConn {
                                         tx.send(ret).await?;
                                         Ok(())
                                     };
-                                    self2.ca_cmd_tx_fut = Some(ErasedFuture::new(fut));
+                                    self2.ca_cmd_tx_fut = Some(fut.box2());
                                 }
                                 CaConnCmdKind::ChannelsForAddrInfoV2(name, mut tx) => {
                                     trace!("{selfname}:Received:ChannelsForAddrInfoV2");
@@ -595,7 +651,7 @@ impl Stream for CaConn {
                                         tx.send(ret).await?;
                                         Ok(())
                                     };
-                                    self2.ca_cmd_tx_fut = Some(ErasedFuture::new(fut));
+                                    self2.ca_cmd_tx_fut = Some(fut.box2());
                                 }
                                 CaConnCmdKind::ChannelsByRegexV1(kind, reg, mut tx) => {
                                     trace!("{selfname}:Received:ChannelsByRegexV1");
@@ -604,7 +660,7 @@ impl Stream for CaConn {
                                         tx.send(ret).await?;
                                         Ok(())
                                     };
-                                    self2.ca_cmd_tx_fut = Some(ErasedFuture::new(fut));
+                                    self2.ca_cmd_tx_fut = Some(fut.box2());
                                 }
                             }
                         }
@@ -650,6 +706,10 @@ impl Stream for CaConn {
                                         connected::ItemInner::ScyllaWrite => todo!("TODO handle ScyllaWrite"),
                                         connected::ItemInner::TestValue(x) => {
                                             let item = CaConnItem::TestValue(x);
+                                            break Ready(Some(Ok(item)));
+                                        }
+                                        connected::ItemInner::LocalLog(x) => {
+                                            let item = CaConnItem::LocalLog(x);
                                             break Ready(Some(Ok(item)));
                                         }
                                     }
