@@ -858,22 +858,18 @@ impl CaMsg {
         }
     }
 
-    fn place_into(&self, buf: &mut [u8]) {
-        match &self.ty {
-            CaMsgTy::ChannelClose(..) => {
-                debug!(
-                    "\n\nNOTE ------------------------------------------\n{}\n\n",
-                    "ChannelClose"
-                );
+    pub fn overwrite_subid(&mut self, subid: u32) {
+        match &mut self.ty {
+            CaMsgTy::EventAdd(v) => {
+                v.subid = subid;
             }
-            CaMsgTy::ChannelCloseRes(..) => {
-                debug!(
-                    "\n\nNOTE ------------------------------------------\n{}\n\n",
-                    "ChannelCloseRes"
-                );
+            _ => {
+                warn!("overwrite_subid for unsupported type");
             }
-            _ => {}
         }
+    }
+
+    fn place_into(&self, buf: &mut [u8]) {
         trace_in_out!("CaMsg place_into {}", self.ty.cmd_title());
         if self.ty.payload_len() <= 0x3ff0 && self.ty.data_count() <= 0xffff {
             let pls = self.ty.payload_len() as u16;
