@@ -194,11 +194,14 @@ fn tracing_init_inner(mode: TracingMode) -> Result<(), Error> {
         // let tracing_trace_always = collect_env_list("TRACING_TRACE_ALWAYS");
         let filter_3 = tracing_subscriber::filter::DynFilterFn::new(move |meta, ctx| {
             let mut tmp1 = String::with_capacity(256);
+            let lgspan_trace = "log_span_trace";
+            let lgspan_debug = "log_span_debug";
             fn check_target(
                 meta: &tracing::Metadata,
                 ctx: &Context<'_, tracing_subscriber::Registry>,
                 list: &Vec<String>,
                 tmp1: &mut String,
+                lgspan: &str,
             ) -> bool {
                 let mut target_match = false;
                 for e in list {
@@ -206,8 +209,8 @@ fn tracing_init_inner(mode: TracingMode) -> Result<(), Error> {
                     tmp1.push_str(e);
                     tmp1.push_str("::");
                     let target = meta.target();
-                    if target.contains("conn::handshake") {
-                        // eprintln!("LOOKING AT  tmp1 [{tmp1}]  target [{target}]");
+                    if false && target.contains("fetchmpx") {
+                        eprintln!("LOOKING AT  {lgspan}  tmp1 [{tmp1}]  target [{target}]");
                     }
                     if target == &tmp1[..tmp1.len() - 2] || target.starts_with(tmp1.as_str()) {
                         target_match = true;
@@ -218,7 +221,7 @@ fn tracing_init_inner(mode: TracingMode) -> Result<(), Error> {
                     let mut sr = ctx.lookup_current();
                     let mut allow = false;
                     while let Some(g) = sr {
-                        if g.name() == "log_span_trace" {
+                        if g.name() == lgspan {
                             allow = true;
                             break;
                         } else {
@@ -232,9 +235,10 @@ fn tracing_init_inner(mode: TracingMode) -> Result<(), Error> {
                 }
             }
             if *meta.level() >= tracing::Level::TRACE {
-                check_target(meta, ctx, &tracing_trace, &mut tmp1)
+                check_target(meta, ctx, &tracing_trace, &mut tmp1, lgspan_trace)
             } else if *meta.level() >= tracing::Level::DEBUG {
-                check_target(meta, ctx, &tracing_debug, &mut tmp1) || check_target(meta, ctx, &tracing_trace, &mut tmp1)
+                check_target(meta, ctx, &tracing_trace, &mut tmp1, lgspan_trace)
+                    || check_target(meta, ctx, &tracing_debug, &mut tmp1, lgspan_debug)
             } else {
                 true
             }
