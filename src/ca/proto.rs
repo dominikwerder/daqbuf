@@ -140,6 +140,17 @@ pub struct EventCancel {
     pub subid: u32,
 }
 
+impl EventCancel {
+    pub fn new(data_type: u16, data_count: u32, sid: u32, subid: u32) -> Self {
+        Self {
+            data_type,
+            data_count,
+            sid,
+            subid,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct EventCancelRes {
     pub data_type: u16,
@@ -861,6 +872,9 @@ impl CaMsg {
     pub fn overwrite_subid(&mut self, subid: u32) {
         match &mut self.ty {
             CaMsgTy::EventAdd(v) => {
+                v.subid = subid;
+            }
+            CaMsgTy::EventCancel(v) => {
                 v.subid = subid;
             }
             _ => {
