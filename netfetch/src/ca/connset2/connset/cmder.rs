@@ -123,7 +123,7 @@ impl ConnSetCmder {
         Ok(ret)
     }
 
-    pub async fn cmd_dyn_v1(&self, cmd: String) -> Result<String, Error> {
+    pub async fn cmd_dyn_v1(&self, cmd: String) -> Result<serde_json::Value, Error> {
         let mut dtx = self.tx.clone();
         let (tx, mut rx) = asynchan::bounded(2, "CmdDynV1");
         let cmd = ConnSetCmd {
@@ -135,15 +135,7 @@ impl ConnSetCmder {
     }
 
     pub async fn channel_add_v1(&self, name: String) -> Result<(), Error> {
-        let mut dtx = self.tx.clone();
-        let (tx, mut rx) = asynchan::bounded(2, "ChannelAdd");
-        let cmd2 = crate::ca::connset2::connset::ChannelAdd::new(ChannelConfig::polled_2_20_120(name, "web-api"), tx);
-        let cmd = ConnSetCmd {
-            kind: ConnSetCmdKind::ChannelAdd(cmd2),
-        };
-        let _ = dtx.send(cmd).await?;
-        let ret = rx.recv().await??;
-        Ok(ret)
+        self.channel_add(ChannelConfig::polled_2_20_120(name, "web-api")).await
     }
 
     pub async fn channel_remove_v1(&self, name: String) -> Result<(), Error> {

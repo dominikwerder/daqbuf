@@ -4,16 +4,10 @@ pub mod connected;
 pub mod ctchan;
 pub mod handshake;
 
-use super::conncmd::ConnCommand;
-use super::connevent::CaConnEvent;
-use super::connevent::EndOfStreamReason;
-use crate::ca::conn::CaConnOpts;
 use crate::ca::conn2::asynchan;
 use crate::ca::conn2::asynchan::SendPoll;
 use crate::ca::conn2::locallog;
-use crate::ca::conn2::statetrans::conn::IocConnStateBase;
 use crate::ca::connset2::connset::TestValue;
-use crate::ca::futstack::ErasedFuture;
 use crate::ca::progpend::HaveProgressPending;
 use crate::conf::ChannelConfig;
 use crate::futwrap::FutDbg;
@@ -50,9 +44,9 @@ macro_rules! warn { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
 macro_rules! info { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
 macro_rules! debug { ($($arg:tt)*) => { if true { log::debug!($($arg)*); } }; }
 macro_rules! conn_err { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
-macro_rules! trace { ($($arg:tt)*) => { if true { log::trace!($($arg)*); } }; }
-macro_rules! trace2 { ($($arg:tt)*) => { if true { log::trace!($($arg)*); } }; }
-macro_rules! trace3 { ($($arg:tt)*) => { if true { log::trace!($($arg)*); } }; }
+macro_rules! trace { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
+macro_rules! trace2 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
+macro_rules! trace3 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
 macro_rules! trace4 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
 macro_rules! trace_pending { ($($arg:tt)*) => { if false { trace!("{}  Pending", format_args!($($arg)*)); } }; }
 
@@ -696,24 +690,21 @@ impl Stream for CaConn {
                         Ready(Some(x)) => {
                             hpp.mark_progress();
                             match x {
-                                Ok(x) => {
-                                    debug!("{selfname}:Connected:Ready  {x:?}");
-                                    match x.inner {
-                                        connected::ItemInner::ChannelInfoQuery(item) => {
-                                            let item = CaConnItem::ChannelInfoQuery(item);
-                                            break Ready(Some(Ok(item)));
-                                        }
-                                        connected::ItemInner::ScyllaWrite => todo!("TODO handle ScyllaWrite"),
-                                        connected::ItemInner::TestValue(x) => {
-                                            let item = CaConnItem::TestValue(x);
-                                            break Ready(Some(Ok(item)));
-                                        }
-                                        connected::ItemInner::LocalLog(x) => {
-                                            let item = CaConnItem::LocalLog(x);
-                                            break Ready(Some(Ok(item)));
-                                        }
+                                Ok(x) => match x.inner {
+                                    connected::ItemInner::ChannelInfoQuery(item) => {
+                                        let item = CaConnItem::ChannelInfoQuery(item);
+                                        break Ready(Some(Ok(item)));
                                     }
-                                }
+                                    connected::ItemInner::ScyllaWrite => todo!("TODO handle ScyllaWrite"),
+                                    connected::ItemInner::TestValue(x) => {
+                                        let item = CaConnItem::TestValue(x);
+                                        break Ready(Some(Ok(item)));
+                                    }
+                                    connected::ItemInner::LocalLog(x) => {
+                                        let item = CaConnItem::LocalLog(x);
+                                        break Ready(Some(Ok(item)));
+                                    }
+                                },
                                 Err(e) => {
                                     trace!("{selfname}:Connected:Err:{e}");
                                     error!("{selfname}:Connected:Err:  TODO handle error and shutdown");

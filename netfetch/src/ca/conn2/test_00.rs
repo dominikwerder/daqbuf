@@ -12,6 +12,7 @@ use std::sync::RwLock;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
+use std::time::Instant;
 use taskrun::tokio;
 
 macro_rules! info { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
@@ -100,7 +101,7 @@ impl netfetch::metrics::Conn2Ctrls for Conn2Ctrls {
     fn cmd_dyn_v1(
         &self,
         cmd: String,
-    ) -> Pin<Box<dyn Future<Output = Result<String, Box<dyn std::error::Error>>> + Send>> {
+    ) -> Pin<Box<dyn Future<Output = Result<serde_json::Value, Box<dyn std::error::Error>>> + Send>> {
         let cmder = self.cmder.clone();
         let fut = async move {
             let ret = cmder.cmd_dyn_v1(cmd).await?;
@@ -336,12 +337,22 @@ pub async fn test_01() {
                 }
             }
         };
+        let print_ivl = Duration::from_millis(2000);
+        let mut print_next = Instant::now() + print_ivl;
+        let mut i1 = 0;
         tokio::spawn(fut);
         while let Some(e) = connset.next().await {
+            let tsnow = Instant::now();
+            if tsnow >= print_next {
+                print_next = tsnow + print_ivl;
+                info!("i1 {i1}");
+                i1 = 0;
+            }
             match e {
                 Ok(x) => match x {
                     crate::ca::connset2::connset::ConnSetItem::TestValue(x) => {
-                        info!("{x}");
+                        // info!("{x}");
+                        i1 += 1;
                     }
                 },
                 _ => {

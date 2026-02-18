@@ -14,7 +14,6 @@ use crate::ca::conn2::caids::Ioid;
 use crate::ca::conn2::caids::Sid;
 use crate::ca::conn2::caids::Subid;
 use crate::ca::conn2::conn::channelheap::channelhandler::ChannelHandler;
-use crate::ca::conn2::conn::ctchan::CtChan;
 use crate::ca::conn2::locallog;
 use crate::ca::conn2::timeoutable::TimeoutError;
 use crate::ca::conn2::timeoutable::Timeoutable;
@@ -23,9 +22,9 @@ use crate::conf::ChannelConfig;
 use crate::futwrap::FutDbg;
 use crate::futwrap::FutDbgBox;
 use asynchan::SendPollError;
+use ca_proto::ca::proto;
 use ca_proto::ca::proto::CaMsg;
 use futures::FutureExt;
-use futures::Stream;
 use futures::StreamExt;
 use futures::future::ready;
 use hashbrown::HashMap;
@@ -43,9 +42,9 @@ macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
 macro_rules! warn { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
 macro_rules! info { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
 macro_rules! debug { ($($arg:tt)*) => { if true { log::debug!($($arg)*); } }; }
-macro_rules! trace { ($($arg:tt)*) => { if true { log::trace!($($arg)*); } }; }
-macro_rules! trace2 { ($($arg:tt)*) => { if true { log::trace!($($arg)*); } }; }
-macro_rules! trace3 { ($($arg:tt)*) => { if true { log::trace!($($arg)*); } }; }
+macro_rules! trace { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
+macro_rules! trace2 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
+macro_rules! trace3 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
 macro_rules! trace4 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
 macro_rules! trace_pending { ($($arg:tt)*) => { if false { trace!("{}  Pending", format_args!($($arg)*)); } }; }
 
@@ -421,6 +420,7 @@ impl ChannelHeap {
                 for ch in self.by_cid.iter_mut().filter(|x| x.1.name == cmd.name) {
                     match &mut ch.1.ch_handler {
                         ChHandler::ChHandlerActive(st2) => {
+                            self.wakeup_cids.insert(ch.0.clone(), ());
                             st2.handler.handle_channel_handler_cmd(cmd);
                         }
                         ChHandler::Done => {
@@ -746,7 +746,15 @@ impl ChannelHeap {
                 } else {
                     hpp.mark_progress();
                     idp += 1;
-                    warn!("{selfname}  TODO no idea how to handle this  {item:?}");
+                    match &item.ty {
+                        proto::CaMsgTy::EventAddRes(..) => {
+                            // TODO keep removed subids separately for a while to sort out monitoring
+                            // events for stale subscriptions.
+                        }
+                        _ => {
+                            warn!("{selfname}  TODO no idea how to handle this  {item:?}");
+                        }
+                    }
                 }
             } else {
                 if self2.inp_done {
@@ -828,7 +836,8 @@ impl ChannelHeap {
                                         }
                                     },
                                     Err(e) => {
-                                        todo!("TODO handle Self::poll_handler  Err  {e}");
+                                        error!("TODO handle Self::poll_handler  error  {e}");
+                                        break Ready(Some(Err(e)));
                                     }
                                 }
                             }

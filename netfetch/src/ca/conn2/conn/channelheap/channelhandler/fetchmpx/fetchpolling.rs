@@ -23,9 +23,9 @@ macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
 macro_rules! warn { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
 macro_rules! info { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
 macro_rules! debug { ($($arg:tt)*) => { if true { log::debug!($($arg)*); } }; }
-macro_rules! trace { ($($arg:tt)*) => { if true { log::trace!($($arg)*); } }; }
-macro_rules! trace2 { ($($arg:tt)*) => { if true { log::trace!($($arg)*); } }; }
-macro_rules! trace3 { ($($arg:tt)*) => { if true { log::trace!($($arg)*); } }; }
+macro_rules! trace { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
+macro_rules! trace2 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
+macro_rules! trace3 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
 macro_rules! trace4 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
 macro_rules! trace_pending { ($($arg:tt)*) => { if false { trace!("{}  Pending", format_args!($($arg)*)); } }; }
 
@@ -127,17 +127,17 @@ impl FetchPolling {
         self.poll_next_ts_exact = self.poll_next_ts_exact + self.interval;
         if self.poll_next_ts_exact < tsnow {
             let r = self.rng_next() & 0xff;
-            let a = 300;
-            let b = a - 128 + r;
+            let a = 1024;
+            let b = a - (a / 8) + r;
             // TODO avoid div
-            let dd = (a * self.interval) / b;
+            let dd = (b * self.interval) / a;
             self.poll_next_ts_exact = tsnow + dd;
         }
         let r = self.rng_next() & 0xff;
-        let a = 1000;
+        let a = 1024;
         let b = a - 128 + r;
         // TODO avoid div
-        let dd = (a * self.interval) / b;
+        let dd = (b * self.interval) / a;
         info!("jittered poll interval: {:.2} sec", (self.interval + dd).as_secs_f32());
         self.poll_next_ts_jitter = self.poll_next_ts_exact + dd;
         self.poll_next_ts_jitter
@@ -207,7 +207,7 @@ impl FetchPolling {
     }
 
     pub fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Result<Item, Error>>> {
-        let selfname = "FetchPolling::poll_next_unpin";
+        let selfname = "poll_next";
         trace3!("{selfname}");
         use Poll::*;
         // TODO allow inner loop

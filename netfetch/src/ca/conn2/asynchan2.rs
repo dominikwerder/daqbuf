@@ -64,6 +64,7 @@ pub enum TrySendError<T> {
     Closed(T),
 }
 
+#[must_use]
 pub struct Sending<'a, T> {
     fut: ErasedFuture<Result<(), mpsc::error::SendError<T>>, 0x300>,
     _p1: std::marker::PhantomData<&'a ()>,

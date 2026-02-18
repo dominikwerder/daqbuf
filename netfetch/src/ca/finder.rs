@@ -49,14 +49,18 @@ impl From<async_channel::SendError<IocAddrQuery>> for Error {
 }
 
 fn transform_pgres(rows: Vec<PgRow>, txs: Vec<OptResTx>) -> VecDeque<FindIocRes> {
+    let selfname = "transform_pgres";
     let mut ret = VecDeque::new();
     for (row, tx) in rows.into_iter().zip(txs) {
         let n: Result<i32, _> = row.try_get(0);
         let ch: Result<String, _> = row.try_get(1);
         match (n, ch) {
             (Ok(_n), Ok(ch)) => {
-                if let Some(addr) = row.get::<_, Option<String>>(3) {
-                    let addr = addr.parse().map_or(None, |x| Some(x));
+                if let Some(addr_str) = row.get::<_, Option<String>>(3) {
+                    let addr = addr_str.parse().map_or(None, |x| Some(x));
+                    if addr.is_none() {
+                        debug!("{selfname}  {ch}  could not parse {addr_str}");
+                    }
                     let item = FindIocRes {
                         channel: ch,
                         response_addr: None,
@@ -66,6 +70,7 @@ fn transform_pgres(rows: Vec<PgRow>, txs: Vec<OptResTx>) -> VecDeque<FindIocRes>
                     };
                     ret.push_back(item);
                 } else {
+                    debug!("{selfname}  {ch}  no addr in database result");
                     let item = FindIocRes {
                         channel: ch,
                         response_addr: None,
@@ -219,7 +224,8 @@ async fn finder_worker_single(
     backend: String,
     db: Database,
 ) -> Result<(), Error> {
-    debug!("finder_worker_single  make_pg_client");
+    let selfname = "finder_worker_single";
+    debug!("{selfname}  make_pg_client");
     let (pg, jh) = make_pg_client(&db).await?;
     let sql = concat!(
         "with q1 as (select * from unnest($2::int[], $3::text[]) as unn (n, ch))",
@@ -238,7 +244,7 @@ async fn finder_worker_single(
                 let ts1 = Instant::now();
                 let (batch, pass_through) = batch.into_iter().fold((Vec::new(), Vec::new()), |(mut a, mut b), x| {
                     if series::dbg::dbg_chn(x.name()) {
-                        trace!("searching database for  {:?}", x.name());
+                        trace!("searching database for  {:?}  use_cache {}", x.name(), x.use_cache());
                     }
                     if x.use_cache() {
                         a.push(x);

@@ -38,14 +38,14 @@ use taskrun::tokio;
 macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
 macro_rules! warn { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
 macro_rules! debug { ($($arg:tt)*) => { if true { log::debug!($($arg)*); } }; }
-macro_rules! trace { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
-macro_rules! trace2 { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
-macro_rules! trace3 { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
+macro_rules! trace { ($($arg:tt)*) => { if false { log::info!($($arg)*); } }; }
+macro_rules! trace2 { ($($arg:tt)*) => { if false { log::info!($($arg)*); } }; }
+macro_rules! trace3 { ($($arg:tt)*) => { if false { log::info!($($arg)*); } }; }
 macro_rules! trace4 { ($($arg:tt)*) => { if false { log::info!($($arg)*); } }; }
 macro_rules! trace_pending { ($($arg:tt)*) => { if false { log::info!("{}  Pending", format_args!($($arg)*)); } }; }
 
 autoerr::create_error_v1!(
-    name(Error, "ConnSet:Channel"),
+    name(Error, "connset:Channel"),
     enum variants {
         Finder(#[from] crate::ca::finder::Error),
         AddrNotFound(String),
@@ -57,9 +57,11 @@ autoerr::create_error_v1!(
 async fn addr_search(conf: ChannelConfig, mut fh: FinderHandleV02) -> Result<SocketAddrV4, Error> {
     static I1: AtomicUsize = AtomicUsize::new(0);
     let selfname = "addr_search";
-    let i1 = I1.fetch_add(1, Ordering::AcqRel);
-    if i1 == 0 {
-        tokio::time::sleep(Duration::from_millis(4000)).await;
+    if false {
+        let i1 = I1.fetch_add(1, Ordering::AcqRel);
+        if i1 == 0 {
+            tokio::time::sleep(Duration::from_millis(4000)).await;
+        }
     }
     let res = fh.find_uncached(conf.name().into()).await?;
     trace!("{selfname}  res {res:?}");
@@ -318,7 +320,7 @@ impl Channel {
         debug!("{selfname} called");
         match cmd {
             Cmd::Remove(cmd) => {
-                debug!("{lf}{selfname}  Remove  {}{lf}", self.name(), lf = "\n\n");
+                trace!("{lf}{selfname}  Remove  {}{lf}", self.name(), lf = "\n\n");
                 self.transition_to_removing();
                 let mut tx = cmd.done_tx;
                 if tx.try_send(Ok(())).is_err() {

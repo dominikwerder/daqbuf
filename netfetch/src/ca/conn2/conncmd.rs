@@ -4,19 +4,19 @@ use series::ChannelStatusSeriesId;
 use std::sync::atomic;
 
 #[derive(Debug)]
-pub enum ConnCommandKind {
+enum ConnCommandKind {
     ChannelAdd(ChannelConfig, ChannelStatusSeriesId),
     ChannelClose(String),
     Shutdown,
 }
 
 #[derive(Debug)]
-pub struct ConnCommand {
+struct ConnCommandDis {
     id: usize,
     kind: ConnCommandKind,
 }
 
-impl ConnCommand {
+impl ConnCommandDis {
     pub fn channel_add(conf: ChannelConfig, cssid: ChannelStatusSeriesId) -> Self {
         Self {
             id: Self::make_id(),

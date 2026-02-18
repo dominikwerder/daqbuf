@@ -18,6 +18,7 @@ use crate::metrics::types::MetricsPrometheusShort;
 use async_channel::Receiver;
 use async_channel::Sender;
 use async_channel::WeakSender;
+use axum::Json;
 use axum::extract::Query;
 use axum::http;
 use axum::http::HeaderMap;
@@ -167,7 +168,7 @@ pub trait Conn2Ctrls: Send + Sync {
     fn cmd_dyn_v1(
         &self,
         cmd: String,
-    ) -> Pin<Box<dyn Future<Output = Result<String, Box<dyn std::error::Error>>> + Send>>;
+    ) -> Pin<Box<dyn Future<Output = Result<serde_json::Value, Box<dyn std::error::Error>>> + Send>>;
 
     fn channel_add_v1(
         &self,
@@ -573,7 +574,6 @@ fn make_routes_conn2(ca_ingest_ctrls: Arc<dyn CaIngestCtrls>) -> axum::Router {
                         });
                         let cmd = serde_json::to_string(&cmd).unwrap();
                         let ret = c2.cmd_dyn_v1(cmd).await.unwrap();
-                        let ret: serde_json::Value = serde_json::from_str(&ret).unwrap();
                         axum::Json(ret)
                     } else {
                         axum::Json(json!({"error": "no ctrl"}))
@@ -598,7 +598,6 @@ fn make_routes_conn2(ca_ingest_ctrls: Arc<dyn CaIngestCtrls>) -> axum::Router {
                         });
                         let cmd = serde_json::to_string(&cmd).unwrap();
                         let ret = c2.cmd_dyn_v1(cmd).await.unwrap();
-                        let ret: serde_json::Value = serde_json::from_str(&ret).unwrap();
                         axum::Json(ret)
                     } else {
                         axum::Json(json!({"error": "no ctrl"}))
@@ -622,6 +621,30 @@ fn make_routes_conn2(ca_ingest_ctrls: Arc<dyn CaIngestCtrls>) -> axum::Router {
                         }
                     } else {
                         axum::Json(json!({"error": "no name"}))
+                    }
+                }
+            }),
+        )
+        .route(
+            "/connset_cmd_v1",
+            post({
+                let ca_ingest_ctrls = ca_ingest_ctrls.clone();
+                |Json(mut cmd): Json<serde_json::Value>| async move {
+                    if let Some(c2) = ca_ingest_ctrls.conn2_ctrls().await {
+                        if let Some(v2) = cmd.as_object_mut() {
+                            v2.insert("type".into(), serde_json::Value::String("ConnSetCmdV1".into()));
+                            let s = serde_json::to_string(&cmd).unwrap();
+                            match c2.cmd_dyn_v1(s).await {
+                                Ok(x) => axum::Json(x),
+                                Err(e) => axum::Json(json!({
+                                    "error": e.to_string(),
+                                })),
+                            }
+                        } else {
+                            axum::Json(json!({"error": "cmd is not a json object"}))
+                        }
+                    } else {
+                        axum::Json(json!({"error": "no ctrl"}))
                     }
                 }
             }),
@@ -655,10 +678,10 @@ fn make_routes_conn2(ca_ingest_ctrls: Arc<dyn CaIngestCtrls>) -> axum::Router {
                     info!("channel_handler_cmd_v1  {cmd:?}");
                     if let Some(c2) = ca_ingest_ctrls.conn2_ctrls().await {
                         if let Some(v2) = cmd.as_object_mut() {
-                            v2.insert("type".into(), serde_json::Value::String("ChannelHandlerCmd".into()));
+                            v2.insert("type".into(), serde_json::Value::String("ChannelHandlerCmdV1".into()));
                             let s = serde_json::to_string(&cmd).unwrap();
                             match c2.cmd_dyn_v1(s).await {
-                                Ok(x) => axum::Json(serde_json::to_value(&x).unwrap()),
+                                Ok(x) => axum::Json(x),
                                 Err(e) => axum::Json(json!({
                                     "error": e.to_string(),
                                 })),

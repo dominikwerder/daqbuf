@@ -583,6 +583,7 @@ impl FindIocStream {
             }
         }
         for (((sid, ch), dt), tx) in sids.into_iter().zip(chns).zip(dts).zip(txs) {
+            debug!("timed out  {ch}");
             let res = FindIocRes {
                 response_addr: None,
                 channel: ch,

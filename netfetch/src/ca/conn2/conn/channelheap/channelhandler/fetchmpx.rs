@@ -36,9 +36,9 @@ macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
 macro_rules! warn { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
 macro_rules! info { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
 macro_rules! debug { ($($arg:tt)*) => { if true { log::debug!($($arg)*); } }; }
-macro_rules! trace { ($($arg:tt)*) => { if true { log::trace!($($arg)*); } }; }
-macro_rules! trace2 { ($($arg:tt)*) => { if true { log::trace!($($arg)*); } }; }
-macro_rules! trace3 { ($($arg:tt)*) => { if true { log::trace!($($arg)*); } }; }
+macro_rules! trace { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
+macro_rules! trace2 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
+macro_rules! trace3 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
 macro_rules! trace4 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
 macro_rules! trace_pending { ($($arg:tt)*) => { if false { trace!("{}  Pending", format_args!($($arg)*)); } }; }
 
@@ -126,8 +126,8 @@ impl Fetchmpx {
     pub fn new(sid: Sid, scalar_type: ScalarType, shape: Shape, ca_dbr_ty: CaDbrTy) -> Self {
         let mut polling = FetchPolling::new(sid.clone(), scalar_type.clone(), shape.clone(), ca_dbr_ty.clone());
         let mut monitoring = FetchMonitoring::new(sid.clone(), scalar_type.clone(), shape.clone(), ca_dbr_ty.clone());
-        polling.transition_to_enable();
-        // monitoring.transition_to_enable();
+        // polling.transition_to_enable();
+        monitoring.transition_to_enable();
         Self {
             state: State::Normal,
             sid,
@@ -160,7 +160,6 @@ impl Fetchmpx {
         use serde_json::json;
         match &mut self.state {
             State::Normal => {
-                warn!("TODO handle while in {} {:?}", self.state.str(), cmd);
                 #[derive(Debug, Deserialize)]
                 struct CmdTmp {
                     #[serde(rename = "type")]
@@ -182,6 +181,8 @@ impl Fetchmpx {
                         } else if x.fetchmpx == "monitoring_enable" {
                             self.monitoring.transition_to_enable();
                             cmd.tx.try_send(json!({"done":"monitoring_enable"}));
+                        } else {
+                            warn!("TODO handle while in {} {:?}", self.state.str(), cmd);
                         }
                     }
                     Err(e) => {
@@ -231,7 +232,9 @@ impl Fetchmpx {
                     if let Some(item) = self2.inp_buf.pop_front() {
                         trace2!("{selfname}  ITEM  {item:?}");
                         match &item.msg.ty {
-                            proto::CaMsgTy::EventAddRes(_) | proto::CaMsgTy::EventAddResEmpty(_) => {
+                            proto::CaMsgTy::EventAddRes(_)
+                            | proto::CaMsgTy::EventAddResEmpty(_)
+                            | proto::CaMsgTy::EventCancelRes(_) => {
                                 match self2.monitoring.inp_push_try(item) {
                                     Some(x) => {
                                         hpp.mark_pending();
@@ -255,7 +258,7 @@ impl Fetchmpx {
                                 }
                             },
                             _ => {
-                                trace!("channel_create: unexpected message {item:?}");
+                                debug!("{selfname}  TODO  handle  {item:?}");
                                 let e = Error::CreateMonitorUnexpectedMessage;
                                 return Ready(Some(Err(e)));
                             }
@@ -293,7 +296,7 @@ impl Stream for Fetchmpx {
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let selfname = "Fetchmpx::poll_next";
-        trace4!("{selfname}");
+        trace3!("{selfname}");
         use Poll::*;
         loop {
             let mut hpp = HaveProgressPending::new();

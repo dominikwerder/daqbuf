@@ -51,9 +51,9 @@ macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
 macro_rules! warn { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
 macro_rules! info { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
 macro_rules! debug { ($($arg:tt)*) => { if true { log::debug!($($arg)*); } }; }
-macro_rules! trace { ($($arg:tt)*) => { if true { log::trace!($($arg)*); } }; }
-macro_rules! trace2 { ($($arg:tt)*) => { if true { log::trace!($($arg)*); } }; }
-macro_rules! trace3 { ($($arg:tt)*) => { if true { log::trace!($($arg)*); } }; }
+macro_rules! trace { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
+macro_rules! trace2 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
+macro_rules! trace3 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
 macro_rules! trace4 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
 macro_rules! trace_pending { ($($arg:tt)*) => { if false { log::trace!("{}  Pending", format_args!($($arg)*)); } }; }
 macro_rules! trace_hpp_flags { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
@@ -121,7 +121,7 @@ enum ConnSetCmdKind {
         String,
         asynchan::Sender<crate::metrics::ChannelsForAddrInfoV2>,
     ),
-    CmdDynV1(String, asynchan::Sender<String>),
+    CmdDynV1(String, asynchan::Sender<serde_json::Value>),
 }
 
 #[derive(Debug)]
@@ -200,9 +200,6 @@ impl State {
     }
 }
 
-const EF1: usize = 0x600;
-const EF2: usize = 0x500;
-
 #[derive(Debug)]
 pub struct ConnSet {
     backend: String,
@@ -210,8 +207,8 @@ pub struct ConnSet {
     state: State,
     cmder: ConnSetCmder,
     cmd_rx: asynchan::Receiver<ConnSetCmd>,
-    cmder_cmd_fut: Option<ErasedFuture<Result<(), Error>, EF1>>,
-    cmd_fut_channel: Option<ErasedFuture<Result<(), Error>, EF2>>,
+    cmder_cmd_fut: Option<FutDbg<Result<(), Error>>>,
+    cmd_fut_channel: Option<FutDbg<Result<(), Error>>>,
     cmd_fut_comm: Option<FutDbg<Result<(), Error>>>,
     finder_handle: FinderHandleV02,
     channels: BTreeMap<String, ChannelCat>,
@@ -305,7 +302,7 @@ impl ConnSet {
     fn poll_channels(
         self: Pin<&mut Self>,
         cx: &mut Context,
-    ) -> Poll<Result<Option<(ErasedFuture<Result<(), Error>, EF2>,)>, Error>> {
+    ) -> Poll<Result<Option<(FutDbg<Result<(), Error>>,)>, Error>> {
         use Poll::*;
         // TODO caller wants to handle only one potential future at a time.
         let mut hpp = HaveProgressPending::new();
@@ -330,11 +327,12 @@ impl ConnSet {
                                                 // TODO
                                                 todo!();
                                             } else {
+                                                let mut comm = conn_reg.comm.clone();
                                                 let fut = async move {
-                                                    conn_reg.comm.channel_add(conf).await?;
+                                                    comm.channel_add(conf).await?;
                                                     Ok(())
                                                 };
-                                                break Ready(Ok(Some((ErasedFuture::new(fut),))));
+                                                break Ready(Ok(Some((fut.box2(),))));
                                             }
                                         } else {
                                             let conn = CaConn::new(
@@ -358,19 +356,20 @@ impl ConnSet {
                                                 comm.channel_add(conf).await?;
                                                 Ok(())
                                             };
-                                            break Ready(Ok(Some((ErasedFuture::new(fut),))));
+                                            break Ready(Ok(Some((fut.box2(),))));
                                         }
                                     }
                                     ChannelActionItem::RemoveFromCaConn(conf, reminfo, mut done_tx) => {
                                         // TODO send a command to the CaConn to remove the channel, wait for confirmation.
                                         if let Some(addr) = reminfo.addr() {
                                             if let Some(conn_reg) = self2.ca_conns.get_mut(&addr) {
+                                                let mut comm = conn_reg.comm.clone();
                                                 let fut = async move {
-                                                    conn_reg.comm.channel_remove(conf).await?;
+                                                    comm.channel_remove(conf).await?;
                                                     let _ = done_tx.send(0).await;
                                                     Ok(())
                                                 };
-                                                break Ready(Ok(Some((ErasedFuture::new(fut),))));
+                                                break Ready(Ok(Some((fut.box2(),))));
                                             } else {
                                             }
                                         } else {
@@ -409,7 +408,7 @@ impl ConnSet {
             if hpp.have_progress() {
                 // TODO return type does not allow yet to indicate progress without future to execute.
                 let fut = async move { Ok(()) };
-                Ready(Ok(Some((ErasedFuture::new(fut),))))
+                Ready(Ok(Some((fut.box2(),))))
             } else if hpp.have_pending() {
                 Pending
             } else {
@@ -570,11 +569,11 @@ impl ConnSet {
     }
 
     fn handle_cmd_dyn_v1(
-        self: Pin<&mut Self>,
+        mut self: Pin<&mut Self>,
         cmd: String,
-        mut tx: asynchan::Sender<String>,
+        mut tx: asynchan::Sender<serde_json::Value>,
         cx: &mut Context,
-    ) -> Option<Box<dyn Future<Output = Result<(), Error>>>> {
+    ) -> Option<FutDbg<Result<(), Error>>> {
         match serde_json::from_str::<crate::metrics::CmdType>(&cmd) {
             Ok(cmdty) => {
                 if cmdty.ty == "ChannelsByRegexV1" {
@@ -610,11 +609,10 @@ impl ConnSet {
                                         let val = serde_json::json!({
                                             "channels": a,
                                         });
-                                        let s = serde_json::to_string(&val).unwrap();
-                                        let _ = tx.send(s).await;
+                                        let _ = tx.send(val).await;
                                         Ok(())
                                     };
-                                    Some(Box::new(fut))
+                                    Some(fut.box2())
                                 } else {
                                     let channels: Vec<_> = self
                                         .channels
@@ -632,38 +630,63 @@ impl ConnSet {
                                     let val = serde_json::json!({
                                         "channels": channels,
                                     });
-                                    let s = serde_json::to_string(&val).unwrap();
                                     let fut = async move {
-                                        let _ = tx.send(s).await;
+                                        let _ = tx.send(val).await;
                                         Ok(())
                                     };
-                                    Some(Box::new(fut))
+                                    Some(fut.box2())
                                 }
                             }
                             Err(e) => {
-                                let s = serde_json::to_string(&serde_json::json!({
+                                let val = serde_json::json!({
                                     "type": "error",
                                     "msg": format!("{e}"),
-                                }))
-                                .unwrap();
-                                let _ = tx.try_send(s);
+                                });
+                                let _ = tx.try_send(val);
                                 None
                             }
                         },
                         Err(e) => {
-                            let s = serde_json::to_string(&serde_json::json!({
+                            let val = serde_json::json!({
                                 "type": "error",
                                 "msg": format!("{e}"),
-                            }))
-                            .unwrap();
-                            let _ = tx.try_send(s);
+                            });
+                            let _ = tx.try_send(val);
                             None
                         }
                     }
-                } else if cmdty.ty == "ChannelHandlerCmd" {
+                } else if cmdty.ty == "ConnSetCmdV1" {
+                    info!("ConnSetCmdV1 {cmd:?}");
+                    #[derive(Deserialize)]
+                    struct ChannelAddV0 {
+                        // TODO missing archiving conf
+                        type2: String,
+                        channels: Vec<String>,
+                    }
+                    if let Ok(cmd) = serde_json::from_str::<ChannelAddV0>(&cmd) {
+                        if cmd.type2 == "ChannelAddV0" {
+                            for x in cmd.channels {
+                                let conf = ChannelConfig::polled_2_20_120(x, "web-api");
+                                let (tx, _rx) = asynchan::bounded(1, "ChannelAddV0-sub");
+                                self.handle_channel_add(conf, tx);
+                            }
+                            let fut = async move {
+                                tx.send(serde_json::json!({"done":"ok"})).await;
+                                Ok(())
+                            };
+                            Some(fut.box2())
+                        } else {
+                            info!("command unknown");
+                            None
+                        }
+                    } else {
+                        info!("command unknown");
+                        None
+                    }
+                } else if cmdty.ty == "ChannelHandlerCmdV1" {
                     match serde_json::from_str::<serde_json::Value>(&cmd) {
                         Ok(cmd) => {
-                            info!("ChannelHandlerCmd {cmd:?}");
+                            info!("ChannelHandlerCmdV1 {cmd:?}");
                             if let Some(name) = cmd.get("name").and_then(|x| x.as_str()) {
                                 let mut retfut = None;
                                 for addr in self.channels.iter().filter(|x| x.0 == name).map(|x| x.1.channel.addr()) {
@@ -675,7 +698,7 @@ impl ConnSet {
                                             .map(|x| (x.0.clone(), x.1.comm.clone()))
                                             .collect();
                                         if cmdtxs.len() > 1 {
-                                            error!("TODO ChannelHandlerCmd allow only unique channel names");
+                                            error!("TODO ChannelHandlerCmdV1 allow only unique channel names");
                                         }
                                         let fut = async move {
                                             let mut val = serde_json::Value::Null;
@@ -689,15 +712,14 @@ impl ConnSet {
                                                 }
                                                 break;
                                             }
-                                            let s = serde_json::to_string(&val).unwrap();
-                                            let _ = tx.send(s).await;
+                                            let _ = tx.send(val).await;
                                             Ok(())
                                         };
-                                        retfut = Some(Box::new(fut));
+                                        retfut = Some(fut.box2());
                                         break;
                                     } else {
                                         // TODO dispatch message even though not connected.
-                                        warn!("TODO dispatch ChannelHandlerCmd {cmd:?} even though no addr");
+                                        warn!("TODO dispatch ChannelHandlerCmdV1 {cmd:?} even though no addr");
                                     }
                                 }
                                 if let Some(fut) = retfut { Some(fut as _) } else { None }
@@ -707,12 +729,11 @@ impl ConnSet {
                             }
                         }
                         Err(e) => {
-                            let s = serde_json::to_string(&serde_json::json!({
+                            let val = serde_json::json!({
                                 "type": "error",
                                 "msg": format!("{e}"),
-                            }))
-                            .unwrap();
-                            let _ = tx.try_send(s);
+                            });
+                            let _ = tx.try_send(val);
                             None
                         }
                     }
@@ -721,30 +742,51 @@ impl ConnSet {
                     let val = serde_json::json!({
                         "llog": local_log,
                     });
-                    let s = serde_json::to_string(&val).unwrap();
                     let fut = async move {
-                        let _ = tx.send(s).await;
+                        let _ = tx.send(val).await;
                         Ok(())
                     };
-                    Some(Box::new(fut))
+                    Some(fut.box2())
                 } else {
-                    let s = serde_json::to_string(&serde_json::json!({
+                    let val = serde_json::json!({
                         "type": "error",
                         "msg": format!("unknown: {}", cmdty.ty),
-                    }))
-                    .unwrap();
-                    let _ = tx.try_send(s);
+                    });
+                    let _ = tx.try_send(val);
                     None
                 }
             }
             Err(e) => {
-                let s = serde_json::to_string(&serde_json::json!({
+                let val = serde_json::json!({
                     "type": "error",
                     "msg": format!("{e}"),
-                }))
-                .unwrap();
-                let _ = tx.try_send(s);
+                });
+                let _ = tx.try_send(val);
                 None
+            }
+        }
+    }
+
+    // TODO return error via return type, let caller handle done_tx
+    fn handle_channel_add(&mut self, conf: ChannelConfig, mut done_tx: asynchan::Sender<Result<(), Error>>) {
+        let selfname = "handle_channel_add";
+        if self.channels.contains_key(conf.name()) {
+            let e = Error::Command(format!("channel already added"));
+            let _ = done_tx.try_send(Err(e));
+        } else {
+            trace4!("{selfname}  ConnSetCmdKind::ChannelAdd");
+            let name = conf.name().to_string();
+            let (cmd_tx, cmd_rx) = asynchan::bounded(16, "ChannelCmd");
+            let e = ChannelCat {
+                channel: channels::channel::Channel::new(self.backend.clone(), conf, cmd_rx),
+                cmd_tx,
+                remove_on_shutdown_sent: false,
+            };
+            trace2!("{selfname}  ConnSetCmdKind::ChannelAdd  added  {name}");
+            self.channels.insert(name, e);
+            // TODO expect it to succeed immediately, should use dedicated api.
+            if done_tx.try_send(Ok(())).is_err() {
+                error!("{selfname}  ConnSetCmdKind::ChannelAdd  done_tx.try_send failed");
             }
         }
     }
@@ -754,25 +796,7 @@ impl ConnSet {
         assert!(self.cmder_cmd_fut.is_none());
         match cmd.kind {
             ConnSetCmdKind::ChannelAdd(mut cmd) => {
-                if self.channels.contains_key(cmd.ch_cfg.name()) {
-                    let e = Error::Command(format!("channel already added"));
-                    let _ = cmd.done_tx.try_send(Err(e));
-                } else {
-                    trace4!("{selfname}  ConnSetCmdKind::ChannelAdd");
-                    let name = cmd.ch_cfg.name().to_string();
-                    let (cmd_tx, cmd_rx) = asynchan::bounded(16, "ChannelCmd");
-                    let e = ChannelCat {
-                        channel: channels::channel::Channel::new(self.backend.clone(), cmd.ch_cfg, cmd_rx),
-                        cmd_tx,
-                        remove_on_shutdown_sent: false,
-                    };
-                    self.channels.insert(name, e);
-                    // TODO expect it to succeed immediately, should use dedicated api.
-                    if cmd.done_tx.try_send(Ok(())).is_err() {
-                        error!("{selfname}  ConnSetCmdKind::ChannelAdd  done_tx.try_send failed");
-                    }
-                    info!("{selfname}  ConnSetCmdKind::ChannelAdd  added channel");
-                }
+                self.handle_channel_add(cmd.ch_cfg, cmd.done_tx);
             }
             ConnSetCmdKind::ChannelRemove(cmd) => {
                 // regular channel remove initiated by ConnSet.
@@ -794,7 +818,7 @@ impl ConnSet {
                     Ok(())
                 };
                 // TODO maybe better return the future from here and let caller place it.
-                self.cmder_cmd_fut = Some(ErasedFuture::new(fut));
+                self.cmder_cmd_fut = Some(fut.box2());
                 error!("TODO connection tear down logic");
             }
             ConnSetCmdKind::Shutdown => {
@@ -859,7 +883,7 @@ impl ConnSet {
                     Ok(())
                 };
                 // TODO maybe better return the future from here and let caller place it.
-                self.cmder_cmd_fut = Some(ErasedFuture::new(fut));
+                self.cmder_cmd_fut = Some(fut.box2());
             }
             ConnSetCmdKind::ChannelsForAddrInfoV1(addr, mut tx) => {
                 let cmdtxs: Vec<_> = self
@@ -880,7 +904,7 @@ impl ConnSet {
                     Ok(())
                 };
                 // TODO maybe better return the future from here and let caller place it.
-                self.cmder_cmd_fut = Some(ErasedFuture::new(fut));
+                self.cmder_cmd_fut = Some(fut.box2());
             }
             ConnSetCmdKind::ChannelsForAddrInfoV2(addr, name, mut tx) => {
                 let cmdtxs: Vec<_> = self
@@ -901,12 +925,12 @@ impl ConnSet {
                     Ok(())
                 };
                 // TODO maybe better return the future from here and let caller place it.
-                self.cmder_cmd_fut = Some(ErasedFuture::new(fut));
+                self.cmder_cmd_fut = Some(fut.box2());
             }
             ConnSetCmdKind::CmdDynV1(cmd, tx) => {
                 // TODO maybe better return the future from here and let caller place it.
                 if let Some(fut) = self.as_mut().handle_cmd_dyn_v1(cmd, tx, cx) {
-                    self.cmder_cmd_fut = Some(ErasedFuture::new(Box::into_pin(fut)));
+                    self.cmder_cmd_fut = Some(fut.box2());
                 }
             }
         }
@@ -1107,9 +1131,9 @@ impl ConnSet {
         let selfname = "poll_channels_outer";
         trace4!("{selfname}");
         use Poll::*;
-        {
+        if false {
             for (name, ch) in self.channels.iter() {
-                debug!("{selfname}  {}  ->  {:?}", name, ch.channel.channel_info());
+                debug!("{selfname}  {}  {:?}", name, ch.channel.channel_info());
             }
         }
         // let mut hpp = HaveProgressPending::new();
@@ -1414,7 +1438,7 @@ impl Stream for ConnSet {
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         use Poll::*;
         loop {
-            trace3!("ConnSet  poll_next  loop begin  {}", self.state.name());
+            trace4!("ConnSet  poll_next  loop begin  {}", self.state.name());
             let mut hpp = HaveProgressPending::new();
             match &mut self.state {
                 State::Running => {
@@ -1424,6 +1448,7 @@ impl Stream for ConnSet {
                     match st2.timeout.poll_unpin(cx) {
                         Ready(()) => {
                             error!("TODO  shutdown timeout");
+                            st2.timeout = tokio::time::sleep(Duration::from_millis(10000)).box2();
                         }
                         Pending => {
                             hpp.mark_pending();
