@@ -70,7 +70,7 @@ pub async fn ca_search_workers_start(
     let batch_run_max = Duration::from_millis(800);
     let (inp_tx, inp_rx) = async_channel::bounded(256);
     let (out_tx, out_rx) = async_channel::bounded(256);
-    let finder = FindIocStream::new(inp_rx, search_tgts, blacklist, batch_run_max, 20, 16);
+    let finder = FindIocStream::new(inp_rx, search_tgts, blacklist, batch_run_max, 16, 4);
     let jh = taskrun::spawn(finder_run(finder, out_tx));
     Ok((inp_tx, out_rx, jh))
 }
