@@ -1,7 +1,7 @@
 use super::connset::CURRENT_SEARCH_PENDING_MAX;
-use super::connset::IocAddrQuery;
 use super::connset::SEARCH_BATCH_MAX;
 use super::search::ca_search_workers_start;
+use crate::ca::conn2::asynchan2 as asynchan;
 use crate::ca::findioc::FindIocRes;
 use crate::ca::findioc::OptResTx;
 use crate::conf::CaIngestOpts;
@@ -39,6 +39,7 @@ autoerr::create_error_v1!(
         IocSearch(#[from] crate::ca::search::Error),
         AddrSearchSend,
         AddrSearchResultTx,
+        AddrSearchResultRx,
     },
 );
 
@@ -48,37 +49,20 @@ impl From<async_channel::SendError<IocAddrQuery>> for Error {
     }
 }
 
-fn transform_pgres(rows: Vec<PgRow>, txs: Vec<OptResTx>) -> VecDeque<FindIocRes> {
+fn transform_pgres(rows: Vec<PgRow>) -> VecDeque<Option<FindIocRes>> {
     let selfname = "transform_pgres";
     let mut ret = VecDeque::new();
-    for (row, tx) in rows.into_iter().zip(txs) {
+    for row in rows {
         let n: Result<i32, _> = row.try_get(0);
         let ch: Result<String, _> = row.try_get(1);
         match (n, ch) {
             (Ok(_n), Ok(ch)) => {
-                if let Some(addr_str) = row.get::<_, Option<String>>(3) {
-                    let addr = addr_str.parse().map_or(None, |x| Some(x));
-                    if addr.is_none() {
-                        debug!("{selfname}  {ch}  could not parse {addr_str}");
-                    }
-                    let item = FindIocRes {
-                        channel: ch,
-                        response_addr: None,
-                        addr,
-                        dt: Duration::from_millis(0),
-                        tx,
-                    };
-                    ret.push_back(item);
+                if let Some(addr) = row.get::<_, Option<String>>(3).and_then(|x| x.parse().ok()) {
+                    let item = FindIocRes::from_results(ch, None, Some(addr), Duration::from_millis(0));
+                    ret.push_back(Some(item));
                 } else {
                     debug!("{selfname}  {ch}  no addr in database result");
-                    let item = FindIocRes {
-                        channel: ch,
-                        response_addr: None,
-                        addr: None,
-                        dt: Duration::from_millis(0),
-                        tx,
-                    };
-                    ret.push_back(item);
+                    ret.push_back(None);
                 }
             }
             (_, Err(e)) => {
@@ -92,27 +76,67 @@ fn transform_pgres(rows: Vec<PgRow>, txs: Vec<OptResTx>) -> VecDeque<FindIocRes>
     ret
 }
 
+#[derive(Debug)]
+pub struct IocAddrQuery {
+    name: String,
+    use_cache: bool,
+    tx: asynchan::Sender<FindIocRes>,
+}
+
+impl IocAddrQuery {
+    pub fn cached_rx(name: String) -> (Self, asynchan::Receiver<FindIocRes>) {
+        let (tx, rx) = asynchan::bounded(1, "IocAddrQuery");
+        let x = Self {
+            name,
+            use_cache: true,
+            tx,
+        };
+        (x, rx)
+    }
+
+    pub fn uncached_rx(name: String) -> (Self, asynchan::Receiver<FindIocRes>) {
+        let (tx, rx) = asynchan::bounded(1, "IocAddrQuery");
+        let x = Self {
+            name,
+            use_cache: false,
+            tx,
+        };
+        (x, rx)
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn name_string(&self) -> &String {
+        &self.name
+    }
+
+    pub fn use_cache(&self) -> bool {
+        self.use_cache
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct FinderHandleV02 {
     qtx: Sender<IocAddrQuery>,
 }
 
 impl FinderHandleV02 {
-    async fn find(&mut self, query: IocAddrQuery) -> Result<FindIocRes, Error> {
-        let (query, mut rx) = query.with_rx();
+    async fn find(&mut self, query: IocAddrQuery, mut rx: asynchan::Receiver<FindIocRes>) -> Result<FindIocRes, Error> {
         self.qtx.send(query).await?;
-        let ret = rx.recv().await.map_err(|_| Error::AddrSearchResultTx)?;
+        let ret = rx.recv().await.map_err(|_| Error::AddrSearchResultRx)?;
         Ok(ret)
     }
 
     pub async fn find_uncached(&mut self, name: String) -> Result<FindIocRes, Error> {
-        let query = IocAddrQuery::uncached(name);
-        self.find(query).await
+        let (qu, rx) = IocAddrQuery::uncached_rx(name);
+        self.find(qu, rx).await
     }
 
     pub async fn find_cached(&mut self, name: String) -> Result<FindIocRes, Error> {
-        let query = IocAddrQuery::cached(name);
-        self.find(query).await
+        let (qu, rx) = IocAddrQuery::cached_rx(name);
+        self.find(qu, rx).await
     }
 }
 
@@ -176,7 +200,12 @@ where
     Ok(())
 }
 
-async fn finder_worker<S>(qrx: S, tx: Sender<VecDeque<FindIocRes>>, backend: String, db: Database) -> Result<(), Error>
+async fn finder_worker<S>(
+    qrx: S,
+    tx: Sender<VecDeque<IocAddrQuery>>,
+    backend: String,
+    db: Database,
+) -> Result<(), Error>
 where
     S: Stream<Item = IocAddrQuery> + Send + 'static,
 {
@@ -218,9 +247,16 @@ where
     Ok(())
 }
 
+#[derive(Debug)]
+pub enum FindIocCacheRes {
+    Hit(FindIocRes),
+    Miss(IocAddrQuery),
+    Uncached(IocAddrQuery),
+}
+
 async fn finder_worker_single(
     inp: Receiver<VecDeque<IocAddrQuery>>,
-    tx: Sender<VecDeque<FindIocRes>>,
+    tx: Sender<VecDeque<FindIocCacheRes>>,
     backend: String,
     db: Database,
 ) -> Result<(), Error> {
@@ -254,10 +290,7 @@ async fn finder_worker_single(
                     (a, b)
                 });
                 debug_batch!("run  query batch  len {}", batch.len());
-                let names: Vec<_> = batch
-                    .iter()
-                    .map(|x| if x.use_cache() { x.name() } else { "---------------" })
-                    .collect();
+                let names: Vec<_> = batch.iter().map(|x| x.name()).collect();
                 let ns: Vec<_> = names.iter().enumerate().map(|(i, _)| i as i32).collect();
                 let qres = pg.query(&qu_select_multi, &[&backend, &ns, &names]).await;
                 let dt = ts1.elapsed();
@@ -279,27 +312,17 @@ async fn finder_worker_single(
                             tokio::time::sleep(Duration::from_millis(1000)).await;
                             continue;
                         }
-                        let mut batch = batch;
-                        let txs: Vec<_> = batch.iter_mut().map(|x| x.tx_take()).collect();
-                        let items = transform_pgres(rows, txs);
-                        for e in items.iter() {
-                            if series::dbg::dbg_chn(&e.channel) {
-                                trace!("found in database {:?}", e);
-                            }
-                        }
-                        let mut items = items;
-                        for mut e in pass_through {
-                            let x = FindIocRes {
-                                channel: e.name().into(),
-                                response_addr: None,
-                                addr: None,
-                                dt: Duration::from_millis(0),
-                                tx: e.tx_take(),
-                            };
-                            items.push_back(x);
-                        }
-                        let items_len = items.len();
-                        match tx.send(items).await {
+                        // for xx in rows.into_iter().zip(batch.into_iter()) {}
+                        let rows2 = transform_pgres(rows);
+                        let ret2: VecDeque<_> = pass_through
+                            .into_iter()
+                            .map(|x| FindIocCacheRes::Uncached(x))
+                            .chain(batch.into_iter().zip(rows2).map(|(b, r)| match r {
+                                Some(x) => FindIocCacheRes::Hit(x),
+                                None => FindIocCacheRes::Miss(b),
+                            }))
+                            .collect();
+                        match tx.send(ret2).await {
                             Ok(_) => {
                                 // TODO
                                 // stats.dbsearcher_batch_send().inc();
@@ -328,7 +351,7 @@ async fn finder_worker_single(
 }
 
 async fn finder_network_if_not_found(
-    rx: Receiver<VecDeque<FindIocRes>>,
+    rx: Receiver<VecDeque<IocAddrQuery>>,
     tx: Sender<VecDeque<FindIocRes>>,
     opts: CaIngestOpts,
 ) -> Result<(), Error> {
@@ -336,27 +359,11 @@ async fn finder_network_if_not_found(
     let (net_tx, net_rx, jh_ca_search) = ca_search_workers_start(&opts).await?;
     let jh2 = taskrun::spawn(process_net_result(net_rx, tx.clone(), opts.clone()));
     'outer: while let Ok(item) = rx.recv().await {
-        let mut res = VecDeque::new();
-        let mut net = VecDeque::new();
         for e in item {
-            if e.addr.is_none() {
-                if series::dbg::dbg_chn(&e.channel) {
-                    trace!("{selfname}  push to network lookup {:?}", e);
-                }
-                net.push_back(e);
-            } else {
-                if series::dbg::dbg_chn(&e.channel) {
-                    trace!("{selfname}  push to result set {:?}", e);
-                }
-                res.push_back(e);
+            if series::dbg::dbg_chn(&e.name()) {
+                trace!("{selfname}  push to network lookup {:?}", e);
             }
-        }
-        if let Err(_) = tx.send(res).await {
-            debug!("{selfname}  res send error, break");
-            break;
-        }
-        for e in net {
-            if let Err(_) = net_tx.send((e.channel, e.tx)).await {
+            if let Err(_) = net_tx.send(e).await {
                 debug!("{selfname}  net ch send error, break");
                 break 'outer;
             }
@@ -376,6 +383,7 @@ async fn process_net_result(
     tx: Sender<VecDeque<FindIocRes>>,
     opts: CaIngestOpts,
 ) -> Result<(), Error> {
+    TODO;
     let selfname = "process_net_result";
     const IOC_SEARCH_INDEX_WORKER_COUNT: usize = 1;
     let (dbtx, dbrx) = async_channel::bounded(64);
@@ -395,7 +403,7 @@ async fn process_net_result(
             Ok(item) => {
                 let mut cacheitems = Vec::new();
                 for e in item.iter() {
-                    if series::dbg::dbg_chn(&e.channel) {
+                    if series::dbg::dbg_chn(&e.channel()) {
                         trace!("{selfname}  push to cacheitems {:?}", e);
                     }
                     let cacheitem =

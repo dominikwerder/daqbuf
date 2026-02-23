@@ -2,6 +2,7 @@ use super::conn::EndOfStreamReason;
 use super::findioc::FindIocRes;
 use crate::ca::conn;
 use crate::ca::conn2::asynchan;
+use crate::ca::finder::IocAddrQuery;
 use crate::ca::findioc::OptResTx;
 use crate::ca::statemap;
 use crate::ca::statemap::MaybeWrongAddressState;
@@ -339,58 +340,6 @@ impl CaConnSetCtrl {
     pub async fn join(self) -> Result<(), Error> {
         self.jh.await??;
         Ok(())
-    }
-}
-
-#[derive(Debug)]
-pub struct IocAddrQuery {
-    name: String,
-    use_cache: bool,
-    tx: OptResTx,
-}
-
-impl IocAddrQuery {
-    pub fn cached(name: String) -> Self {
-        Self {
-            name,
-            use_cache: true,
-            tx: OptResTx::new_empty(),
-        }
-    }
-
-    pub fn uncached(name: String) -> Self {
-        Self {
-            name,
-            use_cache: false,
-            tx: OptResTx::new_empty(),
-        }
-    }
-
-    pub fn with_rx(self) -> (Self, asynchan::Receiver<FindIocRes>) {
-        let (tx, rx) = asynchan::bounded(1, "IocAddrQuery-with_rx");
-        let tx = OptResTx::new_tx(tx);
-        let query = Self {
-            name: self.name,
-            use_cache: self.use_cache,
-            tx,
-        };
-        (query, rx)
-    }
-
-    pub fn name(&self) -> &str {
-        &self.name
-    }
-
-    pub fn name_string(&self) -> &String {
-        &self.name
-    }
-
-    pub fn use_cache(&self) -> bool {
-        self.use_cache
-    }
-
-    pub fn tx_take(&mut self) -> OptResTx {
-        self.tx.takeit()
     }
 }
 

@@ -3,7 +3,6 @@ mod withcssid;
 use crate::ca::conn2::asynchan;
 use crate::ca::conn2::locallog;
 use crate::ca::conn2::locallog::LocalLog;
-use crate::ca::connset::IocAddrQuery;
 use crate::ca::connset2::connset::channels;
 use crate::ca::connset2::connset::channels::channel::locallog::llog;
 use crate::ca::connset2::connset::channels::pollcstm;
@@ -65,7 +64,7 @@ async fn addr_search(conf: ChannelConfig, mut fh: FinderHandleV02) -> Result<Soc
     }
     let res = fh.find_uncached(conf.name().into()).await?;
     trace!("{selfname}  res {res:?}");
-    let ret = res.addr.ok_or_else(|| Error::AddrNotFound(conf.name().into()))?;
+    let ret = res.addr().ok_or_else(|| Error::AddrNotFound(conf.name().into()))?;
     Ok(ret)
 }
 

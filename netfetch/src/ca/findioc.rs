@@ -1,4 +1,5 @@
 use crate::ca::conn2::asynchan;
+use crate::ca::finder::IocAddrQuery;
 use crate::ca::progpend::HaveProgressPending;
 use crate::throttletrace::ThrottleTrace;
 use async_channel::Receiver;
@@ -7,7 +8,6 @@ use futures::Future;
 use futures::FutureExt;
 use futures::Stream;
 use libc::c_int;
-use log::*;
 use proto::CaMsg;
 use proto::CaMsgTy;
 use proto::HeadInfo;
@@ -25,6 +25,13 @@ use std::time::Duration;
 use std::time::Instant;
 use taskrun::tokio;
 use tokio::io::unix::AsyncFd;
+
+macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
+macro_rules! warn { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
+macro_rules! info { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
+macro_rules! debug { ($($arg:tt)*) => { if true { log::debug!($($arg)*); } }; }
+macro_rules! trace { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
+macro_rules! trace4 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
 
 autoerr::create_error_v1!(
     name(Error, "FindIoc"),
@@ -56,7 +63,6 @@ impl Drop for SockBox {
     }
 }
 
-// TODO should be able to get away with non-atomic counters.
 static BATCH_ID: AtomicUsize = AtomicUsize::new(0);
 static SEARCH_ID: AtomicUsize = AtomicUsize::new(0);
 
@@ -84,7 +90,7 @@ struct SearchBatch {
     channels: Vec<String>,
     sids: Vec<SearchId>,
     done: Vec<bool>,
-    txs: Vec<OptResTx>,
+    txs: Vec<Option<asynchan::Sender<FindIocRes>>>,
 }
 
 pub struct OptResTx(Option<Pin<Box<asynchan::Sender<FindIocRes>>>>);
@@ -115,11 +121,34 @@ impl OptResTx {
 
 #[derive(Debug)]
 pub struct FindIocRes {
-    pub channel: String,
-    pub response_addr: Option<SocketAddrV4>,
-    pub addr: Option<SocketAddrV4>,
-    pub dt: Duration,
-    pub tx: OptResTx,
+    channel: String,
+    response_addr: Option<SocketAddrV4>,
+    addr: Option<SocketAddrV4>,
+    dt: Duration,
+}
+
+impl FindIocRes {
+    pub fn from_results(
+        channel: String,
+        response_addr: Option<SocketAddrV4>,
+        addr: Option<SocketAddrV4>,
+        dt: Duration,
+    ) -> Self {
+        Self {
+            channel,
+            response_addr,
+            addr,
+            dt,
+        }
+    }
+
+    pub fn channel(&self) -> &str {
+        &self.channel
+    }
+
+    pub fn addr(&self) -> Option<SocketAddrV4> {
+        self.addr.clone()
+    }
 }
 
 fn _assert_traits() {
@@ -134,24 +163,24 @@ fn _assert_traits() {
 
 pub struct FindIocStream {
     tgts: Vec<SocketAddrV4>,
-    channels_input: Pin<Box<Receiver<(String, OptResTx)>>>,
+    channels_input: Pin<Box<Receiver<(String, asynchan::Sender<FindIocRes>)>>>,
     in_flight: BTreeMap<BatchId, SearchBatch>,
     in_flight_max: usize,
+    channels_per_batch: usize,
+    batch_run_max: Duration,
     bid_by_sid: BTreeMap<SearchId, BatchId>,
     batch_send_queue: VecDeque<BatchId>,
     sock: SockBox,
     afd: AsyncFd<i32>,
     buf1: Vec<u8>,
     send_addr: SocketAddrV4,
-    out_queue: VecDeque<FindIocRes>,
+    out_queue: VecDeque<(FindIocRes, asynchan::Sender<FindIocRes>)>,
     ping: Pin<Box<tokio::time::Sleep>>,
-    channels_per_batch: usize,
-    batch_run_max: Duration,
     bids_all_done: BTreeMap<BatchId, ()>,
     bids_timed_out: BTreeMap<BatchId, ()>,
     sids_done: BTreeMap<SearchId, ()>,
     result_for_done_sid_count: u64,
-    sleeper: Option<Pin<Box<dyn Future<Output = ()> + Send>>>,
+    sleeper: Option<Pin<Box<tokio::time::Sleep>>>,
     #[allow(unused)]
     thr_msg_0: ThrottleTrace,
     #[allow(unused)]
@@ -162,7 +191,7 @@ pub struct FindIocStream {
 
 impl FindIocStream {
     pub fn new(
-        channels_input: Receiver<(String, OptResTx)>,
+        channels_input: Receiver<(String, asynchan::Sender<FindIocRes>)>,
         tgts: Vec<SocketAddrV4>,
         #[allow(unused)] blacklist: Vec<SocketAddrV4>,
         batch_run_max: Duration,
@@ -175,6 +204,9 @@ impl FindIocStream {
             tgts,
             channels_input: Box::pin(channels_input),
             in_flight: BTreeMap::new(),
+            in_flight_max,
+            channels_per_batch: batch_size,
+            batch_run_max,
             bid_by_sid: BTreeMap::new(),
             batch_send_queue: VecDeque::new(),
             sock,
@@ -187,9 +219,6 @@ impl FindIocStream {
             bids_timed_out: BTreeMap::new(),
             sids_done: BTreeMap::new(),
             result_for_done_sid_count: 0,
-            in_flight_max,
-            channels_per_batch: batch_size,
-            batch_run_max,
             sleeper: Some(Box::pin(tokio::time::sleep(Duration::from_millis(500)))),
             thr_msg_0: ThrottleTrace::new(Duration::from_millis(1000)),
             thr_msg_1: ThrottleTrace::new(Duration::from_millis(1000)),
@@ -350,93 +379,103 @@ impl FindIocStream {
         } else {
             // stats.ca_udp_io_recv().inc();
             let saddr2: libc::sockaddr_in = unsafe { std::mem::transmute_copy(&saddr_mem) };
-            let src_addr = Ipv4Addr::from(saddr2.sin_addr.s_addr.to_ne_bytes());
-            let src_port = u16::from_be(saddr2.sin_port);
-            if false {
-                let mut s1 = String::new();
-                for i in 0..(ec as usize) {
-                    s1.extend(format!(" {:02x}", buf[i]).chars());
-                }
-                debug!("received answer {}", s1);
-                debug!(
-                    "received answer string {}",
-                    String::from_utf8_lossy(buf[..ec as usize].into())
-                );
+            let parsed = Self::parse_response(saddr2, ec as _, &buf, tsnow)?;
+            Poll::Ready(Ok(parsed))
+        }
+    }
+
+    fn parse_response(
+        saddr2: libc::sockaddr_in,
+        ec: usize,
+        buf: &[u8],
+        tsnow: Instant,
+    ) -> Result<(SocketAddrV4, Vec<(SearchId, SocketAddrV4)>), Error> {
+        let src_addr = Ipv4Addr::from(saddr2.sin_addr.s_addr.to_ne_bytes());
+        let src_port = u16::from_be(saddr2.sin_port);
+        if false {
+            let mut s1 = String::new();
+            for i in 0..ec {
+                s1.extend(format!(" {:02x}", buf[i]).chars());
             }
-            if ec > 2048 {
-                // TODO handle if we get a too large answer.
-                error!("received packet too large");
-                panic!();
+            debug!("received answer {}", s1);
+            debug!(
+                "received answer string {}",
+                String::from_utf8_lossy(buf[..ec as usize].into())
+            );
+        }
+        if ec > 2048 {
+            // TODO handle if we get a too large answer.
+            error!("received packet too large");
+            panic!();
+        }
+        let mut nb = slidebuf::SlideBuf::new(2048);
+        nb.put_slice(&buf[..ec as usize])?;
+        let mut msgs = Vec::new();
+        let mut accounted = 0;
+        loop {
+            let n = nb.data().len();
+            if n == 0 {
+                break;
             }
-            let mut nb = slidebuf::SlideBuf::new(2048);
-            nb.put_slice(&buf[..ec as usize])?;
-            let mut msgs = Vec::new();
-            let mut accounted = 0;
-            loop {
-                let n = nb.data().len();
-                if n == 0 {
-                    break;
-                }
-                if n < 16 {
-                    error!("incomplete message, not enough for header");
-                    break;
-                }
-                let hi = HeadInfo::from_netbuf(&mut nb)?;
-                if hi.cmdid() == 0 && hi.payload_len() == 0 {
-                } else if hi.cmdid() == 6 && hi.payload_len() == 8 {
-                } else {
-                    info!("cmdid {}  payload {}", hi.cmdid(), hi.payload_len());
-                }
-                if nb.data().len() < hi.payload_len() as usize {
-                    error!("incomplete message, missing payload");
-                    break;
-                }
-                let msg = CaMsg::from_proto_infos(&hi, nb.data(), tsnow, 32)?;
-                nb.adv(hi.payload_len() as usize)?;
-                msgs.push(msg);
-                accounted += 16 + hi.payload_len();
+            if n < 16 {
+                error!("incomplete message, not enough for header");
+                break;
             }
-            if accounted != ec as u32 {
-                // stats.ca_udp_unaccounted_data().inc();
-                debug!("unaccounted data  ec {}  accounted {}", ec, accounted);
-            }
-            if msgs.len() < 1 {
-                // stats.ca_udp_warn().inc();
-                debug!("received answer without messages");
-            }
-            if msgs.len() == 1 {
-                // stats.ca_udp_warn().inc();
-                debug!("received answer with single message: {:?}", msgs);
-            }
-            let mut good = true;
-            if let CaMsgTy::VersionRes(v) = msgs[0].ty {
-                if v != 13 {
-                    warn!("bad version in search response: {}", v);
-                    good = false;
-                }
+            let hi = HeadInfo::from_netbuf(&mut nb)?;
+            if hi.cmdid() == 0 && hi.payload_len() == 0 {
+            } else if hi.cmdid() == 6 && hi.payload_len() == 8 {
             } else {
-                // stats.ca_udp_first_msg_not_version().inc();
+                info!("cmdid {}  payload {}", hi.cmdid(), hi.payload_len());
             }
-            // trace2!("recv  {:?}  {:?}", src_addr, msgs);
-            let mut res = Vec::new();
-            if good {
-                // because of bad java CA implementation, consider also the first message
-                for msg in &msgs[0..] {
-                    match &msg.ty {
-                        CaMsgTy::VersionRes(_) => {}
-                        CaMsgTy::SearchRes(k) => {
-                            let addr = SocketAddrV4::new(src_addr, k.tcp_port);
-                            res.push((SearchId(k.id), addr));
-                        }
-                        _ => {
-                            // stats.ca_udp_error().inc();
-                            warn!("try_read: unknown message received  {:?}", msg.ty);
-                        }
+            if nb.data().len() < hi.payload_len() as usize {
+                error!("incomplete message, missing payload");
+                break;
+            }
+            let msg = CaMsg::from_proto_infos(&hi, nb.data(), tsnow, 32)?;
+            nb.adv(hi.payload_len() as usize)?;
+            msgs.push(msg);
+            accounted += 16 + hi.payload_len();
+        }
+        if accounted != ec as u32 {
+            // stats.ca_udp_unaccounted_data().inc();
+            debug!("unaccounted data  ec {}  accounted {}", ec, accounted);
+        }
+        if msgs.len() < 1 {
+            // stats.ca_udp_warn().inc();
+            debug!("received answer without messages");
+        }
+        if msgs.len() == 1 {
+            // stats.ca_udp_warn().inc();
+            debug!("received answer with single message: {:?}", msgs);
+        }
+        let mut good = true;
+        if let CaMsgTy::VersionRes(v) = msgs[0].ty {
+            if v != 13 {
+                warn!("bad version in search response: {}", v);
+                good = false;
+            }
+        } else {
+            // stats.ca_udp_first_msg_not_version().inc();
+        }
+        // trace2!("recv  {:?}  {:?}", src_addr, msgs);
+        let mut res = Vec::new();
+        if good {
+            // because of bad java CA implementation, consider also the first message
+            for msg in &msgs[0..] {
+                match &msg.ty {
+                    CaMsgTy::VersionRes(_) => {}
+                    CaMsgTy::SearchRes(k) => {
+                        let addr = SocketAddrV4::new(src_addr, k.tcp_port);
+                        res.push((SearchId(k.id), addr));
+                    }
+                    _ => {
+                        // stats.ca_udp_error().inc();
+                        warn!("try_read: unknown message received  {:?}", msg.ty);
                     }
                 }
             }
-            Poll::Ready(Ok((SocketAddrV4::new(src_addr, src_port), res)))
         }
+        Ok((SocketAddrV4::new(src_addr, src_port), res))
     }
 
     fn serialize_batch(buf: &mut Vec<u8>, batch: &SearchBatch) {
@@ -460,7 +499,7 @@ impl FindIocStream {
         }
     }
 
-    fn create_in_flight(&mut self, chns: Vec<(String, OptResTx)>) {
+    fn create_in_flight(&mut self, chns: Vec<(String, asynchan::Sender<FindIocRes>)>) {
         let bid = BatchId::next();
         let mut sids = Vec::new();
         let mut chs = Vec::new();
@@ -470,7 +509,7 @@ impl FindIocStream {
             self.bid_by_sid.insert(sid.clone(), bid.clone());
             sids.push(sid);
             chs.push(ch);
-            txs.push(tx);
+            txs.push(Some(tx));
         }
         let n = chs.len();
         let batch = SearchBatch {
@@ -503,18 +542,20 @@ impl FindIocStream {
                                     batch.done[i2] = true;
                                     match batch.channels.get(i2) {
                                         Some(ch) => {
-                                            let tx = batch.txs.get_mut(i2).unwrap().takeit();
-                                            let dt = tsnow.saturating_duration_since(batch.ts_beg);
-                                            let res = FindIocRes {
-                                                channel: ch.into(),
-                                                response_addr: Some(src.clone()),
-                                                addr: Some(addr),
-                                                dt,
-                                                tx,
-                                            };
-                                            // trace!("udp search response {res:?}");
-                                            // stats.ca_udp_recv_result().inc();
-                                            self.out_queue.push_back(res);
+                                            if let Some(tx) = batch.txs[i2].take() {
+                                                let dt = tsnow.saturating_duration_since(batch.ts_beg);
+                                                let res = FindIocRes {
+                                                    channel: ch.into(),
+                                                    response_addr: Some(src.clone()),
+                                                    addr: Some(addr),
+                                                    dt,
+                                                };
+                                                // trace!("udp search response {res:?}");
+                                                // stats.ca_udp_recv_result().inc();
+                                                self.out_queue.push_back((res, tx));
+                                            } else {
+                                                info!("result for {ch} but no tx");
+                                            }
                                         }
                                         None => {
                                             // stats.ca_udp_logic_error().inc();
@@ -571,10 +612,14 @@ impl FindIocStream {
                 for (i2, sid) in batch.sids.iter().enumerate() {
                     if batch.done[i2] == false {
                         // debug!("Timeout: {bid:?} {}", batch.channels[i2]);
-                        sids.push(sid.clone());
-                        chns.push(batch.channels[i2].clone());
-                        dts.push(dt);
-                        txs.push(batch.txs.get_mut(i2).unwrap().takeit());
+                        if let Some(tx) = batch.txs[i2].take() {
+                            sids.push(sid.clone());
+                            chns.push(batch.channels[i2].clone());
+                            dts.push(dt);
+                            txs.push(tx);
+                        } else if batch.done[i2] == false {
+                            warn!("batch not yet done, but no tx");
+                        }
                         // stats.ca_udp_recv_timeout().inc();
                     }
                 }
@@ -588,9 +633,8 @@ impl FindIocStream {
                 channel: ch,
                 addr: None,
                 dt,
-                tx,
             };
-            self.out_queue.push_back(res);
+            self.out_queue.push_back((res, tx));
             self.bid_by_sid.remove(&sid);
         }
         for bid in bids {
@@ -598,7 +642,7 @@ impl FindIocStream {
         }
     }
 
-    fn get_input_up_to_batch_max(&mut self, cx: &mut Context) -> Poll<Vec<(String, OptResTx)>> {
+    fn get_input_up_to_batch_max(&mut self, cx: &mut Context) -> Poll<Vec<(String, asynchan::Sender<FindIocRes>)>> {
         use Poll::*;
         let mut ret = Vec::new();
         loop {
@@ -607,6 +651,7 @@ impl FindIocStream {
             match rx.poll_next(cx) {
                 Ready(Some(item)) => {
                     hpp.mark_progress();
+                    info!("get_input_up_to_batch_max  {}", item.0);
                     ret.push(item);
                 }
                 Ready(None) => {}
@@ -633,7 +678,7 @@ impl FindIocStream {
             && self.out_queue.is_empty()
     }
 
-    fn out_item(&mut self) -> Option<VecDeque<FindIocRes>> {
+    fn out_item(&mut self) -> Option<VecDeque<(FindIocRes, asynchan::Sender<FindIocRes>)>> {
         if self.out_queue.is_empty() {
             None
         } else {
@@ -675,7 +720,7 @@ impl FindIocStream {
 }
 
 impl Stream for FindIocStream {
-    type Item = Result<VecDeque<FindIocRes>, Error>;
+    type Item = Result<VecDeque<(FindIocRes, asynchan::Sender<FindIocRes>)>, Error>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         use Poll::*;
@@ -821,6 +866,7 @@ impl Stream for FindIocStream {
             } else if hpp.have_pending() {
                 Pending
             } else {
+                info!("FindIocStream  Done");
                 Ready(None)
             };
         }

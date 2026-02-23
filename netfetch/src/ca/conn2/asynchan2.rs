@@ -10,12 +10,11 @@ use tokio::sync::mpsc;
 
 macro_rules! trace { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
 
-pub struct Sender<T>(mpsc::Sender<T>, String);
+pub struct Sender<T>(mpsc::Sender<T>, &'static str);
 
-pub struct Receiver<T>(mpsc::Receiver<T>, String);
+pub struct Receiver<T>(mpsc::Receiver<T>, &'static str);
 
-pub fn bounded<T: Unpin + Send + 'static, S: Into<String>>(n: usize, tag: S) -> (Sender<T>, Receiver<T>) {
-    let tag = tag.into();
+pub fn bounded<T: Unpin + Send + 'static>(n: usize, tag: &'static str) -> (Sender<T>, Receiver<T>) {
     let (tx, rx) = mpsc::channel(n);
     (Sender(tx.clone(), tag.clone()), Receiver(rx, tag))
 }

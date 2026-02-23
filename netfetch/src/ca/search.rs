@@ -1,3 +1,4 @@
+use crate::ca::finder::IocAddrQuery;
 use crate::ca::findioc::FindIocStream;
 use crate::ca::findioc::OptResTx;
 use crate::conf::CaIngestOpts;
@@ -60,7 +61,7 @@ pub async fn ca_search_workers_start(
     opts: &CaIngestOpts,
 ) -> Result<
     (
-        Sender<(String, OptResTx)>,
+        Sender<IocAddrQuery>,
         Receiver<Result<VecDeque<crate::ca::findioc::FindIocRes>, crate::ca::findioc::Error>>,
         JoinHandle<Result<(), Error>>,
     ),
@@ -68,9 +69,11 @@ pub async fn ca_search_workers_start(
 > {
     let (search_tgts, blacklist) = search_tgts_from_opts(&opts).await?;
     let batch_run_max = Duration::from_millis(800);
+    let in_flight_max = 16;
+    let batch_size = 4;
     let (inp_tx, inp_rx) = async_channel::bounded(256);
     let (out_tx, out_rx) = async_channel::bounded(256);
-    let finder = FindIocStream::new(inp_rx, search_tgts, blacklist, batch_run_max, 16, 4);
+    let finder = FindIocStream::new(inp_rx, search_tgts, blacklist, batch_run_max, in_flight_max, batch_size);
     let jh = taskrun::spawn(finder_run(finder, out_tx));
     Ok((inp_tx, out_rx, jh))
 }
