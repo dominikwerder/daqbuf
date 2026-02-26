@@ -142,6 +142,10 @@ impl FinderHandleV02 {
         let (qu, rx) = IocAddrQuery::cached_rx(name);
         self.find(qu, rx).await
     }
+
+    pub fn qtx(&self) -> Sender<IocAddrQuery> {
+        self.qtx.clone()
+    }
 }
 
 pub fn start_finder_handle_v02(
