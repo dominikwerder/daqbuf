@@ -1,7 +1,5 @@
 use crate::ca::conn2::asynchan;
-use crate::ca::connset::IocAddrQuery;
 use crate::ca::finder::FinderHandleV02;
-use crate::ca::findioc::FindIocRes;
 use dbpg::seriesbychannel::ChannelInfoQuerySender;
 use std::pin::Pin;
 use std::task::Context;

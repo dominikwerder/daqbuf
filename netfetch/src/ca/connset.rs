@@ -394,8 +394,9 @@ pub struct CaConnSet {
     channel_info_query_tx: Option<Sender<ChannelInfoQuery>>,
     channel_info_res_tx: Pin<Box<Sender<Result<ChannelInfoResult, Error>>>>,
     channel_info_res_rx: Pin<Box<Receiver<Result<ChannelInfoResult, Error>>>>,
-    find_ioc_query_queue: VecDeque<IocAddrQuery>,
-    find_ioc_query_sender: Pin<Box<SenderPolling<IocAddrQuery>>>,
+    find_ioc_query_queue: VecDeque<(IocAddrQuery, asynchan::Receiver<FindIocRes>)>,
+    // find_ioc_query_sender_1: Pin<Box<SenderPolling<IocAddrQuery>>>,
+    find_ioc_query_sender_2: Option<Pin<Box<async_channel::Sender<IocAddrQuery>>>>,
     find_ioc_res_rx: Pin<Box<Receiver<VecDeque<FindIocRes>>>>,
     find_ioc_queue_set: QueueSet<ChannelName>,
     iqtx: Pin<Box<InsertQueuesTx>>,
@@ -457,7 +458,8 @@ impl CaConnSet {
             channel_info_res_tx: Box::pin(channel_info_res_tx),
             channel_info_res_rx: Box::pin(channel_info_res_rx),
             find_ioc_query_queue: VecDeque::new(),
-            find_ioc_query_sender: Box::pin(SenderPolling::new(find_ioc_query_tx)),
+            // find_ioc_query_sender_1: Box::pin(SenderPolling::new(find_ioc_query_tx)),
+            find_ioc_query_sender_2: Some(Box::pin(find_ioc_query_tx)),
             find_ioc_res_rx: Box::pin(find_ioc_res_rx),
             find_ioc_queue_set: QueueSet::new(),
             iqtx: Box::pin(iqtx.clone()),
@@ -523,9 +525,9 @@ impl CaConnSet {
         trace!("CaConnSet beacon cancelled");
         beacons_jh.await??;
         trace!("CaConnSet beacon joined");
-        trace!("join ioc_finder_jh A  {:?}", this.find_ioc_query_sender.len());
-        this.find_ioc_query_sender.as_mut().drop();
-        trace!("join ioc_finder_jh B  {:?}", this.find_ioc_query_sender.len());
+        trace!("join ioc_finder_jh A");
+        this.find_ioc_query_sender_2 = None;
+        trace!("join ioc_finder_jh B");
         this.ioc_finder_jh.await??;
         trace!("joined ioc_finder_jh");
         this.connset_out_tx.close();
@@ -1126,7 +1128,7 @@ impl CaConnSet {
         self.find_ioc_res_rx.close();
         self.channel_info_query_sender.as_mut().drop();
         self.channel_info_query_tx = None;
-        self.find_ioc_query_sender.as_mut().drop();
+        self.find_ioc_query_sender_2 = None;
         for (_addr, res) in self.ca_conn_ress.iter() {
             let item = ConnCommand::shutdown();
             // TODO not the nicest
@@ -2008,7 +2010,7 @@ impl Stream for CaConnSet {
                 self2
                     .mett
                     .find_ioc_query_sender_len()
-                    .set(self2.find_ioc_query_sender.len().unwrap_or(0) as _);
+                    .set(self2.find_ioc_query_sender_2.as_ref().map_or(0, |x| x.len() as _));
                 self2.mett.ca_conn_res_tx_len().set(self2.ca_conn_res_tx.len() as _);
             }
 
@@ -2091,12 +2093,22 @@ impl Stream for CaConnSet {
                 }
             }
             {
-                let this = self.as_mut().get_mut();
-                let qu = &mut this.find_ioc_query_queue;
-                let tx = this.find_ioc_query_sender.as_mut();
-                let x = sender_polling_send(qu, tx, cx, || ());
-                if let Err(e) = merge_pending_progress(x, &mut penpro) {
-                    break Ready(Some(CaConnSetItem::Error(e)));
+                let self2 = self.as_mut().get_mut();
+                if let Some(item) = self2.find_ioc_query_queue.pop_front() {
+                    if let Some(tx) = self2.find_ioc_query_sender_2.as_mut() {
+                        match tx.try_send(item.0) {
+                            Ok(()) => {
+                                penpro.mark_progress();
+                            }
+                            Err(e) => match e {
+                                async_channel::TrySendError::Full(x) => {
+                                    self2.find_ioc_query_queue.push_front((x, item.1));
+                                    penpro.mark_pending();
+                                }
+                                async_channel::TrySendError::Closed(_) => {}
+                            },
+                        }
+                    }
                 }
             }
             {
