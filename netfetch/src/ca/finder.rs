@@ -146,52 +146,23 @@ pub fn start_finder_handle_v02(
 ) -> (FinderHandleV02, JoinHandle<Result<(), Error>>) {
     let selfname = "start_finder_handle_v02";
     let (qtx, qrx) = async_channel::bounded(CURRENT_SEARCH_PENDING_MAX);
-    let (rtx, rrx) = async_channel::bounded(CURRENT_SEARCH_PENDING_MAX);
-    let jh = taskrun::spawn(finder_full(qrx, rtx, backend, opts));
-    {
-        let fut = async move {
-            let mut rrx = std::pin::pin!(rrx);
-            while let Some(a) = rrx.next().await {
-                for mut x in a {
-                    if let Some(mut tx) = x.tx.takeit().into_inner() {
-                        if let Err(e) = tx.send(x).await {
-                            warn!("{selfname}  response send error");
-                        }
-                    } else {
-                        warn!("{selfname}  missing tx for response");
-                    }
-                }
-            }
-        };
-        // TODO await also this handle
-        let jh = tokio::spawn(fut);
-    }
+    // old:
+    // qtx -> qrx -> rtx -> rrx -> job-tx
+    // new:
+    // qtx -> qrx -> job-tx
+    // let (rtx, rrx) = async_channel::bounded(CURRENT_SEARCH_PENDING_MAX);
+    let jh = taskrun::spawn(finder_full(qrx, backend, opts));
     let fh = FinderHandleV02 { qtx };
     (fh, jh)
 }
 
-pub fn start_finder(
-    tx: Sender<VecDeque<FindIocRes>>,
-    backend: String,
-    opts: CaIngestOpts,
-) -> Result<(Sender<IocAddrQuery>, JoinHandle<Result<(), Error>>), Error> {
-    let (qtx, qrx) = async_channel::bounded(CURRENT_SEARCH_PENDING_MAX);
-    let jh = taskrun::spawn(finder_full(qrx, tx, backend, opts));
-    Ok((qtx, jh))
-}
-
-async fn finder_full<S>(
-    qrx: S,
-    tx: Sender<VecDeque<FindIocRes>>,
-    backend: String,
-    opts: CaIngestOpts,
-) -> Result<(), Error>
+async fn finder_full<S>(qrx: S, backend: String, opts: CaIngestOpts) -> Result<(), Error>
 where
     S: Stream<Item = IocAddrQuery> + Send + 'static,
 {
     let (tx1, rx1) = async_channel::bounded(20);
     let jh1 = taskrun::spawn(finder_worker(qrx, tx1, backend, opts.postgresql_config().clone()));
-    let jh2 = taskrun::spawn(finder_network_if_not_found(rx1, tx, opts.clone()));
+    let jh2 = taskrun::spawn(finder_network_if_not_found(rx1, opts.clone()));
     jh1.await??;
     trace!("finder::finder_full  awaited A");
     jh2.await??;
@@ -350,11 +321,7 @@ async fn finder_worker_single(
     Ok(())
 }
 
-async fn finder_network_if_not_found(
-    rx: Receiver<VecDeque<IocAddrQuery>>,
-    tx: Sender<VecDeque<FindIocRes>>,
-    opts: CaIngestOpts,
-) -> Result<(), Error> {
+async fn finder_network_if_not_found(rx: Receiver<VecDeque<IocAddrQuery>>, opts: CaIngestOpts) -> Result<(), Error> {
     let selfname = "finder_network_if_not_found";
     let (net_tx, net_rx, jh_ca_search) = ca_search_workers_start(&opts).await?;
     let jh2 = taskrun::spawn(process_net_result(net_rx, tx.clone(), opts.clone()));
