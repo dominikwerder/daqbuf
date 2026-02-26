@@ -1,11 +1,9 @@
-use crate::ca::finder::IocAddrQuery;
+use super::conn2::asynchan2 as asynchan;
 use crate::ca::findioc::FindIocStream;
-use crate::ca::findioc::OptResTx;
 use crate::conf::CaIngestOpts;
 use async_channel::Receiver;
 use async_channel::Sender;
 use futures::StreamExt;
-use log::*;
 use std::collections::VecDeque;
 use std::net::IpAddr;
 use std::net::SocketAddr;
@@ -13,6 +11,12 @@ use std::net::SocketAddrV4;
 use std::time::Duration;
 use taskrun::tokio;
 use tokio::task::JoinHandle;
+
+macro_rules! error { ($($arg:tt)*) => ( if true { log::error!($($arg)*); } ); }
+macro_rules! warn { ($($arg:tt)*) => ( if true { log::warn!($($arg)*); } ); }
+macro_rules! info { ($($arg:tt)*) => ( if true { log::info!($($arg)*); } ); }
+macro_rules! debug { ($($arg:tt)*) => ( if true { log::debug!($($arg)*); } ); }
+macro_rules! trace { ($($arg:tt)*) => ( if false { log::trace!($($arg)*); } ); }
 
 autoerr::create_error_v1!(
     name(Error, "IocSearch"),
@@ -61,8 +65,16 @@ pub async fn ca_search_workers_start(
     opts: &CaIngestOpts,
 ) -> Result<
     (
-        Sender<IocAddrQuery>,
-        Receiver<Result<VecDeque<crate::ca::findioc::FindIocRes>, crate::ca::findioc::Error>>,
+        Sender<(String, asynchan::Sender<crate::ca::findioc::FindIocRes>)>,
+        Receiver<
+            Result<
+                VecDeque<(
+                    crate::ca::findioc::FindIocRes,
+                    asynchan::Sender<crate::ca::findioc::FindIocRes>,
+                )>,
+                crate::ca::findioc::Error,
+            >,
+        >,
         JoinHandle<Result<(), Error>>,
     ),
     Error,
@@ -123,14 +135,25 @@ async fn search_tgts_from_opts(opts: &CaIngestOpts) -> Result<(Vec<SocketAddrV4>
     Ok((addrs, blacklist))
 }
 
+// TODO must actually send out the results so that they can also go into database cache, or?
 async fn finder_run(
     finder: FindIocStream,
-    tx: Sender<Result<VecDeque<crate::ca::findioc::FindIocRes>, crate::ca::findioc::Error>>,
+    tx: Sender<
+        Result<
+            VecDeque<(
+                crate::ca::findioc::FindIocRes,
+                asynchan::Sender<crate::ca::findioc::FindIocRes>,
+            )>,
+            crate::ca::findioc::Error,
+        >,
+    >,
 ) -> Result<(), Error> {
+    let selfname = "finder_run";
     let mut finder = Box::pin(finder);
-    while let Some(item) = finder.next().await {
-        if let Err(_) = tx.send(item).await {
-            break;
+    while let Some(x) = finder.next().await {
+        match tx.send(x).await {
+            Ok(_) => todo!(),
+            Err(_) => todo!(),
         }
     }
     trace!("finder_run done");

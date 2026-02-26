@@ -3,6 +3,7 @@ use super::findioc::FindIocRes;
 use crate::ca::conn;
 use crate::ca::conn2::asynchan;
 use crate::ca::finder::IocAddrQuery;
+use crate::ca::finder::start_finder_handle_v02;
 use crate::ca::findioc::OptResTx;
 use crate::ca::statemap;
 use crate::ca::statemap::MaybeWrongAddressState;
@@ -32,8 +33,6 @@ use futures::FutureExt;
 use futures::Stream;
 use futures::StreamExt;
 use hashbrown::HashMap;
-use log;
-use md5::digest::consts::False;
 use netpod::OnDrop;
 use netpod::ScalarType;
 use netpod::SeriesKind;
@@ -438,8 +437,11 @@ impl CaConnSet {
         let (connset_inp_tx, connset_inp_rx) = async_channel::bounded(200);
         let (connset_out_tx, connset_out_rx) = async_channel::bounded(200);
         let (find_ioc_res_tx, find_ioc_res_rx) = async_channel::bounded(400);
-        let (find_ioc_query_tx, ioc_finder_jh) =
-            super::finder::start_finder(find_ioc_res_tx.clone(), backend.clone(), ingest_opts).unwrap();
+        let (find_ioc_query_tx, ioc_finder_jh) = start_finder_handle_v02(backend.clone(), ingest_opts);
+
+        // TODO
+        let find_ioc_query_tx = todo!();
+
         let (channel_info_res_tx, channel_info_res_rx) = async_channel::bounded(400);
         let connset = Self {
             ticker: Self::new_self_ticker(),
@@ -795,8 +797,8 @@ impl CaConnSet {
                         },
                         writer_status: Some(writer_status),
                     });
-                    let qu = IocAddrQuery::cached(name.into());
-                    self.find_ioc_query_queue.push_back(qu);
+                    let (qu, rx) = IocAddrQuery::cached_rx(name.into());
+                    self.find_ioc_query_queue.push_back((qu, rx));
                     self.mett.ioc_search_start().inc();
                 } else {
                     self.mett.logic_err().inc();
@@ -948,14 +950,14 @@ impl CaConnSet {
             return Ok(());
         }
         for res in results {
-            let ch = ChannelName::new(res.channel.clone());
+            let ch = ChannelName::new(res.channel().into());
             if series::dbg::dbg_chn(&ch.name()) {
                 info!("{selfn}  {:?}", res);
             }
             if let Some(st1) = self.channel_states.get_mut(&ch) {
                 if let ChannelStateValue::Active(st2) = &mut st1.value {
                     if let ActiveChannelState::WithStatusSeriesId(st3) = st2 {
-                        if let Some(addr) = res.addr {
+                        if let Some(addr) = res.addr() {
                             self.mett.ioc_addr_found().inc();
                             if series::dbg::dbg_chn(&ch.name()) {
                                 info!("{selfn}  ioc found {:?}", res);
@@ -1703,8 +1705,8 @@ impl CaConnSet {
                                     }
                                     search_pending_count += 1;
                                     st3.inner = WithStatusSeriesIdStateInner::AddrSearchPending { since: stnow };
-                                    let qu = IocAddrQuery::uncached(ch.name().into());
-                                    self.find_ioc_query_queue.push_back(qu);
+                                    let (qu, rx) = IocAddrQuery::uncached_rx(ch.name().into());
+                                    self.find_ioc_query_queue.push_back((qu, rx));
                                     self.mett.ioc_search_start().inc();
                                 }
                                 _ => {}

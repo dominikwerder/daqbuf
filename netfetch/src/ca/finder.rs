@@ -13,7 +13,6 @@ use dbpg::iocindex::IocSearchIndexWorker;
 use dbpg::postgres::Row as PgRow;
 use futures::Stream;
 use futures::StreamExt;
-use log;
 use netpod::Database;
 use std::collections::VecDeque;
 use std::time::Duration;
@@ -40,6 +39,7 @@ autoerr::create_error_v1!(
         AddrSearchSend,
         AddrSearchResultTx,
         AddrSearchResultRx,
+        Send,
     },
 );
 
@@ -115,6 +115,10 @@ impl IocAddrQuery {
     pub fn use_cache(&self) -> bool {
         self.use_cache
     }
+
+    pub fn into_name_tx(self) -> (String, asynchan::Sender<FindIocRes>) {
+        (self.name, self.tx)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -161,8 +165,42 @@ where
     S: Stream<Item = IocAddrQuery> + Send + 'static,
 {
     let (tx1, rx1) = async_channel::bounded(20);
+    let (tx2, rx2) = async_channel::bounded(20);
     let jh1 = taskrun::spawn(finder_worker(qrx, tx1, backend, opts.postgresql_config().clone()));
-    let jh2 = taskrun::spawn(finder_network_if_not_found(rx1, opts.clone()));
+    let jh2 = taskrun::spawn(finder_network_if_not_found(rx2, opts.clone()));
+    let jh3 = {
+        let fut = async move {
+            loop {
+                match rx1.recv().await {
+                    Ok(v) => {
+                        let mut a = VecDeque::new();
+                        let mut d = Vec::new();
+                        for f in v {
+                            match f {
+                                FindIocCacheRes::Hit(x) => {
+                                    d.push(x);
+                                }
+                                FindIocCacheRes::Miss(x) => {
+                                    a.push_back(x);
+                                }
+                                FindIocCacheRes::Uncached(x) => {
+                                    a.push_back(x);
+                                }
+                            }
+                        }
+                        match tx2.send(a).await {
+                            Ok(()) => {}
+                            Err(_) => {
+                                debug!("can not send batch to network lookup");
+                            }
+                        }
+                    }
+                    Err(_) => {}
+                }
+            }
+        };
+        taskrun::spawn(fut)
+    };
     jh1.await??;
     trace!("finder::finder_full  awaited A");
     jh2.await??;
@@ -173,7 +211,7 @@ where
 
 async fn finder_worker<S>(
     qrx: S,
-    tx: Sender<VecDeque<IocAddrQuery>>,
+    tx: Sender<VecDeque<FindIocCacheRes>>,
     backend: String,
     db: Database,
 ) -> Result<(), Error>
@@ -321,20 +359,27 @@ async fn finder_worker_single(
     Ok(())
 }
 
+async fn send_not_found_requests(
+    reqs: VecDeque<IocAddrQuery>,
+    net_tx: &mut async_channel::Sender<(String, asynchan::Sender<FindIocRes>)>,
+) -> Result<(), Error> {
+    let selfname = "send_not_found_requests";
+    for x in reqs {
+        let (name, tx) = x.into_name_tx();
+        if series::dbg::dbg_chn(&name) {
+            trace!("{selfname}  push to network lookup {name}");
+        }
+        net_tx.send((name, tx)).await.map_err(|_| Error::Send)?;
+    }
+    Ok(())
+}
+
 async fn finder_network_if_not_found(rx: Receiver<VecDeque<IocAddrQuery>>, opts: CaIngestOpts) -> Result<(), Error> {
     let selfname = "finder_network_if_not_found";
-    let (net_tx, net_rx, jh_ca_search) = ca_search_workers_start(&opts).await?;
-    let jh2 = taskrun::spawn(process_net_result(net_rx, tx.clone(), opts.clone()));
-    'outer: while let Ok(item) = rx.recv().await {
-        for e in item {
-            if series::dbg::dbg_chn(&e.name()) {
-                trace!("{selfname}  push to network lookup {:?}", e);
-            }
-            if let Err(_) = net_tx.send(e).await {
-                debug!("{selfname}  net ch send error, break");
-                break 'outer;
-            }
-        }
+    let (mut net_tx, net_rx, jh_ca_search) = ca_search_workers_start(&opts).await?;
+    let jh2 = taskrun::spawn(process_net_result(net_rx, opts.clone()));
+    while let Ok(item) = rx.recv().await {
+        send_not_found_requests(item, &mut net_tx).await?;
     }
     drop(net_tx);
     trace!("{selfname}  loop end");
@@ -346,11 +391,10 @@ async fn finder_network_if_not_found(rx: Receiver<VecDeque<IocAddrQuery>>, opts:
 }
 
 async fn process_net_result(
-    net_rx: Receiver<Result<VecDeque<FindIocRes>, crate::ca::findioc::Error>>,
-    tx: Sender<VecDeque<FindIocRes>>,
+    net_rx: Receiver<Result<VecDeque<(FindIocRes, asynchan::Sender<FindIocRes>)>, crate::ca::findioc::Error>>,
+    // tx: Sender<VecDeque<FindIocRes>>,
     opts: CaIngestOpts,
 ) -> Result<(), Error> {
-    TODO;
     let selfname = "process_net_result";
     const IOC_SEARCH_INDEX_WORKER_COUNT: usize = 1;
     let (dbtx, dbrx) = async_channel::bounded(64);
@@ -369,16 +413,24 @@ async fn process_net_result(
         match item {
             Ok(item) => {
                 let mut cacheitems = Vec::new();
-                for e in item.iter() {
+                for (e, mut tx) in item {
                     if series::dbg::dbg_chn(&e.channel()) {
-                        trace!("{selfname}  push to cacheitems {:?}", e);
+                        trace!("{selfname}  push to cacheitems {e:?}");
                     }
-                    let cacheitem =
-                        IocItem::new(e.channel.clone(), e.response_addr.clone(), e.addr.clone(), e.dt.clone());
+                    let cacheitem = IocItem::new(
+                        e.channel().into(),
+                        e.response_addr().into(),
+                        e.addr().into(),
+                        e.dt().into(),
+                    );
                     cacheitems.push(cacheitem);
-                }
-                if let Err(_) = tx.send(item).await {
-                    break;
+                    match tx.send(e).await {
+                        Ok(()) => {}
+                        Err(e) => {
+                            debug!("{selfname}  send error");
+                            // TODO count for metrics
+                        }
+                    }
                 }
                 for e in cacheitems {
                     let chn = e.channel.clone();

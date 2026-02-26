@@ -149,6 +149,14 @@ impl FindIocRes {
     pub fn addr(&self) -> Option<SocketAddrV4> {
         self.addr.clone()
     }
+
+    pub fn response_addr(&self) -> Option<SocketAddrV4> {
+        self.response_addr.clone()
+    }
+
+    pub fn dt(&self) -> Duration {
+        self.dt.clone()
+    }
 }
 
 fn _assert_traits() {
