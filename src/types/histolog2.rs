@@ -120,7 +120,7 @@ impl HistoLog2 {
         ret
     }
 
-    pub fn to_display(&self) -> HistoLog2Display {
+    pub fn to_display(&self) -> HistoLog2Display<'_> {
         HistoLog2Display { inner: self }
     }
 }
