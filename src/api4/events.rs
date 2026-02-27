@@ -17,7 +17,6 @@ use netpod::FromUrl;
 use netpod::HasBackend;
 use netpod::HasTimeout;
 use netpod::SfDbChannel;
-use netpod::UseScylla6Workarounds;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::BTreeMap;
