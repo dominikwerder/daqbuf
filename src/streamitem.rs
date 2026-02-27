@@ -124,7 +124,7 @@ impl LogItem {
         self.level
     }
 
-    pub fn display_log_file(&self) -> LogItemDisplayLogfile {
+    pub fn display_log_file(&self) -> LogItemDisplayLogfile<'_> {
         LogItemDisplayLogfile { item: self }
     }
 }

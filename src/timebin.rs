@@ -104,8 +104,8 @@ pub trait BinningggContainerBinsDyn:
     fn edges_iter(
         &self,
     ) -> std::iter::Zip<
-        std::collections::vec_deque::Iter<TsNano>,
-        std::collections::vec_deque::Iter<TsNano>,
+        std::collections::vec_deque::Iter<'_, TsNano>,
+        std::collections::vec_deque::Iter<'_, TsNano>,
     >;
     fn drain_into(&mut self, dst: &mut dyn BinningggContainerBinsDyn, range: Range<usize>);
     fn binned_bins_timeweight_traitobj(
