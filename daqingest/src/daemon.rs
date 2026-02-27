@@ -2,10 +2,8 @@ pub mod inserthook;
 
 use async_channel::Receiver;
 use async_channel::Sender;
-use channeltools::channel_combine_ab::ChannelCombineAB;
 use dbpg::seriesbychannel::ChannelInfoQuery;
 use err::Error;
-use log;
 use netfetch::ca::connset::CaConnSet;
 use netfetch::ca::connset::CaConnSetCtrl;
 use netfetch::ca::connset::CaConnSetEvent;
@@ -196,6 +194,7 @@ pub struct DaemonOpts {
 }
 
 pub struct Daemon {
+    #[allow(unused)]
     opts: DaemonOpts,
     ingest_opts: CaIngestOpts,
     tx: Sender<DaemonEvent>,
@@ -672,11 +671,6 @@ impl Daemon {
 
     async fn handle_channel_remove(&mut self, ch: ChannelName) -> Result<(), Error> {
         self.connset_ctrl.remove_channel(ch.name().into()).await?;
-        Ok(())
-    }
-
-    async fn handle_channel_command(&mut self, cmd: netfetch::ca::connset::ChannelCommand) -> Result<(), Error> {
-        self.connset_ctrl.send_channel_command(cmd).await?;
         Ok(())
     }
 

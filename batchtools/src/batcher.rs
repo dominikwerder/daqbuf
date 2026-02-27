@@ -30,13 +30,13 @@ async fn run_batcher<T>(rx: Receiver<T>, batch_tx: Sender<Vec<T>>, batch_limit: 
         if do_emit {
             do_emit = false;
             let batch = std::mem::replace(&mut all, Vec::new());
-            match tokio::time::timeout(Duration::from_millis(8000), batch_tx.send(batch)).await {
-                Ok(Ok(_)) => {}
+            match tokio::time::timeout(Duration::from_millis(4000), batch_tx.send(batch)).await {
+                Ok(Ok(())) => {}
                 Ok(Err(e)) => {
                     log::error!("can not send batch");
                     all = e.into_inner();
                 }
-                Err(e) => {
+                Err(_) => {
                     log::error!("send timeout");
                 }
             }
@@ -49,7 +49,17 @@ async fn run_batcher<T>(rx: Receiver<T>, batch_tx: Sender<Vec<T>>, batch_limit: 
                         do_emit = true;
                     }
                 }
-                Err(_e) => {
+                Err(_) => {
+                    let batch = std::mem::replace(&mut all, Vec::new());
+                    match tokio::time::timeout(Duration::from_millis(4000), batch_tx.send(batch)).await {
+                        Ok(Ok(())) => {}
+                        Ok(Err(_)) => {
+                            log::error!("can not send batch");
+                        }
+                        Err(_) => {
+                            log::error!("send timeout");
+                        }
+                    }
                     break;
                 }
             },
@@ -66,7 +76,7 @@ async fn run_batcher<T>(rx: Receiver<T>, batch_tx: Sender<Vec<T>>, batch_limit: 
 }
 
 pub struct Batcher2<S, T> {
-    inp: S,
+    inp: Option<S>,
     buf: VecDeque<T>,
     interval: Duration,
     timeout_fut: tokio::time::Sleep,
@@ -76,7 +86,7 @@ impl<S, T> Batcher2<S, T> {
     pub fn new(inp: S, interval: Duration, limit_len: usize) -> Self {
         let timeout_fut = tokio::time::sleep(interval);
         Self {
-            inp,
+            inp: Some(inp),
             buf: VecDeque::with_capacity(limit_len),
             interval,
             timeout_fut,
@@ -95,44 +105,50 @@ where
         loop {
             let mut prog = false;
             let mut pend = false;
-            let mut timeout_fut = unsafe { Pin::new_unchecked(&mut self.as_mut().get_unchecked_mut().timeout_fut) };
-            match timeout_fut.as_mut().poll(cx) {
-                Ready(()) => {
-                    let self2 = unsafe { self.as_mut().get_unchecked_mut() };
-                    self2.timeout_fut = tokio::time::sleep(self2.interval);
-                    if self2.buf.len() == 0 {
-                        prog = true;
-                    } else {
-                        let buf = std::mem::replace(&mut self2.buf, VecDeque::new());
-                        break Ready(Some(buf));
+            let inp = unsafe { &mut self.as_mut().get_unchecked_mut().inp };
+            if let Some(inp) = inp.as_mut() {
+                let inp = unsafe { Pin::new_unchecked(inp) };
+                match inp.poll_next(cx) {
+                    Ready(x) => match x {
+                        Some(item) => {
+                            let self2 = unsafe { self.as_mut().get_unchecked_mut() };
+                            self2.buf.push_back(item);
+                            prog = true;
+                            if self2.buf.len() >= self2.buf.capacity() {
+                                let buf = std::mem::replace(&mut self2.buf, VecDeque::new());
+                                break Ready(Some(buf));
+                            }
+                        }
+                        None => {
+                            let self2 = unsafe { self.as_mut().get_unchecked_mut() };
+                            self2.inp = None;
+                            let n = self2.buf.len();
+                            log::debug!("BATCHER SEES INPUT EOS  n {n}");
+                            if n > 0 {
+                                let buf = std::mem::replace(&mut self2.buf, VecDeque::new());
+                                break Ready(Some(buf));
+                            }
+                        }
+                    },
+                    Pending => {
+                        pend = true;
                     }
                 }
-                Pending => {
-                    pend = true;
-                }
-            }
-            let inp = unsafe { Pin::new_unchecked(&mut self.as_mut().get_unchecked_mut().inp) };
-            match inp.poll_next(cx) {
-                Ready(x) => match x {
-                    Some(item) => {
+                let mut timeout_fut = unsafe { Pin::new_unchecked(&mut self.as_mut().get_unchecked_mut().timeout_fut) };
+                match timeout_fut.as_mut().poll(cx) {
+                    Ready(()) => {
                         let self2 = unsafe { self.as_mut().get_unchecked_mut() };
-                        self2.buf.push_back(item);
-                        prog = true;
-                        if self2.buf.len() >= self2.buf.capacity() {
+                        self2.timeout_fut = tokio::time::sleep(self2.interval);
+                        if self2.buf.len() == 0 {
+                            prog = true;
+                        } else {
                             let buf = std::mem::replace(&mut self2.buf, VecDeque::new());
                             break Ready(Some(buf));
                         }
                     }
-                    None => {
-                        let self2 = unsafe { self.as_mut().get_unchecked_mut() };
-                        if self2.buf.len() > 0 {
-                            let buf = std::mem::replace(&mut self2.buf, VecDeque::new());
-                            break Ready(Some(buf));
-                        }
+                    Pending => {
+                        pend = true;
                     }
-                },
-                Pending => {
-                    pend = true;
                 }
             }
             break if prog {
@@ -140,6 +156,7 @@ where
             } else if pend {
                 Pending
             } else {
+                log::debug!("BATCHER EMITS EOS {:?}", &self as *const _);
                 Ready(None)
             };
         }

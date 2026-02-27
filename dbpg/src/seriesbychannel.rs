@@ -27,7 +27,6 @@ macro_rules! info { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
 macro_rules! debug { ($($arg:tt)*) => { if true { log::debug!($($arg)*); } }; }
 macro_rules! trace1 { ($($arg:tt)*) => { if true { log::trace!($($arg)*); } }; }
 macro_rules! trace2 { ($($arg:tt)*) => { if true { log::trace!($($arg)*); } }; }
-macro_rules! trace3 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
 
 autoerr::create_error_v1!(
     name(Error, "PgSeries"),
@@ -177,8 +176,8 @@ struct Worker {
 
 impl Worker {
     async fn new(db: &Database, batch_rx: Receiver<Vec<ChannelInfoQuery>>) -> Result<Self, Error> {
+        info!("start postgres worker to {}:{}", db.host, db.port);
         use tokio_postgres::types::Type;
-        debug!("Worker  make_pg_client");
         let (pg, pg_client_jh) = crate::conn::make_pg_client(db).await?;
         let sql = concat!(
             "with q1 as (",

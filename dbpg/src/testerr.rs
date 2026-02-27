@@ -1,7 +1,7 @@
 use std::fmt;
 
 #[derive(Debug)]
-struct TestError {
+pub struct TestError {
     msg: String,
 }
 

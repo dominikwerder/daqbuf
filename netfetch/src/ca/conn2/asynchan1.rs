@@ -1,15 +1,10 @@
-use futures::Sink;
 use futures::Stream;
 use futures::StreamExt;
 use std::fmt;
 use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
-use std::task::Waker;
 
-macro_rules! trace { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
-
-// pub struct Sender<T>(crossfire::MAsyncTx<T>, crossfire::sink::AsyncSink<T>, String);
 pub struct Sender<T>(crossfire::MAsyncTx<T>, (), String);
 
 pub struct Receiver<T>(crossfire::MAsyncRx<T>, crossfire::stream::AsyncStream<T>, String);
@@ -18,7 +13,6 @@ pub fn bounded<T: Unpin + Send + 'static, S: Into<String>>(n: usize, tag: S) -> 
     let tag = tag.into();
     let (tx, rx) = crossfire::mpmc::bounded_async(n);
     (
-        // Sender(tx.clone(), tx.into_sink(), tag.clone()),
         Sender(tx.clone(), (), tag.clone()),
         Receiver(rx.clone(), rx.into_stream(), tag),
     )
@@ -161,7 +155,7 @@ pub trait SendPoll<T> {
 }
 
 impl<T: Unpin + Send + 'static> SendPoll<T> for Sender<T> {
-    fn poll_send(mut self: Pin<&mut Self>, item: T, cx: &mut Context<'_>) -> Result<(), SendPollError<T>> {
+    fn poll_send(self: Pin<&mut Self>, item: T, cx: &mut Context<'_>) -> Result<(), SendPollError<T>> {
         use crossfire::TrySendError;
         let mut sink = self.0.clone().into_sink();
         // let sink = self.1;
@@ -178,7 +172,7 @@ impl<T: Unpin + Send + 'static> SendPoll<T> for Sender<T> {
         Pin::new(self).poll_send(item, cx)
     }
 
-    fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Result<(), SendCloseError> {
+    fn poll_close(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Result<(), SendCloseError> {
         Ok(())
     }
 
@@ -225,6 +219,7 @@ where
     }
 }
 
+#[allow(unused)]
 fn test_some() {
     use crossfire::TrySendError;
     let (tx, rx) = crossfire::mpmc::bounded_async(128);

@@ -22,7 +22,7 @@ pub async fn find(cmd: CaFind, broadcast: String) -> Result<(), Error> {
     let batch_run_max = Duration::from_millis(1200);
     let in_flight_max = 1;
     let batch_size = 1;
-    let (res_tx, res_rx) = netfetch::ca::conn2::asynchan::bounded(1, "channel-lookup-res");
+    let (res_tx, _res_rx) = netfetch::ca::conn2::asynchan::bounded(1, "channel-lookup-res");
     channels_input_tx.send((cmd.channel, res_tx)).await.unwrap();
     let stream = netfetch::ca::findioc::FindIocStream::new(
         channels_input_rx,
@@ -38,7 +38,7 @@ pub async fn find(cmd: CaFind, broadcast: String) -> Result<(), Error> {
         eprintln!("{e:?}");
         match e {
             Ok(x) => {
-                for (res, tx) in x {
+                for (res, _tx) in x {
                     log::info!("{res:?}");
                 }
             }

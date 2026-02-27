@@ -285,11 +285,11 @@ impl ChannelStateMap {
         self.map.iter_mut()
     }
 
-    pub fn iter_mut_dash(&mut self) -> ChannelStateIter {
+    pub fn iter_mut_dash(&mut self) -> ChannelStateIter<'_> {
         todo!()
     }
 
-    pub fn range_mut<R>(&mut self, range: R) -> RangeMut<ChannelName, ChannelState>
+    pub fn range_mut<R>(&mut self, range: R) -> RangeMut<'_, ChannelName, ChannelState>
     where
         R: RangeBounds<ChannelName>,
     {

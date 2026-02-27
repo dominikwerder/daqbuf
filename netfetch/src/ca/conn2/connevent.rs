@@ -26,7 +26,7 @@ impl CaConnEvent {
         }
     }
 
-    pub fn desc_short(&self) -> CaConnEventDescShort {
+    pub fn desc_short(&self) -> CaConnEventDescShort<'_> {
         CaConnEventDescShort { inner: self }
     }
 }

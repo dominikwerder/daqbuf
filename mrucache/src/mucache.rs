@@ -81,6 +81,6 @@ impl<K: Eq + Hash, V> MuCache<K, V> {
     }
 
     pub fn all_ref_mut(&mut self) -> Vec<&mut V> {
-        self.map.iter_mut().map(|x| (&mut x.1 .1)).collect()
+        self.map.iter_mut().map(|x| &mut (x.1).1).collect()
     }
 }

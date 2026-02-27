@@ -7,7 +7,6 @@ use futures::Stream;
 use pin_project::pin_project;
 use std::collections::VecDeque;
 use std::pin::Pin;
-use std::pin::pin;
 use std::task::Context;
 use std::task::Poll;
 

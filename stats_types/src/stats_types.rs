@@ -203,7 +203,7 @@ impl HistoLog2 {
         serde_json::Value::Null
     }
 
-    pub fn to_display(&self) -> HistoLog2Display {
+    pub fn to_display(&self) -> HistoLog2Display<'_> {
         HistoLog2Display { inner: self }
     }
 }

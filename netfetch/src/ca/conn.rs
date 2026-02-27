@@ -15,7 +15,6 @@ use futures::FutureExt;
 use futures::Stream;
 use futures::StreamExt;
 use hashbrown::HashMap;
-use log::*;
 use netpod::ByteSize;
 use netpod::EMIT_ACCOUNTING_SNAP;
 use netpod::ScalarType;
@@ -93,19 +92,18 @@ const DO_RATE_CHECK: bool = false;
 const CHANNEL_STATUS_PONG_QUIET: Duration = Duration::from_millis(1000 * 60 * 5);
 const METRICS_EMIT_IVL: Duration = Duration::from_millis(1000 * 1);
 
-macro_rules! trace3 { ($($arg:tt)*) => ( if false { log::trace!($($arg)*); } ); }
-
-macro_rules! trace4 { ($($arg:tt)*) => ( if false { log::trace!($($arg)*); } ); }
-
-macro_rules! trace_flush_queue { ($($arg:tt)*) => ( if false { trace3!($($arg)*); } ); }
-
-macro_rules! trace_event_incoming { ($($arg:tt)*) => ( if false { log::trace!($($arg)*); } ); }
-
-macro_rules! trace_monitor_stale { ($($arg:tt)*) => ( if false { log::trace!($($arg)*); } ); }
-
-macro_rules! trace_channel_remove { ($($arg:tt)*) => ( if true { log::trace!($($arg)*); } ); }
-
+macro_rules! error { ($($arg:tt)*) => ( if true { log::error!($($arg)*); } ); }
+macro_rules! warn { ($($arg:tt)*) => ( if true { log::warn!($($arg)*); } ); }
+macro_rules! info { ($($arg:tt)*) => ( if true { log::info!($($arg)*); } ); }
+macro_rules! debug { ($($arg:tt)*) => ( if true { log::debug!($($arg)*); } ); }
 macro_rules! debug_shutdown { ($($arg:tt)*) => ( if true { log::debug!($($arg)*); } ); }
+macro_rules! trace { ($($arg:tt)*) => ( if false { log::trace!($($arg)*); } ); }
+macro_rules! trace3 { ($($arg:tt)*) => ( if false { log::trace!($($arg)*); } ); }
+macro_rules! trace4 { ($($arg:tt)*) => ( if false { log::trace!($($arg)*); } ); }
+macro_rules! trace_flush_queue { ($($arg:tt)*) => ( if false { trace3!($($arg)*); } ); }
+macro_rules! trace_event_incoming { ($($arg:tt)*) => ( if false { log::trace!($($arg)*); } ); }
+macro_rules! trace_monitor_stale { ($($arg:tt)*) => ( if false { log::trace!($($arg)*); } ); }
+macro_rules! trace_channel_remove { ($($arg:tt)*) => ( if true { log::trace!($($arg)*); } ); }
 
 fn dbg_chn_cid(cid: Cid, conn: &CaConn) -> bool {
     if let Some(name) = conn.name_by_cid(cid) {
@@ -763,34 +761,6 @@ impl ChannelState {
             ChannelState::Ended(_) => None,
         }
     }
-
-    fn cid(&self) -> Option<Cid> {
-        match self {
-            ChannelState::Init(_) => None,
-            ChannelState::Creating(_) => None,
-            ChannelState::FetchEnumDetails(_) => None,
-            ChannelState::FetchCaStatusSeries(st2) => Some(st2.channel.cid),
-            ChannelState::MakingSeriesWriter(st2) => Some(st2.channel.cid),
-            ChannelState::Writable(st2) => Some(st2.channel.cid),
-            ChannelState::Closing(_) => None,
-            ChannelState::Error(_) => None,
-            ChannelState::Ended(_) => None,
-        }
-    }
-
-    fn sid(&self) -> Option<Sid> {
-        match self {
-            ChannelState::Init(_) => None,
-            ChannelState::Creating(_) => None,
-            ChannelState::FetchEnumDetails(_) => None,
-            ChannelState::FetchCaStatusSeries(st2) => Some(st2.channel.sid),
-            ChannelState::MakingSeriesWriter(st2) => Some(st2.channel.sid),
-            ChannelState::Writable(st2) => Some(st2.channel.sid),
-            ChannelState::Closing(_) => None,
-            ChannelState::Error(_) => None,
-            ChannelState::Ended(_) => None,
-        }
-    }
 }
 
 #[derive(Debug)]
@@ -1221,7 +1191,6 @@ pub enum ConnCommandKind {
     ChannelCloseReconf(String),
     Shutdown,
     ChannelInspectFull(CmdChannelInspectFull),
-    StatusPrivate(StatusPrivate),
 }
 
 #[derive(Debug)]
@@ -1264,15 +1233,6 @@ impl ConnCommand {
             id: Self::make_id(),
             kind: ConnCommandKind::Shutdown,
         }
-    }
-
-    pub async fn status_private() -> Self {
-        let (tx, rx) = async_channel::bounded(16);
-        let cmd = ConnCommand {
-            id: Self::make_id(),
-            kind: ConnCommandKind::StatusPrivate(StatusPrivate { tx }),
-        };
-        cmd
     }
 
     fn make_id() -> usize {
@@ -1329,7 +1289,7 @@ impl CaConnEvent {
         }
     }
 
-    pub fn desc_short(&self) -> CaConnEventDescShort {
+    pub fn desc_short(&self) -> CaConnEventDescShort<'_> {
         CaConnEventDescShort { inner: self }
     }
 }
@@ -1489,6 +1449,7 @@ impl CaConn {
         iqtx: InsertQueuesTx,
         channel_info_query_tx: Sender<ChannelInfoQuery>,
     ) -> Self {
+        debug!("CaConn::new  {remote_addr_dbg}");
         let tsnow = Instant::now();
         let (cq_tx, cq_rx) = async_channel::bounded(32);
         let mut rng = stats::xoshiro_from_time();
@@ -1750,7 +1711,6 @@ impl CaConn {
                                 }
                             }
                         }
-                        ConnCommandKind::StatusPrivate(cmd) => todo!(),
                     }
                 }
                 Ready(None) => {
@@ -1965,7 +1925,7 @@ impl CaConn {
     }
 
     pub fn channel_add(&mut self, conf: ChannelConfig, cssid: ChannelStatusSeriesId) -> Result<(), Error> {
-        trace!("channel_add  {:?}  {:?}", conf, cssid);
+        debug!("channel_add  {:?}  {:?}", conf, cssid);
         if false {
             if series::dbg::dbg_chn(&conf.name()) {
                 self.trace_channel_poll = true;
@@ -2465,12 +2425,13 @@ impl CaConn {
         tsnow: Instant,
         tscaproto: Instant,
     ) -> Result<(), Error> {
+        let selfname = "handle_read_notify_res";
         self.mett.fn_handle_read_notify_res().inc();
-        // trace!("handle_read_notify_res  {ev:?}");
         // TODO can not rely on the SID in the response.
         let sid_ev = Sid(ev.sid);
         let ioid = Ioid(ev.ioid);
         if let Some(pp) = self.handler_by_ioid.get_mut(&ioid) {
+            trace!("{selfname}  {ev:?}");
             if let Some(mut fut) = pp.take() {
                 let camsg = CaMsg::from_ty_ts(CaMsgTy::ReadNotifyRes(ev), tscaproto);
                 fut.as_mut().camsg(camsg, self)?;
@@ -2484,6 +2445,11 @@ impl CaConn {
                     let ch_s = &mut x.state;
                     let ch_wrst = &mut x.wrst;
                     let ch_conf = &x.conf;
+                    if series::dbg::dbg_chn(ch_conf.name()) {
+                        debug!("{selfname}  {ev:?}");
+                    } else {
+                        trace!("{selfname}  {ev:?}");
+                    }
                     match ch_s {
                         ChannelState::Writable(st) => {
                             if st.channel.sid != sid_ev {
@@ -2508,7 +2474,7 @@ impl CaConn {
                                         self.mett.caget_lat().push_dur_100us(dt);
                                         let next = PollTickStateIdle::decide_next(st3.next_backup, st2.poll_ivl, tsnow);
                                         if self.trace_channel_poll {
-                                            trace!("make next poll idle at {:?}   tsnow {:?}", next, tsnow);
+                                            trace!("{selfname}  make next poll idle at {:?}   tsnow {:?}", next, tsnow);
                                         }
                                         st2.tick = PollTickState::Idle(PollTickStateIdle { next });
                                         let mut robj = EventAddIngestRefobj::from_writable_state(
@@ -2653,10 +2619,12 @@ impl CaConn {
                         }
                     }
                 } else {
+                    trace!("{selfname}  cid not found  {ev:?}");
                     self.mett.recv_read_notify_channel_not_found().inc();
                     Ok(())
                 }
             } else {
+                trace!("{selfname}  ioid not found  {ev:?}");
                 self.mett.recv_read_notify_ioid_not_found().inc();
                 // {
                 //     self.mett.monitoring_read_unexpected().inc();

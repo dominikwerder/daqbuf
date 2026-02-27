@@ -3,7 +3,6 @@ use super::connset::SEARCH_BATCH_MAX;
 use super::search::ca_search_workers_start;
 use crate::ca::conn2::asynchan2 as asynchan;
 use crate::ca::findioc::FindIocRes;
-use crate::ca::findioc::OptResTx;
 use crate::conf::CaIngestOpts;
 use async_channel::Receiver;
 use async_channel::Sender;
@@ -12,7 +11,6 @@ use dbpg::iocindex::IocItem;
 use dbpg::iocindex::IocSearchIndexWorker;
 use dbpg::postgres::Row as PgRow;
 use futures::Stream;
-use futures::StreamExt;
 use netpod::Database;
 use std::collections::VecDeque;
 use std::time::Duration;
@@ -27,7 +25,7 @@ macro_rules! warn { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
 macro_rules! info { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
 macro_rules! debug { ($($arg:tt)*) => { if true { log::debug!($($arg)*); } }; }
 macro_rules! debug_batch { ($($arg:tt)*) => { if false { log::debug!($($arg)*); } }; }
-macro_rules! trace { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
+macro_rules! trace { ($($arg:tt)*) => { if true { log::trace!($($arg)*); } }; }
 
 autoerr::create_error_v1!(
     name(Error, "Finder"),
@@ -44,7 +42,7 @@ autoerr::create_error_v1!(
 );
 
 impl From<async_channel::SendError<IocAddrQuery>> for Error {
-    fn from(value: async_channel::SendError<IocAddrQuery>) -> Self {
+    fn from(_: async_channel::SendError<IocAddrQuery>) -> Self {
         Self::AddrSearchSend
     }
 }
@@ -55,6 +53,7 @@ fn transform_pgres(rows: Vec<PgRow>) -> VecDeque<Option<FindIocRes>> {
     for row in rows {
         let n: Result<i32, _> = row.try_get(0);
         let ch: Result<String, _> = row.try_get(1);
+        debug!("{selfname}  {ch:?}");
         match (n, ch) {
             (Ok(_n), Ok(ch)) => {
                 if let Some(addr) = row.get::<_, Option<String>>(3).and_then(|x| x.parse().ok()) {
@@ -152,7 +151,6 @@ pub fn start_finder_handle_v02(
     backend: String,
     opts: CaIngestOpts,
 ) -> (FinderHandleV02, JoinHandle<Result<(), Error>>) {
-    let selfname = "start_finder_handle_v02";
     let (qtx, qrx) = async_channel::bounded(CURRENT_SEARCH_PENDING_MAX);
     // old:
     // qtx -> qrx -> rtx -> rrx -> job-tx
@@ -168,6 +166,7 @@ async fn finder_full<S>(qrx: S, backend: String, opts: CaIngestOpts) -> Result<(
 where
     S: Stream<Item = IocAddrQuery> + Send + 'static,
 {
+    let selfname = "finder_full";
     let (tx1, rx1) = async_channel::bounded(20);
     let (tx2, rx2) = async_channel::bounded(20);
     let jh1 = taskrun::spawn(finder_worker(qrx, tx1, backend, opts.postgresql_config().clone()));
@@ -177,12 +176,12 @@ where
             loop {
                 match rx1.recv().await {
                     Ok(v) => {
+                        debug!("{selfname}  rx1 recv  {v:?}");
                         let mut a = VecDeque::new();
-                        let mut d = Vec::new();
                         for f in v {
                             match f {
-                                FindIocCacheRes::Hit(x) => {
-                                    d.push(x);
+                                FindIocCacheRes::Hit(x, mut tx) => {
+                                    let _ = tx.send(x).await;
                                 }
                                 FindIocCacheRes::Miss(x) => {
                                     a.push_back(x);
@@ -195,21 +194,22 @@ where
                         match tx2.send(a).await {
                             Ok(()) => {}
                             Err(_) => {
-                                debug!("can not send batch to network lookup");
+                                debug!("{selfname}  can not send batch to network lookup");
                             }
                         }
                     }
-                    Err(_) => {}
+                    Err(_) => break,
                 }
             }
         };
         taskrun::spawn(fut)
     };
     jh1.await??;
-    trace!("finder::finder_full  awaited A");
+    debug!("{selfname}  awaited A");
     jh2.await??;
-    trace!("finder::finder_full  awaited B");
-    trace!("finder::finder_full  done");
+    debug!("{selfname}  awaited B");
+    jh3.await?;
+    debug!("{selfname}  awaited C");
     Ok(())
 }
 
@@ -222,6 +222,7 @@ async fn finder_worker<S>(
 where
     S: Stream<Item = IocAddrQuery> + Send + 'static,
 {
+    let selfname = "finder_worker";
     let batched = batchtools::batcher::Batcher2::new(qrx, Duration::from_millis(200), SEARCH_BATCH_MAX);
     let (batched_rx, jh_batch) = {
         let (batched_tx, batched_rx) = async_channel::bounded(SEARCH_DB_WORKER_CNT);
@@ -229,6 +230,7 @@ where
             use futures::StreamExt;
             let mut batched = std::pin::pin!(batched);
             while let Some(item) = batched.next().await {
+                info!("{selfname}  {item:?}");
                 match batched_tx.send(item).await {
                     Ok(()) => {}
                     Err(e) => {
@@ -262,7 +264,7 @@ where
 
 #[derive(Debug)]
 pub enum FindIocCacheRes {
-    Hit(FindIocRes),
+    Hit(FindIocRes, asynchan::Sender<FindIocRes>),
     Miss(IocAddrQuery),
     Uncached(IocAddrQuery),
 }
@@ -284,9 +286,11 @@ async fn finder_worker_single(
         " order by q1.n, tsmod desc",
     );
     let qu_select_multi = pg.prepare(sql).await?;
+    debug!("{selfname}  before loop");
     loop {
         match inp.recv().await {
             Ok(batch) => {
+                debug!("{selfname}  recv  {batch:?}");
                 // TODO
                 // stats.dbsearcher_batch_recv().inc();
                 // stats.dbsearcher_item_recv().add(batch.len() as _);
@@ -331,7 +335,7 @@ async fn finder_worker_single(
                             .into_iter()
                             .map(|x| FindIocCacheRes::Uncached(x))
                             .chain(batch.into_iter().zip(rows2).map(|(b, r)| match r {
-                                Some(x) => FindIocCacheRes::Hit(x),
+                                Some(x) => FindIocCacheRes::Hit(x, b.into_name_tx().1),
                                 None => FindIocCacheRes::Miss(b),
                             }))
                             .collect();
@@ -375,6 +379,7 @@ async fn send_not_found_requests(
         }
         net_tx.send((name, tx)).await.map_err(|_| Error::Send)?;
     }
+    debug!("{selfname}  done");
     Ok(())
 }
 
@@ -386,11 +391,11 @@ async fn finder_network_if_not_found(rx: Receiver<VecDeque<IocAddrQuery>>, opts:
         send_not_found_requests(item, &mut net_tx).await?;
     }
     drop(net_tx);
-    trace!("{selfname}  loop end");
+    debug!("{selfname}  loop end");
     jh_ca_search.await??;
-    trace!("{selfname}  jh_ca_search  awaited");
+    debug!("{selfname}  jh_ca_search  awaited");
     jh2.await??;
-    trace!("{selfname}  process_net_result  awaited");
+    debug!("{selfname}  process_net_result  awaited");
     Ok(())
 }
 
@@ -430,7 +435,7 @@ async fn process_net_result(
                     cacheitems.push(cacheitem);
                     match tx.send(e).await {
                         Ok(()) => {}
-                        Err(e) => {
+                        Err(_) => {
                             debug!("{selfname}  send error");
                             // TODO count for metrics
                         }

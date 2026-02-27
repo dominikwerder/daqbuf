@@ -141,7 +141,7 @@ impl NetBuf {
         }
     }
 
-    pub fn read_buf_for_fill(&mut self, need_min: usize) -> ReadBuf {
+    pub fn read_buf_for_fill(&mut self, need_min: usize) -> ReadBuf<'_> {
         check_invariants!(self);
         self.rewind_if_needed(need_min);
         let read_buf = ReadBuf::new(&mut self.buf[self.wp..]);

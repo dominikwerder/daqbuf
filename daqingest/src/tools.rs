@@ -263,18 +263,20 @@ async fn remove_older_all_series(ts_cut: TsMs, series: SeriesId, stmts: &Stmts, 
 }
 
 async fn remove_older_all_series_msps(
-    series: SeriesId,
+    _series: SeriesId,
     msps: Vec<u64>,
     stmts: &Stmts,
-    scy: &ScySession,
+    _scy: &ScySession,
 ) -> Result<(), Error> {
     for stmt in &stmts.qu_delete {
         stream::iter(msps.clone())
-            .map(|msp| async move {
-                let stmt = stmt.clone();
+            .map(|_msp| async move {
+                let _stmt = stmt.clone();
                 // scy.execute_iter(&stmt, (series.to_i64(), msp as i64)).await
-                todo!();
-                Ok::<_, Error>(0i32)
+                if true {
+                    todo!();
+                }
+                Ok::<_, Error>(())
             })
             .buffer_unordered(32)
             .take_while(|x| {

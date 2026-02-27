@@ -1,5 +1,4 @@
 use crate::conn::PgClient;
-use netpod::ChannelConfigResponse;
 use netpod::DaqbufChannelConfig;
 use netpod::ScalarType;
 use netpod::SeriesKind;

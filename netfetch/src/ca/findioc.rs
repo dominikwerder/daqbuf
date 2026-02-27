@@ -1,12 +1,11 @@
 use crate::ca::conn2::asynchan;
-use crate::ca::finder::IocAddrQuery;
 use crate::ca::progpend::HaveProgressPending;
 use crate::throttletrace::ThrottleTrace;
 use async_channel::Receiver;
 use ca_proto::ca::proto;
-use futures::Future;
 use futures::FutureExt;
 use futures::Stream;
+use futures::StreamExt;
 use libc::c_int;
 use proto::CaMsg;
 use proto::CaMsgTy;
@@ -31,7 +30,6 @@ macro_rules! warn { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
 macro_rules! info { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
 macro_rules! debug { ($($arg:tt)*) => { if true { log::debug!($($arg)*); } }; }
 macro_rules! trace { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
-macro_rules! trace4 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
 
 autoerr::create_error_v1!(
     name(Error, "FindIoc"),
@@ -171,7 +169,7 @@ fn _assert_traits() {
 
 pub struct FindIocStream {
     tgts: Vec<SocketAddrV4>,
-    channels_input: Pin<Box<Receiver<(String, asynchan::Sender<FindIocRes>)>>>,
+    channels_input: Option<Pin<Box<Receiver<(String, asynchan::Sender<FindIocRes>)>>>>,
     in_flight: BTreeMap<BatchId, SearchBatch>,
     in_flight_max: usize,
     channels_per_batch: usize,
@@ -183,12 +181,11 @@ pub struct FindIocStream {
     buf1: Vec<u8>,
     send_addr: SocketAddrV4,
     out_queue: VecDeque<(FindIocRes, asynchan::Sender<FindIocRes>)>,
-    ping: Pin<Box<tokio::time::Sleep>>,
+    ping: Option<Pin<Box<tokio::time::Sleep>>>,
     bids_all_done: BTreeMap<BatchId, ()>,
     bids_timed_out: BTreeMap<BatchId, ()>,
     sids_done: BTreeMap<SearchId, ()>,
     result_for_done_sid_count: u64,
-    sleeper: Option<Pin<Box<tokio::time::Sleep>>>,
     #[allow(unused)]
     thr_msg_0: ThrottleTrace,
     #[allow(unused)]
@@ -210,7 +207,7 @@ impl FindIocStream {
         let afd = AsyncFd::new(sock.0).unwrap();
         Self {
             tgts,
-            channels_input: Box::pin(channels_input),
+            channels_input: Some(Box::pin(channels_input)),
             in_flight: BTreeMap::new(),
             in_flight_max,
             channels_per_batch: batch_size,
@@ -222,12 +219,11 @@ impl FindIocStream {
             buf1: vec![0; 1024],
             send_addr: SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 5064),
             out_queue: VecDeque::new(),
-            ping: Box::pin(tokio::time::sleep(Duration::from_millis(200))),
+            ping: Some(Box::pin(tokio::time::sleep(Duration::from_millis(200)))),
             bids_all_done: BTreeMap::new(),
             bids_timed_out: BTreeMap::new(),
             sids_done: BTreeMap::new(),
             result_for_done_sid_count: 0,
-            sleeper: Some(Box::pin(tokio::time::sleep(Duration::from_millis(500)))),
             thr_msg_0: ThrottleTrace::new(Duration::from_millis(1000)),
             thr_msg_1: ThrottleTrace::new(Duration::from_millis(1000)),
             thr_msg_2: ThrottleTrace::new(Duration::from_millis(1000)),
@@ -236,19 +232,14 @@ impl FindIocStream {
 
     pub fn quick_state(&self) -> String {
         format!(
-            "channels_input {} {}  in_flight {}  bid_by_sid {}  out_queue {}  result_for_done_sid_count {}  bids_timed_out {}",
-            self.channels_input.is_closed(),
-            self.channels_input.len(),
+            "channels_input {:?}  in_flight {}  bid_by_sid {}  out_queue {}  result_for_done_sid_count {}  bids_timed_out {}",
+            self.channels_input.as_ref().map(|x| x.len()),
             self.in_flight.len(),
             self.bid_by_sid.len(),
             self.out_queue.len(),
             self.result_for_done_sid_count,
             self.bids_timed_out.len()
         )
-    }
-
-    pub fn job_queue_len(&self) -> usize {
-        self.channels_input.len()
     }
 
     fn buf_and_batch(&mut self, bid: &BatchId) -> Option<(&mut Vec<u8>, &mut SearchBatch)> {
@@ -655,16 +646,20 @@ impl FindIocStream {
         let mut ret = Vec::new();
         loop {
             let mut hpp = HaveProgressPending::new();
-            let rx = self.channels_input.as_mut();
-            match rx.poll_next(cx) {
-                Ready(Some(item)) => {
-                    hpp.mark_progress();
-                    info!("get_input_up_to_batch_max  {}", item.0);
-                    ret.push(item);
-                }
-                Ready(None) => {}
-                Pending => {
-                    hpp.mark_pending();
+            if let Some(rx) = self.channels_input.as_mut() {
+                match rx.poll_next_unpin(cx) {
+                    Ready(Some(item)) => {
+                        hpp.mark_progress();
+                        trace!("get_input_up_to_batch_max  {}", item.0);
+                        ret.push(item);
+                    }
+                    Ready(None) => {
+                        hpp.mark_progress();
+                        self.channels_input = None;
+                    }
+                    Pending => {
+                        hpp.mark_pending();
+                    }
                 }
             }
             break if ret.len() >= self.channels_per_batch {
@@ -680,10 +675,7 @@ impl FindIocStream {
     }
 
     fn ready_for_end_of_stream(&self) -> bool {
-        self.channels_input.is_closed()
-            && self.channels_input.is_empty()
-            && self.in_flight.is_empty()
-            && self.out_queue.is_empty()
+        self.channels_input.is_none() && self.in_flight.is_empty() && self.out_queue.is_empty()
     }
 
     fn out_item(&mut self) -> Option<VecDeque<(FindIocRes, asynchan::Sender<FindIocRes>)>> {
@@ -732,42 +724,52 @@ impl Stream for FindIocStream {
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         use Poll::*;
-        if self.channels_input.is_closed() {
+        if self.channels_input.is_none() {
             debug!("{}", self.quick_state());
         }
         // self.thr_msg_0.trigger("FindIocStream::poll_next", &[]);
         loop {
             let mut hpp = HaveProgressPending::new();
-            match self.ping.poll_unpin(cx) {
-                Ready(_) => {
-                    self.ping = Box::pin(tokio::time::sleep(Duration::from_millis(200)));
-                    hpp.mark_progress();
-                }
-                Pending => {
-                    hpp.mark_pending();
+            if let Some(fut) = self.ping.as_mut() {
+                match fut.poll_unpin(cx) {
+                    Ready(_) => {
+                        hpp.mark_progress();
+                        if self.ready_for_end_of_stream() {
+                            self.ping = None;
+                        } else {
+                            self.ping = Some(Box::pin(tokio::time::sleep(Duration::from_millis(200))));
+                        }
+                    }
+                    Pending => {
+                        hpp.mark_pending();
+                    }
                 }
             }
             if let Some(x) = self.out_item() {
                 break Ready(Some(Ok(x)));
             }
             self.clear_timed_out();
-            if !self.buf1.is_empty() {
+            if self.buf1.is_empty() {
+            } else {
                 match self.afd.poll_write_ready(cx) {
                     Ready(Ok(mut g)) => match unsafe { Self::try_send(self.sock.0, &self.send_addr, &self.buf1) } {
                         Ready(Ok(())) => {
-                            self.buf1.clear();
                             hpp.mark_progress();
+                            self.buf1.clear();
                         }
                         Ready(Err(e)) => {
+                            hpp.mark_progress();
                             error!("FindIocStream {}", e);
                         }
                         Pending => {
-                            g.clear_ready();
-                            // warn!("socket seemed ready for write, but is not");
                             hpp.mark_pending();
+                            g.clear_ready();
+                            // TODO count for stats
+                            // warn!("socket seemed ready for write, but is not");
                         }
                     },
                     Ready(Err(e)) => {
+                        hpp.mark_progress();
                         error!("poll_write_ready {}", e);
                         // TODO should we abort?
                     }
@@ -817,8 +819,7 @@ impl Stream for FindIocStream {
                     None => break,
                 }
             }
-            if self.channels_input.is_closed() {
-            } else {
+            if self.channels_input.is_some() {
                 match self.refill_some(cx) {
                     Ready(Some(())) => {
                         hpp.mark_progress();
@@ -829,40 +830,32 @@ impl Stream for FindIocStream {
                     }
                 }
             }
-            match self.afd.poll_read_ready(cx) {
-                Ready(Ok(mut g)) => {
-                    // debug!("BLOCK AA");
-                    match unsafe { Self::try_read(self.sock.0) } {
-                        Ready(Ok((src, res))) => {
-                            self.handle_result(src, res);
-                            if self.ready_for_end_of_stream() {
-                                debug!("ready_for_end_of_stream  continue after handle_result");
+            if self.ready_for_end_of_stream() {
+            } else {
+                match self.afd.poll_read_ready(cx) {
+                    Ready(Ok(mut g)) => {
+                        // debug!("BLOCK AA");
+                        match unsafe { Self::try_read(self.sock.0) } {
+                            Ready(Ok((src, res))) => {
+                                self.handle_result(src, res);
+                                if self.ready_for_end_of_stream() {
+                                    debug!("ready_for_end_of_stream  continue after handle_result");
+                                }
+                                hpp.mark_progress();
                             }
-                            hpp.mark_progress();
-                        }
-                        Ready(Err(e)) => {
-                            error!("try_read {}", e);
-                            break Ready(Some(Err(e)));
-                        }
-                        Pending => {
-                            g.clear_ready();
-                            hpp.mark_pending();
+                            Ready(Err(e)) => {
+                                error!("try_read {}", e);
+                                break Ready(Some(Err(e)));
+                            }
+                            Pending => {
+                                g.clear_ready();
+                                hpp.mark_pending();
+                            }
                         }
                     }
-                }
-                Ready(Err(e)) => {
-                    error!("poll_read_ready {}", e);
-                    break Ready(Some(Err(e.into())));
-                }
-                Pending => {
-                    hpp.mark_pending();
-                }
-            }
-            if let Some(fut) = self.sleeper.as_mut() {
-                match fut.poll_unpin(cx) {
-                    Ready(()) => {
-                        self.sleeper = None;
-                        hpp.mark_progress();
+                    Ready(Err(e)) => {
+                        error!("poll_read_ready {}", e);
+                        break Ready(Some(Err(e.into())));
                     }
                     Pending => {
                         hpp.mark_pending();

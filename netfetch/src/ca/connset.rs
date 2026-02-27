@@ -4,7 +4,6 @@ use crate::ca::conn;
 use crate::ca::conn2::asynchan;
 use crate::ca::finder::IocAddrQuery;
 use crate::ca::finder::start_finder_handle_v02;
-use crate::ca::findioc::OptResTx;
 use crate::ca::statemap;
 use crate::ca::statemap::MaybeWrongAddressState;
 use crate::ca::statemap::UnknownAddressState;
@@ -257,10 +256,7 @@ pub enum ConnSetCmd {
     ChannelRemove(ChannelRemove),
     Shutdown,
     ChannelStatuses(ChannelStatusesRequest),
-    ChannelStatusesPrivate(ChannelStatusesPrivateRequest),
     ChannelConfigSetpoint(ChannelConfigSetpointRequest),
-    // TODO rename to ConnCommand because it must be handled by some specific Conn
-    ChannelCommand(ChannelCommand),
 }
 
 #[derive(Debug)]
@@ -320,13 +316,6 @@ impl CaConnSetCtrl {
 
     pub async fn send_ca_conn_set_command(&self, cmd: ConnSetCmd) -> Result<(), Error> {
         self.tx.send(CaConnSetEvent::ConnSetCmd(cmd)).await?;
-        Ok(())
-    }
-
-    pub async fn send_channel_command(&self, cmd: ChannelCommand) -> Result<(), Error> {
-        self.tx
-            .send(CaConnSetEvent::ConnSetCmd(ConnSetCmd::ChannelCommand(cmd)))
-            .await?;
         Ok(())
     }
 
@@ -395,7 +384,6 @@ pub struct CaConnSet {
     channel_info_res_tx: Pin<Box<Sender<Result<ChannelInfoResult, Error>>>>,
     channel_info_res_rx: Pin<Box<Receiver<Result<ChannelInfoResult, Error>>>>,
     find_ioc_query_queue: VecDeque<(IocAddrQuery, asynchan::Receiver<FindIocRes>)>,
-    // find_ioc_query_sender_1: Pin<Box<SenderPolling<IocAddrQuery>>>,
     find_ioc_query_sender_2: Option<Pin<Box<async_channel::Sender<IocAddrQuery>>>>,
     find_ioc_rxs: VecDeque<asynchan::Receiver<FindIocRes>>,
     find_ioc_queue_set: QueueSet<ChannelName>,
@@ -453,7 +441,6 @@ impl CaConnSet {
             channel_info_res_tx: Box::pin(channel_info_res_tx),
             channel_info_res_rx: Box::pin(channel_info_res_rx),
             find_ioc_query_queue: VecDeque::new(),
-            // find_ioc_query_sender_1: Box::pin(SenderPolling::new(find_ioc_query_tx)),
             find_ioc_query_sender_2: Some(Box::pin(find_ioc_query_tx.qtx())),
             find_ioc_rxs: VecDeque::new(),
             find_ioc_queue_set: QueueSet::new(),
@@ -472,7 +459,6 @@ impl CaConnSet {
             chan_check_next: None,
             connset_out_tx: Box::pin(connset_out_tx),
             connset_out_queue: VecDeque::new(),
-            // connset_out_sender: SenderPolling::new(connset_out_tx),
             ioc_finder_jh,
             await_ca_conn_jhs: VecDeque::new(),
             thr_msg_storage_len: ThrottleTrace::new(Duration::from_millis(1000)),
@@ -515,20 +501,17 @@ impl CaConnSet {
                 None => break,
             }
         }
-        trace!("CaConnSet EndOfStream");
+        debug!("CaConnSet EndOfStream");
         beacons_cancel_guard_tx.send(1).await.ok();
-        trace!("CaConnSet beacon cancelled");
+        debug!("CaConnSet beacon cancelled");
         beacons_jh.await??;
-        trace!("CaConnSet beacon joined");
-        trace!("join ioc_finder_jh A");
-        this.find_ioc_query_sender_2 = None;
-        trace!("join ioc_finder_jh B");
+        debug!("CaConnSet beacon joined");
         this.ioc_finder_jh.await??;
-        trace!("joined ioc_finder_jh");
+        debug!("joined ioc_finder_jh");
         this.connset_out_tx.close();
         this.connset_inp_rx.close();
         this.shutdown_done = true;
-        trace!("CaConnSet run done");
+        debug!("CaConnSet run done");
         Ok(())
     }
 
@@ -541,12 +524,7 @@ impl CaConnSet {
                 ConnSetCmd::ChannelRemove(x) => self.handle_remove_channel(x),
                 ConnSetCmd::Shutdown => self.handle_shutdown(),
                 ConnSetCmd::ChannelStatuses(x) => self.handle_channel_statuses_req(x),
-                ConnSetCmd::ChannelStatusesPrivate(x) => {
-                    // unused
-                    Ok(())
-                }
                 ConnSetCmd::ChannelConfigSetpoint(x) => self.handle_channel_config_setpoint(x),
-                ConnSetCmd::ChannelCommand(x) => self.handle_channel_command(x),
             },
         }
     }
@@ -796,6 +774,9 @@ impl CaConnSet {
                     });
                     let (qu, rx) = IocAddrQuery::cached_rx(name.into());
                     self.find_ioc_query_queue.push_back((qu, rx));
+                    if series::dbg::dbg_chn(name) {
+                        debug!("find_ioc_query_queue.push_back  {}", name);
+                    }
                     self.mett.ioc_search_start().inc();
                 } else {
                     self.mett.logic_err().inc();
@@ -1018,9 +999,10 @@ impl CaConnSet {
     }
 
     fn handle_check_health(&mut self) -> Result<(), Error> {
+        let selfname = "handle_check_health";
         let tsnow = Instant::now();
         let stnow = SystemTime::now();
-        trace2!("handle_check_health");
+        debug!("{selfname}");
         if self.shutdown_stopping {
             Ok(())
         } else {
@@ -1083,50 +1065,24 @@ impl CaConnSet {
         Ok(())
     }
 
-    fn handle_channel_command(&mut self, cmd: ChannelCommand) -> Result<(), Error> {
-        if self.shutdown_stopping {
-            return Ok(());
-        }
-        // TODO handle, send to corresponding CaConn
-        let name = cmd.channel.clone();
-        let mut cmd = Some(cmd);
-        // TODO no need to iterate anymore
-        self.channel_states
-            .iter_mut()
-            .filter(|(k, _)| k.name() == name)
-            .map(|(_, st1)| {
-                if let ChannelStateValue::Active(st2) = &mut st1.value {
-                    if let ActiveChannelState::WithStatusSeriesId(st3) = st2 {
-                        if let WithStatusSeriesIdStateInner::WithAddress { addr, state: _ } = &mut st3.inner {
-                            let addr2 = SocketAddr::V4(*addr);
-                            self.ca_conn_ress.get_mut(&addr2).map(|q| {
-                                if let Some(cmd) = cmd.take() {
-                                    q.cmd_queue.push_back(cmd.conn_command);
-                                }
-                            });
-                        }
-                    }
-                };
-            })
-            .for_each(|_| ());
-        Ok(())
-    }
-
     fn handle_shutdown(&mut self) -> Result<(), Error> {
+        let selfname = "handle_shutdown";
         if self.shutdown_stopping {
             return Ok(());
         }
-        debug!("handle_shutdown");
+        debug!("{selfname} 1");
         self.shutdown_stopping = true;
         self.channel_info_query_sender.as_mut().drop();
         self.channel_info_query_tx = None;
         self.find_ioc_query_sender_2 = None;
+        debug!("{selfname} 2");
         for (_addr, res) in self.ca_conn_ress.iter() {
             let item = ConnCommand::shutdown();
             // TODO not the nicest
             let mut tx = res.sender.clone();
             tokio::spawn(async move { tx.as_mut().send_async_pin(item).await });
         }
+        debug!("{selfname} 3");
         Ok(())
     }
 
@@ -1366,14 +1322,23 @@ impl CaConnSet {
     }
 
     fn ready_for_end_of_stream(&self) -> bool {
+        let selfname = "ready_for_end_of_stream";
         if !self.shutdown_stopping {
             false
-        } else if self.ca_conn_ress.len() > 0 {
-            false
-        } else if self.await_ca_conn_jhs.len() > 0 {
-            false
         } else {
-            true
+            let n = self.ca_conn_ress.len();
+            if n > 0 {
+                debug!("{selfname}  ca_conn_ress {n}");
+                false
+            } else {
+                let n = self.await_ca_conn_jhs.len();
+                if n > 0 {
+                    debug!("{selfname}  await_ca_conn_jhs {n}");
+                    false
+                } else {
+                    true
+                }
+            }
         }
     }
 
@@ -1518,7 +1483,7 @@ impl CaConnSet {
     }
 
     fn check_channel_states(&mut self, tsnow: Instant, stnow: SystemTime) -> Result<(), Error> {
-        let selfn = "check_channel_states";
+        let selfname = "check_channel_states";
         let (mut search_pending_count, mut assigned_without_health_update) = self.update_channel_state_counts();
         let mut channel_health_timeout_soon = 0;
         let mut channel_health_timeout_reached = 0;
@@ -1526,7 +1491,7 @@ impl CaConnSet {
         let mut cmd_add_channel = Vec::new();
         let k = self.chan_check_next.take();
         let it = if let Some(last) = k {
-            trace!("check_chans  start at {:?}", last);
+            trace!("{selfname}  check_chans  start at {:?}", last);
             self.channel_states.range_mut(last..)
         } else {
             self.channel_states.range_mut(..)
@@ -1554,8 +1519,8 @@ impl CaConnSet {
                         WithStatusSeriesIdStateInner::UnknownAddress(st4) => {
                             if st4.since + st4.backoff_dt < stnow {
                                 if series::dbg::dbg_chn(&ch.name()) {
-                                    info!(
-                                        "{selfn}  UnknownAddress  move to  AddrSearchPlanned  backoff {}",
+                                    debug!(
+                                        "{selfname}  UnknownAddress  move to  AddrSearchPlanned  backoff {}",
                                         st3.addr_find_backoff
                                     );
                                 }
@@ -1566,7 +1531,10 @@ impl CaConnSet {
                         WithStatusSeriesIdStateInner::AddrSearchPending { since } => {
                             let dt = stnow.duration_since(*since).unwrap_or(Duration::ZERO);
                             if dt > SEARCH_PENDING_TIMEOUT {
-                                info!("should receive some error indication instead of timeout for {:?}", ch);
+                                debug!(
+                                    "{selfname}  should receive some error indication instead of timeout for {:?}",
+                                    ch
+                                );
                                 st3.inner = WithStatusSeriesIdStateInner::NoAddress { since: stnow };
                                 search_pending_count -= 1;
                             }
@@ -1596,9 +1564,12 @@ impl CaConnSet {
                                     }
                                     if st4.updated + CHANNEL_HEALTH_TIMEOUT < stnow {
                                         channel_health_timeout_reached += 1;
-                                        trace!("health timeout  channel {:?}  ~~~~~~~~~~~~~~~~~~~", ch);
+                                        debug!("{selfname}  health timeout  channel {:?}  ~~~~~~~~~~~~~~~~~~~", ch);
                                         // TODO probably kill the whole CaConn?
-                                        error!("TODO  health timeout  channel {:?}  ~~~~~~~~~~~~~~~~~~~", ch);
+                                        error!(
+                                            "{selfname}  TODO  health timeout  channel {:?}  ~~~~~~~~~~~~~~~~~~~",
+                                            ch
+                                        );
 
                                         // TODO("kill CaConn");
 
@@ -1610,10 +1581,7 @@ impl CaConnSet {
                                         bump_backoff(&mut st3.addr_find_backoff);
                                         let snew = MaybeWrongAddressState::new(stnow, st3.addr_find_backoff);
                                         if series::dbg::dbg_chn(ch.name()) {
-                                            info!(
-                                                "check_channel_states  update state  {:?}  {:?}  {:?}",
-                                                ch, addr, snew
-                                            );
+                                            info!("{selfname}  update state  {:?}  {:?}  {:?}", ch, addr, snew);
                                         }
                                         st3.inner = WithStatusSeriesIdStateInner::MaybeWrongAddress(snew);
                                         let item = ChannelStatusItem::new_closed_conn_timeout(stnow, st3.cssid.clone());
@@ -1641,8 +1609,8 @@ impl CaConnSet {
                         WithStatusSeriesIdStateInner::MaybeWrongAddress(st4) => {
                             if st4.since + st4.backoff_dt < stnow {
                                 if series::dbg::dbg_chn(ch.name()) {
-                                    info!(
-                                        "check_channel_states  MaybeWrongAddress  set to  AddrSearchPlanned  {}  backoff {}",
+                                    debug!(
+                                        "{selfname}  MaybeWrongAddress  set to  AddrSearchPlanned  {}  backoff {}",
                                         ch.name(),
                                         st3.addr_find_backoff
                                     );
@@ -1651,19 +1619,19 @@ impl CaConnSet {
                                 st3.inner = WithStatusSeriesIdStateInner::AddrSearchPlanned { since: stnow };
                             } else {
                                 if series::dbg::dbg_chn(ch.name()) {
-                                    // info!("MaybeWrongAddress  back off  {:?}", ch);
+                                    debug!("{selfname}  MaybeWrongAddress  back off  {:?}", ch);
                                 }
                             }
                         }
                         WithStatusSeriesIdStateInner::UnassigningForConfigChange(st4) => {
                             if tsnow.saturating_duration_since(st4.since) >= UNASSIGN_FOR_CONFIG_CHANGE_TIMEOUT {
-                                debug!("timeout unassign for config change");
+                                debug!("{selfname}  timeout unassign for config change");
                             }
                         }
                         WithStatusSeriesIdStateInner::AddrSearchPlanned { since: _ } => {
                             // TODO record elapsed from since for metrics
                             if series::dbg::dbg_chn(ch.name()) {
-                                info!("AddrSearchPlanned  {:?}  {:?}", ch, search_pending_count);
+                                debug!("{selfname}  AddrSearchPlanned  {:?}  {:?}", ch, search_pending_count);
                             }
                         }
                     },
@@ -1692,15 +1660,19 @@ impl CaConnSet {
                         match &mut st1.value {
                             ChannelStateValue::Active(st2) => match st2 {
                                 ActiveChannelState::WithStatusSeriesId(st3) => {
-                                    if series::dbg::dbg_chn(ch.name()) {
-                                        info!("issue ioc search  {:?}", ch);
+                                    let name = ch.name();
+                                    if series::dbg::dbg_chn(name) {
+                                        debug!("{selfname}  issue ioc search  {:?}", ch);
                                     } else {
-                                        trace!("issue ioc search  {:?}", ch);
+                                        trace!("{selfname}  issue ioc search  {:?}", ch);
                                     }
                                     search_pending_count += 1;
                                     st3.inner = WithStatusSeriesIdStateInner::AddrSearchPending { since: stnow };
-                                    let (qu, rx) = IocAddrQuery::uncached_rx(ch.name().into());
+                                    let (qu, rx) = IocAddrQuery::uncached_rx(name.into());
                                     self.find_ioc_query_queue.push_back((qu, rx));
+                                    if series::dbg::dbg_chn(name) {
+                                        debug!("{selfname}  find_ioc_query_queue.push_back  {}", name);
+                                    }
                                     self.mett.ioc_search_start().inc();
                                 }
                                 _ => {}
@@ -2008,9 +1980,19 @@ impl Stream for CaConnSet {
 
             let mut penpro = PendingProgress::new();
 
+            if self.shutdown_stopping {
+                debug!("STIL HAVE PROGRESS  --------------------");
+            }
+
             let res = self.try_push_ca_conn_cmds(cx);
             if let Err(e) = merge_pending_progress(res, &mut penpro) {
                 break Ready(Some(CaConnSetItem::Error(e)));
+            }
+
+            if self.shutdown_stopping {
+                if penpro.progress() {
+                    debug!("STIL HAVE PROGRESS  00");
+                }
             }
 
             match self.ticker.poll_unpin(cx) {
@@ -2025,6 +2007,12 @@ impl Stream for CaConnSet {
                 },
                 Pending => {
                     penpro.mark_pending();
+                }
+            }
+
+            if self.shutdown_stopping {
+                if penpro.progress() {
+                    debug!("STIL HAVE PROGRESS  01");
                 }
             }
 
@@ -2060,6 +2048,12 @@ impl Stream for CaConnSet {
                 }
             }
 
+            if self.shutdown_stopping {
+                if penpro.progress() {
+                    debug!("STIL HAVE PROGRESS  02");
+                }
+            }
+
             {
                 let this = self.as_mut().get_mut();
                 let qu = &mut this.storage_insert_st_qu;
@@ -2072,6 +2066,13 @@ impl Stream for CaConnSet {
                     break Ready(Some(CaConnSetItem::Error(e)));
                 }
             }
+
+            if self.shutdown_stopping {
+                if penpro.progress() {
+                    debug!("STIL HAVE PROGRESS  03");
+                }
+            }
+
             {
                 let this = self.as_mut().get_mut();
                 let qu = &mut this.storage_insert_lt_qu;
@@ -2084,6 +2085,13 @@ impl Stream for CaConnSet {
                     break Ready(Some(CaConnSetItem::Error(e)));
                 }
             }
+
+            if self.shutdown_stopping {
+                if penpro.progress() {
+                    debug!("STIL HAVE PROGRESS  04");
+                }
+            }
+
             {
                 let self2 = self.as_mut().get_mut();
                 if let Some(item) = self2.find_ioc_query_queue.pop_front() {
@@ -2091,11 +2099,12 @@ impl Stream for CaConnSet {
                         match tx.try_send(item.0) {
                             Ok(()) => {
                                 penpro.mark_progress();
+                                self2.find_ioc_rxs.push_back(item.1);
                             }
                             Err(e) => match e {
                                 async_channel::TrySendError::Full(x) => {
-                                    self2.find_ioc_query_queue.push_front((x, item.1));
                                     penpro.mark_pending();
+                                    self2.find_ioc_query_queue.push_front((x, item.1));
                                 }
                                 async_channel::TrySendError::Closed(_) => {}
                             },
@@ -2103,12 +2112,21 @@ impl Stream for CaConnSet {
                     }
                 }
             }
+
+            if self.shutdown_stopping {
+                if penpro.progress() {
+                    debug!("STIL HAVE PROGRESS  05");
+                }
+            }
+
             {
                 let self2 = self.as_mut().get_mut();
                 if let Some(rx) = self2.find_ioc_rxs.front_mut() {
                     match rx.poll_next_unpin(cx) {
                         Ready(Some(x)) => {
                             penpro.mark_progress();
+                            self2.find_ioc_rxs.pop_front();
+                            debug!("find_ioc_rxs  next  {x:?}");
                             match self.handle_ioc_query_result(x) {
                                 Ok(()) => {}
                                 Err(e) => break Ready(Some(CaConnSetItem::Error(e))),
@@ -2121,6 +2139,13 @@ impl Stream for CaConnSet {
                     }
                 }
             }
+
+            if self.shutdown_stopping {
+                if penpro.progress() {
+                    debug!("STIL HAVE PROGRESS  06");
+                }
+            }
+
             {
                 let this = self.as_mut().get_mut();
                 let qu = &mut this.channel_info_query_qu;
@@ -2130,6 +2155,13 @@ impl Stream for CaConnSet {
                     break Ready(Some(CaConnSetItem::Error(e)));
                 }
             }
+
+            if self.shutdown_stopping {
+                if penpro.progress() {
+                    debug!("STIL HAVE PROGRESS  07");
+                }
+            }
+
             match self.ca_conn_res_rx.as_mut().poll_next(cx) {
                 Ready(Some((addr, ev))) => match self.handle_ca_conn_event(addr, ev) {
                     Ok(()) => {
@@ -2142,6 +2174,7 @@ impl Stream for CaConnSet {
                     penpro.mark_pending();
                 }
             }
+
             match self.channel_info_res_rx.as_mut().poll_next(cx) {
                 Ready(Some(x)) => match self.handle_series_lookup_result(x) {
                     Ok(()) => {
@@ -2154,6 +2187,7 @@ impl Stream for CaConnSet {
                     penpro.mark_pending();
                 }
             }
+
             match self.connset_inp_rx.as_mut().poll_next(cx) {
                 Ready(Some(x)) => match self.handle_event(x) {
                     Ok(()) => {
@@ -2168,12 +2202,21 @@ impl Stream for CaConnSet {
                     penpro.mark_pending();
                 }
             }
+
+            if self.shutdown_stopping {
+                if penpro.progress() {
+                    debug!("STIL HAVE PROGRESS  08");
+                }
+            }
+
             break if self.ready_for_end_of_stream() {
                 self.mett.ready_for_end_of_stream().inc();
                 if penpro.progress() {
                     self.mett.ready_for_end_of_stream_with_progress().inc();
+                    debug!("poll_next  ready_for_end_of_stream_with_progress");
                     continue;
                 } else {
+                    debug!("poll_next  EOS");
                     Ready(None)
                 }
             } else {
