@@ -39,6 +39,7 @@ impl RequestLogItemBuffer {
 }
 
 pub struct LogQueueFutureWrap<F> {
+    #[allow(unused)]
     reqid: String,
     fut: Pin<Box<F>>,
     logbuf: RequestLogItemBuffer,
@@ -114,6 +115,7 @@ impl LogQueueFnPtrsB {
     }
 }
 
+#[allow(unused)]
 fn push_log_item_queue_3(item: LogItem) -> Result<(), PushError> {
     LOG_QUEUE_3
         .try_with(|x| {
@@ -138,7 +140,7 @@ pub fn push_log_item(item: LogItem) -> () {
     push_log_item_queue_4(item)
 }
 
-fn log_push_noop(logbuf: *mut RequestLogItemBuffer, item: LogItem) -> Result<(), PushError> {
+fn log_push_noop(_: *mut RequestLogItemBuffer, _: LogItem) -> Result<(), PushError> {
     Ok(())
 }
 
@@ -146,7 +148,7 @@ fn log_push_v0(logbuf: *mut RequestLogItemBuffer, item: LogItem) -> Result<(), P
     unsafe { &mut *logbuf }.push_back(item)
 }
 
-fn log_tx_send_noop(log_tx: *const LogItemMuxTx, item: LogItem) -> Result<(), PushError> {
+fn log_tx_send_noop(_: *const LogItemMuxTx, _: LogItem) -> Result<(), PushError> {
     Ok(())
 }
 
@@ -165,8 +167,10 @@ fn log_tx_send_real(log_tx: *const LogItemMuxTx, item: LogItem) -> Result<(), Pu
 }
 
 struct LogItemMuxTx {
+    #[allow(unused)]
     reqid: String,
     log_tx1: Option<Pin<Box<Sender<LogItem>>>>,
+    #[allow(unused)]
     log_tx2: Option<kanal::AsyncSender<LogItem>>,
 }
 
@@ -174,6 +178,7 @@ pub struct LogItemMux<S> {
     tx: UnsafeCell<LogItemMuxTx>,
     inp: Option<S>,
     log_rx1: Option<Pin<Box<Receiver<LogItem>>>>,
+    #[allow(unused)]
     log_rx2: Option<kanal::AsyncReceiver<LogItem>>,
 }
 
