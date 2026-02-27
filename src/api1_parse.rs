@@ -482,7 +482,7 @@ where
 }
 
 #[allow(unused)]
-fn verbose_err(inp: &[u8]) -> Nres<u32> {
+fn verbose_err(inp: &[u8]) -> Nres<'_, u32> {
     use nom::error::ErrorKind;
     use nom::error::ParseError;
     use nom::error::VerboseError;

@@ -131,7 +131,7 @@ pub struct ChannelConfigs {
     pub entries: Vec<ConfigEntry>,
 }
 
-fn parse_short_string(inp: &[u8]) -> NRes<Option<String>> {
+fn parse_short_string(inp: &[u8]) -> NRes<'_, Option<String>> {
     let (inp, len1) = be_i32(inp)?;
     if len1 == -1 {
         return Ok((inp, None));
@@ -149,7 +149,7 @@ fn parse_short_string(inp: &[u8]) -> NRes<Option<String>> {
     }
 }
 
-pub fn parse_entry(inp: &[u8]) -> NRes<Option<ConfigEntry>> {
+pub fn parse_entry(inp: &[u8]) -> NRes<'_, Option<ConfigEntry>> {
     let (inp, len1) = be_i32(inp)?;
     if len1 < 0 || len1 > 4000 {
         return mkerr(format!("ConfigEntry bad len1 {}", len1));
@@ -258,7 +258,7 @@ pub fn parse_entry(inp: &[u8]) -> NRes<Option<ConfigEntry>> {
 }
 
 /// Parse a complete configuration file from given in-memory input buffer.
-fn parse_config_inner(inp: &[u8]) -> NRes<ChannelConfigs> {
+fn parse_config_inner(inp: &[u8]) -> NRes<'_, ChannelConfigs> {
     let (inp, ver) = be_i16(inp)?;
     let (inp, len1) = be_i32(inp)?;
     if len1 <= 8 || len1 > 500 {
