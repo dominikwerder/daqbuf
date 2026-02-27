@@ -420,7 +420,7 @@ impl EventFull {
         &self.blobs[i]
     }
 
-    pub fn data_decompressed(&self, i: usize) -> Result<Cow<[u8]>, DecompError> {
+    pub fn data_decompressed(&self, i: usize) -> Result<Cow<'_, [u8]>, DecompError> {
         if let Some(comp) = &self.comps[i] {
             match comp {
                 CompressionMethod::BitshuffleLZ4 => {

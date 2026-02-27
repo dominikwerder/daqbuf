@@ -1,6 +1,6 @@
+use netpod::TsNano;
 use netpod::timeunits::MS;
 use netpod::timeunits::SEC;
-use netpod::TsNano;
 use std::collections::VecDeque;
 
 pub fn ts_offs_from_abs_with_anchor(
@@ -12,7 +12,7 @@ pub fn ts_offs_from_abs_with_anchor(
     let ts_off_ns = tss
         .iter()
         .zip(ts_off_ms.iter().map(|&k| k * MS))
-        .map(|(&j, k)| (j.ns() - ts_anchor_ns - k))
+        .map(|(&j, k)| j.ns() - ts_anchor_ns - k)
         .collect();
     (ts_off_ms, ts_off_ns)
 }

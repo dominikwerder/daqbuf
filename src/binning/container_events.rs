@@ -1020,7 +1020,7 @@ where
         }
     }
 
-    pub fn next(&mut self) -> Option<EventSingleRef<EVT>> {
+    pub fn next(&mut self) -> Option<EventSingleRef<'_, EVT>> {
         let evs = &self.evs;
         if self.pos < self.end {
             if let (Some(&ts), Some(val)) =
