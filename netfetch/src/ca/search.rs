@@ -3,6 +3,7 @@ use crate::ca::findioc::FindIocStream;
 use crate::conf::CaIngestOpts;
 use async_channel::Receiver;
 use async_channel::Sender;
+use futures::FutureExt;
 use futures::StreamExt;
 use std::collections::VecDeque;
 use std::net::IpAddr;
@@ -79,11 +80,21 @@ pub async fn ca_search_workers_start(
     ),
     Error,
 > {
+    let selfname = "ca_search_workers_start";
     let (search_tgts, blacklist) = search_tgts_from_opts(&opts).await?;
     let batch_run_max = Duration::from_millis(800);
     let in_flight_max = 16;
     let batch_size = 4;
-    let (inp_tx, inp_rx) = async_channel::bounded(256);
+    let (inp_tx, inp2_rx) = async_channel::bounded(256);
+    let (inp2_tx, inp_rx) = async_channel::bounded(256);
+    tokio::spawn(async move {
+        while let Ok(x) = inp2_rx.recv().await {
+            debug!("{selfname}  SEE ITEM  {x:?}");
+            if inp2_tx.send(x).await.is_err() {
+                break;
+            }
+        }
+    });
     let (out_tx, out_rx) = async_channel::bounded(256);
     let finder = FindIocStream::new(inp_rx, search_tgts, blacklist, batch_run_max, in_flight_max, batch_size);
     let jh = taskrun::spawn(finder_run(finder, out_tx));
@@ -152,8 +163,8 @@ async fn finder_run(
     let mut finder = Box::pin(finder);
     while let Some(x) = finder.next().await {
         match tx.send(x).await {
-            Ok(_) => todo!(),
-            Err(_) => todo!(),
+            Ok(()) => (),
+            Err(_) => break,
         }
     }
     trace!("finder_run done");

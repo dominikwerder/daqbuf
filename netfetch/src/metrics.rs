@@ -435,7 +435,6 @@ impl RoutesResources {
     pub fn new(
         backend: String,
         worker_tx: Sender<ChannelInfoQuery>,
-        series_conf_by_id_tx: Sender<()>,
         iqtx: InsertQueuesTx,
         scyconf_st: ScyllaIngestConfig,
         scyconf_mt: ScyllaIngestConfig,

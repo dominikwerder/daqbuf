@@ -316,7 +316,7 @@ impl FindIocStream {
     unsafe fn try_send(sock: i32, addr: &SocketAddrV4, buf: &[u8]) -> Poll<Result<(), Error>> {
         let ip = addr.ip().octets();
         let port = addr.port();
-        let addr = libc::sockaddr_in {
+        let addrc = libc::sockaddr_in {
             sin_family: libc::AF_INET as u16,
             sin_port: port.to_be(),
             sin_addr: libc::in_addr {
@@ -331,7 +331,7 @@ impl FindIocStream {
                 &buf[0] as *const _ as _,
                 buf.len() as _,
                 0,
-                &addr as *const _ as _,
+                &addrc as *const _ as _,
                 addr_len as _,
             )
         };
@@ -342,6 +342,9 @@ impl FindIocStream {
             } else {
                 return Poll::Ready(Err(Error::SendFailure));
             }
+        } else {
+            let s = String::from_utf8_lossy(buf);
+            debug!("SENT  {addr}  {s}\n");
         }
         Poll::Ready(Ok(()))
     }
@@ -350,7 +353,7 @@ impl FindIocStream {
         let tsnow = Instant::now();
         let mut saddr_mem = [0u8; std::mem::size_of::<libc::sockaddr>()];
         let mut saddr_len: libc::socklen_t = saddr_mem.len() as _;
-        let mut buf = vec![0u8; 1024];
+        let mut buf = vec![0u8; 2048];
         let ec = unsafe {
             libc::recvfrom(
                 sock,
@@ -378,19 +381,25 @@ impl FindIocStream {
         } else {
             // stats.ca_udp_io_recv().inc();
             let saddr2: libc::sockaddr_in = unsafe { std::mem::transmute_copy(&saddr_mem) };
-            let parsed = Self::parse_response(saddr2, ec as _, &buf, tsnow)?;
+            let src_addr = Ipv4Addr::from(saddr2.sin_addr.s_addr.to_ne_bytes());
+            let src_port = u16::from_be(saddr2.sin_port);
+            let src = SocketAddrV4::new(src_addr, src_port);
+            {
+                let n = ec as usize;
+                let s = String::from_utf8_lossy(&buf[..n]);
+                debug!("RECEIVED  {src}  {s}");
+            }
+            let parsed = Self::parse_response(src, ec as _, &buf, tsnow)?;
             Poll::Ready(Ok(parsed))
         }
     }
 
     fn parse_response(
-        saddr2: libc::sockaddr_in,
+        src: SocketAddrV4,
         ec: usize,
         buf: &[u8],
         tsnow: Instant,
     ) -> Result<(SocketAddrV4, Vec<(SearchId, SocketAddrV4)>), Error> {
-        let src_addr = Ipv4Addr::from(saddr2.sin_addr.s_addr.to_ne_bytes());
-        let src_port = u16::from_be(saddr2.sin_port);
         if false {
             let mut s1 = String::new();
             for i in 0..ec {
@@ -432,6 +441,7 @@ impl FindIocStream {
             }
             let msg = CaMsg::from_proto_infos(&hi, nb.data(), tsnow, 32)?;
             nb.adv(hi.payload_len() as usize)?;
+            debug!("RECEIVED  from {src}  msg {msg:?}");
             msgs.push(msg);
             accounted += 16 + hi.payload_len();
         }
@@ -456,7 +466,7 @@ impl FindIocStream {
         } else {
             // stats.ca_udp_first_msg_not_version().inc();
         }
-        // trace2!("recv  {:?}  {:?}", src_addr, msgs);
+        // trace2!("recv  {}  {:?}", src, msgs);
         let mut res = Vec::new();
         if good {
             // because of bad java CA implementation, consider also the first message
@@ -464,7 +474,9 @@ impl FindIocStream {
                 match &msg.ty {
                     CaMsgTy::VersionRes(_) => {}
                     CaMsgTy::SearchRes(k) => {
-                        let addr = SocketAddrV4::new(src_addr, k.tcp_port);
+                        let ip = Ipv4Addr::from_octets(k.addr.to_be_bytes());
+                        let addr = SocketAddrV4::new(ip, k.tcp_port);
+                        debug!("src {}  addr {} {}", src, k.addr, addr);
                         res.push((SearchId(k.id), addr));
                     }
                     _ => {
@@ -474,7 +486,7 @@ impl FindIocStream {
                 }
             }
         }
-        Ok((SocketAddrV4::new(src_addr, src_port), res))
+        Ok((src, res))
     }
 
     fn serialize_batch(buf: &mut Vec<u8>, batch: &SearchBatch) {
@@ -642,15 +654,17 @@ impl FindIocStream {
     }
 
     fn get_input_up_to_batch_max(&mut self, cx: &mut Context) -> Poll<Vec<(String, asynchan::Sender<FindIocRes>)>> {
+        let selfname = "get_input_up_to_batch_max";
         use Poll::*;
         let mut ret = Vec::new();
         loop {
+            debug!("{selfname}");
             let mut hpp = HaveProgressPending::new();
             if let Some(rx) = self.channels_input.as_mut() {
                 match rx.poll_next_unpin(cx) {
                     Ready(Some(item)) => {
                         hpp.mark_progress();
-                        trace!("get_input_up_to_batch_max  {}", item.0);
+                        debug!("{selfname}  {}", item.0);
                         ret.push(item);
                     }
                     Ready(None) => {
@@ -667,7 +681,7 @@ impl FindIocStream {
             } else if hpp.have_progress() {
                 continue;
             } else if hpp.have_pending() {
-                Pending
+                if ret.len() != 0 { Ready(ret) } else { Pending }
             } else {
                 Ready(Vec::new())
             };
@@ -729,6 +743,7 @@ impl Stream for FindIocStream {
         }
         // self.thr_msg_0.trigger("FindIocStream::poll_next", &[]);
         loop {
+            debug!("FindIocStream::poll_next");
             let mut hpp = HaveProgressPending::new();
             if let Some(fut) = self.ping.as_mut() {
                 match fut.poll_unpin(cx) {

@@ -3,6 +3,7 @@ use crate::iteminsertqueue::Accounting;
 use crate::iteminsertqueue::AccountingRecv;
 use crate::iteminsertqueue::BinWriteIndexV04;
 use crate::iteminsertqueue::InsertFut;
+use crate::iteminsertqueue::InsertFutKindDbgTag;
 use crate::iteminsertqueue::InsertItem;
 use crate::iteminsertqueue::MspItem;
 use crate::iteminsertqueue::QueryItem;
@@ -32,18 +33,13 @@ use taskrun::tokio;
 use tokio::task::JoinHandle;
 
 macro_rules! error { ($($arg:tt)*) => ( if true { log::error!($($arg)*); } ); }
-
 macro_rules! warn { ($($arg:tt)*) => ( if true { log::warn!($($arg)*); } ); }
-
-macro_rules! trace2 { ($($arg:tt)*) => ( if false { log::trace!($($arg)*); } ); }
-
-macro_rules! trace_transform { ($($arg:tt)*) => ( if false { log::trace!($($arg)*); } ); }
-
-macro_rules! trace_inspect { ($($arg:tt)*) => ( if false { log::trace!($($arg)*); } ); }
-
-macro_rules! trace_item_execute { ($($arg:tt)*) => ( if false { log::trace!($($arg)*); } ); }
-
+macro_rules! debug { ($($arg:tt)*) => ( if true { log::debug!($($arg)*); } ); }
 macro_rules! debug_setup { ($($arg:tt)*) => ( if false { log::debug!($($arg)*); } ); }
+macro_rules! trace2 { ($($arg:tt)*) => ( if false { log::trace!($($arg)*); } ); }
+macro_rules! trace_transform { ($($arg:tt)*) => ( if false { log::trace!($($arg)*); } ); }
+macro_rules! trace_inspect { ($($arg:tt)*) => ( if false { log::trace!($($arg)*); } ); }
+macro_rules! trace_item_execute { ($($arg:tt)*) => ( if false { log::trace!($($arg)*); } ); }
 
 autoerr::create_error_v1!(
     name(Error, "ScyllaInsertWorker"),
@@ -127,6 +123,7 @@ pub async fn spawn_scylla_insert_workers(
     }
     for worker_ix in 0..insert_worker_count {
         let data_store = data_stores[worker_ix * data_stores.len() / insert_worker_count].clone();
+        let wid = InsertWorkerId::new(rett.clone(), scyconf.clone(), worker_ix);
         let jh = tokio::spawn(worker_streamed(
             worker_ix,
             insert_worker_concurrency,
@@ -135,6 +132,7 @@ pub async fn spawn_scylla_insert_workers(
             Some(data_store),
             ignore_writes,
             tx.clone(),
+            wid,
         ));
         jhs.push(jh);
     }
@@ -151,6 +149,11 @@ pub async fn spawn_scylla_insert_workers_dummy(
     let mut jhs = Vec::new();
     for worker_ix in 0..insert_worker_count {
         let data_store = None;
+        let wid = InsertWorkerId::new(
+            RetentionTime::Short,
+            ScyllaIngestConfig::new(["dummy"], "dummy"),
+            worker_ix,
+        );
         let jh = tokio::spawn(worker_streamed(
             worker_ix,
             insert_worker_concurrency,
@@ -159,6 +162,7 @@ pub async fn spawn_scylla_insert_workers_dummy(
             data_store,
             true,
             tx.clone(),
+            wid,
         ));
         jhs.push(jh);
     }
@@ -207,6 +211,37 @@ where
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct InsertWorkerId {
+    rt: RetentionTime,
+    conf: ScyllaIngestConfig,
+    id: usize,
+    short_name: String,
+}
+
+impl InsertWorkerId {
+    pub fn new(rt: RetentionTime, conf: ScyllaIngestConfig, id: usize) -> Self {
+        let short_name = format!("{} {} {}", conf.hosts()[0], rt.debug_tag(), id);
+        Self {
+            rt,
+            conf,
+            id,
+            short_name,
+        }
+    }
+
+    pub fn short_name(&self) -> &str {
+        &self.short_name
+    }
+
+    #[allow(unused)]
+    fn _dummy(&self) {
+        let _ = &self.rt;
+        let _ = &self.conf;
+        let _ = &self.id;
+    }
+}
+
 async fn worker_streamed(
     worker_ix: usize,
     concurrency: usize,
@@ -215,6 +250,7 @@ async fn worker_streamed(
     data_store: Option<Arc<DataStore>>,
     ignore_writes: bool,
     tx: Sender<InsertWorkerOutputItem>,
+    wid: InsertWorkerId,
 ) -> Result<(), Error> {
     debug_setup!("worker_streamed  begin");
     let tsnow = Instant::now();
@@ -229,8 +265,10 @@ async fn worker_streamed(
         .as_ref()
         .map_or_else(|| format!("dummy"), |x| x.rett.debug_tag().to_string());
     let stream = inspect_items(stream, worker_name.clone());
+    let wid = Arc::new(wid);
     if let Some(data_store) = data_store {
-        let stream = transform_to_db_futures(stream, data_store, ignore_writes);
+        let stream = transform_to_db_futures(stream, data_store, ignore_writes, wid.clone());
+        // let stream = stream.map(|_| Vec::new());
         let stream = stream
             .map(|x| futures_util::stream::iter(x))
             .flatten_unordered(Some(1))
@@ -239,7 +277,11 @@ async fn worker_streamed(
         let mut stream = Box::pin(stream);
         debug_setup!("waiting for item");
         while let Some((ts_net, ts1, ts2, item, jobkind)) = stream.next().await {
-            trace_item_execute!("see item");
+            if false {
+                debug!("see scylla result item  {ts_net:?}  {ts1:?}  {ts2:?}  {item:?}  {jobkind:?}");
+                continue;
+            }
+            trace_item_execute!("see scylla result item  {ts_net:?}  {ts1:?}  {ts2:?}  {item:?}  {jobkind:?}");
             let tsnow = Instant::now();
             match jobkind {
                 FutJobKind::SeriesData => {
@@ -324,6 +366,7 @@ fn transform_to_db_futures<S>(
     item_inp: S,
     data_store: Arc<DataStore>,
     ignore_writes: bool,
+    wid: Arc<InsertWorkerId>,
 ) -> impl Stream<Item = Vec<FutJob>>
 where
     S: Stream<Item = VecDeque<QueryItem>>,
@@ -334,47 +377,48 @@ where
         let tsnow = Instant::now();
         let mut res = Vec::with_capacity(32);
         for item in batch {
+            let wid = wid.clone();
             let futs = match item {
                 QueryItem::Insert(item) => {
                     if ignore_writes {
                         SmallVec::new()
                     } else {
-                        prepare_query_insert_futs(item, &data_store)
+                        prepare_query_insert_futs(item, &data_store, wid)
                     }
                 }
                 QueryItem::Msp(item) => {
                     if ignore_writes {
                         SmallVec::new()
                     } else {
-                        prepare_msp_insert_futs(item, &data_store)
+                        prepare_msp_insert_futs(item, &data_store, wid)
                     }
                 }
                 QueryItem::TimeBinSimpleF32V02(item) => {
                     if ignore_writes {
                         SmallVec::new()
                     } else {
-                        prepare_timebin_v02_insert_futs(item, &data_store, tsnow)
+                        prepare_timebin_v02_insert_futs(item, &data_store, tsnow, wid)
                     }
                 }
                 QueryItem::BinWriteIndexV04(item) => {
                     if ignore_writes {
                         SmallVec::new()
                     } else {
-                        prepare_bin_write_index_v04_insert_futs(item, &data_store, tsnow)
+                        prepare_bin_write_index_v04_insert_futs(item, &data_store, tsnow, wid)
                     }
                 }
                 QueryItem::Accounting(item) => {
                     if ignore_writes {
                         SmallVec::new()
                     } else {
-                        prepare_accounting_insert_futs(item, &data_store, tsnow)
+                        prepare_accounting_insert_futs(item, &data_store, tsnow, wid)
                     }
                 }
                 QueryItem::AccountingRecv(item) => {
                     if ignore_writes {
                         SmallVec::new()
                     } else {
-                        prepare_accounting_recv_insert_futs(item, &data_store, tsnow)
+                        prepare_accounting_recv_insert_futs(item, &data_store, tsnow, wid)
                     }
                 }
             };
@@ -418,13 +462,18 @@ fn inspect_items(
     })
 }
 
-fn prepare_msp_insert_futs(item: MspItem, data_store: &Arc<DataStore>) -> SmallVec<[FutJob; 4]> {
+fn prepare_msp_insert_futs(
+    item: MspItem,
+    data_store: &Arc<DataStore>,
+    wid: Arc<InsertWorkerId>,
+) -> SmallVec<[FutJob; 4]> {
     trace2!("execute  MSP bump");
     let fut = insert_msp_fut(
         item.series(),
         item.ts_msp(),
         data_store.scy.clone(),
         data_store.qu_insert_ts_msp.clone(),
+        wid,
     );
     let fut = FutJob {
         fut,
@@ -435,10 +484,14 @@ fn prepare_msp_insert_futs(item: MspItem, data_store: &Arc<DataStore>) -> SmallV
     futs
 }
 
-fn prepare_query_insert_futs(item: InsertItem, data_store: &Arc<DataStore>) -> SmallVec<[FutJob; 4]> {
+fn prepare_query_insert_futs(
+    item: InsertItem,
+    data_store: &Arc<DataStore>,
+    wid: Arc<InsertWorkerId>,
+) -> SmallVec<[FutJob; 4]> {
     let item_ts_net = item.ts_net;
     let do_insert = true;
-    let fut = insert_item_fut(item, &data_store, do_insert);
+    let fut = insert_item_fut(item, &data_store, do_insert, wid);
     let fut = FutJob {
         fut,
         ts_net: item_ts_net,
@@ -452,6 +505,7 @@ fn prepare_timebin_v02_insert_futs(
     item: TimeBinSimpleF32V02,
     data_store: &Arc<DataStore>,
     tsnow: Instant,
+    wid: Arc<InsertWorkerId>,
 ) -> SmallVec<[FutJob; 4]> {
     let params = (
         item.series.id() as i64,
@@ -469,6 +523,8 @@ fn prepare_timebin_v02_insert_futs(
         data_store.scy.clone(),
         data_store.qu_insert_binned_scalar_f32_v02.clone(),
         params,
+        wid,
+        InsertFutKindDbgTag::Other,
     );
     let fut = FutJob {
         fut,
@@ -495,12 +551,15 @@ fn prepare_bin_write_index_v04_insert_futs(
     item: BinWriteIndexV04,
     data_store: &Arc<DataStore>,
     tsnow: Instant,
+    wid: Arc<InsertWorkerId>,
 ) -> SmallVec<[FutJob; 4]> {
     let params = (item.series, item.pbp, item.msp, item.lsp, item.binlen);
     let fut = InsertFut::new(
         data_store.scy.clone(),
         data_store.qu_insert_bin_write_index_v04.clone(),
         params,
+        wid,
+        InsertFutKindDbgTag::Other,
     );
     let fut = FutJob {
         fut,
@@ -527,6 +586,7 @@ fn prepare_accounting_insert_futs(
     item: Accounting,
     data_store: &Arc<DataStore>,
     tsnow: Instant,
+    wid: Arc<InsertWorkerId>,
 ) -> SmallVec<[FutJob; 4]> {
     let params = (
         item.part,
@@ -535,7 +595,13 @@ fn prepare_accounting_insert_futs(
         item.count,
         item.bytes,
     );
-    let fut = InsertFut::new(data_store.scy.clone(), data_store.qu_account_00.clone(), params);
+    let fut = InsertFut::new(
+        data_store.scy.clone(),
+        data_store.qu_account_00.clone(),
+        params,
+        wid,
+        InsertFutKindDbgTag::Other,
+    );
     let fut = FutJob {
         fut,
         ts_net: tsnow,
@@ -549,6 +615,7 @@ fn prepare_accounting_recv_insert_futs(
     item: AccountingRecv,
     data_store: &Arc<DataStore>,
     tsnow: Instant,
+    wid: Arc<InsertWorkerId>,
 ) -> SmallVec<[FutJob; 4]> {
     let params = (
         item.part,
@@ -557,7 +624,13 @@ fn prepare_accounting_recv_insert_futs(
         item.count,
         item.bytes,
     );
-    let fut = InsertFut::new(data_store.scy.clone(), data_store.qu_account_recv_00.clone(), params);
+    let fut = InsertFut::new(
+        data_store.scy.clone(),
+        data_store.qu_account_recv_00.clone(),
+        params,
+        wid,
+        InsertFutKindDbgTag::Other,
+    );
     let fut = FutJob {
         fut,
         ts_net: tsnow,

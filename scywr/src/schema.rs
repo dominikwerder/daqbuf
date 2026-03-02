@@ -3,12 +3,17 @@ use crate::session::ScySession;
 use crate::session::create_session_no_ks;
 use futures_util::StreamExt;
 use futures_util::TryStreamExt;
-use log::*;
 use netpod::ttl::RetentionTime;
 use scylla::errors::NextRowError;
 use std::collections::BTreeMap;
 use std::fmt;
 use std::time::Duration;
+
+macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
+macro_rules! warn { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
+macro_rules! info { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
+macro_rules! debug { ($($arg:tt)*) => { if true { log::debug!($($arg)*); } }; }
+macro_rules! trace2 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
 
 autoerr::create_error_v1!(
     name(Error, "ScyllaSchema"),
@@ -122,6 +127,7 @@ fn ddays(x: u64) -> Duration {
     Duration::from_secs(60 * 60 * 24 * x)
 }
 
+// TODO disentangle the STCS option: factor the table structure from the compaction strategy
 struct GenTwcsTab {
     keyspace: String,
     name: String,
@@ -132,6 +138,7 @@ struct GenTwcsTab {
     default_time_to_live: Duration,
     compaction_window_size: Duration,
     gc_grace: Duration,
+    rt: RetentionTime,
 }
 
 impl GenTwcsTab {
@@ -143,6 +150,7 @@ impl GenTwcsTab {
         partition_keys: I2,
         cluster_keys: I3,
         default_time_to_live: Duration,
+        rt: RetentionTime,
     ) -> Self
     where
         KS: Into<String>,
@@ -166,6 +174,7 @@ impl GenTwcsTab {
             cluster_keys,
             default_time_to_live,
             default_time_to_live / 40,
+            rt,
         )
     }
 
@@ -178,6 +187,7 @@ impl GenTwcsTab {
         cluster_keys: I3,
         default_time_to_live: Duration,
         compaction_window_size: Duration,
+        rt: RetentionTime,
     ) -> Self
     where
         CI: IntoIterator<Item = &'a (A, B)>,
@@ -204,6 +214,7 @@ impl GenTwcsTab {
             default_time_to_live,
             compaction_window_size,
             gc_grace: Duration::from_secs(60 * 60 * 12),
+            rt,
         }
     }
 
@@ -278,12 +289,18 @@ impl GenTwcsTab {
     }
 
     fn compaction_options(&self) -> BTreeMap<String, String> {
-        let win_mins = self.compaction_window_size.as_secs() / 60;
-        let mut map = BTreeMap::new();
-        map.insert("class".into(), "TimeWindowCompactionStrategy".into());
-        map.insert("compaction_window_unit".into(), "MINUTES".into());
-        map.insert("compaction_window_size".into(), win_mins.to_string());
-        map
+        if self.rt.do_stcs() {
+            let mut map = BTreeMap::new();
+            map.insert("class".into(), "SizeTieredCompactionStrategy".into());
+            map
+        } else {
+            let win_mins = self.compaction_window_size.as_secs() / 60;
+            let mut map = BTreeMap::new();
+            map.insert("class".into(), "TimeWindowCompactionStrategy".into());
+            map.insert("compaction_window_unit".into(), "MINUTES".into());
+            map.insert("compaction_window_size".into(), win_mins.to_string());
+            map
+        }
     }
 
     async fn check_table_options(&self, chs: &mut Changeset, scy: &ScySession) -> Result<(), Error> {
@@ -325,7 +342,8 @@ impl GenTwcsTab {
             }
             if set_opts.len() != 0 {
                 let cql = format!(concat!("alter table {} with {}"), self.name(), set_opts.join(" and "));
-                chs.add_todo(cql);
+                info!("do not modify compaction, would execute: {cql}");
+                // chs.add_todo(cql);
             }
         } else {
             chs.add_todo(self.cql());
@@ -349,7 +367,7 @@ impl GenTwcsTab {
             names_exist.push(name);
             types_exist.push(ty);
         }
-        debug!("names_exist {:?}  types_exist {:?}", names_exist, types_exist);
+        trace2!("names_exist {:?}  types_exist {:?}", names_exist, types_exist);
         for (cn, ct) in self.col_names.iter().zip(self.col_types.iter()) {
             if names_exist.contains(cn) {
                 let i = names_exist.binary_search(cn).unwrap();
@@ -449,6 +467,7 @@ async fn check_event_tables(
                 ["series", "ts_msp"],
                 ["ts_lsp"],
                 rett.ttl_events_d0(),
+                rett.clone(),
             );
             tab.setup(chs, scy).await?;
         }
@@ -469,6 +488,7 @@ async fn check_event_tables(
                 ["series", "ts_msp"],
                 ["ts_lsp"],
                 rett.ttl_events_d1(),
+                rett.clone(),
             );
             tab.setup(chs, scy).await?;
         }
@@ -488,6 +508,7 @@ async fn check_event_tables(
             ["series", "ts_msp"],
             ["ts_lsp"],
             rett.ttl_events_d0(),
+            rett.clone(),
         );
         tab.setup(chs, scy).await?;
     }
@@ -505,6 +526,7 @@ async fn check_event_tables(
             ["series", "ts_msp"],
             ["ts_lsp"],
             rett.ttl_events_d0(),
+            rett.clone(),
         );
         tab.setup(chs, scy).await?;
     }
@@ -522,6 +544,7 @@ async fn check_event_tables(
             ["series", "ts_msp"],
             ["ts_lsp"],
             rett.ttl_events_d0(),
+            rett.clone(),
         );
         tab.setup(chs, scy).await?;
     }
@@ -565,6 +588,7 @@ async fn migrate_scylla_data_schema(
             ["series"],
             ["ts_msp"],
             rett.ttl_ts_msp(),
+            rett.clone(),
         );
         tab.setup(chs, scy).await?;
     }
@@ -582,6 +606,7 @@ async fn migrate_scylla_data_schema(
             ["ts_msp"],
             ["ts_lsp"],
             rett.ttl_channel_status(),
+            rett.clone(),
         );
         tab.setup(chs, scy).await?;
     }
@@ -599,6 +624,7 @@ async fn migrate_scylla_data_schema(
             ["series", "ts_msp"],
             ["ts_lsp"],
             rett.ttl_channel_status(),
+            rett.clone(),
         );
         tab.setup(chs, scy).await?;
     }
@@ -616,6 +642,7 @@ async fn migrate_scylla_data_schema(
             ["ts_msp"],
             ["ts_lsp"],
             rett.ttl_channel_status(),
+            rett.clone(),
         );
         tab.setup(chs, scy).await?;
     }
@@ -634,6 +661,7 @@ async fn migrate_scylla_data_schema(
             ["series", "pbp", "msp"],
             ["lsp", "binlen"],
             rett.ttl_binned(),
+            rett.clone(),
         );
         tab.setup(chs, scy).await?;
     }
@@ -657,6 +685,7 @@ async fn migrate_scylla_data_schema(
             ["series", "binlen", "msp"],
             ["off"],
             rett.ttl_binned(),
+            rett.clone(),
         );
         tab.setup(chs, scy).await?;
     }
@@ -675,6 +704,7 @@ async fn migrate_scylla_data_schema(
             ["part", "ts"],
             ["series"],
             rett.ttl_channel_status(),
+            rett.clone(),
         );
         tab.setup(chs, scy).await?;
     }
@@ -693,6 +723,7 @@ async fn migrate_scylla_data_schema(
             ["part", "ts"],
             ["series"],
             rett.ttl_channel_status(),
+            rett.clone(),
         );
         tab.setup(chs, scy).await?;
     }

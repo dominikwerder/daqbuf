@@ -1,5 +1,12 @@
+//
+
+const DO_DEBUG_PARAMS: bool = true;
+
+//
+
 pub use netpod::CONNECTION_STATUS_DIV;
 
+use crate::insertworker::InsertWorkerId;
 use crate::session::ScySession;
 use crate::store::DataStore;
 use bytes::BufMut;
@@ -19,6 +26,7 @@ use scylla::serialize::value::SerializeValue;
 use scylla::statement::prepared::PreparedStatement;
 use series::ChannelStatusSeriesId;
 use series::SeriesId;
+use std::fmt;
 use std::net::SocketAddrV4;
 use std::pin::Pin;
 use std::ptr::NonNull;
@@ -597,14 +605,15 @@ struct InsParCom {
     ts_lsp: DtNano,
     #[allow(unused)]
     do_insert: bool,
+    wid: Arc<InsertWorkerId>,
 }
 
 fn insert_scalar_gen_fut<ST>(par: InsParCom, val: ST, qu: Arc<PreparedStatement>, scy: Arc<ScySession>) -> InsertFut
 where
-    ST: SerializeValue + Send + 'static,
+    ST: fmt::Debug + SerializeValue + Send + 'static,
 {
     let params = (par.series.to_i64(), par.ts_msp.to_i64(), par.ts_lsp.to_i64(), val);
-    InsertFut::new(scy, qu, params)
+    InsertFut::new(scy, qu, params, par.wid, InsertFutKindDbgTag::InsertEvent)
 }
 
 fn insert_scalar_enum_gen_fut<ST1, ST2>(
@@ -615,8 +624,8 @@ fn insert_scalar_enum_gen_fut<ST1, ST2>(
     scy: Arc<ScySession>,
 ) -> InsertFut
 where
-    ST1: SerializeValue + Send + 'static,
-    ST2: SerializeValue + Send + 'static,
+    ST1: fmt::Debug + SerializeValue + Send + 'static,
+    ST2: fmt::Debug + SerializeValue + Send + 'static,
 {
     let params = (
         par.series.to_i64(),
@@ -625,12 +634,19 @@ where
         val,
         valstr,
     );
-    InsertFut::new(scy, qu, params)
+    InsertFut::new(scy, qu, params, par.wid, InsertFutKindDbgTag::InsertEvent)
 }
 
 fn insert_array_gen_fut(par: InsParCom, val: Vec<u8>, qu: Arc<PreparedStatement>, scy: Arc<ScySession>) -> InsertFut {
     let params = (par.series.to_i64(), par.ts_msp.to_i64(), par.ts_lsp.to_i64(), val);
-    InsertFut::new(scy, qu, params)
+    InsertFut::new(scy, qu, params, par.wid, InsertFutKindDbgTag::InsertEvent)
+}
+
+#[derive(Debug, Clone)]
+pub enum InsertFutKindDbgTag {
+    InsertEvent,
+    InsertMsp,
+    Other,
 }
 
 #[pin_project::pin_project]
@@ -645,12 +661,26 @@ pub struct InsertFut {
 }
 
 impl InsertFut {
-    pub fn new<V: SerializeRow + Send + 'static>(scy: Arc<ScySession>, qu: Arc<PreparedStatement>, params: V) -> Self {
+    pub fn new<V: fmt::Debug + SerializeRow + Send + 'static>(
+        scy: Arc<ScySession>,
+        qu: Arc<PreparedStatement>,
+        params: V,
+        wid: Arc<InsertWorkerId>,
+        tag: InsertFutKindDbgTag,
+    ) -> Self {
         let scy_ref = unsafe { NonNull::from(scy.as_ref()).as_ref() };
         let qu_ref = unsafe { NonNull::from(qu.as_ref()).as_ref() };
+        let params_dbg = if DO_DEBUG_PARAMS {
+            format!("{params:?}")
+        } else {
+            "(hidden)".to_string()
+        };
         let fut = scy_ref.execute_unpaged(qu_ref, params);
         let fut = taskrun::tokio::task::unconstrained(fut);
-        let fut = fut.map_err(|e| e.into());
+        let fut = fut.map_err(|e| e.into()).then(|x| async move {
+            log::debug!("{} {:?} {}", wid.short_name(), tag, params_dbg);
+            x
+        });
         let fut = Box::pin(fut);
         // let _ff = StackFuture::from(fut);
         Self { scy, qu, fut }
@@ -674,12 +704,23 @@ impl Future for InsertFut {
     }
 }
 
-pub fn insert_msp_fut(series: SeriesId, ts_msp: TsMs, scy: Arc<ScySession>, qu: Arc<PreparedStatement>) -> InsertFut {
+pub fn insert_msp_fut(
+    series: SeriesId,
+    ts_msp: TsMs,
+    scy: Arc<ScySession>,
+    qu: Arc<PreparedStatement>,
+    wid: Arc<InsertWorkerId>,
+) -> InsertFut {
     let params = (series.to_i64(), ts_msp.to_i64());
-    InsertFut::new(scy, qu, params)
+    InsertFut::new(scy, qu, params, wid, InsertFutKindDbgTag::InsertMsp)
 }
 
-pub fn insert_item_fut(item: InsertItem, data_store: &DataStore, do_insert: bool) -> InsertFut {
+pub fn insert_item_fut(
+    item: InsertItem,
+    data_store: &DataStore,
+    do_insert: bool,
+    wid: Arc<InsertWorkerId>,
+) -> InsertFut {
     let scy = data_store.scy.clone();
     use DataValue::*;
     match item.val {
@@ -689,6 +730,7 @@ pub fn insert_item_fut(item: InsertItem, data_store: &DataStore, do_insert: bool
                 ts_msp: item.ts_msp,
                 ts_lsp: item.ts_lsp,
                 do_insert,
+                wid,
             };
             use ScalarValue::*;
             match val {
@@ -715,6 +757,7 @@ pub fn insert_item_fut(item: InsertItem, data_store: &DataStore, do_insert: bool
                 ts_msp: item.ts_msp,
                 ts_lsp: item.ts_lsp,
                 do_insert,
+                wid,
             };
             use ArrayValue::*;
             let blob = val.to_binary_blob();

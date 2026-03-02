@@ -209,8 +209,6 @@ pub struct Daemon {
     metrics_shutdown_rx: Receiver<u32>,
     metrics_jh: Option<JoinHandle<Result<(), Error>>>,
     channel_info_query_tx: Sender<ChannelInfoQuery>,
-    // TODO
-    series_conf_by_id_tx: Sender<()>,
     iqtx: Option<InsertQueuesTx>,
     daemon_metrics: stats::mett::DaemonMetrics,
 }
@@ -231,9 +229,6 @@ impl Daemon {
             array_truncate: Arc::new(AtomicU64::new(ingest_opts.array_truncate())),
         };
         let insert_worker_opts = Arc::new(insert_worker_opts);
-
-        // TODO so far a dummy
-        let (series_conf_by_id_tx, _series_conf_by_id_rx) = async_channel::bounded(16);
 
         let (iqtx, iqrx) = {
             let (st_rf3_tx, st_rf3_rx) = async_channel::bounded(ingest_opts.insert_item_queue_cap());
@@ -497,7 +492,6 @@ impl Daemon {
             metrics_shutdown_rx,
             metrics_jh: None,
             channel_info_query_tx,
-            series_conf_by_id_tx,
             iqtx: Some(iqtx2),
             daemon_metrics: stats::mett::DaemonMetrics::new(),
         };
@@ -948,7 +942,6 @@ impl Daemon {
         let rres = RoutesResources::new(
             self.ingest_opts.backend().into(),
             self.channel_info_query_tx.clone(),
-            self.series_conf_by_id_tx.clone(),
             self.iqtx
                 .clone()
                 .take()
