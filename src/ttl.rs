@@ -43,6 +43,15 @@ impl RetentionTime {
         ttl + margin
     }
 
+    pub fn do_stcs(&self) -> bool {
+        use RetentionTime::*;
+        match self {
+            Short => false,
+            Medium => false,
+            Long => true,
+        }
+    }
+
     pub fn ttl_events_d1(&self) -> Duration {
         // TTL now depends only on RetentionTime, not on data type or shape.
         self.ttl_events_d0()
