@@ -1,6 +1,6 @@
 [package]
 name = "daqretrieve"
-version = "0.5.6-aa.11"
+version = "0.5.6-aa.12"
 authors = ["Dominik Werder <dominik.werder@gmail.com>"]
 license = "GPL-3.0-only"
 edition = "2024"
