@@ -3146,7 +3146,7 @@ impl TsMs {
 
 impl fmt::Display for TsMs {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        write!(fmt, "TsMs {{ {} }}", self.0)
+        fmt::Debug::fmt(self, fmt)
     }
 }
 
