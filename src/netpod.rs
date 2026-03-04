@@ -150,6 +150,7 @@ pub mod log_direct {
 }
 
 use crate::log::*;
+use crate::ttl::RetentionTime;
 use bytes::Bytes;
 use chrono::DateTime;
 use chrono::TimeZone;
@@ -1013,6 +1014,15 @@ pub struct ScyllaConfig {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ScyllaConfigMultiKeyspace {
+    pub tag: String,
+    pub hosts: Vec<String>,
+    pub keyspaces: Vec<(String, RetentionTime)>,
+    #[serde(default = "bool_true")]
+    pub bypass_cache: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Cluster {
     pub backend: String,
     pub nodes: Vec<Node>,
@@ -1024,12 +1034,11 @@ pub struct Cluster {
     #[serde(rename = "fileIoBufferSize", default)]
     pub file_io_buffer_size: FileIoBufferSize,
     scylla: Option<ScyllaConfig>,
-    #[serde(rename = "scylla_st")]
     scylla_st: Option<ScyllaConfig>,
-    #[serde(rename = "scylla_mt")]
     scylla_mt: Option<ScyllaConfig>,
-    #[serde(rename = "scylla_lt")]
     scylla_lt: Option<ScyllaConfig>,
+    #[serde(default)]
+    scylla_clusters: Vec<ScyllaConfigMultiKeyspace>,
     cache_scylla: Option<ScyllaConfig>,
     pub announce_backends: Option<Vec<String>>,
     #[serde(with = "serde_UseScylla6Workarounds", default)]
@@ -1053,6 +1062,10 @@ impl Cluster {
 
     pub fn scylla_lt(&self) -> Option<&ScyllaConfig> {
         self.scylla_lt.as_ref()
+    }
+
+    pub fn scylla_clusters(&self) -> &[ScyllaConfigMultiKeyspace] {
+        &self.scylla_clusters
     }
 
     pub fn use_scylla6_workarounds(&self) -> UseScylla6Workarounds {
@@ -1079,6 +1092,7 @@ impl Cluster {
             scylla_st: None,
             scylla_mt: None,
             scylla_lt: None,
+            scylla_clusters: Vec::new(),
             cache_scylla: None,
             announce_backends: None,
             use_scylla6_workarounds: None,
@@ -4105,6 +4119,7 @@ pub fn test_cluster() -> Cluster {
         scylla_st: None,
         scylla_mt: None,
         scylla_lt: None,
+        scylla_clusters: Vec::new(),
         cache_scylla: None,
         run_map_pulse_task: false,
         is_central_storage: false,
@@ -4144,6 +4159,7 @@ pub fn sls_test_cluster() -> Cluster {
         scylla_st: None,
         scylla_mt: None,
         scylla_lt: None,
+        scylla_clusters: Vec::new(),
         cache_scylla: None,
         run_map_pulse_task: false,
         is_central_storage: false,
@@ -4183,6 +4199,7 @@ pub fn archapp_test_cluster() -> Cluster {
         scylla_st: None,
         scylla_mt: None,
         scylla_lt: None,
+        scylla_clusters: Vec::new(),
         cache_scylla: None,
         run_map_pulse_task: false,
         is_central_storage: false,
