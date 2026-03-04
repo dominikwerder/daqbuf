@@ -1,10 +1,9 @@
 use core::fmt;
-use serde::Deserialize;
 use serde::Serialize;
 use std::str::FromStr;
 use std::time::Duration;
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 pub enum RetentionTime {
     Short,
     Medium,
@@ -115,6 +114,47 @@ impl fmt::Display for RetentionTime {
             RetentionTime::Long => "long",
         };
         fmt.write_str(s)
+    }
+}
+
+mod serde_retetion_time {
+    use super::RetentionTime;
+    use serde::Deserialize;
+    use serde::de::Visitor;
+    use std::fmt;
+
+    struct Vis;
+
+    impl<'de> Visitor<'de> for Vis {
+        type Value = RetentionTime;
+
+        fn expecting(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+            write!(fmt, "expect short, medium or long")
+        }
+
+        fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            match v {
+                "short" => Ok(RetentionTime::Short),
+                "medium" => Ok(RetentionTime::Medium),
+                "long" => Ok(RetentionTime::Long),
+                _ => Err(serde::de::Error::invalid_value(
+                    serde::de::Unexpected::Str(v),
+                    &"on of short, medium, long",
+                )),
+            }
+        }
+    }
+
+    impl<'de> Deserialize<'de> for RetentionTime {
+        fn deserialize<D>(de: D) -> Result<Self, D::Error>
+        where
+            D: serde::Deserializer<'de>,
+        {
+            de.deserialize_str(Vis)
+        }
     }
 }
 
