@@ -6,6 +6,7 @@ pub mod binwriteindex;
 pub mod conn;
 pub mod errconv;
 pub mod events2;
+pub mod events3;
 pub mod range;
 pub mod status;
 pub mod worker;

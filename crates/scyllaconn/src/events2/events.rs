@@ -1,6 +1,8 @@
 use super::msp::MspStreamRt;
 use crate::events2::prepare::StmtsEvents;
 use crate::range::ScyllaSeriesRange;
+use crate::worker::EventReadOpts;
+use crate::worker::ReadEventsJobParams;
 use crate::worker::ScyllaQueue;
 use daqbuf_err as err;
 use daqbuf_series::SeriesId;
@@ -70,34 +72,6 @@ macro_rules! log_fetch_result {
 macro_rules! log_query { ($($arg:tt)*) => ( if true { log::info!($($arg)*); } ) }
 
 macro_rules! debug_scy6 { ($($arg:tt)*) => { if false { log::debug!($($arg)*); } }; }
-
-#[derive(Debug, Clone)]
-pub struct EventReadOpts {
-    with_values: bool,
-    one_before: bool,
-    qucap: u32,
-    scylla_opts: query::api4::scyllaopts::ScyllaOptsQuery,
-}
-
-impl EventReadOpts {
-    pub fn new(
-        one_before: bool,
-        with_values: bool,
-        qucap: Option<u32>,
-        scylla_opts: query::api4::scyllaopts::ScyllaOptsQuery,
-    ) -> Self {
-        Self {
-            one_before,
-            with_values,
-            qucap: qucap.unwrap_or(6),
-            scylla_opts,
-        }
-    }
-
-    pub fn with_values(&self) -> bool {
-        self.with_values
-    }
-}
 
 autoerr::create_error_v1!(
     name(Error, "ScyllaEvents"),
@@ -840,18 +814,6 @@ fn phantomval<T>() -> T {
     panic!()
 }
 
-#[derive(Debug, Clone)]
-pub struct ReadEventsJobParams {
-    series: SeriesId,
-    rt: RetentionTime,
-    scalar_type: ScalarType,
-    shape: Shape,
-    ts_msp: TsMs,
-    range: ScyllaSeriesRange,
-    fwd: bool,
-    readopts: EventReadOpts,
-}
-
 // TODO
 async fn __use_log_and_instrument_code() {
     let level = taskrun::query_log_level();
@@ -1072,7 +1034,7 @@ async fn read_events_v02_inner(
             params.series.id()
         );
         let res1 = {
-            let mut opts = ReadNextValuesOpts {
+            let opts = ReadNextValuesOpts {
                 rt: params.rt.clone(),
                 series: params.series,
                 ts_msp: params.ts_msp,

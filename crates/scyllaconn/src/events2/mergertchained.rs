@@ -1,8 +1,8 @@
-use super::events::EventReadOpts;
 use super::events::EventsStreamRt;
 use super::onebeforeandbulk::OneBeforeAndBulk;
 use crate::events2::onebeforeandbulk;
 use crate::range::ScyllaSeriesRange;
+use crate::worker::EventReadOpts;
 use crate::worker::ScyllaQueue;
 use futures_util::Future;
 use futures_util::FutureExt;

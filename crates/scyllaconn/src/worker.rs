@@ -1,6 +1,7 @@
+mod read_events_03;
+
 use crate::binwriteindex::BinWriteIndexEntry;
 use crate::conn::create_scy_session_no_ks;
-use crate::events2::events::ReadEventsJobParams;
 use crate::events2::events::ReadJobTrace;
 use crate::events2::prepare::StmtsEvents;
 use crate::range::ScyllaSeriesRange;
@@ -16,7 +17,9 @@ use futures_util::TryStreamExt;
 use items_0::timebin::BinningggContainerEventsDyn;
 use items_2::binning::container_bins::ContainerBins;
 use netpod::DtMs;
+use netpod::ScalarType;
 use netpod::ScyllaConfig;
+use netpod::Shape;
 use netpod::TsMs;
 use netpod::log;
 use netpod::ttl::RetentionTime;
@@ -259,6 +262,69 @@ enum Job {
         ReadEventsJobParams,
         Sender<Result<(Box<dyn BinningggContainerEventsDyn>, ReadJobTrace), Error>>,
     ),
+    ReadEvents03Fwd(
+        ReadEvents03FwdParams,
+        Sender<
+            Result<
+                (
+                    Box<dyn BinningggContainerEventsDyn>,
+                    crate::events3::jobtrace::ReadJobTrace,
+                ),
+                Error,
+            >,
+        >,
+    ),
+}
+
+#[derive(Debug, Clone)]
+pub struct EventReadOpts {
+    pub with_values: bool,
+    pub one_before: bool,
+    pub qucap: u32,
+    pub scylla_opts: query::api4::scyllaopts::ScyllaOptsQuery,
+}
+
+impl EventReadOpts {
+    pub fn new(
+        one_before: bool,
+        with_values: bool,
+        qucap: Option<u32>,
+        scylla_opts: query::api4::scyllaopts::ScyllaOptsQuery,
+    ) -> Self {
+        Self {
+            one_before,
+            with_values,
+            qucap: qucap.unwrap_or(6),
+            scylla_opts,
+        }
+    }
+
+    pub fn with_values(&self) -> bool {
+        self.with_values
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ReadEventsJobParams {
+    pub series: SeriesId,
+    pub rt: RetentionTime,
+    pub scalar_type: ScalarType,
+    pub shape: Shape,
+    pub ts_msp: TsMs,
+    pub range: ScyllaSeriesRange,
+    pub fwd: bool,
+    pub readopts: EventReadOpts,
+}
+
+#[derive(Debug, Clone)]
+pub struct ReadEvents03FwdParams {
+    pub series: SeriesId,
+    pub rt: RetentionTime,
+    pub scalar_type: ScalarType,
+    pub shape: Shape,
+    pub ts_msp: TsMs,
+    pub range: ScyllaSeriesRange,
+    pub with_values: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -296,6 +362,23 @@ impl ScyllaQueue {
     ) -> Result<(Box<dyn BinningggContainerEventsDyn>, ReadJobTrace), Error> {
         let (tx, rx) = async_channel::bounded(1);
         let job = Job::ReadEvents02(params, tx);
+        self.tx.send(job).await.map_err(|_| Error::JobChannelSend)?;
+        let res = rx.recv().await.map_err(|_| Error::ChannelRecv)??;
+        Ok(res)
+    }
+
+    pub async fn read_events_03_fwd(
+        &self,
+        params: ReadEvents03FwdParams,
+    ) -> Result<
+        (
+            Box<dyn BinningggContainerEventsDyn>,
+            crate::events3::jobtrace::ReadJobTrace,
+        ),
+        Error,
+    > {
+        let (tx, rx) = async_channel::bounded(1);
+        let job = Job::ReadEvents03Fwd(params, tx);
         self.tx.send(job).await.map_err(|_| Error::JobChannelSend)?;
         let res = rx.recv().await.map_err(|_| Error::ChannelRecv)??;
         Ok(res)
@@ -549,6 +632,9 @@ impl ScyllaWorker {
                     }
                     Job::ReadEvents02(params, tx) => {
                         crate::events2::events::read_events_v02(params, tx, stmts.clone(), scy.clone()).await
+                    }
+                    Job::ReadEvents03Fwd(params, tx) => {
+                        read_events_03::read_fwd(params, tx, stmts.clone(), scy.clone()).await
                     }
                 }
             })

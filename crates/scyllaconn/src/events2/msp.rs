@@ -12,6 +12,7 @@ use netpod::log;
 use netpod::ttl::RetentionTime;
 use scylla::client::session::Session;
 use std::collections::VecDeque;
+use std::fmt;
 use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
@@ -83,7 +84,17 @@ enum State {
     Fwd(Fwd),
 }
 
+impl fmt::Debug for State {
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::BckAndFirstFwd(arg0) => fmt.debug_tuple("BckAndFirstFwd").finish(),
+            Self::Fwd(arg0) => fmt.debug_tuple("Fwd").finish(),
+        }
+    }
+}
+
 #[pin_project::pin_project]
+#[derive(Debug)]
 pub struct MspStreamRt {
     rt: RetentionTime,
     series: SeriesId,
