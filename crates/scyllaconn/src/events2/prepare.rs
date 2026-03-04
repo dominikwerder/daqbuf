@@ -136,6 +136,22 @@ pub struct StmtsEventsRt {
 }
 
 impl StmtsEventsRt {
+    pub async fn new(ks: &str, rt: &RetentionTime, query_opts: &str, scy: &Session) -> Result<Self, Error> {
+        let ret = Self {
+            ts_msp_fwd: make_msp_dir(ks, rt, false, query_opts, scy).await?,
+            ts_msp_bck: make_msp_dir(ks, rt, true, query_opts, scy).await?,
+            ts_msp_bck_workaround: make_msp_fwd_for_bck_workaround(ks, rt, query_opts, scy).await?,
+            lsp_all: make_lsp_all(ks, rt, query_opts, scy).await?,
+            lsp_fwd_val: make_lsp_dir(ks, rt, "ts_lsp, value", false, query_opts, scy).await?,
+            lsp_bck_val: make_lsp_dir(ks, rt, "ts_lsp, value", true, query_opts, scy).await?,
+            lsp_fwd_ts: make_lsp_dir(ks, rt, "ts_lsp", false, query_opts, scy).await?,
+            lsp_bck_ts: make_lsp_dir(ks, rt, "ts_lsp", true, query_opts, scy).await?,
+            prebinned_f32: make_prebinned_f32(ks, rt, query_opts, scy).await?,
+            bin_write_index_read: make_bin_write_index_read(ks, rt, query_opts, scy).await?,
+        };
+        Ok(ret)
+    }
+
     pub fn ts_msp_fwd(&self) -> &PreparedStatement {
         &self.ts_msp_fwd
     }
@@ -442,22 +458,6 @@ async fn make_bin_write_index_read(
     Ok(qu)
 }
 
-async fn make_rt(ks: &str, rt: &RetentionTime, query_opts: &str, scy: &Session) -> Result<StmtsEventsRt, Error> {
-    let ret = StmtsEventsRt {
-        ts_msp_fwd: make_msp_dir(ks, rt, false, query_opts, scy).await?,
-        ts_msp_bck: make_msp_dir(ks, rt, true, query_opts, scy).await?,
-        ts_msp_bck_workaround: make_msp_fwd_for_bck_workaround(ks, rt, query_opts, scy).await?,
-        lsp_all: make_lsp_all(ks, rt, query_opts, scy).await?,
-        lsp_fwd_val: make_lsp_dir(ks, rt, "ts_lsp, value", false, query_opts, scy).await?,
-        lsp_bck_val: make_lsp_dir(ks, rt, "ts_lsp, value", true, query_opts, scy).await?,
-        lsp_fwd_ts: make_lsp_dir(ks, rt, "ts_lsp", false, query_opts, scy).await?,
-        lsp_bck_ts: make_lsp_dir(ks, rt, "ts_lsp", true, query_opts, scy).await?,
-        prebinned_f32: make_prebinned_f32(ks, rt, query_opts, scy).await?,
-        bin_write_index_read: make_bin_write_index_read(ks, rt, query_opts, scy).await?,
-    };
-    Ok(ret)
-}
-
 #[derive(Debug)]
 pub struct StmtsEventsCacheBypass {
     st: StmtsEventsRt,
@@ -470,9 +470,9 @@ impl StmtsEventsCacheBypass {
     pub async fn new(ks: [&str; 3], bypass_cache: bool, scy: &Session) -> Result<Self, Error> {
         let query_opts = if bypass_cache { "bypass cache" } else { "" };
         let ret = StmtsEventsCacheBypass {
-            st: make_rt(ks[0], &RetentionTime::Short, query_opts, scy).await?,
-            mt: make_rt(ks[1], &RetentionTime::Medium, query_opts, scy).await?,
-            lt: make_rt(ks[2], &RetentionTime::Long, query_opts, scy).await?,
+            st: StmtsEventsRt::new(ks[0], &RetentionTime::Short, query_opts, scy).await?,
+            mt: StmtsEventsRt::new(ks[1], &RetentionTime::Medium, query_opts, scy).await?,
+            lt: StmtsEventsRt::new(ks[2], &RetentionTime::Long, query_opts, scy).await?,
             bypass_cache,
         };
         Ok(ret)

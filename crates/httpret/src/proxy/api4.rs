@@ -1,5 +1,6 @@
 pub mod backend;
 pub mod caioclookup;
+pub mod dyncmd;
 pub mod events;
 
 use crate::bodystream::ToPublicResponse;

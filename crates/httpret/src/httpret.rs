@@ -1,5 +1,7 @@
-pub mod api1;
-pub mod api4;
+#![recursion_limit = "256"]
+
+mod api1;
+mod api4;
 pub mod bodystream;
 pub mod cache;
 pub mod channel_status;
@@ -128,22 +130,18 @@ pub async fn host(ncc: NodeConfigCached, service_version: ServiceVersion) -> Res
         ncc.node_config.cluster.scylla_mt(),
         ncc.node_config.cluster.scylla_lt(),
     ) {
-        let (scyqueue, scylla_worker) = ScyllaWorker::new(st.clone(), mt.clone(), lt.clone())
-            .await
-            .map_err(|e| {
-                error!("{e}");
-                RetrievalError::TextError(e.to_string())
-            })?;
         // TODO use
-        let _scylla_worker_jh = taskrun::spawn(async move {
-            let x = scylla_worker.work().await;
-            match x {
-                Ok(()) => {}
-                Err(e) => {
-                    error!("received error from ScyllaWorker: {}", e);
-                }
-            }
-        });
+        let (scyqueue, scylla_worker_jh) = ScyllaWorker::new(
+            st.clone(),
+            mt.clone(),
+            lt.clone(),
+            ncc.node_config.cluster.scylla_clusters(),
+        )
+        .await
+        .map_err(|e| {
+            error!("{e}");
+            RetrievalError::TextError(e.to_string())
+        })?;
         Some(scyqueue)
     } else {
         None
@@ -413,6 +411,8 @@ async fn http_service_inner(
         Ok(h.handle(req, ctx, &node_config, shared_res)
             .await
             .map_err(|e| Error::with_msg_no_trace(e.to_string()))?)
+    } else if let Some(h) = api4::dyncmd::DynCmdHandler::handler(&req) {
+        h.handle(req, ctx, &shared_res, &node_config).await
     } else if let Some(h) = api4::backend::BackendListHandler::handler(&req) {
         Ok(h.handle(req, ctx, &node_config, service_version).await?)
     } else if let Some(h) = api4::status::StatusNodesRecursive::handler(&req) {

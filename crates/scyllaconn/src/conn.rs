@@ -1,4 +1,5 @@
 use netpod::ScyllaConfig;
+use netpod::ScyllaConfigMultiKeyspace;
 use netpod::log;
 use scylla::client::execution_profile::ExecutionProfileBuilder;
 use scylla::client::session::Session;
@@ -23,14 +24,33 @@ pub async fn create_scy_session(scyconf: &ScyllaConfig) -> Result<Arc<Session>, 
     Ok(ret)
 }
 
-pub async fn create_scy_session_no_ks(scyconf: &ScyllaConfig) -> Result<Session, Error> {
+trait ScyllaHostSet {
+    fn hosts(&self) -> &Vec<String>;
+}
+
+impl ScyllaHostSet for &ScyllaConfig {
+    fn hosts(&self) -> &Vec<String> {
+        &self.hosts
+    }
+}
+
+impl ScyllaHostSet for &ScyllaConfigMultiKeyspace {
+    fn hosts(&self) -> &Vec<String> {
+        &self.hosts
+    }
+}
+
+pub async fn create_scy_session_no_ks<H>(hosts: H) -> Result<Session, Error>
+where
+    H: ScyllaHostSet,
+{
     log::info!("creating scylla connection");
     let scy = SessionBuilder::new()
         .pool_size(scylla::client::PoolSize::PerHost(NonZero::new(4).unwrap()))
-        .known_nodes(&scyconf.hosts)
+        .known_nodes(hosts.hosts())
         .default_execution_profile_handle(
             ExecutionProfileBuilder::default()
-                .consistency(Consistency::Quorum)
+                .consistency(Consistency::Two)
                 .build()
                 .into_handle(),
         )

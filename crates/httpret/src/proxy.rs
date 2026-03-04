@@ -1,5 +1,5 @@
-pub mod api1;
-pub mod api4;
+mod api1;
+mod api4;
 
 use crate::api1::channel_search_configs_v1;
 use crate::api1::channel_search_list_v1;
@@ -209,6 +209,8 @@ async fn proxy_http_service_inner(
     } else if let Some(h) = api4::ChannelSearchAggHandler::handler(&req) {
         h.handle(req, ctx, &proxy_config).await
     } else if let Some(h) = api4::events::EventsHandler::handler(&req) {
+        h.handle(req, ctx, &proxy_config).await
+    } else if let Some(h) = api4::dyncmd::DynCmdHandler::handler(&req) {
         h.handle(req, ctx, &proxy_config).await
     } else if path == "/api/4/accounting/ingested" {
         Ok(proxy_backend_query::<MapQuery>(req, ctx, proxy_config).await?)

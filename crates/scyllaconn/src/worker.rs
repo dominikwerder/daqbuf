@@ -4,6 +4,7 @@ use crate::binwriteindex::BinWriteIndexEntry;
 use crate::conn::create_scy_session_no_ks;
 use crate::events2::events::ReadJobTrace;
 use crate::events2::prepare::StmtsEvents;
+use crate::events2::prepare::StmtsEventsRt;
 use crate::range::ScyllaSeriesRange;
 use async_channel::Receiver;
 use async_channel::Sender;
@@ -19,6 +20,7 @@ use items_2::binning::container_bins::ContainerBins;
 use netpod::DtMs;
 use netpod::ScalarType;
 use netpod::ScyllaConfig;
+use netpod::ScyllaConfigMultiKeyspace;
 use netpod::Shape;
 use netpod::TsMs;
 use netpod::log;
@@ -555,7 +557,8 @@ impl ScyllaWorker {
         scyconf_st: ScyllaConfig,
         scyconf_mt: ScyllaConfig,
         scyconf_lt: ScyllaConfig,
-    ) -> Result<(ScyllaQueue, Self), Error> {
+        scyconf_multi: &[ScyllaConfigMultiKeyspace],
+    ) -> Result<(ScyllaQueue, tokio::task::JoinHandle<()>), Error> {
         let (tx, rx) = async_channel::bounded(SCYLLA_WORKER_QUEUE_LEN);
         let queue = ScyllaQueue { tx };
         let worker = Self {
@@ -564,7 +567,15 @@ impl ScyllaWorker {
             scyconf_mt,
             scyconf_lt,
         };
-        Ok((queue, worker))
+        let jh = taskrun::spawn(async move {
+            match worker.work().await {
+                Ok(()) => {}
+                Err(e) => {
+                    error!("received error from ScyllaWorker: {}", e);
+                }
+            }
+        });
+        Ok((queue, jh))
     }
 
     async fn work_inner(&self) -> Result<(), Error> {
@@ -675,4 +686,83 @@ impl ScyllaWorker {
             }
         }
     }
+}
+
+async fn job_runner_for_cluster(scyconf: &ScyllaConfigMultiKeyspace) -> Result<(), Error> {
+    let scy = create_scy_session_no_ks(scyconf).await?;
+    let scy = Arc::new(scy);
+    let query_opts = if false { "bypass cache" } else { "" };
+    for (ks, rt) in &scyconf.keyspaces {
+        debug!("scylla worker  prepare start");
+        let stmts = StmtsEventsRt::new(ks, &rt, query_opts, &scy).await?;
+    }
+    // let stmts = StmtsEvents::new(kss.try_into().map_err(|_| Error::MissingKeyspaceConfig)?, &scy).await?;
+    // let stmts = Arc::new(stmts);
+    debug!("scylla worker  prepare done");
+    self.rx
+        .clone()
+        .map(|job| async {
+            match job {
+                Job::FindTsMsp(job) => job.execute(&stmts, &scy).await,
+                Job::AccountingReadTs(rt, ts, tx) => {
+                    let ks = match &rt {
+                        RetentionTime::Short => &self.scyconf_st.keyspace,
+                        RetentionTime::Medium => &self.scyconf_mt.keyspace,
+                        RetentionTime::Long => &self.scyconf_lt.keyspace,
+                    };
+                    let res = crate::accounting::toplist::read_ts(&ks, rt, ts, &scy).await;
+                    if tx.send(res.map_err(Into::into)).await.is_err() {
+                        // TODO count for stats
+                    }
+                }
+                Job::WriteCacheF32(a, b, tx) => {
+                    let _ = a;
+                    let _ = b;
+                    // let res = super::bincache::worker_write(series, bins, &stmts_cache, &scy).await;
+                    let res = Err(streams::timebin::cached::reader::Error::TodoImpl);
+                    if tx.send(res).await.is_err() {
+                        // TODO count for stats
+                    }
+                }
+                Job::ReadPrebinnedF32(job) => {
+                    // TODO remove I guess?
+                    let res = super::bincache::worker_read(
+                        job.rt,
+                        job.series,
+                        job.bin_len,
+                        job.msp,
+                        job.offs,
+                        job.scylla_opts,
+                        &stmts,
+                        &scy,
+                    )
+                    .await;
+                    if job.tx.send(res).await.is_err() {
+                        // TODO count for stats
+                    }
+                }
+                Job::BinWriteIndexRead(job) => job.execute(&stmts, &scy).await,
+                Job::PrepareV1(job) => {
+                    let res = scy.prepare(job.cql).await.map_err(|e| e.into());
+                    // TODO log?
+                    let _ = job.tx.send(res).await;
+                }
+                Job::ExecuteV1(job) => {
+                    let res = scy.execute_iter(job.st, job.params).await.map_err(|e| e.into());
+                    // TODO log?
+                    let _ = job.tx.send(res).await;
+                }
+                Job::ReadEvents02(params, tx) => {
+                    crate::events2::events::read_events_v02(params, tx, stmts.clone(), scy.clone()).await
+                }
+                Job::ReadEvents03Fwd(params, tx) => {
+                    let x = read_events_03::read_fwd(params, stmts.clone(), scy.clone()).await;
+                    let _ = tx.send(x.map_err(Into::into));
+                }
+            }
+        })
+        .buffer_unordered(CONCURRENT_QUERIES_PER_WORKER)
+        .for_each(|_| futures_util::future::ready(()))
+        .await;
+    Ok(())
 }

@@ -1,4 +1,5 @@
 const READ_NEXT_TIMEOUT: Duration = Duration::from_millis(5000);
+const QUERY_PAGE_SIZE: i32 = 512;
 
 mod datatypes;
 
@@ -7,7 +8,6 @@ use crate::events3::jobtrace::ReadEventKind;
 use crate::events3::jobtrace::ReadJobTrace;
 use crate::range::ScyllaSeriesRange;
 use crate::worker::ReadEvents03FwdParams;
-use async_channel::Sender;
 use daqbuf_series::SeriesId;
 use datatypes::ValTyDyn;
 use futures_util::TryFutureExt;
@@ -115,8 +115,7 @@ async fn read_next_values_fwd(
         if qu.is_token_aware() == false {
             return Err(Error::NotTokenAware);
         }
-        qu.set_page_size(10000);
-        // qu.disable_paging();
+        qu.set_page_size(QUERY_PAGE_SIZE);
         qu
     };
     let params = (
