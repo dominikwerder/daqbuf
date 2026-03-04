@@ -24,7 +24,7 @@ macro_rules! trace { ($($arg:tt)*) => ( if true { log::trace!($($arg)*); } ) }
 macro_rules! trace2 { ($($arg:tt)*) => ( if true { log::trace!($($arg)*); } ) }
 
 autoerr::create_error_v1!(
-    name(Error, "EventsMspMerge"),
+    name(Error, "EventsDatatypes"),
     enum variants {
         ScyllaNextRow(#[from] scylla::errors::NextRowError),
         ScyllaTypeCheck(#[from] scylla::deserialize::TypeCheckError),
@@ -66,57 +66,6 @@ where
 
     fn boxed() -> Box<dyn ValTyDyn> {
         Box::new(Self::new())
-    }
-
-    pub fn boxed_from_type(shape: Shape, scalar_type: ScalarType) -> Box<dyn ValTyDyn> {
-        match shape {
-            Shape::Scalar => {
-                use ScalarType::*;
-                match scalar_type {
-                    U8 => ValTyDynTesting::<u8>::boxed(),
-                    U16 => ValTyDynTesting::<u16>::boxed(),
-                    U32 => ValTyDynTesting::<u32>::boxed(),
-                    U64 => ValTyDynTesting::<u64>::boxed(),
-                    I8 => ValTyDynTesting::<i8>::boxed(),
-                    I16 => ValTyDynTesting::<i16>::boxed(),
-                    I32 => ValTyDynTesting::<i32>::boxed(),
-                    I64 => ValTyDynTesting::<i64>::boxed(),
-                    F32 => ValTyDynTesting::<f32>::boxed(),
-                    F64 => ValTyDynTesting::<f64>::boxed(),
-                    BOOL => ValTyDynTesting::<bool>::boxed(),
-                    STRING => ValTyDynTesting::<String>::boxed(),
-                    Enum => ValTyDynTesting::<EnumVariant>::boxed(),
-                }
-            }
-            Shape::Wave(_) => {
-                use ScalarType::*;
-                match scalar_type {
-                    U8 => ValTyDynTesting::<Vec<u8>>::boxed(),
-                    U16 => ValTyDynTesting::<Vec<u16>>::boxed(),
-                    U32 => ValTyDynTesting::<Vec<u32>>::boxed(),
-                    U64 => ValTyDynTesting::<Vec<u64>>::boxed(),
-                    I8 => ValTyDynTesting::<Vec<i8>>::boxed(),
-                    I16 => ValTyDynTesting::<Vec<i16>>::boxed(),
-                    I32 => ValTyDynTesting::<Vec<i32>>::boxed(),
-                    I64 => ValTyDynTesting::<Vec<i64>>::boxed(),
-                    F32 => ValTyDynTesting::<Vec<f32>>::boxed(),
-                    F64 => ValTyDynTesting::<Vec<f64>>::boxed(),
-                    BOOL => ValTyDynTesting::<Vec<bool>>::boxed(),
-                    STRING => {
-                        warn!("read not yet supported  {:?}  {:?}", shape, scalar_type);
-                        ValTyDynTesting::<Vec<String>>::boxed()
-                    }
-                    Enum => {
-                        warn!("read not yet supported  {:?}  {:?}", shape, scalar_type);
-                        ValTyDynTesting::<Vec<EnumVariant>>::boxed()
-                    }
-                }
-            }
-            Shape::Image(_, _) => {
-                error!("read not yet supported  {:?}  {:?}", shape, scalar_type);
-                ValTyDynTesting::<u8>::boxed()
-            }
-        }
     }
 
     async fn read_into_container_impl(
@@ -211,6 +160,57 @@ where
     fn clone_dyn(&self) -> Box<dyn ValTyDyn> {
         let ret = Self { _t1: PhantomData };
         Box::new(ret)
+    }
+}
+
+pub fn val_ty_dyn_from_type(shape: Shape, scalar_type: ScalarType) -> Box<dyn ValTyDyn> {
+    match shape {
+        Shape::Scalar => {
+            use ScalarType::*;
+            match scalar_type {
+                U8 => ValTyDynTesting::<u8>::boxed(),
+                U16 => ValTyDynTesting::<u16>::boxed(),
+                U32 => ValTyDynTesting::<u32>::boxed(),
+                U64 => ValTyDynTesting::<u64>::boxed(),
+                I8 => ValTyDynTesting::<i8>::boxed(),
+                I16 => ValTyDynTesting::<i16>::boxed(),
+                I32 => ValTyDynTesting::<i32>::boxed(),
+                I64 => ValTyDynTesting::<i64>::boxed(),
+                F32 => ValTyDynTesting::<f32>::boxed(),
+                F64 => ValTyDynTesting::<f64>::boxed(),
+                BOOL => ValTyDynTesting::<bool>::boxed(),
+                STRING => ValTyDynTesting::<String>::boxed(),
+                Enum => ValTyDynTesting::<EnumVariant>::boxed(),
+            }
+        }
+        Shape::Wave(_) => {
+            use ScalarType::*;
+            match scalar_type {
+                U8 => ValTyDynTesting::<Vec<u8>>::boxed(),
+                U16 => ValTyDynTesting::<Vec<u16>>::boxed(),
+                U32 => ValTyDynTesting::<Vec<u32>>::boxed(),
+                U64 => ValTyDynTesting::<Vec<u64>>::boxed(),
+                I8 => ValTyDynTesting::<Vec<i8>>::boxed(),
+                I16 => ValTyDynTesting::<Vec<i16>>::boxed(),
+                I32 => ValTyDynTesting::<Vec<i32>>::boxed(),
+                I64 => ValTyDynTesting::<Vec<i64>>::boxed(),
+                F32 => ValTyDynTesting::<Vec<f32>>::boxed(),
+                F64 => ValTyDynTesting::<Vec<f64>>::boxed(),
+                BOOL => ValTyDynTesting::<Vec<bool>>::boxed(),
+                STRING => {
+                    warn!("read not yet supported  {:?}  {:?}", shape, scalar_type);
+                    ValTyDynTesting::<Vec<String>>::boxed()
+                }
+                Enum => {
+                    warn!("read not yet supported  {:?}  {:?}", shape, scalar_type);
+                    ValTyDynTesting::<Vec<EnumVariant>>::boxed()
+                }
+            }
+        }
+        Shape::Image(_, _) => {
+            error!("read not yet supported  {:?}  {:?}", shape, scalar_type);
+            ValTyDynTesting::<u8>::boxed()
+        }
     }
 }
 

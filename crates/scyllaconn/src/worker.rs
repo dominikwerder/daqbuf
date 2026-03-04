@@ -47,6 +47,7 @@ autoerr::create_error_v1!(
         Prepare(#[from] crate::events2::prepare::Error),
         Events(#[from] crate::events2::events::Error),
         Msp(#[from] crate::events2::msp::Error),
+        ReadEvents03(#[from] read_events_03::Error),
         // Reserved for failure of sending jobs to the worker. Not for results back to client.
         JobChannelSend,
         ChannelRecv,
@@ -325,6 +326,7 @@ pub struct ReadEvents03FwdParams {
     pub ts_msp: TsMs,
     pub range: ScyllaSeriesRange,
     pub with_values: bool,
+    pub scylla_opts: query::api4::scyllaopts::ScyllaOptsQuery,
 }
 
 #[derive(Debug, Clone)]
@@ -634,7 +636,8 @@ impl ScyllaWorker {
                         crate::events2::events::read_events_v02(params, tx, stmts.clone(), scy.clone()).await
                     }
                     Job::ReadEvents03Fwd(params, tx) => {
-                        read_events_03::read_fwd(params, tx, stmts.clone(), scy.clone()).await
+                        let x = read_events_03::read_fwd(params, stmts.clone(), scy.clone()).await;
+                        let _ = tx.send(x.map_err(Into::into));
                     }
                 }
             })

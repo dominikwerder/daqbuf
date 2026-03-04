@@ -3,7 +3,6 @@ use crate::events3::SeriesInfo;
 use crate::events3::jobtrace::ReadJobTrace;
 use crate::range::ScyllaSeriesRange;
 use crate::worker::ReadEvents03FwdParams;
-use crate::worker::ReadEventsJobParams;
 use crate::worker::ScyllaQueue;
 use daqbuf_series::msp::MspU32;
 use futures_util::Stream;
@@ -98,6 +97,7 @@ impl EventsMspFwd {
             ts_msp,
             range,
             with_values,
+            scylla_opts: self.readopts.scylla_opts.clone(),
         };
         let fut = async move { scyqueue.read_events_03_fwd(params).await.map_err(From::from) };
         Box::pin(fut)
