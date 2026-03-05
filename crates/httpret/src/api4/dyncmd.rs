@@ -21,25 +21,31 @@ use httpclient::StreamIncoming;
 use httpclient::StreamResponse;
 use netpod::ttl::RetentionTime;
 use netpod::NodeConfigCached;
+use netpod::TsMs;
 use netpod::TsNano;
 use query::api4::scyllaopts::ScyllaOptsQuery;
 use scyllaconn::range::ScyllaSeriesRange;
 use scyllaconn::worker::ScyllaQueue;
 use serde::Deserialize;
+use serde::Serialize;
 use series::SeriesId;
 
 macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
 
-#[derive(Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
+struct AttachedScyllas {}
+
+#[derive(Debug, Serialize, Deserialize)]
 struct ReadMsp {
     series: SeriesId,
-    rt: RetentionTime,
+    rt: Option<RetentionTime>,
+    limit: Option<u32>,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct ReadEvents03Fwd {
     series: SeriesId,
-    rt: RetentionTime,
+    msp: TsMs,
 }
 
 pub struct DynCmdHandler {}
@@ -96,6 +102,10 @@ impl DynCmdHandler {
                                 } else {
                                     Ok(response(StatusCode::BAD_REQUEST).body(body_empty())?)
                                 }
+                            } else if cmd.ty2 == "attached_scyllas" {
+                                let x = attached_scyllas(scyqu).await;
+                                let buf = serde_json::to_vec(&x).unwrap();
+                                Ok(response(StatusCode::OK).body(body_bytes(buf))?)
                             } else {
                                 Ok(response(StatusCode::BAD_REQUEST).body(body_empty())?)
                             }
@@ -119,13 +129,51 @@ impl DynCmdHandler {
     }
 }
 
-async fn read_msp(cmd: ReadMsp, scyqu: &ScyllaQueue) -> serde_json::Value {
+async fn attached_scyllas(scyqu: &ScyllaQueue) -> serde_json::Value {
+    let clusters: Vec<_> = scyqu
+        .clusters()
+        .iter()
+        .map(|x| {
+            let keyspaces: Vec<_> = x.keyspaces().iter().map(|x| serde_json::to_value(x).unwrap()).collect();
+            serde_json::json!({
+                "tag": x.tag(),
+                "keyspaces": keyspaces,
+            })
+        })
+        .collect();
     serde_json::json!({
+        "clusters": clusters,
+    })
+}
+
+async fn read_msp(cmd: ReadMsp, scyqu: &ScyllaQueue) -> serde_json::Value {
+    use serde_json::json;
+    json!({
         "error": "no scylla",
     });
     let range = ScyllaSeriesRange::new(TsNano::from_ms(0), TsNano::from_ms(0x1fffffffffffffff));
     let scylla_opts = ScyllaOptsQuery::new();
-    let x = scyqu.find_ts_msp(cmd.rt, cmd.series, range, false, scylla_opts).await;
-    let x = x.map_err(|e| e.to_string());
-    serde_json::to_value(&x).unwrap()
+    let mut ret1 = Vec::new();
+    for c in scyqu.clusters() {
+        let mut ret2 = Vec::new();
+        for ks in c.keyspaces() {
+            let x = c
+                .find_ts_msp_fwd(ks.clone(), cmd.series, range.clone(), cmd.limit, scylla_opts.clone())
+                .await;
+            let x = x.map_err(|e| e.to_string());
+            let x = json!({
+                "keyspace": ks,
+                "ret": x,
+            });
+            ret2.push(x);
+        }
+        let x = json!({
+            "cluster": c.tag(),
+            "keyspaces": ret2,
+        });
+        ret1.push(x);
+    }
+    // let x = scyqu.find_ts_msp(cmd.rt, cmd.series, range, false, scylla_opts).await;
+    // let x = x.map_err(|e| e.to_string());
+    serde_json::to_value(&ret1).unwrap()
 }

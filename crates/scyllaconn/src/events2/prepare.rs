@@ -152,16 +152,16 @@ impl StmtsEventsRt {
         Ok(ret)
     }
 
-    pub fn ts_msp_fwd(&self) -> &PreparedStatement {
+    fn ts_msp_fwd(&self) -> &PreparedStatement {
         &self.ts_msp_fwd
     }
 
-    pub fn ts_msp_bck(&self) -> &PreparedStatement {
+    fn ts_msp_bck(&self) -> &PreparedStatement {
         trace_scy6!("StmtsEventsRt ORDER DESC");
         &self.ts_msp_bck
     }
 
-    pub fn ts_msp_bck_workaround(&self) -> &PreparedStatement {
+    fn ts_msp_bck_workaround(&self) -> &PreparedStatement {
         &self.ts_msp_bck_workaround
     }
 
@@ -195,18 +195,13 @@ async fn make_msp_dir(
 ) -> Result<PreparedStatement, Error> {
     let table_name = "ts_msp";
     let select_cond = if bck {
-        "ts_msp < ? order by ts_msp desc limit 2"
+        "ts_msp < ? order by ts_msp desc"
     } else {
-        "ts_msp >= ? and ts_msp < ? limit 40"
+        "ts_msp >= ? and ts_msp < ? order by ts_msp asc"
     };
-    let cql = format!(
-        "select ts_msp from {}.{}{} where series = ? and {} {}",
-        ks,
-        rt.table_prefix(),
-        table_name,
-        select_cond,
-        query_opts
-    );
+    let tpre = rt.table_prefix();
+    let cql =
+        format!("select ts_msp from {ks}.{tpre}{table_name} where series = ? and {select_cond} limit ? {query_opts}");
     log_prepare!("{ks} {rt} {cql}");
     let qu = scy.prepare(cql).await?;
     Ok(qu)
@@ -491,6 +486,71 @@ impl StmtsEventsCacheBypass {
 }
 
 #[derive(Debug)]
+pub struct StmtsEventsQueryOpts {
+    ts_msp_fwd: PreparedStatement,
+    ts_msp_bck: PreparedStatement,
+    ts_msp_bck_workaround: PreparedStatement,
+    lsp_all: StmtsLspAll,
+    lsp_fwd_val: StmtsLspDir,
+    lsp_bck_val: StmtsLspDir,
+    lsp_fwd_ts: StmtsLspDir,
+    lsp_bck_ts: StmtsLspDir,
+    prebinned_f32: PreparedStatement,
+    bin_write_index_read: PreparedStatement,
+}
+
+impl StmtsEventsQueryOpts {
+    pub async fn new(ks: &str, rt: &RetentionTime, query_opts: &str, scy: &Session) -> Result<Self, Error> {
+        let ret = Self {
+            ts_msp_fwd: make_msp_dir(ks, rt, false, query_opts, scy).await?,
+            ts_msp_bck: make_msp_dir(ks, rt, true, query_opts, scy).await?,
+            ts_msp_bck_workaround: make_msp_fwd_for_bck_workaround(ks, rt, query_opts, scy).await?,
+            lsp_all: make_lsp_all(ks, rt, query_opts, scy).await?,
+            lsp_fwd_val: make_lsp_dir(ks, rt, "ts_lsp, value", false, query_opts, scy).await?,
+            lsp_bck_val: make_lsp_dir(ks, rt, "ts_lsp, value", true, query_opts, scy).await?,
+            lsp_fwd_ts: make_lsp_dir(ks, rt, "ts_lsp", false, query_opts, scy).await?,
+            lsp_bck_ts: make_lsp_dir(ks, rt, "ts_lsp", true, query_opts, scy).await?,
+            prebinned_f32: make_prebinned_f32(ks, rt, query_opts, scy).await?,
+            bin_write_index_read: make_bin_write_index_read(ks, rt, query_opts, scy).await?,
+        };
+        Ok(ret)
+    }
+
+    pub fn ts_msp_fwd(&self) -> &PreparedStatement {
+        &self.ts_msp_fwd
+    }
+
+    pub fn ts_msp_bck(&self) -> &PreparedStatement {
+        trace_scy6!("StmtsEventsRt ORDER DESC");
+        &self.ts_msp_bck
+    }
+
+    pub fn ts_msp_bck_workaround(&self) -> &PreparedStatement {
+        &self.ts_msp_bck_workaround
+    }
+
+    pub fn lsp_all(&self) -> &StmtsLspAll {
+        &self.lsp_all
+    }
+
+    pub fn lsp(&self, bck: bool, val: bool) -> &StmtsLspDir {
+        if bck {
+            if val { &self.lsp_bck_val } else { &self.lsp_bck_ts }
+        } else {
+            if val { &self.lsp_fwd_val } else { &self.lsp_fwd_ts }
+        }
+    }
+
+    pub fn prebinned_f32(&self) -> &PreparedStatement {
+        &self.prebinned_f32
+    }
+
+    pub fn bin_write_index_read(&self) -> &PreparedStatement {
+        &self.bin_write_index_read
+    }
+}
+
+#[derive(Debug)]
 pub struct StmtsEvents {
     cache_use: StmtsEventsCacheBypass,
     cache_bypass: StmtsEventsCacheBypass,
@@ -506,6 +566,30 @@ impl StmtsEvents {
     }
 
     pub fn cache_bypass(&self, cache_bypass: bool) -> &StmtsEventsCacheBypass {
+        if cache_bypass {
+            &self.cache_bypass
+        } else {
+            &self.cache_use
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct StmtsEventsClusterKeyspace {
+    cache_use: StmtsEventsQueryOpts,
+    cache_bypass: StmtsEventsQueryOpts,
+}
+
+impl StmtsEventsClusterKeyspace {
+    pub async fn new(ks: &str, rt: &RetentionTime, scy: &Session) -> Result<Self, Error> {
+        let ret = Self {
+            cache_use: StmtsEventsQueryOpts::new(ks, rt, "", scy).await?,
+            cache_bypass: StmtsEventsQueryOpts::new(ks, rt, "bypass cache", scy).await?,
+        };
+        Ok(ret)
+    }
+
+    pub fn cache_bypass(&self, cache_bypass: bool) -> &StmtsEventsQueryOpts {
         if cache_bypass {
             &self.cache_bypass
         } else {

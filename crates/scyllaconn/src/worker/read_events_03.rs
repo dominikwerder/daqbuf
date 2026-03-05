@@ -4,6 +4,8 @@ const QUERY_PAGE_SIZE: i32 = 512;
 mod datatypes;
 
 use crate::events2::prepare::StmtsEvents;
+use crate::events2::prepare::StmtsEventsClusterKeyspace;
+use crate::events2::prepare::StmtsEventsQueryOpts;
 use crate::events3::jobtrace::ReadEventKind;
 use crate::events3::jobtrace::ReadJobTrace;
 use crate::range::ScyllaSeriesRange;
@@ -17,6 +19,7 @@ use netpod::TsMs;
 use netpod::TsNano;
 use netpod::ttl::RetentionTime;
 use scylla::client::session::Session;
+use std::ops::Deref;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -55,6 +58,22 @@ autoerr::create_error_v1!(
     },
 );
 
+struct ScySessionRef<'a>(&'a scylla::client::session::Session);
+
+impl<'a> Deref for ScySessionRef<'a> {
+    type Target = scylla::client::session::Session;
+
+    fn deref(&self) -> &Self::Target {
+        self.0
+    }
+}
+
+impl<'a> Clone for ScySessionRef<'a> {
+    fn clone(&self) -> Self {
+        Self(self.0)
+    }
+}
+
 #[derive(Debug)]
 pub(super) struct ReadNextValuesOpts {
     rt: RetentionTime,
@@ -68,8 +87,8 @@ pub(super) struct ReadNextValuesOpts {
 
 async fn read_next_values_fwd(
     opts: ReadNextValuesOpts,
-    stmts: Arc<StmtsEvents>,
-    scy: Arc<Session>,
+    stmts: &StmtsEventsQueryOpts,
+    scy: ScySessionRef<'_>,
     jobtrace: &mut ReadJobTrace,
 ) -> Result<Box<dyn BinningggContainerEventsDyn>, Error> {
     let selfname = "read_next_values_fwd";
@@ -105,8 +124,6 @@ async fn read_next_values_fwd(
         table_name
     );
     let qu = stmts
-        .cache_bypass(opts.scylla_opts.order_asc_cache_bypass())
-        .rt(&opts.rt)
         .lsp(bck, with_values)
         .shape(val_ty_dyn.is_valueblob())
         .st(val_ty_dyn.st_name())?;
@@ -141,8 +158,8 @@ async fn read_next_values_fwd(
 
 async fn read_fwd_inner(
     params: ReadEvents03FwdParams,
-    stmts: Arc<StmtsEvents>,
-    scy: Arc<scylla::client::session::Session>,
+    stmts: &StmtsEventsQueryOpts,
+    scy: ScySessionRef<'_>,
     jobtrace: &mut ReadJobTrace,
 ) -> Result<Box<dyn BinningggContainerEventsDyn>, Error> {
     use crate::worker::Timeoutable;
@@ -213,7 +230,7 @@ async fn read_fwd_inner(
             scylla_opts: params.scylla_opts,
             val_ty_dyn,
         };
-        let res = read_next_values_fwd(opts, stmts.clone(), scy.clone(), jobtrace)
+        let res = read_next_values_fwd(opts, stmts.clone(), scy, jobtrace)
             .with_timeout(READ_NEXT_TIMEOUT)
             .map_err(|_| {
                 warn!("{selfname}  timeout  {:?}", params_dbg);
@@ -227,10 +244,10 @@ async fn read_fwd_inner(
 
 pub async fn read_fwd(
     params: ReadEvents03FwdParams,
-    stmts: Arc<StmtsEvents>,
+    stmts: &StmtsEventsQueryOpts,
     scy: Arc<Session>,
 ) -> Result<(Box<dyn BinningggContainerEventsDyn>, ReadJobTrace), Error> {
     let mut jobtrace = ReadJobTrace::new();
-    let x = read_fwd_inner(params, stmts, scy, &mut jobtrace).await?;
+    let x = read_fwd_inner(params, stmts, ScySessionRef(&scy), &mut jobtrace).await?;
     Ok((x, jobtrace))
 }

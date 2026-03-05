@@ -1,4 +1,5 @@
 use crate::events2::prepare::StmtsEvents;
+use crate::events2::prepare::StmtsEventsQueryOpts;
 use crate::range::ScyllaSeriesRange;
 use crate::worker::ScyllaQueue;
 use daqbuf_series::SeriesId;
@@ -324,42 +325,38 @@ pub async fn find_ts_msp(
     rt: &RetentionTime,
     series: u64,
     range: ScyllaSeriesRange,
+    limit: Option<u32>,
     bck: bool,
     scylla_opts: query::api4::scyllaopts::ScyllaOptsQuery,
-    stmts: &StmtsEvents,
+    stmts: &StmtsEventsQueryOpts,
     scy: &Session,
 ) -> Result<VecDeque<TsMs>, Error> {
-    trace_msp!(
-        "find_ts_msp  series  {:?}  {:?}  {}  bck {}",
-        rt,
-        series,
-        range.fmt(),
-        bck
-    );
+    let selfname = "find_ts_msp";
+    trace_msp!("{selfname}  bck {bck}  series  {:?}  {:?}  {}", rt, series, range.fmt());
     if bck {
         if daqbuf_series::dbg::dbg_check_scy6(daqbuf_series::SeriesId::new(series)) {
-            log::info!("find_ts_msp with scy6 check");
-            let res1 = find_ts_msp_bck(rt, series, range.clone(), scylla_opts.clone(), stmts, scy).await?;
-            let res2 = find_ts_msp_bck_workaround(rt, series, range, scylla_opts.clone(), stmts, scy).await?;
+            log::info!("{selfname}  bck {bck}  with scy6 check");
+            let res1 = find_ts_msp_bck(rt, series, range.clone(), limit, stmts, scy).await?;
+            let res2 = find_ts_msp_bck_workaround(rt, series, range, stmts, scy).await?;
             if res1 != res2 {
                 log::error!(
-                    "find_ts_msp_bck  workaround and normal differ  workaround {:?}  normal {:?}",
+                    "{selfname}  bck {bck}  workaround and normal differ  workaround {:?}  normal {:?}",
                     res2,
                     res1
                 );
             } else {
-                log::info!("find_ts_msp_bck  workaround and normal agree");
+                log::info!("{selfname}  bck {bck}  workaround and normal agree");
             }
             Ok(res1)
         } else {
             if scylla_opts.msp_order_desc_read_all_asc() {
-                find_ts_msp_bck_workaround(rt, series, range, scylla_opts.clone(), stmts, scy).await
+                find_ts_msp_bck_workaround(rt, series, range, stmts, scy).await
             } else {
-                find_ts_msp_bck(rt, series, range, scylla_opts.clone(), stmts, scy).await
+                find_ts_msp_bck(rt, series, range, limit, stmts, scy).await
             }
         }
     } else {
-        find_ts_msp_fwd(rt, series, range, scylla_opts, stmts, scy).await
+        find_ts_msp_fwd(rt, series, range, limit, stmts, scy).await
     }
 }
 
@@ -367,19 +364,22 @@ async fn find_ts_msp_fwd(
     rt: &RetentionTime,
     series: u64,
     range: ScyllaSeriesRange,
-    scylla_opts: query::api4::scyllaopts::ScyllaOptsQuery,
-    stmts: &StmtsEvents,
+    limit: Option<u32>,
+    stmts: &StmtsEventsQueryOpts,
     scy: &Session,
 ) -> Result<VecDeque<TsMs>, Error> {
     let selfname = "find_ts_msp_fwd";
+    let _ = rt;
     let mut ret = VecDeque::new();
     // TODO time range truncation can be handled better
-    let stmt = stmts
-        .cache_bypass(scylla_opts.order_asc_cache_bypass())
-        .rt(rt)
-        .ts_msp_fwd()
-        .clone();
-    let params = (series as i64, range.beg().ms() as i64, 1 + range.end().ms() as i64);
+    let stmt = stmts.ts_msp_fwd().clone();
+    let limit = limit.unwrap_or(40);
+    let params = (
+        series as i64,
+        range.beg().ms() as i64,
+        1 + range.end().ms() as i64,
+        limit as i32,
+    );
     debug_scy6!("{selfname}  EXECUTE {cql}  {params:?}", cql = stmt.get_statement());
     log_fetch_result!("{selfname}  {:?}", params);
     let mut res = scy.execute_iter(stmt, params).await?.rows_stream::<(i64,)>()?;
@@ -395,18 +395,16 @@ async fn find_ts_msp_bck(
     rt: &RetentionTime,
     series: u64,
     range: ScyllaSeriesRange,
-    scylla_opts: query::api4::scyllaopts::ScyllaOptsQuery,
-    stmts: &StmtsEvents,
+    limit: Option<u32>,
+    stmts: &StmtsEventsQueryOpts,
     scy: &Session,
 ) -> Result<VecDeque<TsMs>, Error> {
     let selfname = "find_ts_msp_bck";
+    let _ = rt;
     let mut ret = VecDeque::new();
-    let stmt = stmts
-        .cache_bypass(scylla_opts.msp_cache_bypass())
-        .rt(rt)
-        .ts_msp_bck()
-        .clone();
-    let params = (series as i64, range.beg().ms() as i64);
+    let stmt = stmts.ts_msp_bck().clone();
+    let limit = limit.unwrap_or(2);
+    let params = (series as i64, range.beg().ms() as i64, limit as i32);
     debug_scy6!("{selfname}  EXECUTE {cql}  {params:?}", cql = stmt.get_statement());
     log_fetch_result!("{selfname}  {:?}", params);
     let mut res = scy.execute_iter(stmt, params).await?.rows_stream::<(i64,)>()?;
@@ -423,18 +421,13 @@ async fn find_ts_msp_bck_workaround(
     rt: &RetentionTime,
     series: u64,
     range: ScyllaSeriesRange,
-    scylla_opts: query::api4::scyllaopts::ScyllaOptsQuery,
-    stmts: &StmtsEvents,
+    stmts: &StmtsEventsQueryOpts,
     scy: &Session,
 ) -> Result<VecDeque<TsMs>, Error> {
     let selfname = "find_ts_msp_bck_workaround";
+    let _ = rt;
     let mut ret = Vec::new();
-    let stmt = stmts
-        .cache_bypass(scylla_opts.msp_cache_bypass())
-        .rt(rt)
-        .ts_msp_bck_workaround()
-        .clone();
-    // let params = (series as i64, 0 as i64, range.beg().ms() as i64);
+    let stmt = stmts.ts_msp_bck_workaround().clone();
     let params = (series as i64, 0 as i64, i64::MAX);
     debug_scy6!("{selfname}  EXECUTE {cql}  {params:?}", cql = stmt.get_statement());
     log_fetch_result!("{selfname}  {:?}", params);
@@ -453,10 +446,10 @@ async fn find_ts_msp_bck_workaround(
         }
     }
     log_fetch_result!("{selfname}  {params:?}  considered msp {c}");
-    if ret.len() > 1024 * 6 {
+    if ret.len() > 1024 * 10 {
         log::info!("quite many ts_msp values in reverse lookup  len {}", ret.len());
     }
-    if ret.len() > 1024 * 80 {
+    if ret.len() > 1024 * 160 {
         log::warn!("quite many ts_msp values in reverse lookup  len {}", ret.len());
     }
     let m = ret.len().max(2) - 2;
