@@ -1,9 +1,8 @@
-use core::fmt;
-use serde::Serialize;
+use std::fmt;
 use std::str::FromStr;
 use std::time::Duration;
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum RetentionTime {
     Short,
     Medium,
@@ -120,8 +119,23 @@ impl fmt::Display for RetentionTime {
 mod serde_retetion_time {
     use super::RetentionTime;
     use serde::Deserialize;
+    use serde::Serialize;
     use serde::de::Visitor;
     use std::fmt;
+
+    impl Serialize for RetentionTime {
+        fn serialize<S>(&self, ser: S) -> Result<S::Ok, S::Error>
+        where
+            S: serde::Serializer,
+        {
+            let v = match self {
+                RetentionTime::Short => "short",
+                RetentionTime::Medium => "medium",
+                RetentionTime::Long => "long",
+            };
+            ser.serialize_str(v)
+        }
+    }
 
     struct Vis;
 

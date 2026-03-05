@@ -3097,7 +3097,7 @@ impl<Tz: TimeZone> ToNanos for DateTime<Tz> {
     }
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, PartialOrd, Eq, Ord, Serialize)]
+#[derive(Debug, Copy, Clone, PartialEq, PartialOrd, Eq, Ord, Serialize, Deserialize)]
 pub struct TsMs(pub u64);
 
 impl TsMs {
