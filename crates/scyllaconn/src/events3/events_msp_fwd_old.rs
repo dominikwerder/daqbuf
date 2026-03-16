@@ -64,7 +64,7 @@ impl EventReadOpts {
 pub struct EventsMspFwdOld {
     series_info: SeriesInfo,
     rt: RetentionTime,
-    msp: MspU32,
+    msp: u64,
     scyqueue: ScyllaQueue,
     range: ScyllaSeriesRange,
     readopts: EventReadOpts,
