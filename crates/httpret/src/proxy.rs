@@ -1,5 +1,6 @@
 mod api1;
 mod api4;
+mod ui;
 
 use crate::api1::channel_search_configs_v1;
 use crate::api1::channel_search_list_v1;
@@ -232,6 +233,8 @@ async fn proxy_http_service_inner(
         Ok(proxy_backend_query::<ChannelConfigQuery>(req, ctx, proxy_config).await?)
     } else if path == "/api/4/series/config" {
         Ok(proxy_backend_query::<SeriesConfigQuery>(req, ctx, proxy_config).await?)
+    } else if let Some(h) = ui::UiHandler::handler(&req) {
+        h.handle(req, ctx, &proxy_config).await
     } else if path.starts_with("/api/4/test/http/204") {
         Ok(response(StatusCode::NO_CONTENT).body(body_string("No Content"))?)
     } else if path.starts_with("/api/4/test/http/400") {

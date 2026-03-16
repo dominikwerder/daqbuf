@@ -271,6 +271,7 @@ enum Job {
         ReadEventsJobParams,
         Sender<Result<(Box<dyn BinningggContainerEventsDyn>, ReadJobTrace), Error>>,
     ),
+    ReadMsp03Fwd(crate::events3::mspfwd::ReadMsp03Fwd),
     ReadEvents03Fwd(
         ReadEvents03FwdParams,
         Sender<
@@ -429,6 +430,21 @@ impl ScyllaQueueCluster {
         self.find_ts_msp(ks, series, range, limit, true, scylla_opts).await
     }
 
+    pub async fn read_msp_03_fwd(
+        &self,
+        ks: KeyspaceId,
+        series: SeriesId,
+        range: ScyllaSeriesRange,
+        limit: Option<u32>,
+    ) -> crate::events3::mspfwd::Item {
+        let limit = limit.unwrap_or(40);
+        let (job, rx) = crate::events3::mspfwd::ReadMsp03Fwd::new(ks.clone(), series, range, limit);
+        let job = Job::ReadMsp03Fwd(job);
+        self.tx.send((ks, job)).await?;
+        let res = rx.recv().await??;
+        Ok(res)
+    }
+
     async fn worker(rx: Receiver<(KeyspaceId, Job)>, scyconf: ScyllaConfigMultiKeyspace) -> Result<(), Error> {
         let scy = create_scy_session_no_ks(&scyconf).await?;
         let scy = Arc::new(scy);
@@ -522,6 +538,21 @@ impl ScyllaQueueCluster {
                     Job::ReadEvents02(params, tx) => {
                         error!("ReadEvents02 adapt to StmtsEventsClusterKeyspace");
                         // crate::events2::events::read_events_v02(params, tx, stmts.clone(), scy.clone()).await
+                    }
+                    Job::ReadMsp03Fwd(job) => {
+                        if let Some(((_ks, _rt), stmts)) = scyconf
+                            .keyspaces
+                            .iter()
+                            .zip(stmtsa.iter())
+                            .filter(|((ks, rt), _)| *ks == ksjob.name && *rt == ksjob.rt)
+                            .next()
+                        {
+                            let stmts = stmts.cache_bypass(false);
+                            job.exec(stmts, &scy).await;
+                        } else {
+                            // TODO use a double Result instead.
+                            error!("ks not found for job");
+                        }
                     }
                     Job::ReadEvents03Fwd(params, tx) => {
                         let mut ret = None;
@@ -890,10 +921,11 @@ impl ScyllaWorker {
                     Job::ReadEvents02(params, tx) => {
                         crate::events2::events::read_events_v02(params, tx, stmts.clone(), scy.clone()).await
                     }
-                    Job::ReadEvents03Fwd(params, tx) => {
-                        error!("TODO  Job::ReadEvents03Fwd  adapt to StmtsEventsClusterKeyspace");
-                        // let x = read_events_03::read_fwd(params, stmts.clone(), scy.clone()).await;
-                        // let _ = tx.send(x.map_err(Into::into));
+                    Job::ReadMsp03Fwd(..) => {
+                        error!("TODO  Job::ReadMsp03Fwd  only on cluster aware worker");
+                    }
+                    Job::ReadEvents03Fwd(..) => {
+                        error!("TODO  Job::ReadEvents03Fwd  only on cluster aware worker");
                     }
                 }
             })

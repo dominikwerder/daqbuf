@@ -142,12 +142,12 @@ pub async fn create_response_bytes_stream(
         let fetch_info = evq.ch_conf().to_sf_databuffer()?;
         let stream = disk::raw::conn::make_event_blobs_pipe(&evq, &fetch_info, reqctx, ncc)?;
         let stream = stream.map(|x| x.make_frame_dyn().map(|x| x.freeze()).map_err(sitem_err2_from_string));
-        let ret = Box::pin(stream);
+        let ret = Box::pin(stream) as BoxedBytesStream;
         Ok(ret)
     } else {
         let stream = make_channel_events_stream_data(evq, reqctx, scyqueue, ncc).await?;
         let stream = frameable_stream_to_bytes_stream(stream).map_err(sitem_err2_from_string);
-        let ret = Box::pin(stream);
+        let ret = Box::pin(stream) as BoxedBytesStream;
         Ok(ret)
     }
 }

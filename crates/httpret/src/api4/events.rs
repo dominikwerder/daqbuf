@@ -1,3 +1,7 @@
+pub mod dyneventsstream;
+pub mod plaineventscbor;
+pub mod plaineventsjson;
+
 use crate::channelconfig::chconf_from_events_quorum;
 use crate::requests::accepts_cbor_framed;
 use crate::requests::accepts_json_framed;
@@ -28,6 +32,8 @@ use netpod::APP_JSON;
 use netpod::APP_JSON_FRAMED;
 use netpod::HEADER_NAME_REQUEST_ID;
 use nodenet::client::OpenBoxedBytesViaHttp;
+use plaineventscbor::plain_events_cbor_stream;
+use plaineventsjson::plain_events_json_stream;
 use query::api4::events::PlainEventsQuery;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -35,8 +41,6 @@ use streams::collect::CollectResult;
 use streams::instrument::InstrumentStream;
 use streams::lenframe::bytes_chunks_to_framed;
 use streams::lenframe::bytes_chunks_to_len_framed_str;
-use streams::plaineventscbor::plain_events_cbor_stream;
-use streams::plaineventsjson::plain_events_json_stream;
 use streams::streamtimeout::StreamTimeout2;
 use tracing::Instrument;
 use tracing::Span;
@@ -48,8 +52,8 @@ autoerr::create_error_v1!(
         HttpLib(#[from] http::Error),
         ChannelConfig(crate::channelconfig::Error),
         Retrieval(#[from] crate::RetrievalError),
-        EventsCbor(#[from] streams::plaineventscbor::Error),
-        EventsJson(#[from] streams::plaineventsjson::Error),
+        EventsCbor(#[from] plaineventscbor::Error),
+        EventsJson(#[from] plaineventsjson::Error),
     },
 );
 
@@ -224,7 +228,7 @@ async fn plain_events_json(req: Requ, res2: HandleRes2<'_>) -> Result<StreamResp
     let self_name = "plain_events_json";
     debug!("{self_name}  {:?}  {:?}", res2.ch_conf, req);
     let (_head, _body) = req.into_parts();
-    let item = streams::plaineventsjson::plain_events_json(
+    let item = plaineventsjson::plain_events_json(
         &res2.evq,
         res2.ch_conf,
         res2.ctx,

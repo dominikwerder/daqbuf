@@ -1,6 +1,7 @@
 pub mod jobtrace;
 
 mod events_msp_fwd;
+pub mod mspfwd;
 
 use crate::events2::msp::MspStreamRt;
 use daqbuf_series::SeriesId;

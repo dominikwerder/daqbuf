@@ -55,6 +55,7 @@ taskrun = { path = "../taskrun" }
 scyllaconn = { path = "../scyllaconn" }
 daqbuf-redis = { path = "../daqbuf-redis" }
 httpclient = { path = "../httpclient" }
+daqingest-ui = { path = "../../../daqbuf-ingest-ui", package = "daqbuf-ingest-ui" }
 
 [features]
 default = []

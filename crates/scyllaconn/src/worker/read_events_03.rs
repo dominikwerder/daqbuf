@@ -180,7 +180,7 @@ async fn read_fwd_inner(
             };
             // TODO run same query with workaround on and off.
             // opts.readopts.use_scylla6_workarounds = UseScylla6Workarounds::with_workarounds();
-            let res = read_next_values_fwd(opts, stmts.clone(), scy.clone(), jobtrace)
+            let res = read_next_values_fwd(opts, stmts, scy.clone(), jobtrace)
                 .with_timeout(READ_NEXT_TIMEOUT)
                 .map_err(|_| {
                     warn!("{selfname}  timeout  {:?}", params_dbg);
@@ -200,7 +200,7 @@ async fn read_fwd_inner(
                 val_ty_dyn,
             };
             // opts.readopts.use_scylla6_workarounds = UseScylla6Workarounds::with_workarounds();
-            let res = read_next_values_fwd(opts, stmts.clone(), scy.clone(), jobtrace)
+            let res = read_next_values_fwd(opts, stmts, scy.clone(), jobtrace)
                 .with_timeout(READ_NEXT_TIMEOUT)
                 .map_err(|_| {
                     warn!("{selfname}  timeout  {:?}", params_dbg);
@@ -230,7 +230,7 @@ async fn read_fwd_inner(
             scylla_opts: params.scylla_opts,
             val_ty_dyn,
         };
-        let res = read_next_values_fwd(opts, stmts.clone(), scy, jobtrace)
+        let res = read_next_values_fwd(opts, stmts, scy, jobtrace)
             .with_timeout(READ_NEXT_TIMEOUT)
             .map_err(|_| {
                 warn!("{selfname}  timeout  {:?}", params_dbg);

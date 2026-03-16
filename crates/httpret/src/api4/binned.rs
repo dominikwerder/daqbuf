@@ -28,7 +28,6 @@ use netpod::ChannelTypeConfigGen;
 use netpod::FromUrl;
 use netpod::NodeConfigCached;
 use netpod::ReqCtx;
-use netpod::UseScylla6Workarounds;
 use netpod::APP_CBOR_FRAMED;
 use netpod::APP_JSON;
 use netpod::APP_JSON_FRAMED;
@@ -63,8 +62,8 @@ autoerr::create_error_v1!(
         HttpLib(#[from] http::Error),
         ChannelConfig(crate::channelconfig::Error),
         Retrieval(#[from] crate::RetrievalError),
-        EventsCbor(#[from] streams::plaineventscbor::Error),
-        EventsJson(#[from] streams::plaineventsjson::Error),
+        EventsCbor(#[from] super::events::plaineventscbor::Error),
+        EventsJson(#[from] super::events::plaineventsjson::Error),
         ServerError,
         BinnedStream(err::Error),
         TimebinnedJson(#[from] streams::timebinnedjson::Error),
