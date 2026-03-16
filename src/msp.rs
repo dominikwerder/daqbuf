@@ -14,7 +14,7 @@ autoerr::create_error_v1!(
     },
 );
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct MspU32(pub u32);
 
 impl MspU32 {
@@ -35,7 +35,7 @@ impl MspU32 {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct LspU32(pub u32);
 
 impl LspU32 {
@@ -52,7 +52,7 @@ impl LspU32 {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct BinlenU32(pub u32);
 
 impl BinlenU32 {

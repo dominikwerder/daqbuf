@@ -18,7 +18,7 @@ impl<T> Existence<T> {
     }
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 pub struct SeriesId(u64);
 
 impl SeriesId {
@@ -38,6 +38,44 @@ impl SeriesId {
 impl fmt::Display for SeriesId {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         write!(fmt, "SeriesId {{ {:20} }}", self.0)
+    }
+}
+
+mod series_serde {
+    use crate::SeriesId;
+    use serde::de::Visitor;
+    use serde::Deserialize;
+
+    struct Vis;
+
+    impl<'de> Visitor<'de> for Vis {
+        type Value = SeriesId;
+
+        fn expecting(&self, fmt: &mut std::fmt::Formatter) -> std::fmt::Result {
+            write!(fmt, "expect a numeric series id")
+        }
+
+        fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            Ok(SeriesId::new(v))
+        }
+    }
+
+    impl<'de> Deserialize<'de> for SeriesId {
+        fn deserialize<D>(de: D) -> Result<Self, D::Error>
+        where
+            D: serde::Deserializer<'de>,
+        {
+            de.deserialize_u64(Vis)
+        }
+    }
+}
+
+impl From<(u32, u32)> for SeriesId {
+    fn from((a, b): (u32, u32)) -> Self {
+        SeriesId((a as u64) | (b as u64) << 32)
     }
 }
 
