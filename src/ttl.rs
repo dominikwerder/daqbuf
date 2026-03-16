@@ -74,6 +74,22 @@ impl RetentionTime {
         self.ttl_events_d0()
     }
 
+    pub fn msp_rollover_ivl(&self) -> Duration {
+        // before:
+        // SEC * self.rt.ttl_ts_msp().as_secs() / 20
+        let day = 60 * 60 * 24;
+        match self {
+            RetentionTime::Short => Duration::from_secs(day / 8),
+            RetentionTime::Medium => Duration::from_secs(day * 4),
+            RetentionTime::Long => Duration::from_secs(day * 30),
+        }
+    }
+
+    pub fn msp_rollover_ivl_on_read(&self) -> Duration {
+        // Operation started with writing using self.ttl_ts_msp() / 20
+        self.ttl_ts_msp() / 19
+    }
+
     pub fn to_index_db_i32(&self) -> i32 {
         self.to_index_db_u16() as i32
     }
