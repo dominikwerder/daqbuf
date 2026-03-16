@@ -1,4 +1,3 @@
-use crate::plaineventsstream::ChannelEventsStream;
 use crate::streamtimeout::StreamTimeout2;
 use crate::streamtimeout::TimeoutableStream;
 use bytes::Buf;
@@ -55,7 +54,7 @@ where
 pub type CborStream = Pin<Box<dyn Stream<Item = Result<CborBytes, Error>> + Send>>;
 
 pub fn events_stream_to_cbor_stream(
-    stream: ChannelEventsStream,
+    stream: crate::ChannelEventsStream,
     ivl: Duration,
     timeout_provider: Arc<dyn StreamTimeout2>,
 ) -> impl Stream<Item = Result<CborBytes, Error>> {

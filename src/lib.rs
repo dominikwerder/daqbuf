@@ -1,3 +1,8 @@
+use futures_util::Stream;
+use items_0::streamitem::Sitemty;
+use items_2::channelevents::ChannelEvents;
+use std::pin::Pin;
+
 pub mod cbor_stream;
 pub mod collect;
 #[cfg(feature = "indev")]
@@ -18,9 +23,6 @@ pub mod lenframed;
 pub mod logfilter;
 pub mod logqueue;
 pub mod needminbuffer;
-pub mod plaineventscbor;
-pub mod plaineventsjson;
-pub mod plaineventsstream;
 pub mod print_on_done;
 pub mod rangefilter2;
 #[cfg(test)]
@@ -33,6 +35,9 @@ pub mod test;
 pub mod teststream;
 pub mod timebin;
 pub mod timebinnedjson;
+pub mod wasmtransform;
+
+pub type ChannelEventsStream = Pin<Box<dyn Stream<Item = Sitemty<ChannelEvents>> + Send>>;
 
 #[allow(unused)]
 fn todoval<T>() -> T {

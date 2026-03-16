@@ -1,6 +1,6 @@
-use crate::plaineventsstream::ChannelEventsStream;
 use crate::streamtimeout::StreamTimeout2;
 use crate::streamtimeout::TimeoutableStream;
+use crate::ChannelEventsStream;
 use futures_util::Stream;
 use futures_util::StreamExt;
 use items_0::apitypes::ToUserFacingApiType;
