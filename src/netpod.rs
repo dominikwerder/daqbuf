@@ -1,6 +1,7 @@
 pub mod channelstatus;
 pub mod hex;
 pub mod histo;
+pub mod hpp;
 pub mod query;
 pub mod range;
 pub mod status;
