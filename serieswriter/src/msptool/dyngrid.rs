@@ -46,7 +46,8 @@ impl MspSplit for MspSplitDyn {
                         self.last = Some(ts_msp);
                         self.count = 1;
                         self.bytes = item_bytes;
-                        self.rollover_at = TsNano::from_ns(ts_inp.ns() + SEC * self.rt.ttl_ts_msp().as_secs() / 20);
+                        self.rollover_at =
+                            ts_inp.add_dt_nano(DtNano::from_ms(1000 * self.rt.msp_rollover_ivl().as_secs()));
                         (ts_msp, true, Some(ts_msp_last))
                     }
                 } else {
@@ -60,7 +61,7 @@ impl MspSplit for MspSplitDyn {
                 self.last = Some(ts_msp);
                 self.count = 1;
                 self.bytes = item_bytes;
-                self.rollover_at = TsNano::from_ns(ts_inp.ns() + SEC * self.rt.ttl_ts_msp().as_secs() / 20);
+                self.rollover_at = ts_inp.add_dt_nano(DtNano::from_ms(1000 * self.rt.msp_rollover_ivl().as_secs()));
                 (ts_msp, true, None)
             }
         };
