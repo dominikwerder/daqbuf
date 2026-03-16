@@ -207,6 +207,22 @@ async fn make_msp_dir(
     Ok(qu)
 }
 
+async fn make_ts_msp_bck_win(
+    ks: &str,
+    rt: &RetentionTime,
+    query_opts: &str,
+    scy: &Session,
+) -> Result<PreparedStatement, Error> {
+    let table_name = "ts_msp";
+    let select_cond = "ts_msp >= ? and ts_msp < ? order by ts_msp desc";
+    let tpre = rt.table_prefix();
+    let cql =
+        format!("select ts_msp from {ks}.{tpre}{table_name} where series = ? and {select_cond} limit 100 {query_opts}");
+    log_prepare!("{ks} {rt} {cql}");
+    let qu = scy.prepare(cql).await?;
+    Ok(qu)
+}
+
 async fn make_msp_fwd_for_bck_workaround(
     ks: &str,
     rt: &RetentionTime,
@@ -490,6 +506,7 @@ pub struct StmtsEventsQueryOpts {
     ts_msp_fwd: PreparedStatement,
     ts_msp_bck: PreparedStatement,
     ts_msp_bck_workaround: PreparedStatement,
+    ts_msp_bck_win: PreparedStatement,
     lsp_all: StmtsLspAll,
     lsp_fwd_val: StmtsLspDir,
     lsp_bck_val: StmtsLspDir,
@@ -505,6 +522,7 @@ impl StmtsEventsQueryOpts {
             ts_msp_fwd: make_msp_dir(ks, rt, false, query_opts, scy).await?,
             ts_msp_bck: make_msp_dir(ks, rt, true, query_opts, scy).await?,
             ts_msp_bck_workaround: make_msp_fwd_for_bck_workaround(ks, rt, query_opts, scy).await?,
+            ts_msp_bck_win: make_ts_msp_bck_win(ks, rt, query_opts, scy).await?,
             lsp_all: make_lsp_all(ks, rt, query_opts, scy).await?,
             lsp_fwd_val: make_lsp_dir(ks, rt, "ts_lsp, value", false, query_opts, scy).await?,
             lsp_bck_val: make_lsp_dir(ks, rt, "ts_lsp, value", true, query_opts, scy).await?,
@@ -527,6 +545,10 @@ impl StmtsEventsQueryOpts {
 
     pub fn ts_msp_bck_workaround(&self) -> &PreparedStatement {
         &self.ts_msp_bck_workaround
+    }
+
+    pub fn ts_msp_bck_win(&self) -> &PreparedStatement {
+        &self.ts_msp_bck_win
     }
 
     pub fn lsp_all(&self) -> &StmtsLspAll {

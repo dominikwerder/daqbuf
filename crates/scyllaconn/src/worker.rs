@@ -272,6 +272,7 @@ enum Job {
         Sender<Result<(Box<dyn BinningggContainerEventsDyn>, ReadJobTrace), Error>>,
     ),
     ReadMsp03Fwd(crate::events3::mspfwd::ReadMsp03Fwd),
+    ReadMsp03Bck(crate::events3::mspbck::ReadMsp03Bck),
     ReadEvents03Fwd(
         ReadEvents03FwdParams,
         Sender<
@@ -347,6 +348,10 @@ pub struct KeyspaceId {
 impl KeyspaceId {
     pub fn new(name: String, rt: RetentionTime) -> Self {
         Self { name, rt }
+    }
+
+    pub fn rt(&self) -> RetentionTime {
+        self.rt.clone()
     }
 }
 
@@ -440,6 +445,19 @@ impl ScyllaQueueCluster {
         let limit = limit.unwrap_or(40);
         let (job, rx) = crate::events3::mspfwd::ReadMsp03Fwd::new(ks.clone(), series, range, limit);
         let job = Job::ReadMsp03Fwd(job);
+        self.tx.send((ks, job)).await?;
+        let res = rx.recv().await??;
+        Ok(res)
+    }
+
+    pub async fn read_msp_03_bck(
+        &self,
+        ks: KeyspaceId,
+        series: SeriesId,
+        range: ScyllaSeriesRange,
+    ) -> crate::events3::mspbck::Item {
+        let (job, rx) = crate::events3::mspbck::ReadMsp03Bck::new(ks.clone(), series, range);
+        let job = Job::ReadMsp03Bck(job);
         self.tx.send((ks, job)).await?;
         let res = rx.recv().await??;
         Ok(res)
@@ -550,7 +568,22 @@ impl ScyllaQueueCluster {
                             let stmts = stmts.cache_bypass(false);
                             job.exec(stmts, &scy).await;
                         } else {
-                            // TODO use a double Result instead.
+                            // TODO use a nested Result instead.
+                            error!("ks not found for job");
+                        }
+                    }
+                    Job::ReadMsp03Bck(job) => {
+                        if let Some(((_ks, _rt), stmts)) = scyconf
+                            .keyspaces
+                            .iter()
+                            .zip(stmtsa.iter())
+                            .filter(|((ks, rt), _)| *ks == ksjob.name && *rt == ksjob.rt)
+                            .next()
+                        {
+                            let stmts = stmts.cache_bypass(false);
+                            job.exec(stmts, &scy).await;
+                        } else {
+                            // TODO use a nested Result instead.
                             error!("ks not found for job");
                         }
                     }
@@ -923,6 +956,9 @@ impl ScyllaWorker {
                     }
                     Job::ReadMsp03Fwd(..) => {
                         error!("TODO  Job::ReadMsp03Fwd  only on cluster aware worker");
+                    }
+                    Job::ReadMsp03Bck(..) => {
+                        error!("TODO  Job::ReadMsp03Bck  only on cluster aware worker");
                     }
                     Job::ReadEvents03Fwd(..) => {
                         error!("TODO  Job::ReadEvents03Fwd  only on cluster aware worker");
