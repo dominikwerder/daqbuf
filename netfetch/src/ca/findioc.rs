@@ -474,7 +474,11 @@ impl FindIocStream {
                 match &msg.ty {
                     CaMsgTy::VersionRes(_) => {}
                     CaMsgTy::SearchRes(k) => {
-                        let ip = Ipv4Addr::from_octets(k.addr.to_be_bytes());
+                        let ip = if k.addr == 0xffffffff {
+                            *src.ip()
+                        } else {
+                            Ipv4Addr::from_octets(k.addr.to_be_bytes())
+                        };
                         let addr = SocketAddrV4::new(ip, k.tcp_port);
                         debug!("src {}  addr {} {}", src, k.addr, addr);
                         res.push((SearchId(k.id), addr));

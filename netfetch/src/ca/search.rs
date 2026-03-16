@@ -82,20 +82,20 @@ pub async fn ca_search_workers_start(
 > {
     let selfname = "ca_search_workers_start";
     let (search_tgts, blacklist) = search_tgts_from_opts(&opts).await?;
-    let batch_run_max = Duration::from_millis(800);
-    let in_flight_max = 16;
-    let batch_size = 4;
-    let (inp_tx, inp2_rx) = async_channel::bounded(256);
-    let (inp2_tx, inp_rx) = async_channel::bounded(256);
+    let batch_run_max = Duration::from_millis(1200);
+    let in_flight_max = 32;
+    let batch_size = 8;
+    let (inp_tx, inp2_rx) = async_channel::bounded(64);
+    let (inp2_tx, inp_rx) = async_channel::bounded(64);
     tokio::spawn(async move {
         while let Ok(x) = inp2_rx.recv().await {
-            debug!("{selfname}  SEE ITEM  {x:?}");
+            trace!("{selfname}  SEE ITEM  {x:?}");
             if inp2_tx.send(x).await.is_err() {
                 break;
             }
         }
     });
-    let (out_tx, out_rx) = async_channel::bounded(256);
+    let (out_tx, out_rx) = async_channel::bounded(64);
     let finder = FindIocStream::new(inp_rx, search_tgts, blacklist, batch_run_max, in_flight_max, batch_size);
     let jh = taskrun::spawn(finder_run(finder, out_tx));
     Ok((inp_tx, out_rx, jh))

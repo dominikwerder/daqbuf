@@ -71,9 +71,9 @@ use tracing::Instrument;
 const CHECK_CHANS_PER_TICK: usize = 10000000;
 pub const SEARCH_BATCH_MAX: usize = 64;
 pub const CURRENT_SEARCH_PENDING_MAX: usize = SEARCH_BATCH_MAX * 4;
-const NO_ADDRESS_STAY: Duration = Duration::from_millis(1000 * 20);
-const SEARCH_PENDING_TIMEOUT: Duration = Duration::from_millis(1000 * 30);
-const CHANNEL_HEALTH_TIMEOUT: Duration = Duration::from_millis(1000 * 30);
+const NO_ADDRESS_STAY: Duration = Duration::from_millis(1000 * 40);
+const SEARCH_PENDING_TIMEOUT: Duration = Duration::from_millis(1000 * 120);
+const CHANNEL_HEALTH_TIMEOUT: Duration = Duration::from_millis(1000 * 120);
 const CHANNEL_UNASSIGNED_TIMEOUT: Duration = Duration::from_millis(0);
 const UNASSIGN_FOR_CONFIG_CHANGE_TIMEOUT: Duration = Duration::from_millis(1000 * 10);
 const CHANNEL_MAX_WITHOUT_HEALTH_UPDATE: usize = 3000000;
@@ -972,6 +972,10 @@ impl CaConnSet {
                                     since,
                                     backoff_dt,
                                 });
+                            }
+                            WithStatusSeriesIdStateInner::AddrSearchPlanned { .. } => {
+                                // TODO probably we ran into timeout and triggered a new search already
+                                // TODO count metrics
                             }
                             _ => {
                                 info!("{selfn}  bad state on find ioc result  {}", st3.inner.name());

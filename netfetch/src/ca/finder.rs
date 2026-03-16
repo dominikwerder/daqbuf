@@ -230,7 +230,7 @@ where
             use futures::StreamExt;
             let mut batched = std::pin::pin!(batched);
             while let Some(item) = batched.next().await {
-                info!("{selfname}  {item:?}");
+                trace!("{selfname}  {item:?}");
                 match batched_tx.send(item).await {
                     Ok(()) => {}
                     Err(e) => {
