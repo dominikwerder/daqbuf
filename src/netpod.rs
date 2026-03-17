@@ -1,4 +1,5 @@
 pub mod channelstatus;
+pub mod futdbg;
 pub mod hex;
 pub mod histo;
 pub mod hpp;
