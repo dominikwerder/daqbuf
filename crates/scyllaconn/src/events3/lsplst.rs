@@ -1,4 +1,7 @@
 use crate::events2::prepare::StmtsEventsQueryOpts;
+use crate::events3::SeriesInfo;
+use crate::events3::msplsp::LspEv;
+use crate::events3::msplsp::MspEv;
 use crate::range::ScyllaSeriesRange;
 use crate::worker::KeyspaceId;
 use daqbuf_series::SeriesId;
@@ -10,7 +13,7 @@ use std::collections::VecDeque;
 use std::fmt;
 
 autoerr::create_error_v1!(
-    name(Error, "ReadMsp03Bck"),
+    name(Error, "Read03LspLst"),
     enum variants {
         Send,
         Recv,
@@ -18,6 +21,7 @@ autoerr::create_error_v1!(
         ScyllaPagerExecution(#[from] scylla::errors::PagerExecutionError),
         ScyllaTypeCheck(#[from] scylla::deserialize::TypeCheckError),
         ScyllaNextRow(#[from] scylla::errors::NextRowError),
+        Prepare(#[from] crate::events2::prepare::Error),
     },
 );
 
@@ -33,19 +37,31 @@ impl From<async_channel::RecvError> for Error {
     }
 }
 
-pub type Item = Result<VecDeque<TsMs>, Error>;
+pub type Item = Result<Option<LspEv>, Error>;
 
-pub struct ReadMsp03Bck {
+pub struct Read03LspLst {
     ks: KeyspaceId,
-    series: SeriesId,
-    range: ScyllaSeriesRange,
+    series_info: SeriesInfo,
+    msp: MspEv,
+    end: Option<LspEv>,
     tx: async_channel::Sender<Item>,
 }
 
-impl ReadMsp03Bck {
-    pub fn new(ks: KeyspaceId, series: SeriesId, range: ScyllaSeriesRange) -> (Self, async_channel::Receiver<Item>) {
+impl Read03LspLst {
+    pub fn new(
+        ks: KeyspaceId,
+        series_info: SeriesInfo,
+        msp: MspEv,
+        end: Option<LspEv>,
+    ) -> (Self, async_channel::Receiver<Item>) {
         let (tx, rx) = async_channel::bounded(1);
-        let ret = Self { ks, series, range, tx };
+        let ret = Self {
+            ks,
+            series_info,
+            msp,
+            end,
+            tx,
+        };
         (ret, rx)
     }
 
@@ -55,22 +71,23 @@ impl ReadMsp03Bck {
     }
 
     async fn exec_inner(&self, stmts: &StmtsEventsQueryOpts, scy: &Session) -> Item {
-        let stmt = stmts.ts_msp_bck_win().clone();
-        let win = self.ks.rt().msp_rollover_ivl_on_read();
-        let beg = self.range.beg().sub(DtNano::from_ms(1000 * win.as_secs()));
-        let end = self.range.beg();
-        let params = (self.series.to_i64(), beg.ms() as i64, end.ms() as i64);
+        let stmt = stmts
+            .lsp_lst()
+            .shape(self.series_info.shape())
+            .st(self.series_info.scalar_type().to_scylla_table_name_id())?
+            .clone();
+        let end = self.end.clone().map_or(i64::MAX, |x| x.to_i64());
+        let params = (self.series_info.id().to_i64(), self.msp.to_i64(), end);
         let mut rows = scy.execute_iter(stmt, params).await?.rows_stream::<(i64,)>()?;
-        let mut ret = VecDeque::new();
         while let Some((v,)) = rows.try_next().await? {
-            ret.push_back(TsMs::from_ms_u64(v as _));
+            return Ok(Some(LspEv::from_i64(v)));
         }
-        Ok(ret)
+        Ok(None)
     }
 }
 
-impl fmt::Debug for ReadMsp03Bck {
+impl fmt::Debug for Read03LspLst {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt.debug_struct("ReadMsp03Bck").finish()
+        fmt.debug_struct("Read03LspLst").finish()
     }
 }

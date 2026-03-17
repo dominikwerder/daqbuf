@@ -7,6 +7,9 @@ use crate::events2::prepare::StmtsEvents;
 use crate::events2::prepare::StmtsEventsClusterKeyspace;
 use crate::events2::prepare::StmtsEventsQueryOpts;
 use crate::events2::prepare::StmtsEventsRt;
+use crate::events3::SeriesInfo;
+use crate::events3::msplsp::LspEv;
+use crate::events3::msplsp::MspEv;
 use crate::range::ScyllaSeriesRange;
 use async_channel::Receiver;
 use async_channel::Sender;
@@ -285,6 +288,7 @@ enum Job {
             >,
         >,
     ),
+    Read03LspLst(crate::events3::lsplst::Read03LspLst),
 }
 
 #[derive(Debug, Clone)]
@@ -463,6 +467,20 @@ impl ScyllaQueueCluster {
         Ok(res)
     }
 
+    pub async fn read_03_lsp_lst(
+        &self,
+        ks: KeyspaceId,
+        series_info: SeriesInfo,
+        msp: MspEv,
+        end: Option<LspEv>,
+    ) -> crate::events3::lsplst::Item {
+        let (job, rx) = crate::events3::lsplst::Read03LspLst::new(ks.clone(), series_info, msp, end);
+        let job = Job::Read03LspLst(job);
+        self.tx.send((ks, job)).await?;
+        let res = rx.recv().await??;
+        Ok(res)
+    }
+
     async fn worker(rx: Receiver<(KeyspaceId, Job)>, scyconf: ScyllaConfigMultiKeyspace) -> Result<(), Error> {
         let scy = create_scy_session_no_ks(&scyconf).await?;
         let scy = Arc::new(scy);
@@ -602,6 +620,21 @@ impl ScyllaQueueCluster {
                             let _ = tx.send(x.map_err(Into::into));
                         } else {
                             let _ = tx.send(Err(Error::ClusterKeyspaceNoMatch));
+                        }
+                    }
+                    Job::Read03LspLst(job) => {
+                        if let Some(((_ks, _rt), stmts)) = scyconf
+                            .keyspaces
+                            .iter()
+                            .zip(stmtsa.iter())
+                            .filter(|((ks, rt), _)| *ks == ksjob.name && *rt == ksjob.rt)
+                            .next()
+                        {
+                            let stmts = stmts.cache_bypass(false);
+                            job.exec(stmts, &scy).await;
+                        } else {
+                            // TODO use a nested Result instead.
+                            error!("ks not found for job");
                         }
                     }
                 }
@@ -962,6 +995,9 @@ impl ScyllaWorker {
                     }
                     Job::ReadEvents03Fwd(..) => {
                         error!("TODO  Job::ReadEvents03Fwd  only on cluster aware worker");
+                    }
+                    Job::Read03LspLst(..) => {
+                        error!("TODO  Job::Read03LspLst  only on cluster aware worker");
                     }
                 }
             })

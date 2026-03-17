@@ -1,3 +1,4 @@
+use netpod::Shape;
 use netpod::ttl::RetentionTime;
 use scylla::client::session::Session;
 use scylla::statement::prepared::PreparedStatement;
@@ -424,6 +425,111 @@ async fn make_lsp_dir(
     Ok(ret)
 }
 
+#[derive(Debug)]
+pub struct StmtsLspLstShape {
+    u8: PreparedStatement,
+    u16: PreparedStatement,
+    u32: PreparedStatement,
+    u64: PreparedStatement,
+    i8: PreparedStatement,
+    i16: PreparedStatement,
+    i32: PreparedStatement,
+    i64: PreparedStatement,
+    f32: PreparedStatement,
+    f64: PreparedStatement,
+    bool: PreparedStatement,
+    string: PreparedStatement,
+    enumvals: PreparedStatement,
+}
+
+impl StmtsLspLstShape {
+    async fn make_sty(
+        ks: &str,
+        rt: &RetentionTime,
+        shapepre: &str,
+        stname: &str,
+        scy: &Session,
+    ) -> Result<PreparedStatement, Error> {
+        let tp = rt.table_prefix();
+        let cql = format!(
+            "{}{}{}",
+            format_args!("select ts_lsp from {ks}.{tp}events_{shapepre}_{stname}"),
+            format_args!(" where series = ? and ts_msp = ?"),
+            format_args!(" and ts_lsp < ? order by ts_lsp desc limit 1")
+        );
+        log_prepare!("{ks} {rt} {cql}");
+        let qu = scy.prepare(cql).await?;
+        Ok(qu)
+    }
+
+    async fn make(ks: &str, rt: &RetentionTime, shapepre: &str, scy: &Session) -> Result<Self, Error> {
+        let ret = Self {
+            u8: Self::make_sty(ks, rt, shapepre, "u8", scy).await?,
+            u16: Self::make_sty(ks, rt, shapepre, "u16", scy).await?,
+            u32: Self::make_sty(ks, rt, shapepre, "u32", scy).await?,
+            u64: Self::make_sty(ks, rt, shapepre, "u64", scy).await?,
+            i8: Self::make_sty(ks, rt, shapepre, "i8", scy).await?,
+            i16: Self::make_sty(ks, rt, shapepre, "i16", scy).await?,
+            i32: Self::make_sty(ks, rt, shapepre, "i32", scy).await?,
+            i64: Self::make_sty(ks, rt, shapepre, "i64", scy).await?,
+            f32: Self::make_sty(ks, rt, shapepre, "f32", scy).await?,
+            f64: Self::make_sty(ks, rt, shapepre, "f64", scy).await?,
+            bool: Self::make_sty(ks, rt, shapepre, "bool", scy).await?,
+            string: Self::make_sty(ks, rt, shapepre, "string", scy).await?,
+            enumvals: if shapepre == "scalar" {
+                Self::make_sty(ks, rt, shapepre, "enum", scy).await?
+            } else {
+                Self::make_sty(ks, rt, shapepre, "i16", scy).await?
+            },
+        };
+        Ok(ret)
+    }
+
+    pub fn st(&self, stname: &str) -> Result<&PreparedStatement, Error> {
+        let ret = match stname {
+            "u8" => &self.u8,
+            "u16" => &self.u16,
+            "u32" => &self.u32,
+            "u64" => &self.u64,
+            "i8" => &self.i8,
+            "i16" => &self.i16,
+            "i32" => &self.i32,
+            "i64" => &self.i64,
+            "f32" => &self.f32,
+            "f64" => &self.f64,
+            "bool" => &self.bool,
+            "string" => &self.string,
+            "enum" => &self.enumvals,
+            _ => return Err(Error::MissingQuery(format!("no query for stname {stname}"))),
+        };
+        Ok(ret)
+    }
+}
+
+#[derive(Debug)]
+pub struct StmtsLspLst {
+    scalar: StmtsLspLstShape,
+    array: StmtsLspLstShape,
+}
+
+impl StmtsLspLst {
+    async fn make(ks: &str, rt: &RetentionTime, scy: &Session) -> Result<Self, Error> {
+        let ret = Self {
+            scalar: StmtsLspLstShape::make(ks, rt, "scalar", scy).await?,
+            array: StmtsLspLstShape::make(ks, rt, "array", scy).await?,
+        };
+        Ok(ret)
+    }
+
+    pub fn shape(&self, shape: Shape) -> &StmtsLspLstShape {
+        match shape {
+            Shape::Scalar => &self.scalar,
+            Shape::Wave(_) => &self.array,
+            Shape::Image(_, _) => todo!(),
+        }
+    }
+}
+
 async fn make_prebinned_f32(
     ks: &str,
     rt: &RetentionTime,
@@ -512,6 +618,7 @@ pub struct StmtsEventsQueryOpts {
     lsp_bck_val: StmtsLspDir,
     lsp_fwd_ts: StmtsLspDir,
     lsp_bck_ts: StmtsLspDir,
+    lsp_lst: StmtsLspLst,
     prebinned_f32: PreparedStatement,
     bin_write_index_read: PreparedStatement,
 }
@@ -528,6 +635,7 @@ impl StmtsEventsQueryOpts {
             lsp_bck_val: make_lsp_dir(ks, rt, "ts_lsp, value", true, query_opts, scy).await?,
             lsp_fwd_ts: make_lsp_dir(ks, rt, "ts_lsp", false, query_opts, scy).await?,
             lsp_bck_ts: make_lsp_dir(ks, rt, "ts_lsp", true, query_opts, scy).await?,
+            lsp_lst: StmtsLspLst::make(ks, rt, scy).await?,
             prebinned_f32: make_prebinned_f32(ks, rt, query_opts, scy).await?,
             bin_write_index_read: make_bin_write_index_read(ks, rt, query_opts, scy).await?,
         };
@@ -561,6 +669,10 @@ impl StmtsEventsQueryOpts {
         } else {
             if val { &self.lsp_fwd_val } else { &self.lsp_fwd_ts }
         }
+    }
+
+    pub fn lsp_lst(&self) -> &StmtsLspLst {
+        &self.lsp_lst
     }
 
     pub fn prebinned_f32(&self) -> &PreparedStatement {

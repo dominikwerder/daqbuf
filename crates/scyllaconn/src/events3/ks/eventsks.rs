@@ -1,13 +1,27 @@
+mod bck_events_lst;
+
 use crate::events3::SeriesInfo;
+use crate::events3::lsplst;
 use crate::range::ScyllaSeriesRange;
 use crate::worker::KeyspaceId;
 use crate::worker::ScyllaQueueCluster;
+use bck_events_lst::BckEventsLst;
+use futures_util::FutureExt;
 use futures_util::Stream;
+use items_0::streamitem::RangeCompletableItem;
 use items_0::streamitem::Sitemty2;
+use items_0::streamitem::StreamItem;
 use items_2::channelevents::ChannelEvents;
+use netpod::TsMs;
+use netpod::futdbg::FutDbg;
+use netpod::futdbg::FutDbgBox;
+use netpod::hpp::HaveProgressPending;
+use serde::Serialize;
+use std::collections::VecDeque;
 use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
+use taskrun::tokio::io::Ready;
 
 macro_rules! error { ($($arg:tt)*) => ( if true { log::error!($($arg)*); } ) }
 macro_rules! warn { ($($arg:tt)*) => ( if true { log::warn!($($arg)*); } ) }
@@ -66,9 +80,14 @@ impl Opts {
 }
 
 #[derive(Debug)]
+struct BckMsps {
+    fut: FutDbg<Result<VecDeque<TsMs>, crate::events3::mspbck::Error>>,
+}
+
+#[derive(Debug)]
 enum State {
-    BckMsps,
-    BckEventsLst,
+    BckMsps(BckMsps),
+    BckEventsLst(BckEventsLst),
     BckEventsCstr,
     FwdEvents,
     Done,
@@ -79,16 +98,106 @@ enum State {
 pub struct EventsKs {
     series_info: SeriesInfo,
     ks: KeyspaceId,
-    scyqueue: ScyllaQueueCluster,
+    scyqu: ScyllaQueueCluster,
     range: ScyllaSeriesRange,
     opts: Opts,
+    state: State,
+}
+
+impl EventsKs {
+    pub fn new(
+        series_info: SeriesInfo,
+        ks: KeyspaceId,
+        scyqu: ScyllaQueueCluster,
+        range: ScyllaSeriesRange,
+        opts: Opts,
+    ) -> Self {
+        let st1 = BckMsps {
+            fut: {
+                let ks = ks.clone();
+                let id = series_info.id();
+                let range = range.clone();
+                let scyqu = scyqu.clone();
+                async move { scyqu.read_msp_03_bck(ks, id, range).await }.box2()
+            },
+        };
+        let state = State::BckMsps(st1);
+        Self {
+            series_info,
+            ks,
+            scyqu,
+            range,
+            opts,
+            state,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub enum ItemType {
+    ChannelEvents(ChannelEvents),
+    BckMsps(VecDeque<TsMs>),
+    BckEventsLst(bck_events_lst::Res1),
 }
 
 impl Stream for EventsKs {
-    type Item = Sitemty2<ChannelEvents, Error>;
+    type Item = Sitemty2<ItemType, Error>;
 
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         use Poll::*;
-        todo!()
+        loop {
+            let mut hpp = HaveProgressPending::new();
+            match &mut self.state {
+                State::BckMsps(st1) => match st1.fut.poll_unpin(cx) {
+                    Ready(x) => {
+                        hpp.mark_progress();
+                        match x {
+                            Ok(msps) => {
+                                let msps2 = msps.iter().map(|x| x.clone().into()).collect();
+                                let stn = bck_events_lst::BckEventsLst::new(
+                                    self.series_info.clone(),
+                                    self.ks.clone(),
+                                    self.range.clone(),
+                                    msps2,
+                                    self.scyqu.clone(),
+                                );
+                                self.state = State::BckEventsLst(stn);
+                                break Ready(Some(Ok(StreamItem::DataItem(RangeCompletableItem::Data(
+                                    ItemType::BckMsps(msps),
+                                )))));
+                            }
+                            Err(e) => {
+                                self.state = State::Done;
+                            }
+                        }
+                    }
+                    Pending => {
+                        hpp.mark_pending();
+                    }
+                },
+                State::BckEventsLst(st1) => match st1.poll_unpin(cx) {
+                    Ready(x) => {
+                        hpp.mark_progress();
+                        match x {
+                            Ok(res1) => {
+                                self.state = State::Done;
+                                break Ready(Some(Ok(StreamItem::DataItem(RangeCompletableItem::Data(
+                                    ItemType::BckEventsLst(res1),
+                                )))));
+                            }
+                            Err(e) => {
+                                self.state = State::Done;
+                            }
+                        }
+                    }
+                    Pending => {
+                        hpp.mark_pending();
+                    }
+                },
+                State::BckEventsCstr => todo!(),
+                State::FwdEvents => todo!(),
+                State::Done => break Ready(None),
+            }
+        }
     }
 }
