@@ -217,8 +217,12 @@ async fn make_ts_msp_bck_win(
     let table_name = "ts_msp";
     let select_cond = "ts_msp >= ? and ts_msp < ? order by ts_msp desc";
     let tpre = rt.table_prefix();
-    let cql =
-        format!("select ts_msp from {ks}.{tpre}{table_name} where series = ? and {select_cond} limit 100 {query_opts}");
+    let cql = format!(
+        "{}{}{}",
+        format_args!("select ts_msp from {ks}.{tpre}{table_name}"),
+        format_args!(" where series = ? and {select_cond}"),
+        format_args!(" limit 100 {query_opts}")
+    );
     log_prepare!("{ks} {rt} {cql}");
     let qu = scy.prepare(cql).await?;
     Ok(qu)
@@ -448,6 +452,7 @@ impl StmtsLspLstShape {
         rt: &RetentionTime,
         shapepre: &str,
         stname: &str,
+        query_opts: &str,
         scy: &Session,
     ) -> Result<PreparedStatement, Error> {
         let tp = rt.table_prefix();
@@ -455,31 +460,37 @@ impl StmtsLspLstShape {
             "{}{}{}",
             format_args!("select ts_lsp from {ks}.{tp}events_{shapepre}_{stname}"),
             format_args!(" where series = ? and ts_msp = ?"),
-            format_args!(" and ts_lsp < ? order by ts_lsp desc limit 1")
+            format_args!(" and ts_lsp < ? order by ts_lsp desc limit 1 {query_opts}")
         );
         log_prepare!("{ks} {rt} {cql}");
         let qu = scy.prepare(cql).await?;
         Ok(qu)
     }
 
-    async fn make(ks: &str, rt: &RetentionTime, shapepre: &str, scy: &Session) -> Result<Self, Error> {
+    async fn make(
+        ks: &str,
+        rt: &RetentionTime,
+        shapepre: &str,
+        query_opts: &str,
+        scy: &Session,
+    ) -> Result<Self, Error> {
         let ret = Self {
-            u8: Self::make_sty(ks, rt, shapepre, "u8", scy).await?,
-            u16: Self::make_sty(ks, rt, shapepre, "u16", scy).await?,
-            u32: Self::make_sty(ks, rt, shapepre, "u32", scy).await?,
-            u64: Self::make_sty(ks, rt, shapepre, "u64", scy).await?,
-            i8: Self::make_sty(ks, rt, shapepre, "i8", scy).await?,
-            i16: Self::make_sty(ks, rt, shapepre, "i16", scy).await?,
-            i32: Self::make_sty(ks, rt, shapepre, "i32", scy).await?,
-            i64: Self::make_sty(ks, rt, shapepre, "i64", scy).await?,
-            f32: Self::make_sty(ks, rt, shapepre, "f32", scy).await?,
-            f64: Self::make_sty(ks, rt, shapepre, "f64", scy).await?,
-            bool: Self::make_sty(ks, rt, shapepre, "bool", scy).await?,
-            string: Self::make_sty(ks, rt, shapepre, "string", scy).await?,
+            u8: Self::make_sty(ks, rt, shapepre, "u8", query_opts, scy).await?,
+            u16: Self::make_sty(ks, rt, shapepre, "u16", query_opts, scy).await?,
+            u32: Self::make_sty(ks, rt, shapepre, "u32", query_opts, scy).await?,
+            u64: Self::make_sty(ks, rt, shapepre, "u64", query_opts, scy).await?,
+            i8: Self::make_sty(ks, rt, shapepre, "i8", query_opts, scy).await?,
+            i16: Self::make_sty(ks, rt, shapepre, "i16", query_opts, scy).await?,
+            i32: Self::make_sty(ks, rt, shapepre, "i32", query_opts, scy).await?,
+            i64: Self::make_sty(ks, rt, shapepre, "i64", query_opts, scy).await?,
+            f32: Self::make_sty(ks, rt, shapepre, "f32", query_opts, scy).await?,
+            f64: Self::make_sty(ks, rt, shapepre, "f64", query_opts, scy).await?,
+            bool: Self::make_sty(ks, rt, shapepre, "bool", query_opts, scy).await?,
+            string: Self::make_sty(ks, rt, shapepre, "string", query_opts, scy).await?,
             enumvals: if shapepre == "scalar" {
-                Self::make_sty(ks, rt, shapepre, "enum", scy).await?
+                Self::make_sty(ks, rt, shapepre, "enum", query_opts, scy).await?
             } else {
-                Self::make_sty(ks, rt, shapepre, "i16", scy).await?
+                Self::make_sty(ks, rt, shapepre, "i16", query_opts, scy).await?
             },
         };
         Ok(ret)
@@ -513,10 +524,10 @@ pub struct StmtsLspLst {
 }
 
 impl StmtsLspLst {
-    async fn make(ks: &str, rt: &RetentionTime, scy: &Session) -> Result<Self, Error> {
+    async fn make(ks: &str, rt: &RetentionTime, query_opts: &str, scy: &Session) -> Result<Self, Error> {
         let ret = Self {
-            scalar: StmtsLspLstShape::make(ks, rt, "scalar", scy).await?,
-            array: StmtsLspLstShape::make(ks, rt, "array", scy).await?,
+            scalar: StmtsLspLstShape::make(ks, rt, "scalar", query_opts, scy).await?,
+            array: StmtsLspLstShape::make(ks, rt, "array", query_opts, scy).await?,
         };
         Ok(ret)
     }
@@ -635,7 +646,7 @@ impl StmtsEventsQueryOpts {
             lsp_bck_val: make_lsp_dir(ks, rt, "ts_lsp, value", true, query_opts, scy).await?,
             lsp_fwd_ts: make_lsp_dir(ks, rt, "ts_lsp", false, query_opts, scy).await?,
             lsp_bck_ts: make_lsp_dir(ks, rt, "ts_lsp", true, query_opts, scy).await?,
-            lsp_lst: StmtsLspLst::make(ks, rt, scy).await?,
+            lsp_lst: StmtsLspLst::make(ks, rt, query_opts, scy).await?,
             prebinned_f32: make_prebinned_f32(ks, rt, query_opts, scy).await?,
             bin_write_index_read: make_bin_write_index_read(ks, rt, query_opts, scy).await?,
         };

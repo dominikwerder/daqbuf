@@ -354,6 +354,10 @@ impl KeyspaceId {
         Self { name, rt }
     }
 
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
     pub fn rt(&self) -> RetentionTime {
         self.rt.clone()
     }
@@ -390,6 +394,43 @@ impl ScyllaQueueCluster {
 
     pub fn keyspaces(&self) -> &[KeyspaceId] {
         &self.keyspaces
+    }
+
+    pub async fn prepare(
+        &self,
+        ks: KeyspaceId,
+        cql: String,
+    ) -> Result<scylla::statement::prepared::PreparedStatement, Error> {
+        let (tx, rx) = async_channel::bounded(1);
+        let job = Job::PrepareV1(PrepareV1 { cql, tx });
+        self.tx
+            .send((ks, job))
+            .await
+            .map_err(|_| streams::timebin::cached::reader::Error::ChannelSend)?;
+        let res = rx
+            .recv()
+            .await
+            .map_err(|_| streams::timebin::cached::reader::Error::ChannelRecv)??;
+        Ok(res)
+    }
+
+    pub async fn execute(
+        &self,
+        ks: KeyspaceId,
+        st: scylla::statement::prepared::PreparedStatement,
+        params: Box<dyn scylla::serialize::row::SerializeRow + Send>,
+    ) -> Result<scylla::client::pager::QueryPager, Error> {
+        let (tx, rx) = async_channel::bounded(1);
+        let job = Job::ExecuteV1(ExecuteV1 { st, params, tx });
+        self.tx
+            .send((ks, job))
+            .await
+            .map_err(|_| streams::timebin::cached::reader::Error::ChannelSend)?;
+        let res = rx
+            .recv()
+            .await
+            .map_err(|_| streams::timebin::cached::reader::Error::ChannelRecv)??;
+        Ok(res)
     }
 
     async fn find_ts_msp(
@@ -516,6 +557,16 @@ impl ScyllaQueueCluster {
             let scyconf = scyconf.clone();
             async move {
                 match job {
+                    Job::PrepareV1(job) => {
+                        let res = scy.prepare(job.cql).await.map_err(|e| e.into());
+                        // TODO log?
+                        let _ = job.tx.send(res).await;
+                    }
+                    Job::ExecuteV1(job) => {
+                        let res = scy.execute_iter(job.st, job.params).await.map_err(|e| e.into());
+                        // TODO log?
+                        let _ = job.tx.send(res).await;
+                    }
                     Job::FindTsMsp(job) => {
                         let stmts = &stmtsa[stmtsix];
                         let stmts = stmts.cache_bypass(job.scylla_opts.msp_cache_bypass());
@@ -561,16 +612,6 @@ impl ScyllaQueueCluster {
                         error!("BinWriteIndexRead adapt to StmtsEventsClusterKeyspace");
                         // job.execute(&stmts, &scy).await
                     }
-                    Job::PrepareV1(job) => {
-                        let res = scy.prepare(job.cql).await.map_err(|e| e.into());
-                        // TODO log?
-                        let _ = job.tx.send(res).await;
-                    }
-                    Job::ExecuteV1(job) => {
-                        let res = scy.execute_iter(job.st, job.params).await.map_err(|e| e.into());
-                        // TODO log?
-                        let _ = job.tx.send(res).await;
-                    }
                     Job::ReadEvents02(params, tx) => {
                         error!("ReadEvents02 adapt to StmtsEventsClusterKeyspace");
                         // crate::events2::events::read_events_v02(params, tx, stmts.clone(), scy.clone()).await
@@ -583,7 +624,7 @@ impl ScyllaQueueCluster {
                             .filter(|((ks, rt), _)| *ks == ksjob.name && *rt == ksjob.rt)
                             .next()
                         {
-                            let stmts = stmts.cache_bypass(false);
+                            let stmts = stmts.cache_bypass(true);
                             job.exec(stmts, &scy).await;
                         } else {
                             // TODO use a nested Result instead.
@@ -598,7 +639,7 @@ impl ScyllaQueueCluster {
                             .filter(|((ks, rt), _)| *ks == ksjob.name && *rt == ksjob.rt)
                             .next()
                         {
-                            let stmts = stmts.cache_bypass(false);
+                            let stmts = stmts.cache_bypass(true);
                             job.exec(stmts, &scy).await;
                         } else {
                             // TODO use a nested Result instead.
@@ -612,7 +653,7 @@ impl ScyllaQueueCluster {
                             // The job must get routed to the correct worker.
                             // Here, the job must indicate the keyspace to use.
                             warn!("TODO  ReadEvents03Fwd  using first available keyspace");
-                            let stmts = stmts.cache_bypass(false);
+                            let stmts = stmts.cache_bypass(true);
                             ret = Some(read_events_03::read_fwd(params, stmts, scy.clone()).await);
                             break;
                         }
@@ -630,7 +671,7 @@ impl ScyllaQueueCluster {
                             .filter(|((ks, rt), _)| *ks == ksjob.name && *rt == ksjob.rt)
                             .next()
                         {
-                            let stmts = stmts.cache_bypass(false);
+                            let stmts = stmts.cache_bypass(true);
                             job.exec(stmts, &scy).await;
                         } else {
                             // TODO use a nested Result instead.

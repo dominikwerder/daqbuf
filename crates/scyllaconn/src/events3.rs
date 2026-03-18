@@ -1,7 +1,7 @@
 mod events_msp_fwd_old;
 pub mod jobtrace;
 pub mod ks;
-pub(super) mod lsplst;
+pub mod lsplst;
 pub mod mspbck;
 pub mod mspfwd;
 pub mod msplsp;
@@ -12,6 +12,7 @@ use daqbuf_series::msp::MspU32;
 use futures_util::Stream;
 use items_0::streamitem::Sitemty2;
 use items_2::channelevents::ChannelEvents;
+use netpod::ChConf;
 use netpod::ScalarType;
 use netpod::SeriesKind;
 use netpod::Shape;
@@ -36,7 +37,6 @@ autoerr::create_error_v1!(
 #[derive(Debug, Clone)]
 pub struct SeriesInfo {
     series: SeriesId,
-    kind: SeriesKind,
     scalar_type: ScalarType,
     shape: Shape,
 }
@@ -52,6 +52,16 @@ impl SeriesInfo {
 
     pub fn shape(&self) -> Shape {
         self.shape.clone()
+    }
+}
+
+impl From<&ChConf> for SeriesInfo {
+    fn from(chconf: &ChConf) -> Self {
+        SeriesInfo {
+            series: SeriesId::new(chconf.series()),
+            scalar_type: chconf.scalar_type().clone(),
+            shape: chconf.shape().clone(),
+        }
     }
 }
 
