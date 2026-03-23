@@ -368,14 +368,23 @@ pub struct ScyllaQueueCluster {
     tag: String,
     keyspaces: Vec<KeyspaceId>,
     tx: Sender<(KeyspaceId, Job)>,
+    // TODO the last Self should await jh:
+    jh: Arc<tokio::task::JoinHandle<Result<(), Error>>>,
+    is_mock: bool,
 }
 
 impl ScyllaQueueCluster {
     async fn new(scyconf: &ScyllaConfigMultiKeyspace) -> Result<Self, Error> {
+        let is_mock = false;
         let tag = scyconf.tag.clone();
         let (tx, rx) = async_channel::bounded(128);
-        let task = Self::worker(rx, scyconf.clone());
-        let jh = tokio::task::spawn(task);
+        let jh = if is_mock {
+            let task = async { Ok(()) };
+            tokio::task::spawn(task)
+        } else {
+            let task = Self::worker(rx, scyconf.clone());
+            tokio::task::spawn(task)
+        };
         let ret = Self {
             tag,
             keyspaces: scyconf
@@ -384,6 +393,8 @@ impl ScyllaQueueCluster {
                 .map(|x| KeyspaceId::new(x.0.clone(), x.1.clone()))
                 .collect(),
             tx,
+            jh: Arc::new(jh),
+            is_mock,
         };
         Ok(ret)
     }
@@ -678,6 +689,53 @@ impl ScyllaQueueCluster {
                             error!("ks not found for job");
                         }
                     }
+                }
+            }
+        })
+        .buffer_unordered(CONCURRENT_QUERIES_PER_WORKER)
+        .for_each(|_| futures_util::future::ready(()))
+        .await;
+        Ok(())
+    }
+
+    async fn worker_mock(rx: Receiver<(KeyspaceId, Job)>) -> Result<(), Error> {
+        rx.map(|(ksjob, job)| async move {
+            match job {
+                Job::PrepareV1(job) => {
+                    debug!("can not execute Job::PrepareV1 in mock");
+                }
+                Job::ExecuteV1(job) => {
+                    debug!("can not execute Job::ExecuteV1 in mock");
+                }
+                Job::FindTsMsp(job) => {
+                    debug!("can not execute Job::FindTsMsp in mock");
+                }
+                Job::AccountingReadTs(rt, ts, tx) => {
+                    debug!("can not execute Job::AccountingReadTs in mock");
+                }
+                Job::WriteCacheF32(a, b, tx) => {
+                    debug!("can not execute Job::WriteCacheF32 in mock");
+                }
+                Job::ReadPrebinnedF32(job) => {
+                    debug!("can not execute Job::ReadPrebinnedF32 in mock");
+                }
+                Job::BinWriteIndexRead(job) => {
+                    debug!("can not execute Job::BinWriteIndexRead in mock");
+                }
+                Job::ReadEvents02(params, tx) => {
+                    debug!("can not execute Job::ReadEvents02 in mock");
+                }
+                Job::ReadMsp03Fwd(job) => {
+                    debug!("can not execute Job::ReadMsp03Fwd in mock");
+                }
+                Job::ReadMsp03Bck(job) => {
+                    debug!("can not execute Job::ReadMsp03Bck in mock");
+                }
+                Job::ReadEvents03Fwd(params, tx) => {
+                    debug!("can not execute Job::ReadEvents03Fwd in mock");
+                }
+                Job::Read03LspLst(job) => {
+                    debug!("can not execute Job::Read03LspLst in mock");
                 }
             }
         })
