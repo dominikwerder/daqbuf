@@ -1,12 +1,21 @@
 use crate::events2::prepare::StmtsEventsQueryOpts;
+use crate::events3::SERIES_ID_A;
+use crate::events3::test_data;
 use crate::range::ScyllaSeriesRange;
 use crate::worker::KeyspaceId;
+use crate::worker::ScyllaQueueCluster;
 use daqbuf_series::SeriesId;
+use futures_util::FutureExt;
+use futures_util::Stream;
 use futures_util::TryStreamExt;
 use netpod::TsMs;
+use netpod::ttl::RetentionTime;
 use scylla::client::session::Session;
 use std::collections::VecDeque;
 use std::fmt;
+use std::pin::Pin;
+use std::task::Context;
+use std::task::Poll;
 
 autoerr::create_error_v1!(
     name(Error, "ReadMsp03Fwd"),
@@ -70,8 +79,8 @@ impl ReadMsp03Fwd {
         let limit = self.limit;
         let params = (
             self.series.to_i64(),
-            self.range.beg().ms() as i64,
-            self.range.end().ms() as i64,
+            self.range.beg().to_dt_ms().to_i64(),
+            self.range.end().to_dt_ms().to_i64(),
             limit as i32,
         );
         let mut rows = scy.execute_iter(stmt, params).await?.rows_stream::<(i64,)>()?;
@@ -81,10 +90,116 @@ impl ReadMsp03Fwd {
         }
         Ok(ret)
     }
+
+    pub async fn exec_mock(self, cltag: &str, ks: KeyspaceId) {
+        let res = self.exec_mock_inner(cltag, ks).await;
+        let _ = self.tx.send(res).await;
+    }
+
+    async fn exec_mock_inner(&self, cltag: &str, ks: KeyspaceId) -> Item {
+        if self.series == SERIES_ID_A {
+            if cltag == "mock1" {
+                match ks.rt() {
+                    RetentionTime::Short => {
+                        let ret = test_data::series_a_msps()
+                            .into_iter()
+                            .filter(test_data::pred_ms_range(self.range.clone()))
+                            .collect();
+                        Ok(ret)
+                    }
+                    RetentionTime::Medium => todo!(),
+                    RetentionTime::Long => todo!(),
+                }
+            } else {
+                Err(Error::NoKs)
+            }
+        } else {
+            Ok(VecDeque::new())
+        }
+    }
 }
 
 impl fmt::Debug for ReadMsp03Fwd {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt.debug_struct("ReadMsp03Fwd").finish()
+    }
+}
+
+pub struct ReadMspFwdStream {
+    ks: KeyspaceId,
+    series: SeriesId,
+    range: ScyllaSeriesRange,
+    limit: u32,
+    fut: Option<Pin<Box<dyn Future<Output = Item>>>>,
+    scyqu: ScyllaQueueCluster,
+}
+
+impl ReadMspFwdStream {
+    pub fn new(
+        ks: KeyspaceId,
+        series: SeriesId,
+        range: ScyllaSeriesRange,
+        limit: u32,
+        scyqu: ScyllaQueueCluster,
+    ) -> Self {
+        let limit = limit.max(1);
+        Self {
+            ks,
+            series,
+            range,
+            limit,
+            fut: None,
+            scyqu,
+        }
+    }
+
+    fn trigger_done(&mut self) {
+        self.range = ScyllaSeriesRange::new(self.range.end(), self.range.end());
+    }
+}
+
+impl Stream for ReadMspFwdStream {
+    type Item = Item;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        use Poll::*;
+        loop {
+            match &mut self.fut {
+                Some(fut) => match fut.poll_unpin(cx) {
+                    Ready(x) => {
+                        self.fut = None;
+                        match x {
+                            Ok(v) => {
+                                if v.len() < self.limit as _ {
+                                    self.trigger_done();
+                                } else {
+                                    let beg = v.back().unwrap().ns();
+                                    self.range = ScyllaSeriesRange::new(beg, self.range.end());
+                                }
+                                break Ready(Some(Ok(v)));
+                            }
+                            Err(e) => {
+                                self.trigger_done();
+                                break Ready(Some(Err(e)));
+                            }
+                        }
+                    }
+                    Pending => break Pending,
+                },
+                None => {
+                    if self.range.beg() < self.range.end() {
+                        let scyqu = self.scyqu.clone();
+                        let ks = self.ks.clone();
+                        let series = self.series.clone();
+                        let range = self.range.clone();
+                        let limit = Some(self.limit.clone());
+                        let fut = async move { scyqu.read_msp_03_fwd(ks, series, range, limit).await };
+                        self.fut = Some(Box::pin(fut));
+                    } else {
+                        break Ready(None);
+                    }
+                }
+            }
+        }
     }
 }

@@ -1,4 +1,6 @@
 use netpod::ttl::RetentionTime;
+use scyllaconn::events3::MSP_A_00;
+use scyllaconn::events3::SERIES_ID_A;
 use scyllaconn::worker::KeyspaceId;
 use scyllaconn::worker::ScyllaQueue;
 use scyllaconn::worker::ScyllaQueueCluster;
@@ -18,9 +20,6 @@ autoerr::create_error_v1!(
 // Wed Mar 18 02:37:00 PM CET 2026
 // 1773841020
 
-const SERIES_ID_A: u64 = 291;
-const MSP_A_00: u64 = 1773841020000;
-
 async fn create_test_data_1(ksid: &KeyspaceId, scyqu: &ScyllaQueueCluster) -> Result<(), Error> {
     info!("create_test_data_1");
     let rt = ksid.rt();
@@ -35,7 +34,7 @@ async fn create_test_data_1(ksid: &KeyspaceId, scyqu: &ScyllaQueueCluster) -> Re
         );
         let stmt = scyqu.prepare(ksid.clone(), cql).await?;
         let _ = scyqu
-            .execute(ksid.clone(), stmt, Box::new((SERIES_ID_A as i64, MSP_A_00 as i64)))
+            .execute(ksid.clone(), stmt, Box::new((SERIES_ID_A.to_i64(), MSP_A_00.to_i64())))
             .await?;
     }
     let cql = format!(

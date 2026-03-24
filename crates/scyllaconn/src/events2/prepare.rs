@@ -215,13 +215,13 @@ async fn make_ts_msp_bck_win(
     scy: &Session,
 ) -> Result<PreparedStatement, Error> {
     let table_name = "ts_msp";
-    let select_cond = "ts_msp >= ? and ts_msp < ? order by ts_msp desc";
+    let select_cond = "ts_msp >= ? and ts_msp < ?";
     let tpre = rt.table_prefix();
     let cql = format!(
         "{}{}{}",
         format_args!("select ts_msp from {ks}.{tpre}{table_name}"),
         format_args!(" where series = ? and {select_cond}"),
-        format_args!(" limit 100 {query_opts}")
+        format_args!(" limit 471 {query_opts}")
     );
     log_prepare!("{ks} {rt} {cql}");
     let qu = scy.prepare(cql).await?;

@@ -1,10 +1,15 @@
 use crate::events2::prepare::StmtsEventsQueryOpts;
+use crate::events3::MSP_A_00;
+use crate::events3::SERIES_ID_A;
+use crate::events3::test_data;
+use crate::events3::test_data::series_a_msps;
 use crate::range::ScyllaSeriesRange;
 use crate::worker::KeyspaceId;
 use daqbuf_series::SeriesId;
 use futures_util::TryStreamExt;
 use netpod::DtNano;
 use netpod::TsMs;
+use netpod::ttl::RetentionTime;
 use scylla::client::session::Session;
 use std::collections::VecDeque;
 use std::fmt;
@@ -66,6 +71,33 @@ impl ReadMsp03Bck {
             ret.push_back(TsMs::from_ms_u64(v as _));
         }
         Ok(ret)
+    }
+
+    pub async fn exec_mock(self, cltag: &str, ks: KeyspaceId) {
+        let res = self.exec_mock_inner(cltag, ks).await;
+        let _ = self.tx.send(res).await;
+    }
+
+    async fn exec_mock_inner(&self, cltag: &str, ks: KeyspaceId) -> Item {
+        if self.series == SERIES_ID_A {
+            if cltag == "mock1" {
+                match ks.rt() {
+                    RetentionTime::Short => {
+                        let ret = series_a_msps()
+                            .into_iter()
+                            .filter(test_data::pred_ms_range(self.range.clone()))
+                            .collect();
+                        Ok(ret)
+                    }
+                    RetentionTime::Medium => todo!(),
+                    RetentionTime::Long => todo!(),
+                }
+            } else {
+                Err(Error::NoKs)
+            }
+        } else {
+            Ok(VecDeque::new())
+        }
     }
 }
 

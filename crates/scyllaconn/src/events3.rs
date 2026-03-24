@@ -5,6 +5,10 @@ pub mod lsplst;
 pub mod mspbck;
 pub mod mspfwd;
 pub mod msplsp;
+mod test_data;
+
+#[cfg(test)]
+mod test;
 
 use crate::events2::msp::MspStreamRt;
 use daqbuf_series::SeriesId;
@@ -16,6 +20,7 @@ use netpod::ChConf;
 use netpod::ScalarType;
 use netpod::SeriesKind;
 use netpod::Shape;
+use netpod::TsMs;
 use netpod::ttl::RetentionTime;
 use std::pin::Pin;
 use std::task::Context;
@@ -33,6 +38,9 @@ autoerr::create_error_v1!(
         Logic,
     },
 );
+
+pub const SERIES_ID_A: SeriesId = SeriesId::new(291);
+pub const MSP_A_00: TsMs = TsMs::from_ms_u64(1000 * 1773841020);
 
 #[derive(Debug, Clone)]
 pub struct SeriesInfo {

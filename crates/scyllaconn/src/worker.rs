@@ -378,13 +378,8 @@ impl ScyllaQueueCluster {
         let is_mock = false;
         let tag = scyconf.tag.clone();
         let (tx, rx) = async_channel::bounded(128);
-        let jh = if is_mock {
-            let task = async { Ok(()) };
-            tokio::task::spawn(task)
-        } else {
-            let task = Self::worker(rx, scyconf.clone());
-            tokio::task::spawn(task)
-        };
+        let task = Self::worker(rx, scyconf.clone());
+        let jh = tokio::task::spawn(task);
         let ret = Self {
             tag,
             keyspaces: scyconf
@@ -502,8 +497,10 @@ impl ScyllaQueueCluster {
         let (job, rx) = crate::events3::mspfwd::ReadMsp03Fwd::new(ks.clone(), series, range, limit);
         let job = Job::ReadMsp03Fwd(job);
         self.tx.send((ks, job)).await?;
-        let res = rx.recv().await??;
-        Ok(res)
+        let res = rx.recv().await.inspect_err(|e| {
+            eprintln!("GOT RECV ERROR");
+        })?;
+        res
     }
 
     pub async fn read_msp_03_bck(
@@ -698,7 +695,22 @@ impl ScyllaQueueCluster {
         Ok(())
     }
 
-    async fn worker_mock(rx: Receiver<(KeyspaceId, Job)>) -> Result<(), Error> {
+    pub fn new_mock(tag: String, keyspaces: Vec<KeyspaceId>) -> Result<Self, Error> {
+        let (tx, rx) = async_channel::bounded(128);
+        let task = Self::worker_mock(rx, tag.clone());
+        let jh = tokio::task::spawn(task);
+        let ret = Self {
+            tag,
+            keyspaces,
+            tx,
+            jh: Arc::new(jh),
+            is_mock: true,
+        };
+        Ok(ret)
+    }
+
+    async fn worker_mock(rx: Receiver<(KeyspaceId, Job)>, tag: String) -> Result<(), Error> {
+        let tag = &tag;
         rx.map(|(ksjob, job)| async move {
             match job {
                 Job::PrepareV1(job) => {
@@ -726,10 +738,10 @@ impl ScyllaQueueCluster {
                     debug!("can not execute Job::ReadEvents02 in mock");
                 }
                 Job::ReadMsp03Fwd(job) => {
-                    debug!("can not execute Job::ReadMsp03Fwd in mock");
+                    job.exec_mock(&tag, ksjob).await;
                 }
                 Job::ReadMsp03Bck(job) => {
-                    debug!("can not execute Job::ReadMsp03Bck in mock");
+                    job.exec_mock(&tag, ksjob).await;
                 }
                 Job::ReadEvents03Fwd(params, tx) => {
                     debug!("can not execute Job::ReadEvents03Fwd in mock");
