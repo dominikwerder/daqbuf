@@ -22,7 +22,7 @@ impl<T> Existence<T> {
 pub struct SeriesId(u64);
 
 impl SeriesId {
-    pub fn new(id: u64) -> Self {
+    pub const fn new(id: u64) -> Self {
         Self(id)
     }
 
