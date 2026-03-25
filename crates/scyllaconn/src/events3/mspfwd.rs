@@ -8,7 +8,9 @@ use daqbuf_series::SeriesId;
 use futures_util::FutureExt;
 use futures_util::Stream;
 use futures_util::TryStreamExt;
+use netpod::RangeExcl;
 use netpod::TsMs;
+use netpod::TsNano;
 use netpod::ttl::RetentionTime;
 use scylla::client::session::Session;
 use std::collections::VecDeque;
@@ -16,6 +18,11 @@ use std::fmt;
 use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
+
+macro_rules! error { ($($arg:tt)*) => ( if true { log::error!($($arg)*); } ); }
+macro_rules! warn { ($($arg:tt)*) => ( if true { log::warn!($($arg)*); } ); }
+macro_rules! info { ($($arg:tt)*) => ( if true { log::info!($($arg)*); } ); }
+macro_rules! debug { ($($arg:tt)*) => ( if true { log::debug!($($arg)*); } ); }
 
 autoerr::create_error_v1!(
     name(Error, "ReadMsp03Fwd"),
@@ -48,6 +55,7 @@ pub struct ReadMsp03Fwd {
     series: SeriesId,
     range: ScyllaSeriesRange,
     limit: u32,
+    begexcl: RangeExcl,
     tx: async_channel::Sender<Item>,
 }
 
@@ -56,6 +64,7 @@ impl ReadMsp03Fwd {
         ks: KeyspaceId,
         series: SeriesId,
         range: ScyllaSeriesRange,
+        begexcl: RangeExcl,
         limit: u32,
     ) -> (Self, async_channel::Receiver<Item>) {
         let (tx, rx) = async_channel::bounded(1);
@@ -63,6 +72,7 @@ impl ReadMsp03Fwd {
             ks,
             series,
             range,
+            begexcl,
             limit,
             tx,
         };
@@ -75,14 +85,16 @@ impl ReadMsp03Fwd {
     }
 
     async fn exec_inner(&self, stmts: &StmtsEventsQueryOpts, scy: &Session) -> Result<VecDeque<TsMs>, Error> {
-        let stmt = stmts.ts_msp_fwd().clone();
+        let begj = if self.begexcl.excl_beg() {
+            i64::MIN
+        } else {
+            self.range.beg().to_dt_ms().to_i64()
+        };
+        let begk = self.range.beg().to_dt_ms().to_i64();
+        let end = self.range.end().to_dt_ms().to_i64();
         let limit = self.limit;
-        let params = (
-            self.series.to_i64(),
-            self.range.beg().to_dt_ms().to_i64(),
-            self.range.end().to_dt_ms().to_i64(),
-            limit as i32,
-        );
+        let params = (self.series.to_i64(), begj, begk, end, limit as i32);
+        let stmt = stmts.ts_msp_fwd2().clone();
         let mut rows = scy.execute_iter(stmt, params).await?.rows_stream::<(i64,)>()?;
         let mut ret = VecDeque::new();
         while let Some((v,)) = rows.try_next().await? {
@@ -101,9 +113,16 @@ impl ReadMsp03Fwd {
             if cltag == "mock1" {
                 match ks.rt() {
                     RetentionTime::Short => {
+                        let begj = if self.begexcl.excl_beg() {
+                            TsNano::from_ns(u64::MAX)
+                        } else {
+                            self.range.beg()
+                        };
+                        let begk = self.range.beg();
+                        let end = self.range.end();
                         let ret = test_data::series_a_msps()
                             .into_iter()
-                            .filter(test_data::pred_ms_range(self.range.clone()))
+                            .filter(test_data::pred_ms_range(begj, begk, end))
                             .collect();
                         Ok(ret)
                     }
@@ -129,6 +148,7 @@ pub struct ReadMspFwdStream {
     ks: KeyspaceId,
     series: SeriesId,
     range: ScyllaSeriesRange,
+    begexcl: RangeExcl,
     limit: u32,
     fut: Option<Pin<Box<dyn Future<Output = Item>>>>,
     scyqu: ScyllaQueueCluster,
@@ -139,6 +159,7 @@ impl ReadMspFwdStream {
         ks: KeyspaceId,
         series: SeriesId,
         range: ScyllaSeriesRange,
+        begexcl: RangeExcl,
         limit: u32,
         scyqu: ScyllaQueueCluster,
     ) -> Self {
@@ -147,6 +168,7 @@ impl ReadMspFwdStream {
             ks,
             series,
             range,
+            begexcl,
             limit,
             fut: None,
             scyqu,
@@ -173,6 +195,7 @@ impl Stream for ReadMspFwdStream {
                                 if v.len() < self.limit as _ {
                                     self.trigger_done();
                                 } else {
+                                    self.begexcl = RangeExcl::Beg;
                                     let beg = v.back().unwrap().ns();
                                     self.range = ScyllaSeriesRange::new(beg, self.range.end());
                                 }
@@ -192,8 +215,9 @@ impl Stream for ReadMspFwdStream {
                         let ks = self.ks.clone();
                         let series = self.series.clone();
                         let range = self.range.clone();
+                        let begexcl = self.begexcl;
                         let limit = Some(self.limit.clone());
-                        let fut = async move { scyqu.read_msp_03_fwd(ks, series, range, limit).await };
+                        let fut = async move { scyqu.read_msp_03_fwd(ks, series, range, begexcl, limit).await };
                         self.fut = Some(Box::pin(fut));
                     } else {
                         break Ready(None);

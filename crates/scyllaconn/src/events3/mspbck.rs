@@ -14,6 +14,8 @@ use scylla::client::session::Session;
 use std::collections::VecDeque;
 use std::fmt;
 
+macro_rules! error { ($($arg:tt)*) => { log::error!($($arg)*); }; }
+
 autoerr::create_error_v1!(
     name(Error, "ReadMsp03Bck"),
     enum variants {
@@ -60,17 +62,18 @@ impl ReadMsp03Bck {
     }
 
     async fn exec_inner(&self, stmts: &StmtsEventsQueryOpts, scy: &Session) -> Item {
-        let stmt = stmts.ts_msp_bck_win().clone();
-        let win = self.ks.rt().msp_rollover_ivl_on_read();
-        let beg = self.range.beg().sub(DtNano::from_ms(1000 * win.as_secs()));
-        let end = self.range.beg();
-        let params = (self.series.to_i64(), beg.ms() as i64, end.ms() as i64);
-        let mut rows = scy.execute_iter(stmt, params).await?.rows_stream::<(i64,)>()?;
-        let mut ret = VecDeque::new();
-        while let Some((v,)) = rows.try_next().await? {
-            ret.push_back(TsMs::from_ms_u64(v as _));
-        }
-        Ok(ret)
+        error!("ReadMsp03Bck exec_inner not supported");
+        // let stmt = stmts.ts_msp_bck_win().clone();
+        // let win = self.ks.rt().msp_rollover_ivl_on_read();
+        // let beg = self.range.beg().sub(DtNano::from_ms(1000 * win.as_secs()));
+        // let end = self.range.beg();
+        // let params = (self.series.to_i64(), beg.ms() as i64, end.ms() as i64);
+        // let mut rows = scy.execute_iter(stmt, params).await?.rows_stream::<(i64,)>()?;
+        // let mut ret = VecDeque::new();
+        // while let Some((v,)) = rows.try_next().await? {
+        //     ret.push_back(TsMs::from_ms_u64(v as _));
+        // }
+        Ok(VecDeque::new())
     }
 
     pub async fn exec_mock(self, cltag: &str, ks: KeyspaceId) {
@@ -79,25 +82,8 @@ impl ReadMsp03Bck {
     }
 
     async fn exec_mock_inner(&self, cltag: &str, ks: KeyspaceId) -> Item {
-        if self.series == SERIES_ID_A {
-            if cltag == "mock1" {
-                match ks.rt() {
-                    RetentionTime::Short => {
-                        let ret = series_a_msps()
-                            .into_iter()
-                            .filter(test_data::pred_ms_range(self.range.clone()))
-                            .collect();
-                        Ok(ret)
-                    }
-                    RetentionTime::Medium => todo!(),
-                    RetentionTime::Long => todo!(),
-                }
-            } else {
-                Err(Error::NoKs)
-            }
-        } else {
-            Ok(VecDeque::new())
-        }
+        error!("ReadMsp03Bck exec_inner not supported");
+        Ok(VecDeque::new())
     }
 }
 

@@ -24,6 +24,7 @@ use httpclient::StreamIncoming;
 use httpclient::StreamResponse;
 use netpod::ttl::RetentionTime;
 use netpod::NodeConfigCached;
+use netpod::RangeExcl;
 use netpod::SeriesKind;
 use netpod::TsMs;
 use netpod::TsNano;
@@ -279,7 +280,7 @@ async fn read_msp(cmd: ReadMsp, scyqu: &ScyllaQueue) -> Result<serde_json::Value
                 .find_ts_msp_fwd(ks.clone(), cmd.series(), range.clone(), cmd.limit, scylla_opts.clone())
                 .await?;
             let x2 = c
-                .read_msp_03_fwd(ks.clone(), cmd.series(), range.clone(), cmd.limit)
+                .read_msp_03_fwd(ks.clone(), cmd.series(), range.clone(), RangeExcl::None, cmd.limit)
                 .await?;
             if x1.len() != x2.len() {
                 // TODO this can actually happen on concurrent db write.

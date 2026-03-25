@@ -40,6 +40,8 @@ autoerr::create_error_v1!(
 );
 
 pub const SERIES_ID_A: SeriesId = SeriesId::new(291);
+// 1773841020
+// 2026, 3, 18, 13, 37, UTC
 pub const MSP_A_00: TsMs = TsMs::from_ms_u64(1000 * 1773841020);
 
 #[derive(Debug, Clone)]

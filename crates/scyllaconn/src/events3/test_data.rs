@@ -1,10 +1,20 @@
+use crate::events2::msp;
 use crate::events3::MSP_A_00;
 use netpod::DtMs;
+use netpod::DtNano;
 use netpod::TsMs;
+use netpod::TsNano;
+use netpod::timeunits::SEC;
+use rand_xoshiro::Xoshiro256PlusPlus;
+use rand_xoshiro::rand_core::Rng;
+use rand_xoshiro::rand_core::SeedableRng;
+use std::collections::BTreeMap;
 use std::collections::VecDeque;
 
-pub fn pred_ms_range(range: crate::range::ScyllaSeriesRange) -> impl Fn(&TsMs) -> bool {
-    move |ms| range.beg() <= ms.ns() && ms.ns() < range.end()
+macro_rules! info { ($($arg:tt)*) => ( if true { log::info!($($arg)*); } ); }
+
+pub fn pred_ms_range(begj: TsNano, begk: TsNano, end: TsNano) -> impl Fn(&TsMs) -> bool {
+    move |ms| (begj == ms.ns() || begk < ms.ns()) && ms.ns() < end
 }
 
 pub fn series_a_msps() -> VecDeque<TsMs> {
@@ -18,4 +28,79 @@ pub fn series_a_msps() -> VecDeque<TsMs> {
             x
         })
         .collect()
+}
+
+/*
+import datetime
+utc = datetime.UTC
+datetime.datetime.fromtimestamp(1773841020, utc)
+datetime.datetime(2026, 3, 18, 13, 37, tzinfo=datetime.timezone.utc)
+*/
+
+pub fn create_msp_lsp_stream(beg: TsNano) -> impl Iterator<Item = (TsMs, TsNano, u32)> {
+    info!("beg {beg}  {h}", h = beg.ms() / 1000);
+    // TODO use this as the first event timestamp, not the first msp.
+    // Derive the msp from the timestamp.
+    let t0 = MSP_A_00.ns();
+    info!("msA {MSP_A_00}  {}", MSP_A_00.ms() / 1000);
+    info!("t0  {t0}  {}", t0.ms() / 1000);
+    let ivl = DtNano::from_ms(2000);
+    let mut i0 = 0;
+    if beg > t0 {
+        i0 = ((beg.ns() - t0.ns()) / ivl.ns()) as u64;
+    }
+    info!("i0 {i0}");
+    info!("allocate");
+    let mut rnd1 = vec![0u8; 1024 * 1024 * 20];
+    info!("seed");
+    let mut rng = Xoshiro256PlusPlus::seed_from_u64(89163);
+    info!("generate");
+    rng.fill_bytes(&mut rnd1);
+    let mut msps = BTreeMap::new();
+    {
+        // produce a random distribution of msp.
+        info!("alloc msp_off_secs");
+        let mut msp_off_ms = vec![0u32; 100];
+        let a = &mut msp_off_ms;
+        let h = size_of_val(&a[0]);
+        assert_eq!(h, 4);
+        let src = rnd1[1024 * 700..].as_ptr();
+        let dst = a.as_mut_ptr() as *mut u8;
+        info!("memcpy");
+        unsafe {
+            std::ptr::copy_nonoverlapping(src, dst, a.len() * h);
+        }
+        for x in a.iter().take(0) {
+            info!("msp_off_ms {x}");
+        }
+        info!("converting...");
+        for x in a.iter() {
+            let x = *x as u64;
+            let dt = DtMs::from_ms_u64(x % 200000000);
+            let msp = TsMs::from_ms_u64(MSP_A_00.ms() - 1000 * 60 * 60 * 2).add_dt_ms(dt);
+            msps.insert(msp, 0u32);
+        }
+        for x in msps.keys().take(10) {
+            info!("msp {x}");
+        }
+    }
+    let msps_slice: Vec<_> = msps.keys().cloned().collect();
+    (i0..u64::MAX).into_iter().map(move |i| {
+        let ts = t0.add_dt_nano(ivl.mul_u64(i));
+        let tsms = ts.to_ts_ms();
+        let n1 = msps_slice.partition_point(|x| *x <= tsms);
+        let msp = if n1 == 0 {
+            TsMs::from_ms_u64(0)
+        } else {
+            msps_slice[n1 - 1]
+        };
+        (msp, ts, i as u32)
+    })
+}
+
+#[test]
+fn test_assign() {
+    for (msp, ts, val) in create_msp_lsp_stream("2026-03-18T13:37:10.000Z".parse().unwrap()).take(8000) {
+        info!("{msp}  {ts}  {val:9}");
+    }
 }

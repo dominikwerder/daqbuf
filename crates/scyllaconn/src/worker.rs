@@ -23,6 +23,7 @@ use futures_util::TryStreamExt;
 use items_0::timebin::BinningggContainerEventsDyn;
 use items_2::binning::container_bins::ContainerBins;
 use netpod::DtMs;
+use netpod::RangeExcl;
 use netpod::ScalarType;
 use netpod::ScyllaConfig;
 use netpod::ScyllaConfigMultiKeyspace;
@@ -491,10 +492,11 @@ impl ScyllaQueueCluster {
         ks: KeyspaceId,
         series: SeriesId,
         range: ScyllaSeriesRange,
+        begexcl: RangeExcl,
         limit: Option<u32>,
     ) -> crate::events3::mspfwd::Item {
         let limit = limit.unwrap_or(40);
-        let (job, rx) = crate::events3::mspfwd::ReadMsp03Fwd::new(ks.clone(), series, range, limit);
+        let (job, rx) = crate::events3::mspfwd::ReadMsp03Fwd::new(ks.clone(), series, range, begexcl, limit);
         let job = Job::ReadMsp03Fwd(job);
         self.tx.send((ks, job)).await?;
         let res = rx.recv().await.inspect_err(|e| {

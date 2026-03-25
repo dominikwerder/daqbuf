@@ -208,19 +208,19 @@ async fn make_msp_dir(
     Ok(qu)
 }
 
-async fn make_ts_msp_bck_win(
+async fn make_ts_msp_fwd2(
     ks: &str,
     rt: &RetentionTime,
     query_opts: &str,
     scy: &Session,
 ) -> Result<PreparedStatement, Error> {
     let table_name = "ts_msp";
-    let select_cond = "ts_msp >= ? and ts_msp < ?";
     let tpre = rt.table_prefix();
     let cql = format!(
-        "{}{}{}",
+        "{}{}{}{}",
         format_args!("select ts_msp from {ks}.{tpre}{table_name}"),
-        format_args!(" where series = ? and {select_cond}"),
+        format_args!(" where series = ?"),
+        format_args!(" and (ts_msp = ? or ts_msp > ?) and ts_msp < ?"),
         format_args!(" limit 471 {query_opts}")
     );
     log_prepare!("{ks} {rt} {cql}");
@@ -623,7 +623,7 @@ pub struct StmtsEventsQueryOpts {
     ts_msp_fwd: PreparedStatement,
     ts_msp_bck: PreparedStatement,
     ts_msp_bck_workaround: PreparedStatement,
-    ts_msp_bck_win: PreparedStatement,
+    ts_msp_fwd2: PreparedStatement,
     lsp_all: StmtsLspAll,
     lsp_fwd_val: StmtsLspDir,
     lsp_bck_val: StmtsLspDir,
@@ -640,7 +640,7 @@ impl StmtsEventsQueryOpts {
             ts_msp_fwd: make_msp_dir(ks, rt, false, query_opts, scy).await?,
             ts_msp_bck: make_msp_dir(ks, rt, true, query_opts, scy).await?,
             ts_msp_bck_workaround: make_msp_fwd_for_bck_workaround(ks, rt, query_opts, scy).await?,
-            ts_msp_bck_win: make_ts_msp_bck_win(ks, rt, query_opts, scy).await?,
+            ts_msp_fwd2: make_ts_msp_fwd2(ks, rt, query_opts, scy).await?,
             lsp_all: make_lsp_all(ks, rt, query_opts, scy).await?,
             lsp_fwd_val: make_lsp_dir(ks, rt, "ts_lsp, value", false, query_opts, scy).await?,
             lsp_bck_val: make_lsp_dir(ks, rt, "ts_lsp, value", true, query_opts, scy).await?,
@@ -666,8 +666,8 @@ impl StmtsEventsQueryOpts {
         &self.ts_msp_bck_workaround
     }
 
-    pub fn ts_msp_bck_win(&self) -> &PreparedStatement {
-        &self.ts_msp_bck_win
+    pub fn ts_msp_fwd2(&self) -> &PreparedStatement {
+        &self.ts_msp_fwd2
     }
 
     pub fn lsp_all(&self) -> &StmtsLspAll {

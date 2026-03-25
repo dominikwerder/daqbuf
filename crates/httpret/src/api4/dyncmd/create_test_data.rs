@@ -17,9 +17,6 @@ autoerr::create_error_v1!(
     },
 );
 
-// Wed Mar 18 02:37:00 PM CET 2026
-// 1773841020
-
 async fn create_test_data_1(ksid: &KeyspaceId, scyqu: &ScyllaQueueCluster) -> Result<(), Error> {
     info!("create_test_data_1");
     let rt = ksid.rt();

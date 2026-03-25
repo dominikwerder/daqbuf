@@ -22,5 +22,6 @@ query = { path = "../../../daqbuf-query", package = "daqbuf-query" }
 items_0 = { path = "../../../daqbuf-items-0", package = "daqbuf-items-0" }
 items_2 = { path = "../../../daqbuf-items-2", package = "daqbuf-items-2" }
 streams = { path = "../../../daqbuf-streams", package = "daqbuf-streams" }
+rand_xoshiro = "0.8.0"
 daqbuf-series = { path = "../../../daqbuf-series" }
 taskrun = { path = "../taskrun" }
