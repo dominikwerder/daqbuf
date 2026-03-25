@@ -8,13 +8,52 @@ pub use branch_warn as warn;
 
 pub use tracing as tracing_rxp;
 
+use std::fmt;
+use std::io;
 use std::sync::LazyLock;
+
+struct FmtWriter<'a, 'b>(&'a mut fmt::Formatter<'b>);
+
+impl io::Write for FmtWriter<'_, '_> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        let s =
+            std::str::from_utf8(buf).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        self.0
+            .write_str(s)
+            .map_err(|_| io::Error::new(io::ErrorKind::Other, "fmt error"))?;
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+pub struct TsNow(time::UtcDateTime);
+
+impl TsNow {
+    pub fn now() -> Self {
+        Self(time::UtcDateTime::now())
+    }
+}
+
+impl fmt::Display for TsNow {
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let f2 = time::macros::format_description!(
+            "[year]-[month]-[day] [hour]:[minute]:[second].[subsecond digits:3]"
+        );
+        self.0
+            .format_into(&mut FmtWriter(fmt), f2)
+            .map_err(|_| fmt::Error)?;
+        Ok(())
+    }
+}
 
 #[allow(unused)]
 #[inline(always)]
 pub fn is_log_direct() -> bool {
     static ONCE: LazyLock<bool> =
-        LazyLock::new(|| std::env::var("LOG_DIRECT").map_or(false, |x| x.parse().unwrap_or(false)));
+        LazyLock::new(|| std::env::var("LOG_DIRECT").map_or(false, |x| x == "1"));
     *ONCE
 }
 
@@ -32,10 +71,10 @@ pub mod log_direct {
     #[macro_export]
     macro_rules! direct_trace {
         ($fmt:expr) => {
-            eprintln!("TRACE {}", format_args!($fmt));
+            eprintln!("{} TRACE {}", $crate::TsNow::now(), format_args!($fmt));
         };
         ($fmt:expr, $($arg:tt)*) => {
-            eprintln!("TRACE {}", format_args!($fmt, $($arg)*));
+            eprintln!("{} TRACE {}", $crate::TsNow::now(), format_args!($fmt, $($arg)*));
         };
     }
     #[allow(unused)]
@@ -44,42 +83,42 @@ pub mod log_direct {
         ($fmt:expr) => {
             // eprintln!(concat!("DEBUG ", $fmt));
             // eprintln!("{}", format_args!(concat!("DEBUG ", $fmt)));
-            eprintln!("DEBUG {}", format_args!($fmt));
+            eprintln!("{} DEBUG {}", $crate::TsNow::now(), format_args!($fmt));
         };
         ($fmt:expr, $($arg:tt)*) => {
             // eprintln!(concat!("DEBUG ", $fmt), $($arg),*);
             // eprintln!("{}", format_args!(concat!("DEBUG ", $fmt), $($arg),*));
-            eprintln!("DEBUG {}", format_args!($fmt, $($arg)*));
+            eprintln!("{} DEBUG {}", $crate::TsNow::now(), format_args!($fmt, $($arg)*));
         };
     }
     #[allow(unused)]
     #[macro_export]
     macro_rules! direct_info {
         ($fmt:expr) => {
-            eprintln!("INFO  {}", format_args!($fmt));
+            eprintln!("{} INFO  {}", $crate::TsNow::now(), format_args!($fmt));
         };
         ($fmt:expr, $($arg:tt)*) => {
-            eprintln!("INFO  {}", format_args!($fmt, $($arg)*));
+            eprintln!("{} INFO  {}", $crate::TsNow::now(), format_args!($fmt, $($arg)*));
         };
     }
     #[allow(unused)]
     #[macro_export]
     macro_rules! direct_warn {
         ($fmt:expr) => {
-            eprintln!("WARN  {}", format_args!($fmt));
+            eprintln!("{} WARN  {}", $crate::TsNow::now(), format_args!($fmt));
         };
         ($fmt:expr, $($arg:tt)*) => {
-            eprintln!("WARN  {}", format_args!($fmt, $($arg)*));
+            eprintln!("{} WARN  {}", $crate::TsNow::now(), format_args!($fmt, $($arg)*));
         };
     }
     #[allow(unused)]
     #[macro_export]
     macro_rules! direct_error {
         ($fmt:expr) => {
-            eprintln!("ERROR {}", format_args!($fmt));
+            eprintln!("{} ERROR {}", $crate::TsNow::now(), format_args!($fmt));
         };
         ($fmt:expr, $($arg:tt)*) => {
-            eprintln!("ERROR {}", format_args!($fmt, $($arg)*));
+            eprintln!("{} ERROR {}", $crate::TsNow::now(), format_args!($fmt, $($arg)*));
         };
     }
     pub use crate::direct_debug as debug;
