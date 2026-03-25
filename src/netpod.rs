@@ -1859,20 +1859,24 @@ impl DtNano {
         self.0 / 1000000
     }
 
-    pub fn to_i64(&self) -> i64 {
+    pub const fn to_i64(&self) -> i64 {
         self.0 as i64
     }
 
-    pub fn add(self, rhs: Self) -> Self {
+    pub const fn add(self, rhs: Self) -> Self {
         Self(self.0 + rhs.0)
     }
 
-    pub fn fraction_f32_of(self, rhs: Self) -> f32 {
+    pub const fn fraction_f32_of(self, rhs: Self) -> f32 {
         self.0 as f32 / rhs.0 as f32
     }
 
-    pub fn fraction_f64_of(self, rhs: Self) -> f64 {
+    pub const fn fraction_f64_of(self, rhs: Self) -> f64 {
         self.0 as f64 / rhs.0 as f64
+    }
+
+    pub const fn mul_u64(self, x: u64) -> Self {
+        Self(self.0 * x)
     }
 }
 
@@ -2107,6 +2111,23 @@ impl fmt::Display for TsNano {
             .earliest()
             .unwrap_or(Default::default());
         ts.format(DATETIME_FMT_3MS).fmt(fmt)
+    }
+}
+
+impl FromStr for TsNano {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let fm = time::macros::format_description!(
+            "[year]-[month]-[day]T[hour]:[minute]:[second].[subsecond digits:3]Z"
+        );
+        time::UtcDateTime::parse(s, fm)
+            .map_err(|_| Error::InputBad)
+            .map(|x| {
+                let sec = x.unix_timestamp() as u64;
+                let ms = x.millisecond() as u64;
+                TsNano::from_ms(1000 * sec + ms)
+            })
     }
 }
 
@@ -3162,7 +3183,13 @@ impl TsMs {
 
 impl fmt::Display for TsMs {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        fmt::Debug::fmt(self, fmt)
+        let sec = self.0 / 1000;
+        let ns = 1000000 * (self.0 % 1000);
+        let ts = Utc
+            .timestamp_opt(sec as i64, ns as u32)
+            .earliest()
+            .unwrap_or(Default::default());
+        ts.format(DATETIME_FMT_3MS).fmt(fmt)
     }
 }
 
@@ -4752,3 +4779,59 @@ conf_a:
 //         }
 //     }
 // }
+
+#[derive(Debug, Clone, Copy)]
+pub enum RangeExcl {
+    None,
+    Beg,
+}
+
+impl RangeExcl {
+    pub fn excl_beg(&self) -> bool {
+        match self {
+            RangeExcl::None => false,
+            RangeExcl::Beg => true,
+        }
+    }
+}
+
+mod serde_range_excl {
+    use crate::RangeExcl;
+    use serde::Serialize;
+    use serde::de::Visitor;
+    use std::fmt;
+
+    impl Serialize for RangeExcl {
+        fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: serde::Serializer,
+        {
+            let s = match self {
+                RangeExcl::None => "none",
+                RangeExcl::Beg => "beg",
+            };
+            serializer.serialize_str(s)
+        }
+    }
+
+    struct Vis;
+
+    impl Visitor<'_> for Vis {
+        type Value = RangeExcl;
+
+        fn expecting(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+            write!(fmt, "a string representing a RangeExcl value (none, beg)")
+        }
+
+        fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            match v {
+                "none" => Ok(RangeExcl::None),
+                "beg" => Ok(RangeExcl::Beg),
+                _ => Err(E::custom(format!("invalid RangeExcl value: {v}"))),
+            }
+        }
+    }
+}
