@@ -1851,12 +1851,20 @@ impl DtNano {
         Self(1000000 * ms)
     }
 
+    pub const fn from_sec(sec: u64) -> Self {
+        Self(1000000000 * sec)
+    }
+
     pub const fn ns(&self) -> u64 {
         self.0
     }
 
     pub const fn ms_u64(&self) -> u64 {
         self.0 / 1000000
+    }
+
+    pub const fn sec_u64(&self) -> u64 {
+        self.0 / 1000000000
     }
 
     pub const fn to_i64(&self) -> i64 {
