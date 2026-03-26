@@ -109,6 +109,7 @@ impl ReadMsp03Fwd {
     }
 
     async fn exec_mock_inner(&self, cltag: &str, ks: KeyspaceId) -> Item {
+        debug!("exec_mock_inner  {cltag}  {ks:?}  {self:?}");
         if self.series == SERIES_ID_A {
             if cltag == "mock1" {
                 match ks.rt() {
@@ -120,9 +121,13 @@ impl ReadMsp03Fwd {
                         };
                         let begk = self.range.beg();
                         let end = self.range.end();
-                        let ret = test_data::series_a_msps()
-                            .into_iter()
+                        let ret = test_data::produce_full_event_set()
+                            .by_msp
+                            .keys()
+                            .map(|x| *x)
                             .filter(test_data::pred_ms_range(begj, begk, end))
+                            .map(|x| x.to_ms())
+                            .take(self.limit as usize)
                             .collect();
                         Ok(ret)
                     }
@@ -150,7 +155,7 @@ pub struct ReadMspFwdStream {
     range: ScyllaSeriesRange,
     begexcl: RangeExcl,
     limit: u32,
-    fut: Option<Pin<Box<dyn Future<Output = Item>>>>,
+    fut: Option<Pin<Box<dyn Future<Output = Item> + Send>>>,
     scyqu: ScyllaQueueCluster,
 }
 
@@ -163,7 +168,7 @@ impl ReadMspFwdStream {
         limit: u32,
         scyqu: ScyllaQueueCluster,
     ) -> Self {
-        let limit = limit.max(1);
+        let limit = limit.max(1).min(40);
         Self {
             ks,
             series,

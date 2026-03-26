@@ -63,6 +63,14 @@ impl SeriesInfo {
     pub fn shape(&self) -> Shape {
         self.shape.clone()
     }
+
+    pub fn new(series: SeriesId, scalar_type: ScalarType, shape: Shape) -> Self {
+        Self {
+            series,
+            scalar_type,
+            shape,
+        }
+    }
 }
 
 impl From<&ChConf> for SeriesInfo {

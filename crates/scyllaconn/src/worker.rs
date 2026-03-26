@@ -29,7 +29,6 @@ use netpod::ScyllaConfig;
 use netpod::ScyllaConfigMultiKeyspace;
 use netpod::Shape;
 use netpod::TsMs;
-use netpod::log;
 use netpod::ttl::RetentionTime;
 use serde::Serialize;
 use std::collections::VecDeque;
@@ -495,12 +494,13 @@ impl ScyllaQueueCluster {
         begexcl: RangeExcl,
         limit: Option<u32>,
     ) -> crate::events3::mspfwd::Item {
+        debug!("read_msp_03_fwd  {ks:?}  {series:?}  {range:?}  {begexcl:?}  {limit:?}");
         let limit = limit.unwrap_or(40);
         let (job, rx) = crate::events3::mspfwd::ReadMsp03Fwd::new(ks.clone(), series, range, begexcl, limit);
         let job = Job::ReadMsp03Fwd(job);
         self.tx.send((ks, job)).await?;
         let res = rx.recv().await.inspect_err(|e| {
-            eprintln!("GOT RECV ERROR");
+            eprintln!("GOT RECV ERROR {e}");
         })?;
         res
     }
@@ -749,7 +749,7 @@ impl ScyllaQueueCluster {
                     debug!("can not execute Job::ReadEvents03Fwd in mock");
                 }
                 Job::Read03LspLst(job) => {
-                    debug!("can not execute Job::Read03LspLst in mock");
+                    job.exec_mock(&tag, ksjob).await;
                 }
             }
         })

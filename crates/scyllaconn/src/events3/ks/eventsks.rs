@@ -2,16 +2,21 @@ mod bck_events_lst;
 
 use crate::events3::SeriesInfo;
 use crate::events3::lsplst;
+use crate::events3::mspfwd::ReadMsp03Fwd;
+use crate::events3::mspfwd::ReadMspFwdStream;
 use crate::range::ScyllaSeriesRange;
 use crate::worker::KeyspaceId;
 use crate::worker::ScyllaQueueCluster;
 use bck_events_lst::BckEventsLst;
 use futures_util::FutureExt;
 use futures_util::Stream;
+use futures_util::StreamExt;
 use items_0::streamitem::RangeCompletableItem;
 use items_0::streamitem::Sitemty2;
 use items_0::streamitem::StreamItem;
 use items_2::channelevents::ChannelEvents;
+use netpod::DtNano;
+use netpod::RangeExcl;
 use netpod::TsMs;
 use netpod::futdbg::FutDbg;
 use netpod::futdbg::FutDbgBox;
@@ -32,7 +37,9 @@ macro_rules! trace { ($($arg:tt)*) => ( if true { log::trace!($($arg)*); } ) }
 autoerr::create_error_v1!(
     name(Error, "EventsKs"),
     enum variants {
-        Logic,
+        MspFwd(#[from] crate::events3::mspfwd::Error),
+        BckLspLst(#[from] bck_events_lst::Error),
+        MspBckTooMany,
     },
 );
 
@@ -81,7 +88,7 @@ impl Opts {
 
 #[derive(Debug)]
 struct BckMsps {
-    fut: FutDbg<Result<VecDeque<TsMs>, crate::events3::mspbck::Error>>,
+    fut: FutDbg<Result<VecDeque<TsMs>, Error>>,
 }
 
 #[derive(Debug)]
@@ -114,11 +121,31 @@ impl EventsKs {
     ) -> Self {
         let st1 = BckMsps {
             fut: {
+                // Collect all msp from the backward window.
+                // Error if we find too many.
                 let ks = ks.clone();
-                let id = series_info.id();
-                let range = range.clone();
+                let series = series_info.id();
+                let win = DtNano::from_sec(ks.rt().msp_rollover_ivl_on_read().as_secs());
+                debug!("backward window {win} h", win = win.sec_u64() / 60 / 60);
+                let range = { ScyllaSeriesRange::new(range.beg().sub(win), range.beg()) };
                 let scyqu = scyqu.clone();
-                async move { scyqu.read_msp_03_bck(ks, id, range).await }.box2()
+                // TODO change the limit to larger for non-test-data
+                let mut stream = ReadMspFwdStream::new(ks, series, range, RangeExcl::None, 1, scyqu);
+                async move {
+                    let mut msps = VecDeque::new();
+                    while let Some(x) = stream.next().await {
+                        msps.extend(x?);
+                        if msps.len() > 80 {
+                            error!("too many msp in backward window");
+                            return Err(Error::MspBckTooMany);
+                        }
+                    }
+                    for e in &msps {
+                        debug!("got backward msp {e}");
+                    }
+                    Ok(msps)
+                }
+                .box2()
             },
         };
         let state = State::BckMsps(st1);
@@ -168,6 +195,7 @@ impl Stream for EventsKs {
                             }
                             Err(e) => {
                                 self.state = State::Done;
+                                break Ready(Some(Err(e)));
                             }
                         }
                     }
@@ -187,6 +215,7 @@ impl Stream for EventsKs {
                             }
                             Err(e) => {
                                 self.state = State::Done;
+                                break Ready(Some(Err(e.into())));
                             }
                         }
                     }

@@ -1,16 +1,22 @@
 use crate::events2::prepare::StmtsEventsQueryOpts;
+use crate::events3::SERIES_ID_A;
 use crate::events3::SeriesInfo;
 use crate::events3::msplsp::LspEv;
 use crate::events3::msplsp::MspEv;
+use crate::events3::test_data;
 use crate::range::ScyllaSeriesRange;
 use crate::worker::KeyspaceId;
 use daqbuf_series::SeriesId;
 use futures_util::TryStreamExt;
 use netpod::DtNano;
 use netpod::TsMs;
+use netpod::TsNano;
+use netpod::ttl::RetentionTime;
 use scylla::client::session::Session;
 use std::collections::VecDeque;
 use std::fmt;
+
+macro_rules! error { ($($arg:tt)*) => { log::error!($($arg)*); }; }
 
 autoerr::create_error_v1!(
     name(Error, "Read03LspLst"),
@@ -76,13 +82,48 @@ impl Read03LspLst {
             .shape(self.series_info.shape())
             .st(self.series_info.scalar_type().to_scylla_table_name_id())?
             .clone();
-        let end = self.end.clone().map_or(i64::MAX, |x| x.to_i64());
-        let params = (self.series_info.id().to_i64(), self.msp.to_i64(), end);
+        let lsp_max = self.end.clone().map_or(i64::MAX, |x| x.to_i64());
+        let params = (self.series_info.id().to_i64(), self.msp.to_i64(), lsp_max);
         let mut rows = scy.execute_iter(stmt, params).await?.rows_stream::<(i64,)>()?;
         while let Some((v,)) = rows.try_next().await? {
             return Ok(Some(LspEv::from_i64(v)));
         }
         Ok(None)
+    }
+
+    pub async fn exec_mock(self, cltag: &str, ks: KeyspaceId) {
+        let res = self.exec_mock_inner(cltag, ks).await;
+        let _ = self.tx.send(res).await;
+    }
+
+    async fn exec_mock_inner(&self, cltag: &str, ks: KeyspaceId) -> Item {
+        let lsp_max = self.end.unwrap_or(LspEv::max());
+        if self.series_info.id() == SERIES_ID_A {
+            if cltag == "mock1" {
+                match ks.rt() {
+                    RetentionTime::Short => {
+                        let ret = test_data::produce_full_event_set()
+                            .by_msp
+                            .get(&self.msp)
+                            .map_or(None, |x| {
+                                x.iter()
+                                    .rev()
+                                    .map(|x| *x)
+                                    .filter(|(_, lsp, ..)| *lsp < lsp_max)
+                                    .map(|x| x.1)
+                                    .next()
+                            });
+                        Ok(ret)
+                    }
+                    RetentionTime::Medium => todo!(),
+                    RetentionTime::Long => todo!(),
+                }
+            } else {
+                Err(Error::NoKs)
+            }
+        } else {
+            Ok(None)
+        }
     }
 }
 
