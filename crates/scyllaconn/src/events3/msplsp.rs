@@ -1,3 +1,4 @@
+use crate::events3::lsplst;
 use netpod::DATETIME_FMT_3MS;
 use netpod::TsMs;
 use netpod::TsNano;
@@ -28,6 +29,11 @@ impl MspEv {
         } else {
             None
         }
+    }
+
+    pub fn to_ts(&self, lsp: LspEv) -> TsNano {
+        let ns = self.0 * MS + lsp.0;
+        TsNano::from_ns(ns)
     }
 }
 

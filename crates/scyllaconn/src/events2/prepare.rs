@@ -3,6 +3,8 @@ use netpod::ttl::RetentionTime;
 use scylla::client::session::Session;
 use scylla::statement::prepared::PreparedStatement;
 
+macro_rules! error { ($($arg:tt)*) => { if true { log::error!("{}", format_args!($($arg)*)); } }; }
+
 macro_rules! log_prepare { ($($arg:tt)*) => { log::debug!("prepare cql  {}", format_args!($($arg)*)); }; }
 
 macro_rules! trace_scy6 { ($($arg:tt)*) => { if false { log::trace!("{}", format_args!($($arg)*)); } }; }
@@ -117,6 +119,7 @@ pub struct StmtsLspDir {
 }
 
 impl StmtsLspDir {
+    // TODO instead of simple array bool flag, use either enum IsValueBlob, or Shape?
     pub fn shape(&self, array: bool) -> &StmtsLspShape {
         if array { &self.array } else { &self.scalar }
     }

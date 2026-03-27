@@ -10,6 +10,7 @@ use futures_util::Stream;
 use items_0::streamitem::Sitemty2;
 use items_2::channelevents::ChannelEvents;
 use netpod::TsMs;
+use netpod::TsNano;
 use netpod::futdbg::FutDbg;
 use netpod::futdbg::FutDbgBox;
 use serde::Serialize;
@@ -25,55 +26,42 @@ macro_rules! debug { ($($arg:tt)*) => ( if true { log::debug!($($arg)*); } ) }
 macro_rules! trace { ($($arg:tt)*) => ( if true { log::trace!($($arg)*); } ) }
 
 autoerr::create_error_v1!(
-    name(Error, "BckEventsLst"),
+    name(Error, "BckLspLst"),
     enum variants {
         LspLst(#[from] crate::events3::lsplst::Error),
+        LspImpossible,
     },
 );
 
 #[derive(Debug, Serialize)]
 pub struct Res1 {
-    lsps_a: VecDeque<Option<LspEv>>,
+    lsps_a: VecDeque<(MspEv, Option<LspEv>)>,
+}
+
+impl Res1 {
+    pub fn lsps(&self) -> &VecDeque<(MspEv, Option<LspEv>)> {
+        &self.lsps_a
+    }
 }
 
 #[derive(Debug)]
-pub struct BckEventsLst {
+pub struct BckLspLst {
     series_info: SeriesInfo,
     ks: KeyspaceId,
     scyqu: ScyllaQueueCluster,
-    range: ScyllaSeriesRange,
     fut: FutDbg<Result<Res1, Error>>,
 }
 
-impl BckEventsLst {
-    async fn fetch(
-        series_info: SeriesInfo,
-        ks: KeyspaceId,
-        msps: VecDeque<MspEv>,
-        scyqu: ScyllaQueueCluster,
-    ) -> Result<Res1, Error> {
-        let series = series_info.id();
-        let end = LspEv::max();
-        let mut lsps_a = VecDeque::new();
-        for msp in msps.iter() {
-            let x = scyqu
-                .read_03_lsp_lst(ks.clone(), series_info.clone(), msp.clone(), None)
-                .await?;
-            lsps_a.push_back(x);
-        }
-        let ret = Res1 { lsps_a };
-        Ok(ret)
-    }
-
+impl BckLspLst {
     pub fn new(
         series_info: SeriesInfo,
         ks: KeyspaceId,
-        range: ScyllaSeriesRange,
         msps: VecDeque<MspEv>,
+        end: Option<TsNano>,
         scyqu: ScyllaQueueCluster,
     ) -> Self {
         // TODO fetch the latest lsp without value for each msp
-        let fut = Self::fetch(series_info.clone(), ks.clone(), msps, scyqu.clone()).box2();
+        let fut = Self::fetch(series_info.clone(), ks.clone(), msps, end, scyqu.clone()).box2();
         // TODO if lsps after range begin, backwards search again for the latest before.
         // TODO determine the latest before.
         // TODO record effort information.
@@ -81,13 +69,40 @@ impl BckEventsLst {
             series_info,
             ks,
             scyqu,
-            range,
             fut,
         }
     }
+
+    async fn fetch(
+        series_info: SeriesInfo,
+        ks: KeyspaceId,
+        msps: VecDeque<MspEv>,
+        end: Option<TsNano>,
+        scyqu: ScyllaQueueCluster,
+    ) -> Result<Res1, Error> {
+        let mut lsps_a = VecDeque::new();
+        for msp in msps.iter() {
+            let end = if let Some(end) = end {
+                let x = if let Some(x) = msp.lsp(end) {
+                    x
+                } else {
+                    return Err(Error::LspImpossible);
+                };
+                Some(x)
+            } else {
+                None
+            };
+            let x = scyqu
+                .read_03_lsp_lst(ks.clone(), series_info.clone(), msp.clone(), end)
+                .await?;
+            lsps_a.push_back((*msp, x));
+        }
+        let ret = Res1 { lsps_a };
+        Ok(ret)
+    }
 }
 
-impl Future for BckEventsLst {
+impl Future for BckLspLst {
     type Output = Result<Res1, Error>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {

@@ -1,6 +1,7 @@
 mod events_msp_fwd_old;
 pub mod jobtrace;
 pub mod ks;
+pub mod lspfwd;
 pub mod lsplst;
 pub mod mspbck;
 pub mod mspfwd;

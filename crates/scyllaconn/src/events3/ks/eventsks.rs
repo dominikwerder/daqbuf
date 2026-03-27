@@ -4,10 +4,11 @@ use crate::events3::SeriesInfo;
 use crate::events3::lsplst;
 use crate::events3::mspfwd::ReadMsp03Fwd;
 use crate::events3::mspfwd::ReadMspFwdStream;
+use crate::events3::msplsp::MspEv;
 use crate::range::ScyllaSeriesRange;
 use crate::worker::KeyspaceId;
 use crate::worker::ScyllaQueueCluster;
-use bck_events_lst::BckEventsLst;
+use bck_events_lst::BckLspLst;
 use futures_util::FutureExt;
 use futures_util::Stream;
 use futures_util::StreamExt;
@@ -18,15 +19,19 @@ use items_2::channelevents::ChannelEvents;
 use netpod::DtNano;
 use netpod::RangeExcl;
 use netpod::TsMs;
+use netpod::TsNano;
 use netpod::futdbg::FutDbg;
 use netpod::futdbg::FutDbgBox;
 use netpod::hpp::HaveProgressPending;
 use serde::Serialize;
+use std::collections::BTreeMap;
 use std::collections::VecDeque;
+use std::ops::RangeBounds;
 use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
 use taskrun::tokio::io::Ready;
+use taskrun::tracing_subscriber::field::debug;
 
 macro_rules! error { ($($arg:tt)*) => ( if true { log::error!($($arg)*); } ) }
 macro_rules! warn { ($($arg:tt)*) => ( if true { log::warn!($($arg)*); } ) }
@@ -94,9 +99,9 @@ struct BckMsps {
 #[derive(Debug)]
 enum State {
     BckMsps(BckMsps),
-    BckEventsLst(BckEventsLst),
-    BckEventsCstr,
-    FwdEvents,
+    BckLspLst(BckLspLst),
+    BckLspCstr(BckLspLst),
+    FwdEvents1(TsNano, VecDeque<MspEv>),
     Done,
 }
 
@@ -181,14 +186,14 @@ impl Stream for EventsKs {
                         match x {
                             Ok(msps) => {
                                 let msps2 = msps.iter().map(|x| x.clone().into()).collect();
-                                let stn = bck_events_lst::BckEventsLst::new(
+                                let stn = bck_events_lst::BckLspLst::new(
                                     self.series_info.clone(),
                                     self.ks.clone(),
-                                    self.range.clone(),
                                     msps2,
+                                    None,
                                     self.scyqu.clone(),
                                 );
-                                self.state = State::BckEventsLst(stn);
+                                self.state = State::BckLspLst(stn);
                                 break Ready(Some(Ok(StreamItem::DataItem(RangeCompletableItem::Data(
                                     ItemType::BckMsps(msps),
                                 )))));
@@ -203,15 +208,59 @@ impl Stream for EventsKs {
                         hpp.mark_pending();
                     }
                 },
-                State::BckEventsLst(st1) => match st1.poll_unpin(cx) {
+                State::BckLspLst(st1) => match st1.poll_unpin(cx) {
                     Ready(x) => {
                         hpp.mark_progress();
                         match x {
                             Ok(res1) => {
-                                self.state = State::Done;
-                                break Ready(Some(Ok(StreamItem::DataItem(RangeCompletableItem::Data(
-                                    ItemType::BckEventsLst(res1),
-                                )))));
+                                let msp_keep_a: Vec<_> = res1
+                                    .lsps()
+                                    .iter()
+                                    .filter_map(|(msp, lsp)| {
+                                        if let Some(lsp) = lsp {
+                                            let ts = msp.to_ts(*lsp);
+                                            debug!("BckEventsLst  {msp}  {lsp}  {ts}");
+                                            Some((*msp, *lsp, ts))
+                                        } else {
+                                            debug!("BckEventsLst  None  {msp}");
+                                            None
+                                        }
+                                    })
+                                    .collect();
+                                let by_ts: BTreeMap<_, _> =
+                                    msp_keep_a.iter().map(|(msp, lsp, ts)| (*ts, (*msp, *lsp))).collect();
+                                let it1 = by_ts.range(..self.range.beg());
+                                let ts_lst_ph1 = if let Some((ts, (msp, lsp))) = it1.rev().next() {
+                                    debug!("lst-unconstr  {msp}  {lsp}  {ts}");
+                                    Some(*ts)
+                                } else {
+                                    debug!("lst-unconstr  None");
+                                    None
+                                };
+                                let msp_keep_b = if let Some(ts0) = ts_lst_ph1 {
+                                    msp_keep_a
+                                        .iter()
+                                        .filter(|(_msp, _lsp, ts)| *ts >= ts0)
+                                        .map(|(msp, lsp, ts)| (*msp, *lsp, *ts))
+                                        .collect()
+                                } else {
+                                    msp_keep_a.clone()
+                                };
+                                for (msp, lsp, ts) in msp_keep_b.iter() {
+                                    debug!("msp_keep_b    {msp}  {lsp}  {ts}");
+                                }
+                                let msps = msp_keep_b.iter().map(|(msp, ..)| *msp).collect();
+                                let stn = bck_events_lst::BckLspLst::new(
+                                    self.series_info.clone(),
+                                    self.ks.clone(),
+                                    msps,
+                                    Some(self.range.beg()),
+                                    self.scyqu.clone(),
+                                );
+                                self.state = State::BckLspCstr(stn);
+                                let item =
+                                    StreamItem::DataItem(RangeCompletableItem::Data(ItemType::BckEventsLst(res1)));
+                                break Ready(Some(Ok(item)));
                             }
                             Err(e) => {
                                 self.state = State::Done;
@@ -223,8 +272,54 @@ impl Stream for EventsKs {
                         hpp.mark_pending();
                     }
                 },
-                State::BckEventsCstr => todo!(),
-                State::FwdEvents => todo!(),
+                State::BckLspCstr(st1) => match st1.poll_unpin(cx) {
+                    Ready(x) => {
+                        hpp.mark_progress();
+                        match x {
+                            Ok(res1) => {
+                                let msp_keep_a: Vec<_> = res1
+                                    .lsps()
+                                    .iter()
+                                    .filter_map(|(msp, lsp)| {
+                                        if let Some(lsp) = lsp {
+                                            let ts = msp.to_ts(*lsp);
+                                            debug!("BckEventsLst  {msp}  {lsp}  {ts}");
+                                            Some((*msp, *lsp, ts))
+                                        } else {
+                                            debug!("BckEventsLst  None  {msp}");
+                                            None
+                                        }
+                                    })
+                                    .collect();
+                                let by_ts: BTreeMap<_, _> =
+                                    msp_keep_a.iter().map(|(msp, lsp, ts)| (*ts, (*msp, *lsp))).collect();
+                                let it1 = by_ts.range(..self.range.beg());
+                                let ts_lst_ph2 = if let Some((ts, (msp, lsp))) = it1.rev().next() {
+                                    debug!("lst-cstr      {msp}  {lsp}  {ts}");
+                                    Some(*ts)
+                                } else {
+                                    debug!("lst-cstr      None");
+                                    None
+                                };
+                                let begb = ts_lst_ph2.unwrap_or(self.range.beg());
+                                let msps = msp_keep_a.iter().map(|(msp, ..)| *msp).collect();
+                                self.state = State::FwdEvents1(begb, msps);
+                            }
+                            Err(e) => {
+                                self.state = State::Done;
+                                break Ready(Some(Err(e.into())));
+                            }
+                        }
+                    }
+                    Pending => {
+                        hpp.mark_pending();
+                    }
+                },
+                State::FwdEvents1(tsbegb, msps) => {
+                    //
+                    hpp.mark_progress();
+                    self.state = State::Done;
+                }
                 State::Done => break Ready(None),
             }
         }

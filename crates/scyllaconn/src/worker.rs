@@ -289,6 +289,7 @@ enum Job {
         >,
     ),
     Read03LspLst(crate::events3::lsplst::Read03LspLst),
+    Read03LspFwd(crate::events3::lspfwd::Read03LspFwd),
 }
 
 #[derive(Debug, Clone)]
@@ -688,6 +689,21 @@ impl ScyllaQueueCluster {
                             error!("ks not found for job");
                         }
                     }
+                    Job::Read03LspFwd(job) => {
+                        if let Some(((_ks, _rt), stmts)) = scyconf
+                            .keyspaces
+                            .iter()
+                            .zip(stmtsa.iter())
+                            .filter(|((ks, rt), _)| *ks == ksjob.name && *rt == ksjob.rt)
+                            .next()
+                        {
+                            let stmts = stmts.cache_bypass(true);
+                            job.exec(stmts, &scy).await;
+                        } else {
+                            // TODO use a nested Result instead.
+                            error!("ks not found for job");
+                        }
+                    }
                 }
             }
         })
@@ -749,6 +765,9 @@ impl ScyllaQueueCluster {
                     debug!("can not execute Job::ReadEvents03Fwd in mock");
                 }
                 Job::Read03LspLst(job) => {
+                    job.exec_mock(&tag, ksjob).await;
+                }
+                Job::Read03LspFwd(job) => {
                     job.exec_mock(&tag, ksjob).await;
                 }
             }
