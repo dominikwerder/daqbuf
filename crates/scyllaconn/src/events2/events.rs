@@ -888,11 +888,13 @@ async fn read_next_values_3_fwd(
         // qu.disable_paging();
         qu
     };
+    let lim = i64::MAX;
     let params = (
         series.to_i64(),
         ts_msp.ms() as i64,
         ts_lsp_min.ns() as i64,
         ts_lsp_max.ns() as i64,
+        lim,
     );
     debug_scy6!("{selfname}  EXECUTE  {cql}  {params:?}", cql = qu.get_statement());
     trace_fetch!("{selfname} event search  params {:?}", params);
@@ -989,7 +991,8 @@ async fn read_next_values_3_bck(
         .lsp(false, with_values)
         .shape(val_ty_dyn.is_valueblob())
         .st(val_ty_dyn.st_name())?;
-    let params = (series.to_i64(), ts_msp.ms() as i64, lsp.to_i64(), lsp.to_i64() + 1);
+    let lim = 1i64;
+    let params = (series.to_i64(), ts_msp.ms() as i64, lsp.to_i64(), lsp.to_i64() + 1, lim);
     debug_scy6!("{selfname}  EXECUTE  {cql}  {params:?}", cql = qu.get_statement());
     trace_fetch!("{selfname}  event search  params {:?}", params);
     jobtrace.add_event_now(ReadEventKind::CallExecuteIter);

@@ -336,9 +336,9 @@ async fn make_lsp(
     scy: &Session,
 ) -> Result<PreparedStatement, Error> {
     let select_cond = if bck {
-        "ts_lsp < ? order by ts_lsp desc limit 1"
+        "ts_lsp < ? order by ts_lsp desc limit ?"
     } else {
-        "ts_lsp >= ? and ts_lsp < ?"
+        "ts_lsp >= ? and ts_lsp < ? limit ?"
     };
     let cql = format!(
         concat!(

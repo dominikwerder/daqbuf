@@ -135,11 +135,13 @@ async fn read_next_values_fwd(
         qu.set_page_size(QUERY_PAGE_SIZE);
         qu
     };
+    let lim = i64::MAX;
     let params = (
         series.to_i64(),
         ts_msp.ms() as i64,
         ts_lsp_min.ns() as i64,
         ts_lsp_max.ns() as i64,
+        lim,
     );
     trace4!("{selfname}  EXECUTE  {cql}  {params:?}", cql = qu.get_statement());
     trace_fetch!("{selfname} event search  params {:?}", params);

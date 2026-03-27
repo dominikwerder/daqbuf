@@ -10,7 +10,25 @@ This type is the building block consumed by `ks::lsp_fwd_msp_multi::FwdMspMerged
 
 
 
-TO CHANGE:
+BEGIN OF PLAN TO CHANGE:
+
+Please use `async fn scyllaconn::worker::ScyllaQueueCluster::read_03_lsp_fwd` to implement the actual reading.
+That probably means that you can skip the Part 2 "worker integration" ?
+In the end, we want to deliver full events to the user including the value, not just timestamps.
+So, using `scyllaconn::worker::ScyllaQueueCluster::read_03_lsp_fwd` makes sense.
+
+Please ignore FwdMspMerged and remove it the current plan. We will work on that later, but focus now on the type in this file.
+
+The type in this file should simply stream events for the given msp.
+The queries will always return the lsp in order.
+So there is no need to merge or sort in here I think.
+But, the queries take a row limit parameter.
+In the type in this file, we must therefore query repeatedly.
+We must use the timestamp of the latest event from the current batch, and for the next query, ask for tslast + 1ns.
+We do not need a begexcl flag in here.
+
+END OF PLAN TO CHANGE.
+
 
 
 

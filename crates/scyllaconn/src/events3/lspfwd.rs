@@ -54,6 +54,7 @@ pub struct Read03LspFwd {
     series_info: SeriesInfo,
     msp: MspEv,
     range: ScyllaSeriesRange,
+    limit: u32,
     tx: async_channel::Sender<Item>,
 }
 
@@ -63,6 +64,7 @@ impl Read03LspFwd {
         series_info: SeriesInfo,
         msp: MspEv,
         range: ScyllaSeriesRange,
+        limit: u32,
     ) -> (Self, async_channel::Receiver<Item>) {
         let (tx, rx) = async_channel::bounded(1);
         let ret = Self {
@@ -70,6 +72,7 @@ impl Read03LspFwd {
             series_info,
             msp,
             range,
+            limit,
             tx,
         };
         (ret, rx)
@@ -98,7 +101,8 @@ impl Read03LspFwd {
             .clone();
         let lsp_beg = self.msp.lsp(self.range.beg()).map_or(0i64, |x| x.to_i64());
         let lsp_end = self.msp.lsp(self.range.end()).map_or(0i64, |x| x.to_i64());
-        let params = (self.series_info.id().to_i64(), self.msp.to_i64(), lsp_beg, lsp_end);
+        let lim = self.limit as i64;
+        let params = (self.series_info.id().to_i64(), self.msp.to_i64(), lsp_beg, lsp_end, lim);
         let mut rows = scy.execute_iter(stmt, params).await?.rows_stream::<(i64,)>()?;
         // TODO branch on type
         let mut evs = ContainerEvents::<u32>::new();
@@ -121,17 +125,20 @@ impl Read03LspFwd {
             if cltag == "mock1" {
                 match ks.rt() {
                     RetentionTime::Short => {
+                        let mut evs = ContainerEvents::<u32>::new();
                         let beg = self.range.beg();
                         let end = self.range.end();
-                        let mut evs = ContainerEvents::<u32>::new();
                         if let Some(events) = test_data::produce_full_event_set().by_msp.get(&self.msp) {
                             for (ts, _lsp, val, _nb) in events {
-                                if *ts >= beg && *ts < end {
+                                if beg <= *ts && *ts < end {
                                     evs.push_back(*ts, *val);
+                                    if evs.len() >= self.limit as _ {
+                                        break;
+                                    }
                                 }
                             }
                         }
-                        Ok(Box::new(evs))
+                        Ok(Box::new(evs) as Box<dyn BinningggContainerEventsDyn>)
                     }
                     RetentionTime::Medium => todo!(),
                     RetentionTime::Long => todo!(),
@@ -140,7 +147,9 @@ impl Read03LspFwd {
                 Err(Error::NoKs)
             }
         } else {
-            Ok(Box::new(ContainerEvents::<u32>::new()))
+            let c = items_2::empty::empty_events_dyn_ev(&self.series_info.scalar_type(), &self.series_info.shape())
+                .unwrap();
+            Ok(c)
         }
     }
 }

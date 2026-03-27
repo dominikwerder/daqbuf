@@ -533,6 +533,21 @@ impl ScyllaQueueCluster {
         Ok(res)
     }
 
+    pub async fn read_03_lsp_fwd(
+        &self,
+        ks: KeyspaceId,
+        series_info: SeriesInfo,
+        msp: MspEv,
+        range: ScyllaSeriesRange,
+        limit: u32,
+    ) -> crate::events3::lspfwd::Item {
+        let (job, rx) = crate::events3::lspfwd::Read03LspFwd::new(ks.clone(), series_info, msp, range, limit);
+        let job = Job::Read03LspFwd(job);
+        self.tx.send((ks, job)).await?;
+        let res = rx.recv().await??;
+        Ok(res)
+    }
+
     async fn worker(rx: Receiver<(KeyspaceId, Job)>, scyconf: ScyllaConfigMultiKeyspace) -> Result<(), Error> {
         let scy = create_scy_session_no_ks(&scyconf).await?;
         let scy = Arc::new(scy);
@@ -1130,6 +1145,9 @@ impl ScyllaWorker {
                     }
                     Job::Read03LspLst(..) => {
                         error!("TODO  Job::Read03LspLst  only on cluster aware worker");
+                    }
+                    Job::Read03LspFwd(..) => {
+                        error!("TODO  Job::Read03LspFwd  only on cluster aware worker");
                     }
                 }
             })
