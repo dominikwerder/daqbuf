@@ -96,8 +96,9 @@ impl Read03LspFwd {
             .shape(array)
             .st(self.series_info.scalar_type().to_scylla_table_name_id())?
             .clone();
-        let lsp_max = self.msp.lsp(self.range.end()).map_or(i64::MAX, |x| x.to_i64());
-        let params = (self.series_info.id().to_i64(), self.msp.to_i64(), lsp_max);
+        let lsp_beg = self.msp.lsp(self.range.beg()).map_or(0i64, |x| x.to_i64());
+        let lsp_end = self.msp.lsp(self.range.end()).map_or(0i64, |x| x.to_i64());
+        let params = (self.series_info.id().to_i64(), self.msp.to_i64(), lsp_beg, lsp_end);
         let mut rows = scy.execute_iter(stmt, params).await?.rows_stream::<(i64,)>()?;
         // TODO branch on type
         let mut evs = ContainerEvents::<u32>::new();
