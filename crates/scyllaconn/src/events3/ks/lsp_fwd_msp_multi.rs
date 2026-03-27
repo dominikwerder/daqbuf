@@ -87,6 +87,14 @@ pub struct FwdMspMerged {
     state: State,
 }
 
-// TODO create first a stream which streams from a single ks, series, msp over a given range.
 // Then merge those here.
 // The user has already found the ts of the latest-one-before.
+
+// TODO in constructor, take also a list of msp for which the user of this type already know that it makes sense to read from.
+// TODO open a stream of msp which starts reading msp after the highest msp that the user gave us in the list.
+// TODO for each msp, open a LspFwdMspSingleStream.
+// TODO merge all those streams into a single output stream.
+// TODO to implement the merging, we must utilize the trait MergeableDyn.
+// TODO As long as we have some event from any of the opnened streams that is smaller than the next msp from the msp stream,
+// we do not yet need to open a event stream for that msp, because it can not produce events before.
+// TODO We want to keep the number of open streams low.
