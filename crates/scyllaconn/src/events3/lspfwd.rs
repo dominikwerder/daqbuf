@@ -17,7 +17,6 @@ use netpod::TsMs;
 use netpod::TsNano;
 use netpod::ttl::RetentionTime;
 use scylla::client::session::Session;
-use std::collections::VecDeque;
 use std::fmt;
 
 macro_rules! error { ($($arg:tt)*) => { log::error!($($arg)*); }; }
@@ -54,7 +53,7 @@ pub struct Read03LspFwd {
     ks: KeyspaceId,
     series_info: SeriesInfo,
     msp: MspEv,
-    end: Option<LspEv>,
+    range: ScyllaSeriesRange,
     tx: async_channel::Sender<Item>,
 }
 
@@ -63,14 +62,14 @@ impl Read03LspFwd {
         ks: KeyspaceId,
         series_info: SeriesInfo,
         msp: MspEv,
-        end: Option<LspEv>,
+        range: ScyllaSeriesRange,
     ) -> (Self, async_channel::Receiver<Item>) {
         let (tx, rx) = async_channel::bounded(1);
         let ret = Self {
             ks,
             series_info,
             msp,
-            end,
+            range,
             tx,
         };
         (ret, rx)
@@ -97,7 +96,7 @@ impl Read03LspFwd {
             .shape(array)
             .st(self.series_info.scalar_type().to_scylla_table_name_id())?
             .clone();
-        let lsp_max = self.end.clone().map_or(i64::MAX, |x| x.to_i64());
+        let lsp_max = self.msp.lsp(self.range.end()).map_or(i64::MAX, |x| x.to_i64());
         let params = (self.series_info.id().to_i64(), self.msp.to_i64(), lsp_max);
         let mut rows = scy.execute_iter(stmt, params).await?.rows_stream::<(i64,)>()?;
         // TODO branch on type
@@ -117,30 +116,21 @@ impl Read03LspFwd {
     }
 
     async fn exec_mock_inner(&self, cltag: &str, ks: KeyspaceId) -> Item {
-        let lsp_max = self.end.unwrap_or(LspEv::max());
         if self.series_info.id() == SERIES_ID_A {
             if cltag == "mock1" {
                 match ks.rt() {
                     RetentionTime::Short => {
-                        // TODO this code was taken from another file.
-                        // But it does not yet do what I want.
-                        // From the test data returned by produce_full_event_set it should fill a ContainerEvents<u32>
-                        // with the events for the msp at hand and where the events TsNano fits a given ScyllaSeriesRange.
-                        // The current Self type does not yet hold that ScyllaSeriesRange: so please remove the `end` field
-                        // and replace it with a `range` field.
-                        // The test data is a time series where the value type is u32.
-                        let ret = test_data::produce_full_event_set()
-                            .by_msp
-                            .get(&self.msp)
-                            .map_or(None, |x| {
-                                x.iter()
-                                    .rev()
-                                    .map(|x| *x)
-                                    .filter(|(_, lsp, ..)| *lsp < lsp_max)
-                                    .map(|x| x.1)
-                                    .next()
-                            });
-                        Ok(ret)
+                        let beg = self.range.beg();
+                        let end = self.range.end();
+                        let mut evs = ContainerEvents::<u32>::new();
+                        if let Some(events) = test_data::produce_full_event_set().by_msp.get(&self.msp) {
+                            for (ts, _lsp, val, _nb) in events {
+                                if *ts >= beg && *ts < end {
+                                    evs.push_back(*ts, *val);
+                                }
+                            }
+                        }
+                        Ok(Box::new(evs))
                     }
                     RetentionTime::Medium => todo!(),
                     RetentionTime::Long => todo!(),
@@ -149,7 +139,7 @@ impl Read03LspFwd {
                 Err(Error::NoKs)
             }
         } else {
-            Ok(None)
+            Ok(Box::new(ContainerEvents::<u32>::new()))
         }
     }
 }
