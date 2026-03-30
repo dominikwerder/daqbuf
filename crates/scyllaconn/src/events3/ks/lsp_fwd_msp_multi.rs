@@ -1,4 +1,5 @@
 use crate::events3::SeriesInfo;
+use crate::events3::ks::lsp_fwd_msp_single::LspFwdMspSingleStream;
 use crate::events3::lsplst;
 use crate::events3::mspfwd::ReadMsp03Fwd;
 use crate::events3::mspfwd::ReadMspFwdStream;
@@ -37,9 +38,9 @@ macro_rules! debug { ($($arg:tt)*) => ( if true { log::debug!($($arg)*); } ) }
 macro_rules! trace { ($($arg:tt)*) => ( if true { log::trace!($($arg)*); } ) }
 
 autoerr::create_error_v1!(
-    name(Error, "FwdMspMerged"),
+    name(Error, "LspFwdMspMulti"),
     enum variants {
-        Logic,
+        MspFwd(#[from] crate::events3::mspfwd::Error),
     },
 );
 
@@ -67,24 +68,6 @@ impl Opts {
     pub fn is_values(&self) -> bool {
         self.with_values
     }
-}
-
-#[derive(Debug)]
-enum State {
-    Done,
-}
-
-// The user must already have found the ts of the latest-one-before
-// and use that in the passed range begin.
-// This type has therefore no option for one-before.
-#[derive(Debug)]
-pub struct FwdMspMerged {
-    series_info: SeriesInfo,
-    ks: KeyspaceId,
-    scyqu: ScyllaQueueCluster,
-    range: ScyllaSeriesRange,
-    opts: Opts,
-    state: State,
 }
 
 // Then merge those here.
@@ -205,3 +188,160 @@ This gives us a safe delivery frontier.
   - The Error type already has a Logic variant; add LspFwdError(#[from] lspfwd::Error) and
     MspFwdError(#[from] mspfwd::Error) variants.
 */
+
+pub type Item = crate::events3::lspfwd::Item;
+
+#[derive(Debug)]
+struct Inp {
+    evs: LspFwdMspSingleStream,
+    buf: Option<Item>,
+}
+
+#[derive(Debug)]
+struct InputIx(usize);
+
+#[derive(Debug)]
+enum NextTs {
+    None,
+    One(TsNano, InputIx),
+    Two(TsNano, InputIx, TsNano, InputIx),
+}
+
+struct BaseRefs<'a> {
+    series_info: &'a SeriesInfo,
+    ks: &'a KeyspaceId,
+    range: &'a ScyllaSeriesRange,
+    scyqu: &'a mut ScyllaQueueCluster,
+}
+
+#[derive(Debug)]
+struct Merging {
+    msps: Option<ReadMspFwdStream>,
+    mspbuf: VecDeque<TsMs>,
+    inps: VecDeque<Inp>,
+}
+
+impl Merging {
+    fn poll_state(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        brefs: BaseRefs,
+    ) -> Poll<Option<Sitemty2<Item, Error>>> {
+        use Poll::*;
+        loop {
+            let mut hpp = HaveProgressPending::new();
+            let self2 = self.as_mut().get_mut();
+            if let Some(&msp_next) = self2.mspbuf.front() {
+                // continue processing with a next msp at hand.
+            } else if let Some(inp) = self2.msps.as_mut() {
+                match inp.poll_next_unpin(cx) {
+                    Ready(Some(x)) => {
+                        hpp.mark_progress();
+                        match x {
+                            Ok(x) => {
+                                self2.mspbuf.extend(x);
+                            }
+                            Err(e) => break Ready(Some(Err(e.into()))),
+                        }
+                    }
+                    Ready(None) => {
+                        hpp.mark_progress();
+                        self2.msps = None;
+                    }
+                    Pending => {
+                        hpp.mark_pending();
+                    }
+                }
+            } else {
+                // continue processing without next msp.
+            }
+            break if hpp.have_progress() {
+                continue;
+            } else if hpp.have_pending() {
+                Pending
+            } else {
+                Ready(None)
+            };
+        }
+    }
+
+    fn check_inputs(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        brefs: BaseRefs,
+        msp_next: Option<TsMs>,
+    ) -> Poll<Option<Sitemty2<Item, Error>>> {
+        use Poll::*;
+        loop {
+            let mut hpp = HaveProgressPending::new();
+            let self2 = self.as_mut().get_mut();
+            // TODO check whether we have to open next msp before we can make a decision.
+            todo!()
+        }
+    }
+
+    fn find_next_ts(mut self: Pin<&mut Self>, cx: &mut Context<'_>, brefs: BaseRefs) -> NextTs {
+        todo!()
+    }
+}
+
+#[derive(Debug)]
+enum State {
+    Merging(Merging),
+    Done,
+}
+
+#[derive(Debug)]
+pub struct LspFwdMspMulti {
+    series_info: SeriesInfo,
+    ks: KeyspaceId,
+    range: ScyllaSeriesRange,
+    opts: Opts,
+    state: State,
+    scyqu: ScyllaQueueCluster,
+}
+
+impl LspFwdMspMulti {}
+
+impl Stream for LspFwdMspMulti {
+    type Item = Sitemty2<Item, Error>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        use Poll::*;
+        loop {
+            let mut hpp = HaveProgressPending::new();
+            let self2 = self.as_mut().get_mut();
+            match &mut self2.state {
+                State::Merging(st1) => {
+                    let brefs = BaseRefs {
+                        series_info: &self2.series_info,
+                        ks: &self2.ks,
+                        range: &self2.range,
+                        scyqu: &mut self2.scyqu,
+                    };
+                    match Pin::new(st1).poll_state(cx, brefs) {
+                        Ready(Some(x)) => {
+                            hpp.mark_progress();
+                            break Ready(Some(x));
+                        }
+                        Ready(None) => {
+                            hpp.mark_progress();
+                            self2.state = State::Done;
+                        }
+                        Pending => {
+                            hpp.mark_pending();
+                        }
+                    }
+                }
+                State::Done => {}
+            }
+            break if hpp.have_progress() {
+                continue;
+            } else if hpp.have_pending() {
+                Pending
+            } else {
+                Ready(None)
+            };
+        }
+    }
+}

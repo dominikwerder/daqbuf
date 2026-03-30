@@ -159,6 +159,18 @@ pub struct ReadMspFwdStream {
     scyqu: ScyllaQueueCluster,
 }
 
+impl fmt::Debug for ReadMspFwdStream {
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt.debug_struct("ReadMspFwdStream")
+            .field("ks", &self.ks)
+            .field("series", &self.series)
+            .field("range", &self.range)
+            .field("begexcl", &self.begexcl)
+            .field("limit", &self.limit)
+            .finish()
+    }
+}
+
 impl ReadMspFwdStream {
     pub fn new(
         ks: KeyspaceId,

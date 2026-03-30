@@ -5,6 +5,7 @@ use crate::worker::KeyspaceId;
 use crate::worker::ScyllaQueueCluster;
 use futures_util::FutureExt;
 use futures_util::Stream;
+use std::fmt;
 use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
@@ -19,6 +20,18 @@ pub struct LspFwdMspSingleStream {
     limit: u32,
     fut: Option<Pin<Box<dyn Future<Output = Item> + Send>>>,
     scyqu: ScyllaQueueCluster,
+}
+
+impl fmt::Debug for LspFwdMspSingleStream {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("LspFwdMspSingleStream")
+            .field("ks", &self.ks)
+            .field("series_info", &self.series_info)
+            .field("msp", &self.msp)
+            .field("range", &self.range)
+            .field("limit", &self.limit)
+            .finish()
+    }
 }
 
 impl LspFwdMspSingleStream {
