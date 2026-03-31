@@ -13,6 +13,7 @@ use futures_util::StreamExt;
 use items_0::streamitem::RangeCompletableItem;
 use items_0::streamitem::Sitemty2;
 use items_0::streamitem::StreamItem;
+use items_0::timebin::BinningggContainerEventsDyn;
 use items_2::channelevents::ChannelEvents;
 use netpod::DtNano;
 use netpod::RangeExcl;
@@ -41,6 +42,9 @@ autoerr::create_error_v1!(
     name(Error, "LspFwdMspMulti"),
     enum variants {
         MspFwd(#[from] crate::events3::mspfwd::Error),
+        LspFwd(#[from] crate::events3::lspfwd::Error),
+        FindNextTsWithoutBuf,
+        FindNextTsOnEmptyBuf,
     },
 );
 
@@ -111,20 +115,6 @@ This gives us a safe delivery frontier.
       Set when ReadMspFwdStream returns Ready(None).
 
 
-── Constructor new(...) ─────────────────────────────────────────────────────────────────────
-
-  Takes an additional `known_msps: Vec<MspEv>` parameter (sorted ascending).
-  Steps:
-    1. Build ReadMspFwdStream starting from the range whose beg is the highest known_msp
-       start (or range.beg if known_msps is empty).  Use RangeExcl::Beg to exclude the
-       highest known_msp itself so we don't double-count it.
-    2. Open one LspFwdMspSingleStream per known MSP (limit = 40).
-    3. Store in open, buffers all None.
-    4. Set known_msps = VecDeque::new() (all opened), msp_stream_done = false.
-
-  Note: if known_msps is large, the caller should pass only the MSPs that plausibly overlap
-  the range (i.e. msp.start < range.end).
-
 
 ── poll_next state machine ──────────────────────────────────────────────────────────────────
 
@@ -172,13 +162,6 @@ This gives us a safe delivery frontier.
           If Done: set buffer = None (stream needs more data next iteration).
         None: nothing to drain from this buffer.
 
-  Step 5 — yield or continue:
-    If merged is Some and non-empty: return Ready(Some(Ok(merged))).
-    If has_pending: return Pending.
-    If all streams exhausted and msp_stream_done: return Ready(None).
-    Otherwise: continue loop (recheck after state updates).
-
-
 ── Notes ────────────────────────────────────────────────────────────────────────────────────
 
   - EventsBoxed = Box<dyn BinningggContainerEventsDyn>  (from items_0::timebin).
@@ -189,11 +172,11 @@ This gives us a safe delivery frontier.
     MspFwdError(#[from] mspfwd::Error) variants.
 */
 
-pub type Item = crate::events3::lspfwd::Item;
+pub type Item = Box<dyn BinningggContainerEventsDyn>;
 
 #[derive(Debug)]
 struct Inp {
-    evs: LspFwdMspSingleStream,
+    evs: Option<LspFwdMspSingleStream>,
     buf: Option<Item>,
 }
 
@@ -215,6 +198,12 @@ struct BaseRefs<'a> {
 }
 
 #[derive(Debug)]
+enum CheckInputItem {
+    OpenNextMsp,
+    Item(Item),
+}
+
+#[derive(Debug)]
 struct Merging {
     msps: Option<ReadMspFwdStream>,
     mspbuf: VecDeque<TsMs>,
@@ -222,6 +211,193 @@ struct Merging {
 }
 
 impl Merging {
+    fn find_next_ts(self: Pin<&mut Self>) -> Result<NextTs, Error> {
+        let self2 = self.get_mut();
+        let mut best: Option<(TsNano, usize)> = None;
+        let mut second: Option<(TsNano, usize)> = None;
+        for (ix, inp) in self2.inps.iter_mut().enumerate() {
+            if let Some(buf) = inp.buf.as_mut() {
+                if let Some(ts) = buf.as_mergeable_dyn_mut().ts_min() {
+                    match best {
+                        Some((ts_1st, _)) => {
+                            if ts < ts_1st {
+                                second = best;
+                                best = Some((ts, ix));
+                            } else {
+                                match second {
+                                    None => {
+                                        second = Some((ts, ix));
+                                    }
+                                    Some((ts_2nd, _)) => {
+                                        if ts < ts_2nd {
+                                            second = Some((ts, ix));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        None => {
+                            best = Some((ts, ix));
+                        }
+                    }
+                } else {
+                    return Err(Error::FindNextTsOnEmptyBuf);
+                }
+            } else {
+                return Err(Error::FindNextTsWithoutBuf);
+            }
+        }
+        let ret = match (best, second) {
+            (None, _) => NextTs::None,
+            (Some((ts1, ix1)), None) => NextTs::One(ts1, InputIx(ix1)),
+            (Some((ts1, ix1)), Some((ts2, ix2))) => NextTs::Two(ts1, InputIx(ix1), ts2, InputIx(ix2)),
+        };
+        Ok(ret)
+    }
+
+    fn consider_input(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        brefs: BaseRefs,
+        msp_next: Option<TsMs>,
+    ) -> Poll<Option<Sitemty2<Item, Error>>> {
+        use Poll::*;
+        loop {
+            let mut hpp = HaveProgressPending::new();
+            break if hpp.have_progress() {
+                continue;
+            } else if hpp.have_pending() {
+                Pending
+            } else {
+                Ready(None)
+            };
+        }
+    }
+
+    fn poll_all_inp(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        brefs: BaseRefs,
+    ) -> Poll<Option<Result<(), Error>>> {
+        use Poll::*;
+        // TODO when does this loop actually terminate?
+        'outer: loop {
+            let mut hpp = HaveProgressPending::new();
+            let self2 = self.as_mut().get_mut();
+            for inp in &mut self2.inps {
+                if let Some(buf) = inp.buf.as_mut() {
+                    if buf.len() == 0 {
+                        hpp.mark_progress();
+                        inp.buf = None;
+                    }
+                } else {
+                    if let Some(inps) = inp.evs.as_mut() {
+                        match inps.poll_next_unpin(cx) {
+                            Ready(Some(x)) => {
+                                hpp.mark_progress();
+                                match x {
+                                    Ok(x) => {
+                                        if x.len() == 0 {
+                                            // TODO count for metrics
+                                        } else {
+                                            inp.buf = Some(x);
+                                        }
+                                    }
+                                    Err(e) => break 'outer Ready(Some(Err(e.into()))),
+                                }
+                            }
+                            Ready(None) => {
+                                hpp.mark_progress();
+                                inp.evs = None;
+                            }
+                            Pending => {
+                                hpp.mark_pending();
+                            }
+                        }
+                    } else {
+                        // will get removed
+                    }
+                }
+            }
+            {
+                let n1 = self2.inps.len();
+                self2.inps.retain(|x| x.buf.is_some() || x.evs.is_some());
+                let n2 = self2.inps.len();
+                if n1 != n2 {
+                    hpp.mark_progress();
+                }
+            }
+            let n_it = self2.inps.iter().filter(|x| x.buf.is_none());
+            break if hpp.have_progress() {
+                continue;
+            } else if hpp.have_pending() {
+                Pending
+            } else if n_it.count() == 0 {
+                Ready(Some(Ok(())))
+            } else {
+                Ready(None)
+            };
+        }
+    }
+
+    fn check_inputs(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        brefs: BaseRefs,
+        msp_next: Option<TsMs>,
+    ) -> Poll<Option<Result<CheckInputItem, Error>>> {
+        use Poll::*;
+        loop {
+            let mut hpp = HaveProgressPending::new();
+            let brefs2 = BaseRefs {
+                series_info: brefs.series_info,
+                ks: brefs.ks,
+                range: brefs.range,
+                scyqu: brefs.scyqu,
+            };
+            match self.as_mut().poll_all_inp(cx, brefs2) {
+                Ready(Some(x)) => {
+                    hpp.mark_progress();
+                    match x {
+                        Ok(()) => match self.as_mut().find_next_ts()? {
+                            NextTs::None => {}
+                            NextTs::One(ts1, ix1) => {
+                                // TODO check if msp lower that final entry in ix1 buffer.
+                                // if yes, add a new stream for that msp and start over.
+                            }
+                            NextTs::Two(ts1, ix1, ts2, ix2) => {
+                                if msp_next.map_or(false, |x| x.ns() <= ts2) {
+                                    // TODO add a new stream from that msp.
+                                    // TODO but also have to drain that msp so that it can get replenished from stream.
+                                } else {
+                                    // TODO drain all events with ts <= ts2.
+                                }
+                            }
+                        },
+                        Err(e) => break Ready(Some(Err(e.into()))),
+                    }
+                }
+                Ready(None) => {}
+                Pending => {
+                    hpp.mark_pending();
+                }
+            }
+            let self2 = self.as_mut().get_mut();
+            // TODO check whether we have to open next msp before we can make a decision.
+            break if hpp.have_progress() {
+                continue;
+            } else if hpp.have_pending() {
+                Pending
+            } else {
+                Ready(None)
+            };
+        }
+    }
+
+    fn gen_limit(&mut self) -> u32 {
+        3
+    }
+
     fn poll_state(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -231,8 +407,49 @@ impl Merging {
         loop {
             let mut hpp = HaveProgressPending::new();
             let self2 = self.as_mut().get_mut();
+            let brefs2 = BaseRefs {
+                series_info: brefs.series_info,
+                ks: brefs.ks,
+                range: brefs.range,
+                scyqu: brefs.scyqu,
+            };
             if let Some(&msp_next) = self2.mspbuf.front() {
-                // continue processing with a next msp at hand.
+                match Pin::new(&mut *self2).check_inputs(cx, brefs2, Some(msp_next)) {
+                    Ready(Some(x)) => {
+                        hpp.mark_progress();
+                        match x {
+                            Ok(x) => match x {
+                                CheckInputItem::OpenNextMsp => {
+                                    // In this scope we know that there exists one:
+                                    let msp_next = self2.mspbuf.pop_front().unwrap();
+                                    let msp = MspEv::from(msp_next);
+                                    let stream = LspFwdMspSingleStream::new(
+                                        brefs.ks.clone(),
+                                        brefs.series_info.clone(),
+                                        msp,
+                                        brefs.range.clone(),
+                                        self2.gen_limit(),
+                                        brefs.scyqu.clone(),
+                                    );
+                                    self2.inps.push_back(Inp {
+                                        evs: Some(stream),
+                                        buf: None,
+                                    });
+                                }
+                                CheckInputItem::Item(x) => {
+                                    break Ready(Some(items_0::streamitem::sitem2_data(x)));
+                                }
+                            },
+                            Err(e) => break Ready(Some(Err(e.into()))),
+                        }
+                    }
+                    Ready(None) => {
+                        hpp.mark_progress();
+                    }
+                    Pending => {
+                        hpp.mark_pending();
+                    }
+                }
             } else if let Some(inp) = self2.msps.as_mut() {
                 match inp.poll_next_unpin(cx) {
                     Ready(Some(x)) => {
@@ -253,7 +470,43 @@ impl Merging {
                     }
                 }
             } else {
-                // continue processing without next msp.
+                // TODO can we unify better with the case above?
+                match Pin::new(&mut *self2).check_inputs(cx, brefs2, None) {
+                    Ready(Some(x)) => {
+                        hpp.mark_progress();
+                        match x {
+                            Ok(x) => match x {
+                                CheckInputItem::OpenNextMsp => {
+                                    // In this scope we know that there exists one:
+                                    let msp_next = self2.mspbuf.pop_front().unwrap();
+                                    let msp = MspEv::from(msp_next);
+                                    let stream = LspFwdMspSingleStream::new(
+                                        brefs.ks.clone(),
+                                        brefs.series_info.clone(),
+                                        msp,
+                                        brefs.range.clone(),
+                                        self2.gen_limit(),
+                                        brefs.scyqu.clone(),
+                                    );
+                                    self2.inps.push_back(Inp {
+                                        evs: Some(stream),
+                                        buf: None,
+                                    });
+                                }
+                                CheckInputItem::Item(x) => {
+                                    break Ready(Some(items_0::streamitem::sitem2_data(x)));
+                                }
+                            },
+                            Err(e) => break Ready(Some(Err(e.into()))),
+                        }
+                    }
+                    Ready(None) => {
+                        hpp.mark_progress();
+                    }
+                    Pending => {
+                        hpp.mark_pending();
+                    }
+                }
             }
             break if hpp.have_progress() {
                 continue;
@@ -263,25 +516,6 @@ impl Merging {
                 Ready(None)
             };
         }
-    }
-
-    fn check_inputs(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        brefs: BaseRefs,
-        msp_next: Option<TsMs>,
-    ) -> Poll<Option<Sitemty2<Item, Error>>> {
-        use Poll::*;
-        loop {
-            let mut hpp = HaveProgressPending::new();
-            let self2 = self.as_mut().get_mut();
-            // TODO check whether we have to open next msp before we can make a decision.
-            todo!()
-        }
-    }
-
-    fn find_next_ts(mut self: Pin<&mut Self>, cx: &mut Context<'_>, brefs: BaseRefs) -> NextTs {
-        todo!()
     }
 }
 
@@ -301,7 +535,33 @@ pub struct LspFwdMspMulti {
     scyqu: ScyllaQueueCluster,
 }
 
-impl LspFwdMspMulti {}
+impl LspFwdMspMulti {
+    pub fn new(
+        ks: KeyspaceId,
+        series_info: SeriesInfo,
+        range: ScyllaSeriesRange,
+        opts: Opts,
+        scyqu: ScyllaQueueCluster,
+        msps: VecDeque<MspEv>,
+    ) -> Self {
+        todo!("use the passed msps, because the caller already has this reduced set at hand.");
+        // TODO start the msp stream only from the largest passed msp onwards.
+        // TODO what if the passed set is empty? Then start msp stream only from range.beg()
+        let state = State::Merging(Merging {
+            msps: None,
+            mspbuf: VecDeque::new(),
+            inps: VecDeque::new(),
+        });
+        Self {
+            ks,
+            series_info,
+            range,
+            opts,
+            state,
+            scyqu,
+        }
+    }
+}
 
 impl Stream for LspFwdMspMulti {
     type Item = Sitemty2<Item, Error>;
