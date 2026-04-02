@@ -219,10 +219,9 @@ async fn make_msp_dir(
     Ok(qu)
 }
 
-async fn make_ts_msp_fwd_3_4(
+async fn make_ts_msp_fwd_3(
     ks: &str,
     rt: &RetentionTime,
-    begexcl: bool,
     query_opts: &str,
     scy: &Session,
 ) -> Result<PreparedStatement, Error> {
@@ -232,7 +231,7 @@ async fn make_ts_msp_fwd_3_4(
         "{}{}{}{}",
         format_args!("select ts_msp from {ks}.{tpre}{table_name}"),
         format_args!(" where series = ?"),
-        format_args!(" and ts_msp {} ? and ts_msp < ?", if begexcl { ">" } else { ">=" }),
+        format_args!(" and ts_msp >= ? and ts_msp < ?"),
         format_args!(" limit ? {query_opts}")
     );
     log_prepare!("{ks} {rt} {cql}");
@@ -636,7 +635,6 @@ pub struct StmtsEventsQueryOpts {
     ts_msp_bck: PreparedStatement,
     ts_msp_bck_workaround: PreparedStatement,
     ts_msp_fwd3: PreparedStatement,
-    ts_msp_fwd4: PreparedStatement,
     lsp_all: StmtsLspAll,
     lsp_fwd_val: StmtsLspDir,
     lsp_bck_val: StmtsLspDir,
@@ -653,8 +651,7 @@ impl StmtsEventsQueryOpts {
             ts_msp_fwd: make_msp_dir(ks, rt, false, query_opts, scy).await?,
             ts_msp_bck: make_msp_dir(ks, rt, true, query_opts, scy).await?,
             ts_msp_bck_workaround: make_msp_fwd_for_bck_workaround(ks, rt, query_opts, scy).await?,
-            ts_msp_fwd3: make_ts_msp_fwd_3_4(ks, rt, false, query_opts, scy).await?,
-            ts_msp_fwd4: make_ts_msp_fwd_3_4(ks, rt, true, query_opts, scy).await?,
+            ts_msp_fwd3: make_ts_msp_fwd_3(ks, rt, query_opts, scy).await?,
             lsp_all: make_lsp_all(ks, rt, query_opts, scy).await?,
             lsp_fwd_val: make_lsp_dir(ks, rt, "ts_lsp, value", false, query_opts, scy).await?,
             lsp_bck_val: make_lsp_dir(ks, rt, "ts_lsp, value", true, query_opts, scy).await?,
@@ -682,10 +679,6 @@ impl StmtsEventsQueryOpts {
 
     pub fn ts_msp_fwd3(&self) -> &PreparedStatement {
         &self.ts_msp_fwd3
-    }
-
-    pub fn ts_msp_fwd4(&self) -> &PreparedStatement {
-        &self.ts_msp_fwd4
     }
 
     pub fn lsp_all(&self) -> &StmtsLspAll {

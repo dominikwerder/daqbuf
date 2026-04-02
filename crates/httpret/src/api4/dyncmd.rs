@@ -667,6 +667,9 @@ impl LspFwdMspMultiCmd {
                         let range = range.clone();
                         move |x| {
                             res_to_stream::ResultToStream::new(x, |(ks, msp_bck)| {
+                                for x in msp_bck.iter() {
+                                    info!("msp_bck  {ks:?}  {x}");
+                                }
                                 let cl = cl.clone();
                                 let series_info = series_info.clone();
                                 let range = range.clone();

@@ -87,13 +87,10 @@ impl ReadMsp03Fwd {
     async fn exec_inner(&self, stmts: &StmtsEventsQueryOpts, scy: &Session) -> Result<VecDeque<TsMs>, Error> {
         let beg = self.range.beg().to_dt_ms().to_i64();
         let end = self.range.end().to_dt_ms().to_i64();
+        let beg = if self.begexcl.excl_beg() { 1 + beg } else { beg };
         let limit = self.limit;
         let params = (self.series.to_i64(), beg, end, limit as i32);
-        let stmt = if self.begexcl.excl_beg() {
-            stmts.ts_msp_fwd4().clone()
-        } else {
-            stmts.ts_msp_fwd3().clone()
-        };
+        let stmt = stmts.ts_msp_fwd3().clone();
         let mut rows = scy.execute_iter(stmt, params).await?.rows_stream::<(i64,)>()?;
         let mut ret = VecDeque::new();
         while let Some((v,)) = rows.try_next().await? {
