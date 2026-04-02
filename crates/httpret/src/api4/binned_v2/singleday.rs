@@ -44,7 +44,6 @@ macro_rules! error { ($($arg:tt)*) => ( if true { log::error!($($arg)*); } ); }
 macro_rules! info { ($($arg:tt)*) => ( if true { log::info!($($arg)*); } ); }
 macro_rules! debug { ($($arg:tt)*) => ( if true { log::debug!($($arg)*); } ); }
 macro_rules! trace { ($($arg:tt)*) => ( if true { log::trace!($($arg)*); } ); }
-macro_rules! log_query { ($($arg:tt)*) => ( if true { log::info!($($arg)*); } ); }
 
 autoerr::create_error_v1!(
     name(Error, "BinnedSingleday"),
@@ -202,7 +201,7 @@ async fn instrumented(
     }
 }
 
-async fn deliver_json(res2: HandleRes2<'_>, ctx: &ReqCtx, ncc: &NodeConfigCached) -> Result<StreamResponse, Error> {
+async fn deliver_json(res2: HandleRes2<'_>, ctx: &ReqCtx, _ncc: &NodeConfigCached) -> Result<StreamResponse, Error> {
     let series = SeriesId::new(res2.ch_conf.series().unwrap());
     let range = res2.query.range().to_time().unwrap();
     let scyqueue = res2.scyqueue.as_ref().unwrap();

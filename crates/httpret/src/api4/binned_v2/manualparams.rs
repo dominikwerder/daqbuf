@@ -9,7 +9,6 @@ use crate::ServiceSharedResources;
 use bytes::Bytes;
 use daqbuf_err as err;
 use dbconn::worker::PgQueue;
-use futures_util::future::ready;
 use futures_util::Stream;
 use futures_util::StreamExt;
 use http::header::CONTENT_TYPE;
@@ -27,17 +26,14 @@ use httpclient::Requ;
 use httpclient::StreamResponse;
 use httpclient::ToJsonBody;
 use items_0::collect_s::CollectableDyn;
-use items_0::streamitem::LogItem;
 use items_0::streamitem::RangeCompletableItem;
 use items_0::streamitem::StreamItem;
 use items_2::binning::container_bins::ContainerBins;
 use items_2::jsonbytes::JsonBytes;
 use netpod::log;
 use netpod::req_uri_to_url;
-use netpod::timeunits::SEC;
 use netpod::ttl::RetentionTime;
 use netpod::BinnedRange;
-use netpod::DtMs;
 use netpod::FromUrl;
 use netpod::NodeConfigCached;
 use netpod::ReqCtx;
@@ -46,7 +42,6 @@ use netpod::APP_JSON_FRAMED;
 use netpod::HEADER_NAME_REQUEST_ID;
 use query::api4::binned::BinnedQuery;
 use scyllaconn::binned2::binnedrtpbp::BinnedRtPbpStream;
-use scyllaconn::binwriteindex::BinWriteIndexRtStream;
 use scyllaconn::worker::ScyllaQueue;
 use series::msp::PrebinnedPartitioning;
 use series::SeriesId;
@@ -62,7 +57,6 @@ macro_rules! error { ($($arg:tt)*) => ( if true { log::error!($($arg)*); } ); }
 macro_rules! info { ($($arg:tt)*) => ( if true { log::info!($($arg)*); } ); }
 macro_rules! debug { ($($arg:tt)*) => ( if true { log::debug!($($arg)*); } ); }
 macro_rules! trace { ($($arg:tt)*) => ( if true { log::trace!($($arg)*); } ); }
-macro_rules! log_query { ($($arg:tt)*) => ( if true { log::info!($($arg)*); } ); }
 
 autoerr::create_error_v1!(
     name(Error, "BinnedManualParams"),
@@ -239,7 +233,7 @@ async fn instrumented(
 fn build_stream(
     res2: HandleRes2<'_>,
     ctx: &ReqCtx,
-    ncc: &NodeConfigCached,
+    _ncc: &NodeConfigCached,
 ) -> impl Stream<Item = Result<StreamItem<ContainerBins<f32, f32>>, Error>> {
     let series = SeriesId::new(res2.ch_conf.series().unwrap());
     let range = res2.query.range().to_time().unwrap();
@@ -272,10 +266,13 @@ async fn deliver_json_framed(
     ctx: &ReqCtx,
     ncc: &NodeConfigCached,
 ) -> Result<StreamResponse, Error> {
-    let timeout_provider = res2.timeout_provider.clone();
-    let rt_opt = res2.query.use_rt();
-    let pbp1_opt = res2.query.pbp1();
-    let use_pbp_opt = res2.query.use_pbp();
+    {
+        #![allow(unused)]
+        let timeout_provider = res2.timeout_provider.clone();
+        let rt_opt = res2.query.use_rt();
+        let pbp1_opt = res2.query.pbp1();
+        let use_pbp_opt = res2.query.use_pbp();
+    }
     let logspan = res2.logspan.clone();
     let stream = build_stream(res2, ctx, ncc);
     let stream = stream.map(|e| match e {
@@ -303,8 +300,12 @@ async fn deliver_json_framed(
 async fn deliver_json(res2: HandleRes2<'_>, ctx: &ReqCtx, ncc: &NodeConfigCached) -> Result<StreamResponse, Error> {
     let timeout_provider = res2.timeout_provider.clone();
     let rt_opt = res2.query.use_rt();
-    let pbp1_opt = res2.query.pbp1();
-    let use_pbp_opt = res2.query.use_pbp();
+    let pbp1_opt = res2.query.pbp1().cloned();
+    {
+        #![allow(unused)]
+        let use_pbp_opt = res2.query.use_pbp();
+    }
+    let logspan2 = res2.logspan.clone();
     let stream = build_stream(res2, ctx, ncc);
     let stream = stream.map(|e| {
         match e {
@@ -335,38 +336,41 @@ async fn deliver_json(res2: HandleRes2<'_>, ctx: &ReqCtx, ncc: &NodeConfigCached
         CollectResult::Empty => CollectResult::Empty,
         CollectResult::Timeout => CollectResult::Timeout,
     };
-    return match res {
-        CollectResult::Some(item) => {
-            let ret = response(StatusCode::OK)
-                .header(CONTENT_TYPE, APP_JSON)
-                .header(HEADER_NAME_REQUEST_ID, ctx.reqid())
-                .body(ToJsonBody::from(item.into_bytes()).into_body())?;
-            Ok(ret)
+    if true {
+        match res {
+            CollectResult::Some(item) => {
+                let ret = response(StatusCode::OK)
+                    .header(CONTENT_TYPE, APP_JSON)
+                    .header(HEADER_NAME_REQUEST_ID, ctx.reqid())
+                    .body(ToJsonBody::from(item.into_bytes()).into_body())?;
+                Ok(ret)
+            }
+            CollectResult::Empty => {
+                let ret = error_status_response(StatusCode::NO_CONTENT, format!("no content"), ctx.reqid());
+                Ok(ret)
+            }
+            CollectResult::Timeout => {
+                let ret = error_status_response(
+                    StatusCode::GATEWAY_TIMEOUT,
+                    format!("no content within timeout"),
+                    ctx.reqid(),
+                );
+                Ok(ret)
+            }
         }
-        CollectResult::Empty => {
-            let ret = error_status_response(StatusCode::NO_CONTENT, format!("no content"), ctx.reqid());
-            Ok(ret)
-        }
-        CollectResult::Timeout => {
-            let ret = error_status_response(
-                StatusCode::GATEWAY_TIMEOUT,
-                format!("no content within timeout"),
-                ctx.reqid(),
-            );
-            Ok(ret)
-        }
-    };
-    let js = serde_json::json!({
-        "rt": rt_opt,
-        "pbp1": pbp1_opt,
-        "objs": (),
-    });
-    let bb = serde_json::to_vec(&js).unwrap();
-    let stream = futures_util::stream::iter([Bytes::from(bb)]).map(|x| Ok::<_, Error>(x));
-    let stream = streams::instrument::InstrumentStream::new(stream, res2.logspan);
-    let ret = response(StatusCode::OK)
-        .header(CONTENT_TYPE, APP_JSON)
-        .header(HEADER_NAME_REQUEST_ID, ctx.reqid())
-        .body(body_stream(stream))?;
-    Ok(ret)
+    } else {
+        let js = serde_json::json!({
+            "rt": rt_opt,
+            "pbp1": pbp1_opt,
+            "objs": (),
+        });
+        let bb = serde_json::to_vec(&js).unwrap();
+        let stream = futures_util::stream::iter([Bytes::from(bb)]).map(|x| Ok::<_, Error>(x));
+        let stream = streams::instrument::InstrumentStream::new(stream, logspan2);
+        let ret = response(StatusCode::OK)
+            .header(CONTENT_TYPE, APP_JSON)
+            .header(HEADER_NAME_REQUEST_ID, ctx.reqid())
+            .body(body_stream(stream))?;
+        Ok(ret)
+    }
 }

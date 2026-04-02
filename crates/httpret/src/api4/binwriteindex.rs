@@ -24,7 +24,6 @@ use netpod::ChannelTypeConfigGen;
 use netpod::FromUrl;
 use netpod::NodeConfigCached;
 use netpod::ReqCtx;
-use netpod::UseScylla6Workarounds;
 use netpod::APP_JSON;
 use netpod::HEADER_NAME_REQUEST_ID;
 use nodenet::client::OpenBoxedBytesViaHttp;
@@ -187,17 +186,6 @@ async fn binned_instrumented(
     }
 }
 
-fn make_read_provider(
-    chname: &str,
-    scylla_opts: ScyllaOptsQuery,
-    scyqueue: Option<ScyllaQueue>,
-    open_bytes: Pin<Arc<OpenBoxedBytesViaHttp>>,
-    ctx: &ReqCtx,
-    ncc: &NodeConfigCached,
-) -> (Arc<dyn EventsReadProvider>, Arc<dyn CacheReadProvider>) {
-    todo!()
-}
-
 async fn binned_json_single(
     res2: HandleRes2<'_>,
     ctx: &ReqCtx,
@@ -230,6 +218,7 @@ async fn binned_json_single(
     Ok(ret)
 }
 
+#[allow(unused)]
 struct HandleRes2<'a> {
     logspan: Span,
     url: Url,
@@ -259,7 +248,7 @@ impl<'a> HandleRes2<'a> {
             .await?
             .ok_or_else(|| Error::ChannelNotFound)?;
         let open_bytes = Arc::pin(OpenBoxedBytesViaHttp::new(ncc.node_config.cluster.clone()));
-        let (events_read_provider, cache_read_provider) = crate::api4::binwriteindex::make_read_provider(
+        let (events_read_provider, cache_read_provider) = crate::api4::binned::make_read_provider(
             ch_conf.name(),
             scylla_opts.clone(),
             scyqueue.clone(),

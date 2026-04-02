@@ -6,14 +6,10 @@ use netpod::ChannelTypeConfigGen;
 use netpod::NodeConfigCached;
 use netpod::ReqCtx;
 use nodenet::client::OpenBoxedBytesViaHttp;
-use nodenet::scylla::ScyllaEventReadProvider;
 use query::api4::binned::BinnedQuery;
 use query::api4::scyllaopts::ScyllaOptsQuery;
 use scyllaconn::worker::ScyllaQueue;
-use std::pin::Pin;
 use std::sync::Arc;
-use streams::eventsplainreader::DummyCacheReadProvider;
-use streams::eventsplainreader::SfDatabufferEventReadProvider;
 use streams::streamtimeout::StreamTimeout2;
 use streams::timebin::cached::reader::EventsReadProvider;
 use streams::timebin::CacheReadProvider;
@@ -73,9 +69,11 @@ pub struct HandleRes2<'a> {
     pub url: Url,
     pub query: BinnedQuery,
     pub ch_conf: ChannelTypeConfigGen,
+    #[allow(unused)]
     pub events_read_provider: Arc<dyn EventsReadProvider>,
     pub cache_read_provider: Arc<dyn CacheReadProvider>,
     pub timeout_provider: Arc<dyn StreamTimeout2>,
+    #[allow(unused)]
     pub pgqueue: &'a PgQueue,
     pub scyqueue: Option<ScyllaQueue>,
     pub scylla_opts: ScyllaOptsQuery,
@@ -97,10 +95,10 @@ impl<'a> HandleRes2<'a> {
             .await?
             .ok_or_else(|| Error::ChannelNotFound)?;
         let open_bytes = Arc::pin(OpenBoxedBytesViaHttp::new(ncc.node_config.cluster.clone()));
-        let (events_read_provider, cache_read_provider) = make_read_provider(
+        let (events_read_provider, cache_read_provider) = crate::api4::binned::make_read_provider(
             ch_conf.name(),
-            scyqueue.clone(),
             scylla_opts.clone(),
+            scyqueue.clone(),
             open_bytes,
             ctx,
             ncc,
@@ -120,43 +118,4 @@ impl<'a> HandleRes2<'a> {
         };
         Ok(ret)
     }
-}
-
-fn make_read_provider(
-    chname: &str,
-    scyqueue: Option<ScyllaQueue>,
-    scylla_opts: ScyllaOptsQuery,
-    open_bytes: Pin<Arc<OpenBoxedBytesViaHttp>>,
-    ctx: &ReqCtx,
-    ncc: &NodeConfigCached,
-) -> (Arc<dyn EventsReadProvider>, Arc<dyn CacheReadProvider>) {
-    let events_read_provider = if chname.starts_with("unittest") {
-        let x = streams::teststream::UnitTestStream::new();
-        Arc::new(x)
-    } else if ncc.node_config.cluster.scylla_lt().is_some() {
-        scyqueue
-            .clone()
-            .map(|qu| ScyllaEventReadProvider::new(qu, scylla_opts.clone()))
-            .map(|x| Arc::new(x) as Arc<dyn EventsReadProvider>)
-            .expect("scylla queue")
-    } else if ncc.node.sf_databuffer.is_some() {
-        // TODO do not clone the request. Pass an Arc up to here.
-        let x = SfDatabufferEventReadProvider::new(Arc::new(ctx.clone()), open_bytes);
-        Arc::new(x)
-    } else {
-        panic!("unexpected backend")
-    };
-    let cache_read_provider = if ncc.node_config.cluster.scylla_lt().is_some() {
-        scyqueue
-            .clone()
-            .map(|qu| scyllaconn::bincache::ScyllaPrebinnedReadProvider::new(scylla_opts, qu))
-            .map(|x| Arc::new(x) as Arc<dyn CacheReadProvider>)
-            .expect("scylla queue")
-    } else if ncc.node.sf_databuffer.is_some() {
-        let x = DummyCacheReadProvider::new();
-        Arc::new(x)
-    } else {
-        panic!("unexpected backend")
-    };
-    (events_read_provider, cache_read_provider)
 }
