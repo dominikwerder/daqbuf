@@ -1065,6 +1065,11 @@ where
         if x == 0 { None } else { Some(x - 1) }
     }
 
+    fn find_highest_index_le(&self, ts: TsNano) -> Option<usize> {
+        let x = self.tss.partition_point(|&x| x <= ts);
+        if x == 0 { None } else { Some(x - 1) }
+    }
+
     fn tss_for_testing(&self) -> VecDeque<TsNano> {
         self.tss.clone()
     }
@@ -1123,6 +1128,10 @@ where
 
     fn find_highest_index_lt(&self, ts: TsNano) -> Option<usize> {
         MergeableTy::find_highest_index_lt(self, ts)
+    }
+
+    fn find_highest_index_le(&self, ts: TsNano) -> Option<usize> {
+        MergeableTy::find_highest_index_le(self, ts)
     }
 
     fn tss_for_testing(&self) -> VecDeque<TsNano> {

@@ -872,6 +872,19 @@ impl MergeableTy for ChannelEvents {
         }
     }
 
+    fn find_highest_index_le(&self, ts: TsNano) -> Option<usize> {
+        match self {
+            ChannelEvents::Events(k) => k.find_highest_index_le(ts),
+            ChannelEvents::Status(k) => {
+                if let Some(k) = k {
+                    if k.ts <= ts { Some(0) } else { None }
+                } else {
+                    None
+                }
+            }
+        }
+    }
+
     fn tss_for_testing(&self) -> VecDeque<TsNano> {
         match self {
             ChannelEvents::Events(x) => x.tss_for_testing(),
