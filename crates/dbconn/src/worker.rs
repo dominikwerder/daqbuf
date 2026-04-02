@@ -11,27 +11,10 @@ use netpod::SeriesKind;
 use netpod::SfDbChannel;
 use netpod::log::*;
 use netpod::range::evrange::NanoRange;
-use std::fmt;
-use std::hash::RandomState;
 use std::io::ErrorKind;
 use std::time::Duration;
 use taskrun::tokio;
-use tokio::task::JoinHandle;
 use tokio_postgres::Client;
-
-struct JobStash(Job);
-
-impl fmt::Debug for JobStash {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        write!(fmt, "JobStash")
-    }
-}
-
-impl fmt::Display for JobStash {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        fmt::Debug::fmt(self, fmt)
-    }
-}
 
 autoerr::create_error_v1!(
     name(Error, "PgWorker"),
@@ -252,7 +235,8 @@ impl PgWorker {
             rx,
         };
         // TODO await join handle
-        let worker_jh = taskrun::spawn(async move {
+        #[allow(unused)]
+        let jh = taskrun::spawn(async move {
             let x = worker.work().await;
             match x {
                 Ok(()) => {}

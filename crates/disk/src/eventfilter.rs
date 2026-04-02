@@ -18,13 +18,13 @@ pub struct EventFullShapeFilter<INP> {
     inp: INP,
     scalar_type_exp: ScalarType,
     shape_exp: Shape,
+    #[allow(unused)]
     node_ix: usize,
     log_items: VecDeque<LogItem>,
 }
 
 impl<INP> EventFullShapeFilter<INP> {
     fn filter_item(&mut self, item: &mut EventFull) {
-        let node_ix = self.node_ix;
         let p: Vec<_> = (0..item.len())
             .map(|i| {
                 let sh = item.shape_derived(i, &self.scalar_type_exp, &self.shape_exp);

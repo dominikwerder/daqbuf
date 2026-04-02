@@ -1,10 +1,6 @@
 use super::tools::HandleRes2;
 use crate::bodystream::response;
-use crate::channelconfig::ch_conf_from_binned;
-use crate::requests::accepts_cbor_framed;
 use crate::requests::accepts_json_framed;
-use crate::requests::accepts_json_or_all;
-use crate::requests::accepts_octets;
 use crate::ServiceSharedResources;
 use daqbuf_err as err;
 use dbconn::worker::PgQueue;
@@ -18,42 +14,22 @@ use httpclient::bad_request_response;
 use httpclient::body_empty;
 use httpclient::body_stream;
 use httpclient::error_response;
-use httpclient::error_status_response;
 use httpclient::not_found_response;
-use httpclient::IntoBody;
 use httpclient::Requ;
 use httpclient::StreamResponse;
-use httpclient::ToJsonBody;
 use netpod::log;
 use netpod::req_uri_to_url;
 use netpod::timeunits::SEC;
-use netpod::ttl::RetentionTime;
-use netpod::BinnedRange;
-use netpod::ChannelTypeConfigGen;
 use netpod::FromUrl;
 use netpod::NodeConfigCached;
 use netpod::ReqCtx;
-use netpod::UseScylla6Workarounds;
-use netpod::APP_CBOR_FRAMED;
-use netpod::APP_JSON;
 use netpod::APP_JSON_FRAMED;
 use netpod::HEADER_NAME_REQUEST_ID;
-use nodenet::client::OpenBoxedBytesViaHttp;
-use nodenet::scylla::ScyllaEventReadProvider;
-use query::api4::binned::BinWriteIndexQuery;
 use query::api4::binned::BinnedQuery;
 use scyllaconn::worker::ScyllaQueue;
-use series::msp::PrebinnedPartitioning;
 use series::SeriesId;
-use std::pin::Pin;
-use std::sync::Arc;
 use std::time::Duration;
-use streams::eventsplainreader::DummyCacheReadProvider;
-use streams::eventsplainreader::SfDatabufferEventReadProvider;
-use streams::streamtimeout::StreamTimeout2;
 use streams::streamtimeout::TimeoutableStream;
-use streams::timebin::cached::reader::EventsReadProvider;
-use streams::timebin::CacheReadProvider;
 use streams::timebinnedjson::timeoutable_collectable_stream_to_json_bytes;
 use tracing::Instrument;
 use tracing::Span;
@@ -63,7 +39,6 @@ macro_rules! error { ($($arg:tt)*) => ( if true { log::error!($($arg)*); } ); }
 macro_rules! info { ($($arg:tt)*) => ( if true { log::info!($($arg)*); } ); }
 macro_rules! debug { ($($arg:tt)*) => ( if true { log::debug!($($arg)*); } ); }
 macro_rules! trace { ($($arg:tt)*) => ( if true { log::trace!($($arg)*); } ); }
-macro_rules! log_query { ($($arg:tt)*) => ( if true { log::info!($($arg)*); } ); }
 
 autoerr::create_error_v1!(
     name(Error, "Api4BinnedV2"),
@@ -213,12 +188,11 @@ async fn instrumented(
 async fn deliver_json_framed(
     res2: HandleRes2<'_>,
     ctx: &ReqCtx,
-    ncc: &NodeConfigCached,
+    _ncc: &NodeConfigCached,
 ) -> Result<StreamResponse, Error> {
-    use futures_util::Stream;
     info!("binned_json_framed  V2 prebinned");
     let series = SeriesId::new(res2.ch_conf.series().unwrap());
-    let range = res2.query.range().to_time().unwrap();
+    let _range = res2.query.range().to_time().unwrap();
     let scyqueue = res2.scyqueue.as_ref().unwrap();
     let stream = if false {
         // let stream = scyllaconn::binwriteindex::read_all_coarse::ReadAllCoarse::new(series, range, scyqueue.clone());
@@ -265,7 +239,7 @@ async fn deliver_json_framed(
         let stream = stream.map(|item| {
             use items_0::streamitem::RangeCompletableItem;
             use items_0::streamitem::StreamItem;
-            use items_0::timebin::BinsBoxed;
+            // use items_0::timebin::BinsBoxed;
             match item {
                 Ok(StreamItem::DataItem(mut x)) => {
                     x.fix_numerics();

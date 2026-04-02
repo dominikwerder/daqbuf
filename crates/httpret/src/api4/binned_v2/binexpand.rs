@@ -11,7 +11,6 @@ use std::task::Context;
 use std::task::Poll;
 use tracing::Level;
 
-macro_rules! info_item { ($($arg:tt)*) => { if true { lg::info!($($arg)*); } }; }
 macro_rules! trace_item { ($($arg:tt)*) => { if false { lg::trace!($($arg)*); } }; }
 
 autoerr::create_error_v1!(

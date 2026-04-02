@@ -206,7 +206,7 @@ async fn binned_instrumented(
     }
 }
 
-fn make_read_provider(
+pub fn make_read_provider(
     chname: &str,
     scylla_opts: ScyllaOptsQuery,
     scyqueue: Option<ScyllaQueue>,

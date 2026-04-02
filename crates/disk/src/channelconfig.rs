@@ -1,8 +1,4 @@
 use crate::SfDbChConf;
-use daqbuf_err as err;
-use err::*;
-#[allow(unused)]
-use netpod::log::*;
 use netpod::range::evrange::NanoRange;
 use netpod::timeunits::DAY;
 use netpod::ByteOrder;
@@ -20,6 +16,8 @@ use std::time::Duration;
 use std::time::SystemTime;
 use streams::tcprawclient::TEST_BACKEND;
 use taskrun::tokio;
+
+macro_rules! error { ($($arg:tt)*) => { if true { netpod::log::error!("{}", format_args!($($arg)*)); } }; }
 
 autoerr::create_error_v1!(
     name(ConfigError, "ChannelConfig"),

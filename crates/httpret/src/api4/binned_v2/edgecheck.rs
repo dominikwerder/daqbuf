@@ -1,5 +1,4 @@
 use futures_util::Stream;
-use items_0::streamitem::LogItem;
 use items_0::streamitem::StreamItem;
 use items_2::binning::container_bins::ContainerBins;
 use log::log_item_emit as lg;
@@ -8,10 +7,15 @@ use netpod::TsNano;
 use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
-use tracing::Level;
 
 macro_rules! info_item { ($($arg:tt)*) => { if true { lg::info!($($arg)*); } }; }
 macro_rules! trace_item { ($($arg:tt)*) => { if false { lg::trace!($($arg)*); } }; }
+
+#[allow(unused)]
+fn _keep() {
+    info_item!("");
+    trace_item!("");
+}
 
 autoerr::create_error_v1!(
     name(Error, "Edgecheck"),
@@ -28,6 +32,7 @@ enum State {
 
 pub struct Edgecheck<S> {
     inp: S,
+    #[allow(unused)]
     range: BinnedRange<TsNano>,
     state: State,
 }

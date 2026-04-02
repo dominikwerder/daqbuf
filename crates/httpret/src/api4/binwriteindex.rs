@@ -253,15 +253,20 @@ impl<'a> HandleRes2<'a> {
         scyqueue: Option<ScyllaQueue>,
         ncc: &NodeConfigCached,
     ) -> Result<Self, Error> {
-        todo!("unify with similar code");
         let scylla_opts = ScyllaOptsQuery::new();
         let q2 = BinnedQuery::new(query.channel().clone(), query.range().clone(), 100);
         let ch_conf = ch_conf_from_binned(&q2, ctx, pgqueue, ncc)
             .await?
             .ok_or_else(|| Error::ChannelNotFound)?;
         let open_bytes = Arc::pin(OpenBoxedBytesViaHttp::new(ncc.node_config.cluster.clone()));
-        let (events_read_provider, cache_read_provider) =
-            make_read_provider(ch_conf.name(), scylla_opts, scyqueue.clone(), open_bytes, ctx, ncc);
+        let (events_read_provider, cache_read_provider) = crate::api4::binwriteindex::make_read_provider(
+            ch_conf.name(),
+            scylla_opts.clone(),
+            scyqueue.clone(),
+            open_bytes,
+            ctx,
+            ncc,
+        );
         let timeout_provider = streamio::streamtimeout::StreamTimeout::boxed();
         let ret = Self {
             logspan,

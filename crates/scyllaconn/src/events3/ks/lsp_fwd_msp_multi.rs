@@ -100,6 +100,20 @@ struct BaseRefs<'a> {
     scyqu: &'a mut ScyllaQueueCluster,
 }
 
+impl<'a> BaseRefs<'a> {
+    fn clone_mut<'b>(&'b mut self) -> BaseRefs<'a>
+    where
+        'b: 'a,
+    {
+        Self {
+            series_info: &self.series_info,
+            ks: &self.ks,
+            range: &self.range,
+            scyqu: &mut self.scyqu,
+        }
+    }
+}
+
 #[derive(Debug)]
 enum CheckInputItem {
     OpenNextMsp,
@@ -252,7 +266,7 @@ impl Merging {
     fn check_inputs(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
-        brefs: BaseRefs,
+        mut brefs: BaseRefs,
         msp_next: Option<TsMs>,
     ) -> Poll<Option<Result<CheckInputItem, Error>>> {
         use Poll::*;
@@ -529,7 +543,7 @@ impl Stream for LspFwdMspMulti {
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         use Poll::*;
         self.loop_cnt += 1;
-        if self.loop_cnt > 20000 {
+        if self.loop_cnt > 10000 {
             error!("LspFwdMspMulti  poll_next  too many");
             return Ready(Some(Err(Error::LoopTooMany)));
         }

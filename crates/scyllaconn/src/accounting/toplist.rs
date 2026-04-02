@@ -4,7 +4,6 @@ use netpod::EMIT_ACCOUNTING_SNAP;
 use netpod::TsMs;
 use netpod::ttl::RetentionTime;
 use scylla::client::session::Session as ScySession;
-use scylla::statement::prepared::PreparedStatement;
 
 autoerr::create_error_v1!(
     name(Error, "AccountingToplist"),

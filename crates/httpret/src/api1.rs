@@ -79,14 +79,6 @@ use taskrun::tokio;
 use tracing_futures::Instrument;
 use url::Url;
 
-pub trait BackendAware {
-    fn backend(&self) -> &str;
-}
-
-pub trait FromErrorCode {
-    fn from_error_code(backend: &str, code: ErrorCode) -> Self;
-}
-
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub enum ErrorCode {
     Error,
@@ -128,22 +120,6 @@ pub struct ChannelSearchResultItemV1 {
     pub channels: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<ErrorDescription>,
-}
-
-impl BackendAware for ChannelSearchResultItemV1 {
-    fn backend(&self) -> &str {
-        &self.backend
-    }
-}
-
-impl FromErrorCode for ChannelSearchResultItemV1 {
-    fn from_error_code(backend: &str, code: ErrorCode) -> Self {
-        Self {
-            backend: backend.into(),
-            channels: vec![],
-            error: Some(ErrorDescription { code }),
-        }
-    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -406,20 +382,6 @@ pub struct ChannelConfigV1 {
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
-pub struct ChannelConfigsQueryV1 {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub regex: Option<String>,
-    #[serde(rename = "sourceRegex")]
-    pub source_regex: Option<String>,
-    #[serde(rename = "descriptionRegex")]
-    pub description_regex: Option<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty", default)]
-    pub backends: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub ordering: Option<Ordering>,
-}
-
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct ChannelBackendConfigsV1 {
     pub backend: String,
     pub channels: Vec<ChannelConfigV1>,
@@ -429,22 +391,6 @@ pub struct ChannelBackendConfigsV1 {
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct ChannelConfigsResponseV1(pub Vec<ChannelBackendConfigsV1>);
-
-impl BackendAware for ChannelBackendConfigsV1 {
-    fn backend(&self) -> &str {
-        &self.backend
-    }
-}
-
-impl FromErrorCode for ChannelBackendConfigsV1 {
-    fn from_error_code(backend: &str, code: ErrorCode) -> Self {
-        Self {
-            backend: backend.into(),
-            channels: Vec::new(),
-            error: Some(ErrorDescription { code }),
-        }
-    }
-}
 
 // TODO replace usage of this by gather-generic
 pub async fn gather_json_2_v1(req: Requ, pathpre: &str, _proxy_config: &ProxyConfig) -> Result<StreamResponse, Error> {

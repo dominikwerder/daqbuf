@@ -3,6 +3,7 @@ use netpod::ttl::RetentionTime;
 use scylla::client::session::Session;
 use scylla::statement::prepared::PreparedStatement;
 
+#[allow(unused)]
 macro_rules! error { ($($arg:tt)*) => { if true { log::error!("{}", format_args!($($arg)*)); } }; }
 
 macro_rules! log_prepare { ($($arg:tt)*) => { log::debug!("prepare cql  {}", format_args!($($arg)*)); }; }

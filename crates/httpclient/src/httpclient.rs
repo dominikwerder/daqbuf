@@ -371,7 +371,7 @@ pub async fn connect_client<B>(uri: &http::Uri) -> Result<SendRequest<B>, Error>
 where
     B: Body + Send + 'static,
     <B as Body>::Data: Send,
-    <B as Body>::Error: Into<Box<(dyn std::error::Error + Send + Sync + 'static)>>,
+    <B as Body>::Error: Into<Box<dyn std::error::Error + Send + Sync + 'static>>,
 {
     let scheme = uri.scheme_str().unwrap_or("http");
     let host = uri.host().ok_or_else(|| Error::NoHostInUrl)?;

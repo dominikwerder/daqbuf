@@ -23,7 +23,6 @@ use netpod::TableSizes;
 use netpod::log::*;
 use pg::Client as PgClient;
 use pg::NoTls;
-use serde::Serialize;
 use std::sync::Arc;
 use std::time::Duration;
 use taskrun::tokio;

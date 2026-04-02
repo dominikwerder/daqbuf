@@ -4,6 +4,7 @@ use std::collections::VecDeque;
 
 pub struct Streamlog {
     items: VecDeque<LogItem>,
+    #[allow(unused)]
     node_ix: u32,
 }
 
