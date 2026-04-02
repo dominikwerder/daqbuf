@@ -4805,6 +4805,7 @@ impl RangeExcl {
 
 mod serde_range_excl {
     use crate::RangeExcl;
+    use serde::Deserialize;
     use serde::Serialize;
     use serde::de::Visitor;
     use std::fmt;
@@ -4840,6 +4841,15 @@ mod serde_range_excl {
                 "beg" => Ok(RangeExcl::Beg),
                 _ => Err(E::custom(format!("invalid RangeExcl value: {v}"))),
             }
+        }
+    }
+
+    impl<'de> Deserialize<'de> for RangeExcl {
+        fn deserialize<D>(de: D) -> Result<Self, D::Error>
+        where
+            D: serde::Deserializer<'de>,
+        {
+            de.deserialize_str(Vis)
         }
     }
 }
