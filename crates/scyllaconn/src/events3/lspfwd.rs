@@ -101,7 +101,7 @@ impl Read03LspFwd {
             .clone();
         let lsp_beg = self.msp.lsp(self.range.beg()).map_or(0i64, |x| x.to_i64());
         let lsp_end = self.msp.lsp(self.range.end()).map_or(0i64, |x| x.to_i64());
-        let lim = self.limit as i64;
+        let lim = self.limit as i32;
         let params = (self.series_info.id().to_i64(), self.msp.to_i64(), lsp_beg, lsp_end, lim);
         let mut rows = scy.execute_iter(stmt, params).await?.rows_stream::<(i64,)>()?;
         // TODO branch on type

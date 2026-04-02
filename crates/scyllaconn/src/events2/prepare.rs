@@ -14,13 +14,21 @@ autoerr::create_error_v1!(
     enum variants {
         ScyllaNextRow(#[from] scylla::errors::NextRowError),
         ScyllaWorker(Box<crate::worker::Error>),
-        ScyllaPrepare(#[from] scylla::errors::PrepareError),
+        ScyllaPrepare(scylla::errors::PrepareError, String),
         MissingQuery(String),
         RangeEndOverflow,
         InvalidFuture,
         TestError(String),
     },
 );
+
+async fn scyprep(cql: String, scy: &Session) -> Result<PreparedStatement, Error> {
+    let qu = scy
+        .prepare(cql.clone())
+        .await
+        .map_err(move |e| Error::ScyllaPrepare(e, cql))?;
+    Ok(qu)
+}
 
 #[derive(Debug)]
 pub struct StmtsLspAllShape {
@@ -207,13 +215,14 @@ async fn make_msp_dir(
     let cql =
         format!("select ts_msp from {ks}.{tpre}{table_name} where series = ? and {select_cond} limit ? {query_opts}");
     log_prepare!("{ks} {rt} {cql}");
-    let qu = scy.prepare(cql).await?;
+    let qu = scyprep(cql, scy).await?;
     Ok(qu)
 }
 
-async fn make_ts_msp_fwd2(
+async fn make_ts_msp_fwd_3_4(
     ks: &str,
     rt: &RetentionTime,
+    begexcl: bool,
     query_opts: &str,
     scy: &Session,
 ) -> Result<PreparedStatement, Error> {
@@ -223,11 +232,11 @@ async fn make_ts_msp_fwd2(
         "{}{}{}{}",
         format_args!("select ts_msp from {ks}.{tpre}{table_name}"),
         format_args!(" where series = ?"),
-        format_args!(" and (ts_msp = ? or ts_msp > ?) and ts_msp < ?"),
-        format_args!(" limit 471 {query_opts}")
+        format_args!(" and ts_msp {} ? and ts_msp < ?", if begexcl { ">" } else { ">=" }),
+        format_args!(" limit ? {query_opts}")
     );
     log_prepare!("{ks} {rt} {cql}");
-    let qu = scy.prepare(cql).await?;
+    let qu = scyprep(cql, scy).await?;
     Ok(qu)
 }
 
@@ -248,7 +257,7 @@ async fn make_msp_fwd_for_bck_workaround(
         query_opts
     );
     log_prepare!("{ks} {rt} {cql}");
-    let qu = scy.prepare(cql).await?;
+    let qu = scyprep(cql, scy).await?;
     Ok(qu)
 }
 
@@ -272,7 +281,7 @@ async fn make_lsp_all_shape_st(
         query_opts
     );
     log_prepare!("{ks} {rt} {cql}");
-    let qu = scy.prepare(cql).await?;
+    let qu = scyprep(cql, scy).await?;
     Ok(qu)
 }
 
@@ -310,7 +319,7 @@ async fn make_lsp_all_shape(
                 query_opts
             );
             log_prepare!("{ks} {rt} {cql}");
-            let qu = scy.prepare(cql).await?;
+            let qu = scyprep(cql, scy).await?;
             qu
         },
     };
@@ -354,7 +363,7 @@ async fn make_lsp(
         query_opts
     );
     log_prepare!("{ks} {rt} {cql}");
-    let qu = scy.prepare(cql).await?;
+    let qu = scyprep(cql, scy).await?;
     Ok(qu)
 }
 
@@ -410,7 +419,7 @@ async fn make_lsp_shape(
                 query_opts
             );
             log_prepare!("{ks} {rt} {cql}");
-            let qu = scy.prepare(cql).await?;
+            let qu = scyprep(cql, scy).await?;
             qu
         },
     };
@@ -466,7 +475,7 @@ impl StmtsLspLstShape {
             format_args!(" and ts_lsp < ? order by ts_lsp desc limit 1 {query_opts}")
         );
         log_prepare!("{ks} {rt} {cql}");
-        let qu = scy.prepare(cql).await?;
+        let qu = scyprep(cql, scy).await?;
         Ok(qu)
     }
 
@@ -562,7 +571,7 @@ async fn make_prebinned_f32(
         query_opts
     );
     log_prepare!("{ks} {rt} {cql}");
-    let qu = scy.prepare(cql).await?;
+    let qu = scyprep(cql, scy).await?;
     Ok(qu)
 }
 
@@ -585,7 +594,7 @@ async fn make_bin_write_index_read(
         query_opts
     );
     log_prepare!("{ks} {rt} {cql}");
-    let qu = scy.prepare(cql).await?;
+    let qu = scyprep(cql, scy).await?;
     Ok(qu)
 }
 
@@ -626,7 +635,8 @@ pub struct StmtsEventsQueryOpts {
     ts_msp_fwd: PreparedStatement,
     ts_msp_bck: PreparedStatement,
     ts_msp_bck_workaround: PreparedStatement,
-    ts_msp_fwd2: PreparedStatement,
+    ts_msp_fwd3: PreparedStatement,
+    ts_msp_fwd4: PreparedStatement,
     lsp_all: StmtsLspAll,
     lsp_fwd_val: StmtsLspDir,
     lsp_bck_val: StmtsLspDir,
@@ -643,7 +653,8 @@ impl StmtsEventsQueryOpts {
             ts_msp_fwd: make_msp_dir(ks, rt, false, query_opts, scy).await?,
             ts_msp_bck: make_msp_dir(ks, rt, true, query_opts, scy).await?,
             ts_msp_bck_workaround: make_msp_fwd_for_bck_workaround(ks, rt, query_opts, scy).await?,
-            ts_msp_fwd2: make_ts_msp_fwd2(ks, rt, query_opts, scy).await?,
+            ts_msp_fwd3: make_ts_msp_fwd_3_4(ks, rt, false, query_opts, scy).await?,
+            ts_msp_fwd4: make_ts_msp_fwd_3_4(ks, rt, true, query_opts, scy).await?,
             lsp_all: make_lsp_all(ks, rt, query_opts, scy).await?,
             lsp_fwd_val: make_lsp_dir(ks, rt, "ts_lsp, value", false, query_opts, scy).await?,
             lsp_bck_val: make_lsp_dir(ks, rt, "ts_lsp, value", true, query_opts, scy).await?,
@@ -669,8 +680,12 @@ impl StmtsEventsQueryOpts {
         &self.ts_msp_bck_workaround
     }
 
-    pub fn ts_msp_fwd2(&self) -> &PreparedStatement {
-        &self.ts_msp_fwd2
+    pub fn ts_msp_fwd3(&self) -> &PreparedStatement {
+        &self.ts_msp_fwd3
+    }
+
+    pub fn ts_msp_fwd4(&self) -> &PreparedStatement {
+        &self.ts_msp_fwd4
     }
 
     pub fn lsp_all(&self) -> &StmtsLspAll {

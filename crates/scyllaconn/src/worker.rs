@@ -805,6 +805,10 @@ impl ScyllaQueue {
         &self.clusters
     }
 
+    pub fn into_clusters(self) -> impl Iterator<Item = Arc<ScyllaQueueCluster>> {
+        self.clusters.into_iter()
+    }
+
     pub async fn find_ts_msp(
         &self,
         rt: RetentionTime,
