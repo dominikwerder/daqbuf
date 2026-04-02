@@ -1,7 +1,6 @@
 use futures_util::Stream;
 use items_0::streamitem::Sitemty;
 use items_2::channelevents::ChannelEvents;
-use netpod::log;
 use netpod::ReqCtx;
 
 autoerr::create_error_v1!(
@@ -11,6 +10,7 @@ autoerr::create_error_v1!(
     },
 );
 
+#[allow(unused)]
 #[cfg(not(feature = "wasm_transform"))]
 async fn transform_wasm<INP, ETS>(
     stream: INP,
