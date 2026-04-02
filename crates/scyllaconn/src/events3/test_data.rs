@@ -1,4 +1,3 @@
-use crate::events2::msp;
 use crate::events3::MSP_A_00;
 use crate::events3::msplsp::LspEv;
 use crate::events3::msplsp::MspEv;
@@ -6,15 +5,14 @@ use netpod::DtMs;
 use netpod::DtNano;
 use netpod::TsMs;
 use netpod::TsNano;
-use netpod::timeunits::SEC;
 use rand_xoshiro::Xoshiro256PlusPlus;
 use rand_xoshiro::rand_core::Rng;
 use rand_xoshiro::rand_core::SeedableRng;
-use std::cell::OnceCell;
 use std::collections::BTreeMap;
 use std::collections::VecDeque;
 use std::sync::OnceLock;
 
+#[allow(unused)]
 macro_rules! info { ($($arg:tt)*) => ( if true { log::info!($($arg)*); } ); }
 macro_rules! trace { ($($arg:tt)*) => ( if true { log::trace!($($arg)*); } ); }
 
@@ -22,6 +20,7 @@ pub fn pred_ms_range(begj: TsNano, begk: TsNano, end: TsNano) -> impl Fn(&MspEv)
     move |ms| (begj == ms.to_ms().ns() || begk < ms.to_ms().ns()) && ms.to_ms().ns() < end
 }
 
+#[allow(unused)]
 pub fn series_a_msps() -> VecDeque<TsMs> {
     let dt = DtMs::from_ms_u64(1000 * 60 * 60);
     let mut v = MSP_A_00;
@@ -106,6 +105,8 @@ pub fn create_msp_lsp_stream(beg: TsNano) -> impl Iterator<Item = (TsNano, MspEv
 #[test]
 fn test_assign() {
     for (ts, msp, lsp, val, nb) in create_msp_lsp_stream("2026-03-18T13:37:10.000Z".parse().unwrap()).take(8000) {
+        let _ = lsp;
+        let _ = nb;
         info!("{ts}  {msp}  {val:9}");
     }
 }
@@ -139,8 +140,8 @@ pub fn produce_full_event_set() -> &'static FullEventSet {
 
 #[test]
 fn test_full_event_set() {
-    let beg: TsNano = "2026-03-18T00:00:00.000Z".parse().unwrap();
-    let end: TsNano = "2026-03-24T16:00:00.000Z".parse().unwrap();
+    let _beg: TsNano = "2026-03-18T00:00:00.000Z".parse().unwrap();
+    let _end: TsNano = "2026-03-24T16:00:00.000Z".parse().unwrap();
     let evs = produce_full_event_set();
     for (msp, v) in evs.by_msp.iter() {
         for (ts, lsp, val, nb) in v {

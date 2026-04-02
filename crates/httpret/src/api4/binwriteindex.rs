@@ -32,7 +32,6 @@ use query::api4::binned::BinnedQuery;
 use query::api4::scyllaopts::ScyllaOptsQuery;
 use scyllaconn::worker::ScyllaQueue;
 use series::SeriesId;
-use std::pin::Pin;
 use std::sync::Arc;
 use streams::streamtimeout::StreamTimeout2;
 use streams::timebin::cached::reader::EventsReadProvider;
@@ -186,11 +185,19 @@ async fn binned_instrumented(
     }
 }
 
+#[allow(unused)]
 async fn binned_json_single(
     res2: HandleRes2<'_>,
     ctx: &ReqCtx,
     ncc: &NodeConfigCached,
 ) -> Result<StreamResponse, Error> {
+    if true {
+        let ret = response(StatusCode::INTERNAL_SERVER_ERROR)
+            .header(CONTENT_TYPE, APP_JSON)
+            .header(HEADER_NAME_REQUEST_ID, ctx.reqid())
+            .body(ToJsonBody::from(&"\"binned_json_single not implemented\"").into_body())?;
+        return Ok(ret);
+    }
     // TODO unify with binned_json_framed
     debug!("binned_json_single");
     let rt1 = res2.query.retention_time();

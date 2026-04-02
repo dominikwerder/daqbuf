@@ -2,8 +2,6 @@ use crate::bodystream::response;
 use crate::requests::accepts_json_or_all;
 use crate::ReqCtx;
 use crate::ServiceSharedResources;
-use dbconn::worker::PgQueue;
-use futures_util::StreamExt;
 use futures_util::TryStreamExt;
 use http::Method;
 use http::StatusCode;
@@ -13,14 +11,10 @@ use httpclient::IntoBody;
 use httpclient::Requ;
 use httpclient::StreamResponse;
 use httpclient::ToJsonBody;
-use netpod::log;
 use netpod::req_uri_to_url;
-use netpod::ttl::RetentionTime;
-use netpod::FromUrl;
 use netpod::NodeConfigCached;
 use netpod::ScalarType;
 use netpod::Shape;
-use netpod::TsMs;
 use netpod::UriError;
 use serde::Deserialize;
 use serde::Serialize;
@@ -49,6 +43,7 @@ pub struct AccountedIngested {
     shapes: Vec<Shape>,
 }
 
+#[allow(unused)]
 impl AccountedIngested {
     fn new() -> Self {
         Self {
@@ -68,7 +63,6 @@ impl AccountedIngested {
         self.shapes.push(shape);
     }
 
-    #[allow(unused)]
     fn truncate(&mut self, len: usize) {
         self.names.truncate(len);
         self.counts.truncate(len);
@@ -116,12 +110,12 @@ impl DataSearch {
     async fn handle_get(
         &self,
         req: Requ,
-        ctx: &ReqCtx,
+        _ctx: &ReqCtx,
         shared_res: &ServiceSharedResources,
-        ncc: &NodeConfigCached,
+        _ncc: &NodeConfigCached,
     ) -> Result<StreamResponse, Error> {
         let url = req_uri_to_url(req.uri())?;
-        let params: BTreeMap<_, _> = url.query_pairs().collect();
+        let _params: BTreeMap<_, _> = url.query_pairs().collect();
         if let Some(scyqu) = &shared_res.scyqueue {
             let cql = "select ts_msp from sls_st.st_ts_msp where series = 6293882751490541488";
             let st = scyqu.prepare(cql.into()).await?;

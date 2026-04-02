@@ -116,7 +116,7 @@ impl BinReadLayeredTop {
     fn start_next_day1(common: &mut Common) -> StateModFn {
         match common.msplspiter.next() {
             Some(x) => {
-                let series = common.series.clone();
+                let _series = common.series.clone();
                 // SAFETY future must not outlive self.
                 let scyqueue = unsafe { netpod::extltref(&common.scyqueue) };
                 // self.state = State::FetchingIndex(FetchingIndex {

@@ -17,10 +17,6 @@ autoerr::create_error_v1!(
     },
 );
 
-fn def<T: Default>() -> T {
-    Default::default()
-}
-
 pub struct BinReadLayeredAtGrid {}
 
 impl BinReadLayeredAtGrid {
@@ -30,6 +26,9 @@ impl BinReadLayeredAtGrid {
         index_entries: VecDeque<IndexEntry>,
         scyqueue: &ScyllaQueue,
     ) -> Result<Self, Error> {
+        let _ = series;
+        let _ = binrange;
+        let _ = scyqueue;
         if !crate::binned3::index_entry::check_good_order(&index_entries) {
             return Err(Error::IndexEntriesOrderBad);
         }
@@ -40,7 +39,7 @@ impl BinReadLayeredAtGrid {
 impl Stream for BinReadLayeredAtGrid {
     type Item = Sitemty3<(), Error>;
 
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
+    fn poll_next(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<Option<Self::Item>> {
         todo!()
     }
 }

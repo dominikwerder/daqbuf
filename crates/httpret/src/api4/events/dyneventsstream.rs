@@ -13,6 +13,10 @@ use streams::ChannelEventsStream;
 macro_rules! debug { ($($arg:tt)*) => { if true { log::debug!($($arg)*); } }; }
 macro_rules! trace { ($($arg:tt)*) => { if true { log::trace!($($arg)*); } }; }
 
+fn _keep() {
+    debug!("");
+}
+
 autoerr::create_error_v1!(
     name(Error, "DynEventsStream"),
     enum variants {
@@ -31,7 +35,8 @@ pub async fn dyn_events_stream(
     trace!("{selfname}  {}", evq.summary_short());
     use query::api4::events::EventsSubQuerySettings;
     let stream = if let Ok(chconf) = ch_conf.to_scylla() {
-        let subq = make_sub_query(
+        let _ = chconf;
+        let _subq = make_sub_query(
             ch_conf,
             evq.range().clone(),
             evq.one_before_range(),
@@ -67,11 +72,12 @@ pub async fn dyn_events_stream(
         let stream = Merger::new(inps, evq.merger_out_len_max());
         let range_ty2 = match NanoRange::try_from(evq.range()) {
             Ok(x) => x,
-            Err(e) => return Err(Error::NanoRangeFromSeriesRange),
+            Err(_e) => return Err(Error::NanoRangeFromSeriesRange),
         };
         RangeFilter2::new(stream, range_ty2, evq.one_before_range())
     };
     if let Some(wasmname) = evq.test_do_wasm() {
+        let _ = wasmname;
         // let stream = transform_wasm::<_, items_0::streamitem::SitemErrTy>(stream, wasmname, ctx).await?;
         Ok(Box::pin(stream) as ChannelEventsStream)
     } else {

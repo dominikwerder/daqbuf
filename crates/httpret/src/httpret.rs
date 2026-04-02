@@ -144,6 +144,8 @@ pub async fn host(ncc: NodeConfigCached, service_version: ServiceVersion) -> Res
             error!("{e}");
             RetrievalError::TextError(e.to_string())
         })?;
+        // TODO await the task
+        let _ = scylla_worker_jh;
         Some(scyqueue)
     } else {
         None
@@ -499,6 +501,8 @@ async fn http_service_inner(
         Ok(h.handle(req, ctx, &shared_res, &node_config).await?)
     } else if let Some(h) = api4::docs::DocsHandler::handler(&req) {
         Ok(h.handle(req, ctx).await?)
+    } else if let Some(h) = ui::UiHandler::handler(&req) {
+        Ok(h.handle(req, ctx, &shared_res, &node_config).await?)
     } else {
         use std::fmt::Write;
         let mut body = String::new();

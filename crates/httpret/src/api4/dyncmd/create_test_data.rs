@@ -5,7 +5,6 @@ use scyllaconn::worker::KeyspaceId;
 use scyllaconn::worker::ScyllaQueue;
 use scyllaconn::worker::ScyllaQueueCluster;
 use serde_json::json;
-use series::SeriesId;
 
 macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
 macro_rules! info { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
@@ -40,7 +39,7 @@ async fn create_test_data_1(ksid: &KeyspaceId, scyqu: &ScyllaQueueCluster) -> Re
         format_args!(" (series, ts_msp, ts_lsp, value)"),
         format_args!(" values (?, ?, ?, ?)")
     );
-    let stmt = scyqu.prepare(ksid.clone(), cql).await?;
+    let _stmt = scyqu.prepare(ksid.clone(), cql).await?;
     Ok(())
 }
 

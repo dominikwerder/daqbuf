@@ -6,18 +6,12 @@ use crate::events3::msplsp::MspEv;
 use crate::events3::test_data;
 use crate::range::ScyllaSeriesRange;
 use crate::worker::KeyspaceId;
-use daqbuf_series::SeriesId;
 use futures_util::TryStreamExt;
 use items_0::timebin::BinningggContainerEventsDyn;
 use items_2::binning::container_events::ContainerEvents;
-use items_2::channelevents::ChannelEvents;
-use netpod::DtNano;
 use netpod::Shape;
-use netpod::TsMs;
-use netpod::TsNano;
 use netpod::ttl::RetentionTime;
 use scylla::client::session::Session;
-use std::fmt;
 
 macro_rules! error { ($($arg:tt)*) => { log::error!($($arg)*); }; }
 
@@ -50,6 +44,7 @@ pub type Item = Result<Box<dyn BinningggContainerEventsDyn>, Error>;
 
 #[derive(Debug)]
 pub struct Read03LspFwd {
+    #[allow(unused)]
     ks: KeyspaceId,
     series_info: SeriesInfo,
     msp: MspEv,

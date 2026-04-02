@@ -689,7 +689,7 @@ impl ScyllaSeriesTsMsp {
         &self,
         q: &ScyllaSeriesTsMspQuery,
         shared_res: &ServiceSharedResources,
-        ncc: &NodeConfigCached,
+        _ncc: &NodeConfigCached,
     ) -> Result<ScyllaSeriesTsMspResponse, Error> {
         // TODO also use the cluster config default
         let use_scylla6_workarounds = q.scylla_opts.clone();
@@ -970,12 +970,7 @@ impl SeriesConfigHandler {
         }
     }
 
-    async fn config(
-        &self,
-        req: Requ,
-        pgqueue: &PgQueue,
-        node_config: &NodeConfigCached,
-    ) -> Result<StreamResponse, Error> {
+    async fn config(&self, req: Requ, pgqueue: &PgQueue, _ncc: &NodeConfigCached) -> Result<StreamResponse, Error> {
         let url = req_uri_to_url(req.uri())?;
         let q = SeriesConfigQuery::from_url(&url)?;
         let conf = nodenet::channelconfig::scylla_chconf_from_series(q.backend, SeriesId::new(q.series), pgqueue).await;
@@ -987,7 +982,7 @@ impl SeriesConfigHandler {
                     .body(ToJsonBody::from(&res).into_body())?;
                 Ok(ret)
             }
-            Err(e) => {
+            Err(_) => {
                 let ret = response(StatusCode::NOT_FOUND)
                     .header(http::header::CONTENT_TYPE, APP_JSON)
                     .body(body_empty())?;

@@ -2,7 +2,6 @@ use super::BinWriteIndexRtStream;
 use crate::worker::ScyllaQueue;
 use daqbuf_series::SeriesId;
 use daqbuf_series::msp::PrebinnedPartitioning;
-use futures_util::Future;
 use futures_util::Stream;
 use futures_util::StreamExt;
 use netpod::log;
@@ -10,7 +9,6 @@ use netpod::range::evrange::NanoRange;
 use netpod::ttl::RetentionTime;
 use query::api4::scyllaopts::ScyllaOptsQuery;
 use std::collections::VecDeque;
-use std::fmt;
 use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
@@ -26,14 +24,6 @@ autoerr::create_error_v1!(
 
 type Fut1Res = <BinWriteIndexRtStream as Stream>::Item;
 
-struct Fut1a(Pin<Box<dyn Future<Output = Fut1Res>>>);
-
-impl fmt::Debug for Fut1a {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        fmt.debug_tuple("Fut1a").finish()
-    }
-}
-
 #[derive(Debug)]
 enum InpSt {
     Polling(BinWriteIndexRtStream),
@@ -44,6 +34,7 @@ enum InpSt {
 #[derive(Debug)]
 pub struct BinWriteIndexStream {
     rtss: VecDeque<InpSt>,
+    #[allow(unused)]
     scylla_opts: ScyllaOptsQuery,
 }
 
@@ -95,9 +86,12 @@ impl Stream for BinWriteIndexStream {
                 match inp {
                     InpSt::Polling(fut) => match fut.poll_next_unpin(cx) {
                         Ready(Some(item)) => {
-                            let fut = todo!("bwxcmb keep stream in state");
+                            let fut = netpod::todoval();
                             *inp = InpSt::Ready(fut, item);
                             ready_cnt += 1;
+                            if true {
+                                todo!("bwxcmb keep stream in state");
+                            }
                         }
                         Ready(None) => {
                             do_abort = true;
@@ -106,7 +100,8 @@ impl Stream for BinWriteIndexStream {
                             have_pending = true;
                         }
                     },
-                    InpSt::Ready(..) => {
+                    InpSt::Ready(a, b) => {
+                        let _ = (a, b);
                         ready_cnt += 1;
                     }
                     InpSt::Done => {}

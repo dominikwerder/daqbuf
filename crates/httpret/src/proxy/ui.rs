@@ -2,35 +2,13 @@
 
 use crate::bodystream::response;
 use crate::ReqCtx;
-use crate::RetrievalError as Error;
-use crate::ServiceSharedResources;
-use bytes::BytesMut;
-use futures_util::TryStreamExt;
-use http::header;
-use http::Method;
-use http::Request;
-use http::Response;
 use http::StatusCode;
-use http::Uri;
 use httpclient::body_bytes;
 use httpclient::body_empty;
-use httpclient::body_stream;
-use httpclient::connect_client;
 use httpclient::Requ;
-use httpclient::StreamIncoming;
 use httpclient::StreamResponse;
-use netpod::ttl::RetentionTime;
-use netpod::NodeConfigCached;
 use netpod::ProxyConfig;
-use netpod::TsMs;
-use netpod::TsNano;
-use query::api4::scyllaopts::ScyllaOptsQuery;
-use scyllaconn::range::ScyllaSeriesRange;
-use scyllaconn::worker::ScyllaQueue;
-use serde::Deserialize;
-use serde::Serialize;
 use serde_json::json;
-use series::SeriesId;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
@@ -56,14 +34,14 @@ impl UiHandler {
     pub async fn handle(
         &self,
         req: Requ,
-        ctx: &ReqCtx,
+        _ctx: &ReqCtx,
         // shared_res: &ServiceSharedResources,
         // ncc: &NodeConfigCached,
-        proxy_config: &ProxyConfig,
+        _proxy_config: &ProxyConfig,
     ) -> Result<StreamResponse, crate::err::Error> {
         if let Some(pq) = req.uri().path_and_query() {
             if pq.query().map(|x| x.contains("dbgshowreq")).unwrap_or(false) {
-                let (head, body) = req.into_parts();
+                let (head, _body) = req.into_parts();
                 let method = head.method.as_str();
                 let uri = head.uri.to_string();
                 let headers: BTreeMap<_, _> = head

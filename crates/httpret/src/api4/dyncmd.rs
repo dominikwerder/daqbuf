@@ -5,28 +5,20 @@ mod create_test_data;
 use crate::bodystream::response;
 use crate::ReqCtx;
 use crate::ServiceSharedResources;
-use bytes::Bytes;
 use bytes::BytesMut;
 use chrono::TimeZone;
 use dbconn::worker::PgQueue;
-use futures_util::FutureExt;
-use futures_util::Stream;
 use futures_util::StreamExt;
 use futures_util::TryFutureExt;
 use futures_util::TryStreamExt;
 use http::header;
 use http::Method;
-use http::Request;
-use http::Response;
 use http::StatusCode;
-use http::Uri;
 use httpclient::body_bytes;
 use httpclient::body_empty;
 use httpclient::body_stream;
-use httpclient::connect_client;
 use httpclient::Requ;
 use httpclient::StreamBody;
-use httpclient::StreamIncoming;
 use httpclient::StreamResponse;
 use items_0::streamitem::RangeCompletableItem;
 use items_0::streamitem::StreamItem;
@@ -36,7 +28,6 @@ use netpod::NodeConfigCached;
 use netpod::RangeExcl;
 use netpod::SeriesKind;
 use netpod::TsMs;
-use netpod::TsNano;
 use netpod::APP_JSON_FRAMED;
 use query::api4::scyllaopts::ScyllaOptsQuery;
 use scyllaconn::events3::msplsp::MspEv;
@@ -48,7 +39,6 @@ use serde::Serialize;
 use series::SeriesId;
 use std::collections::BTreeMap;
 use std::collections::VecDeque;
-use std::future::ready;
 use std::time::Duration;
 use streams::lenframe::bytes_chunks_to_len_framed_str;
 use taskrun::tokio::time::timeout;
@@ -76,9 +66,6 @@ autoerr::create_error_v1!(
 );
 
 impl crate::IntoBoxedError for Error {}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct AttachedScyllas {}
 
 #[derive(Debug, Serialize, Deserialize)]
 struct ReadMsp {
@@ -177,14 +164,14 @@ impl DynCmdHandler {
     pub async fn handle(
         &self,
         req: Requ,
-        ctx: &ReqCtx,
+        _ctx: &ReqCtx,
         shared_res: &ServiceSharedResources,
-        ncc: &NodeConfigCached,
+        _ncc: &NodeConfigCached,
     ) -> Result<StreamResponse, crate::RetrievalError> {
-        if req.method() != Method::POST {
+        let (req, body) = req.into_parts();
+        if req.method != Method::POST {
             Ok(response(StatusCode::METHOD_NOT_ALLOWED).body(body_empty())?)
         } else {
-            let (req, body) = req.into_parts();
             let mut bs = http_body_util::BodyStream::new(body);
             let mut buf = BytesMut::with_capacity(1024 * 2);
             while let Some(fr) = bs.try_next().await? {
@@ -200,6 +187,7 @@ impl DynCmdHandler {
             if let Ok(cmd) = serde_json::from_slice::<DynCmd>(&buf) {
                 if cmd.ty1 == "scyqu" {
                     if let Some(scyqu) = &shared_res.scyqueue {
+                        #[allow(unused)]
                         #[derive(Debug, Deserialize)]
                         struct DynCmd {
                             ty1: String,

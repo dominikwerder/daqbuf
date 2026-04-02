@@ -6,7 +6,6 @@ use crate::events2::events::ReadJobTrace;
 use crate::events2::prepare::StmtsEvents;
 use crate::events2::prepare::StmtsEventsClusterKeyspace;
 use crate::events2::prepare::StmtsEventsQueryOpts;
-use crate::events2::prepare::StmtsEventsRt;
 use crate::events3::SeriesInfo;
 use crate::events3::msplsp::LspEv;
 use crate::events3::msplsp::MspEv;
@@ -370,13 +369,12 @@ pub struct ScyllaQueueCluster {
     keyspaces: Vec<KeyspaceId>,
     tx: Sender<(KeyspaceId, Job)>,
     // TODO the last Self should await jh:
+    #[allow(unused)]
     jh: Arc<tokio::task::JoinHandle<Result<(), Error>>>,
-    is_mock: bool,
 }
 
 impl ScyllaQueueCluster {
     async fn new(scyconf: &ScyllaConfigMultiKeyspace) -> Result<Self, Error> {
-        let is_mock = false;
         let tag = scyconf.tag.clone();
         let (tx, rx) = async_channel::bounded(128);
         let task = Self::worker(rx, scyconf.clone());
@@ -390,7 +388,6 @@ impl ScyllaQueueCluster {
                 .collect(),
             tx,
             jh: Arc::new(jh),
-            is_mock,
         };
         Ok(ret)
     }
@@ -562,7 +559,7 @@ impl ScyllaQueueCluster {
         debug!("scylla worker  prepare done");
         rx.map(|(ksjob, job)| {
             let mut stmtsix = None;
-            for (i, ((ks2, rt), stmts)) in scyconf.keyspaces.iter().zip(stmtsa.iter()).enumerate() {
+            for (i, ((ks2, _rt), _stmts)) in scyconf.keyspaces.iter().zip(stmtsa.iter()).enumerate() {
                 if ks2 == &ksjob.name {
                     stmtsix = Some(i);
                     break;
@@ -599,7 +596,8 @@ impl ScyllaQueueCluster {
                         job.execute(stmts, &scy).await;
                     }
                     Job::AccountingReadTs(rt, ts, tx) => {
-                        for ((ks, rt), stmts) in scyconf.keyspaces.iter().zip(stmtsa.iter()) {
+                        let _ = rt;
+                        for ((ks, rt), _stmts) in scyconf.keyspaces.iter().zip(stmtsa.iter()) {
                             let res = crate::accounting::toplist::read_ts(ks, rt.clone(), ts, &scy).await;
                             error!("TODO return accounting data for dynamic configured list of keyspaces");
                             if tx.send(res.map_err(Into::into)).await.is_err() {
@@ -616,7 +614,7 @@ impl ScyllaQueueCluster {
                             // TODO count for stats
                         }
                     }
-                    Job::ReadPrebinnedF32(job) => {
+                    Job::ReadPrebinnedF32(_job) => {
                         // TODO where is it used?
                         error!("ReadPrebinnedF32 adapt to StmtsEventsClusterKeyspace");
                         // let res = super::bincache::worker_read(
@@ -634,11 +632,11 @@ impl ScyllaQueueCluster {
                         //     // TODO count for stats
                         // }
                     }
-                    Job::BinWriteIndexRead(job) => {
+                    Job::BinWriteIndexRead(_job) => {
                         error!("BinWriteIndexRead adapt to StmtsEventsClusterKeyspace");
                         // job.execute(&stmts, &scy).await
                     }
-                    Job::ReadEvents02(params, tx) => {
+                    Job::ReadEvents02(_params, _tx) => {
                         error!("ReadEvents02 adapt to StmtsEventsClusterKeyspace");
                         // crate::events2::events::read_events_v02(params, tx, stmts.clone(), scy.clone()).await
                     }
@@ -674,7 +672,7 @@ impl ScyllaQueueCluster {
                     }
                     Job::ReadEvents03Fwd(params, tx) => {
                         let mut ret = None;
-                        for ((ks, rt), stmts) in scyconf.keyspaces.iter().zip(stmtsa.iter()) {
+                        for ((_, _), stmts) in scyconf.keyspaces.iter().zip(stmtsa.iter()) {
                             // TODO this whole worker is dedicated to one cluster.
                             // The job must get routed to the correct worker.
                             // Here, the job must indicate the keyspace to use.
@@ -737,7 +735,6 @@ impl ScyllaQueueCluster {
             keyspaces,
             tx,
             jh: Arc::new(jh),
-            is_mock: true,
         };
         Ok(ret)
     }
@@ -746,28 +743,28 @@ impl ScyllaQueueCluster {
         let tag = &tag;
         rx.map(|(ksjob, job)| async move {
             match job {
-                Job::PrepareV1(job) => {
+                Job::PrepareV1(..) => {
                     debug!("can not execute Job::PrepareV1 in mock");
                 }
-                Job::ExecuteV1(job) => {
+                Job::ExecuteV1(..) => {
                     debug!("can not execute Job::ExecuteV1 in mock");
                 }
-                Job::FindTsMsp(job) => {
+                Job::FindTsMsp(..) => {
                     debug!("can not execute Job::FindTsMsp in mock");
                 }
-                Job::AccountingReadTs(rt, ts, tx) => {
+                Job::AccountingReadTs(..) => {
                     debug!("can not execute Job::AccountingReadTs in mock");
                 }
-                Job::WriteCacheF32(a, b, tx) => {
+                Job::WriteCacheF32(..) => {
                     debug!("can not execute Job::WriteCacheF32 in mock");
                 }
-                Job::ReadPrebinnedF32(job) => {
+                Job::ReadPrebinnedF32(..) => {
                     debug!("can not execute Job::ReadPrebinnedF32 in mock");
                 }
-                Job::BinWriteIndexRead(job) => {
+                Job::BinWriteIndexRead(..) => {
                     debug!("can not execute Job::BinWriteIndexRead in mock");
                 }
-                Job::ReadEvents02(params, tx) => {
+                Job::ReadEvents02(..) => {
                     debug!("can not execute Job::ReadEvents02 in mock");
                 }
                 Job::ReadMsp03Fwd(job) => {
@@ -776,7 +773,7 @@ impl ScyllaQueueCluster {
                 Job::ReadMsp03Bck(job) => {
                     job.exec_mock(&tag, ksjob).await;
                 }
-                Job::ReadEvents03Fwd(params, tx) => {
+                Job::ReadEvents03Fwd(..) => {
                     debug!("can not execute Job::ReadEvents03Fwd in mock");
                 }
                 Job::Read03LspLst(job) => {
