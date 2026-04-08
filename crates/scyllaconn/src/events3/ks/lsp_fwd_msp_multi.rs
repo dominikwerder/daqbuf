@@ -6,6 +6,7 @@ use crate::events3::mspfwd::ReadMspFwdStream;
 use crate::events3::msplsp::MspEv;
 use crate::range::ScyllaSeriesRange;
 use crate::worker::KeyspaceId;
+use crate::worker::ScyllaQueue;
 use crate::worker::ScyllaQueueCluster;
 use futures_util::FutureExt;
 use futures_util::Stream;
@@ -588,5 +589,38 @@ impl Stream for LspFwdMspMulti {
                 Ready(None)
             };
         }
+    }
+}
+
+#[derive(Debug)]
+pub struct LspFwdMspMultiOverClusters {
+    scyqu: ScyllaQueue,
+}
+
+impl LspFwdMspMultiOverClusters {
+    pub fn new(
+        ks: KeyspaceId,
+        series_info: SeriesInfo,
+        range: ScyllaSeriesRange,
+        opts: Opts,
+        scyqu: ScyllaQueue,
+        msps: VecDeque<MspEv>,
+    ) -> Self {
+        todo!()
+    }
+}
+
+#[derive(Debug)]
+pub struct LspFwdOverClusterItem {
+    cluster_tag: String,
+    ks: KeyspaceId,
+    item: Box<dyn BinningggContainerEventsDyn>,
+}
+
+impl Stream for LspFwdMspMultiOverClusters {
+    type Item = Sitemty2<LspFwdOverClusterItem, Error>;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        todo!()
     }
 }
