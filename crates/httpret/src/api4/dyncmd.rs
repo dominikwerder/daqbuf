@@ -632,6 +632,19 @@ impl LspFwdMspMultiCmd {
         let series_info = SeriesInfo::from(&chi);
         let range = netpod::range::evrange::NanoRange::from(range);
         let range = ScyllaSeriesRange::new(range.beg_ts(), range.end_ts());
+        // TODO this has to be done for each cl, ks
+        // let msp_bck =
+        //     scyllaconn::events3::mspbck::msp_bck(ks.clone(), series_info.clone(), range.beg(), cl.as_ref().clone())
+        //         .await?
+        //         .into_iter()
+        //         .map(|x| MspEv::from(x))
+        //         .collect();
+        let stream = scyllaconn::events3::ks::lsp_fwd_msp_multi::LspFwdMspMultiOverClusters::new(
+            series_info.clone(),
+            range.clone(),
+            scyllaconn::events3::ks::lsp_fwd_msp_multi::Opts::new(),
+            scyqu.clone(),
+        );
         let stream = iter(scyqu.into_clusters())
             .map(move |cl| {
                 iter(cl.keyspaces().to_vec())

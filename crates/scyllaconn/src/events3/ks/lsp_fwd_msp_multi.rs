@@ -1,7 +1,5 @@
 use crate::events3::SeriesInfo;
 use crate::events3::ks::lsp_fwd_msp_single::LspFwdMspSingleStream;
-use crate::events3::lsplst;
-use crate::events3::mspfwd::ReadMsp03Fwd;
 use crate::events3::mspfwd::ReadMspFwdStream;
 use crate::events3::msplsp::MspEv;
 use crate::range::ScyllaSeriesRange;
@@ -15,29 +13,31 @@ use items_0::streamitem::RangeCompletableItem;
 use items_0::streamitem::Sitemty2;
 use items_0::streamitem::StreamItem;
 use items_0::timebin::BinningggContainerEventsDyn;
-use items_2::channelevents::ChannelEvents;
-use netpod::DtNano;
 use netpod::RangeExcl;
 use netpod::TsMs;
 use netpod::TsNano;
 use netpod::futdbg::FutDbg;
 use netpod::futdbg::FutDbgBox;
 use netpod::hpp::HaveProgressPending;
-use serde::Serialize;
-use std::collections::BTreeMap;
 use std::collections::VecDeque;
-use std::ops::RangeBounds;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::task::Context;
 use std::task::Poll;
-use taskrun::tokio::io::Ready;
-use taskrun::tracing_subscriber::field::debug;
 
 macro_rules! error { ($($arg:tt)*) => ( if true { log::error!($($arg)*); } ) }
 macro_rules! warn { ($($arg:tt)*) => ( if true { log::warn!($($arg)*); } ) }
 macro_rules! info { ($($arg:tt)*) => ( if true { log::info!($($arg)*); } ) }
 macro_rules! debug { ($($arg:tt)*) => ( if true { log::debug!($($arg)*); } ) }
 macro_rules! trace { ($($arg:tt)*) => ( if true { log::trace!($($arg)*); } ) }
+
+fn _keep() {
+    error!("");
+    warn!("");
+    info!("");
+    debug!("");
+    trace!("");
+}
 
 autoerr::create_error_v1!(
     name(Error, "LspFwdMspMulti"),
@@ -47,13 +47,13 @@ autoerr::create_error_v1!(
         FindNextTsWithoutBuf,
         FindNextTsOnEmptyBuf,
         LoopTooMany,
+        MspBck(#[from] crate::events3::mspbck::Error),
     },
 );
 
 #[derive(Debug, Clone)]
 pub struct Opts {
     with_values: bool,
-    qucap: u32,
     scylla_opts: query::api4::scyllaopts::ScyllaOptsQuery,
 }
 
@@ -61,7 +61,6 @@ impl Opts {
     pub fn new() -> Self {
         Self {
             with_values: false,
-            qucap: 6,
             scylla_opts: query::api4::scyllaopts::ScyllaOptsQuery::new(),
         }
     }
@@ -173,29 +172,10 @@ impl Merging {
         Ok(ret)
     }
 
-    fn consider_input(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        brefs: BaseRefs,
-        msp_next: Option<TsMs>,
-    ) -> Poll<Option<Sitemty2<Item, Error>>> {
-        use Poll::*;
-        loop {
-            let mut hpp = HaveProgressPending::new();
-            break if hpp.have_progress() {
-                continue;
-            } else if hpp.have_pending() {
-                Pending
-            } else {
-                Ready(None)
-            };
-        }
-    }
-
     fn poll_all_inp(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
-        brefs: BaseRefs,
+        _brefs: BaseRefs,
     ) -> Poll<Option<Result<(), Error>>> {
         use Poll::*;
         // TODO when does this loop actually terminate?
@@ -279,6 +259,10 @@ impl Merging {
                 break Ready(Some(Err(Error::LoopTooMany)));
             }
             let mut hpp = HaveProgressPending::new();
+            {
+                // TODO fix
+                // let brefs2 = brefs.clone_mut();
+            }
             let brefs2 = BaseRefs {
                 series_info: brefs.series_info,
                 ks: brefs.ks,
@@ -302,7 +286,7 @@ impl Merging {
                                     self.inps.clear();
                                 }
                             }
-                            NextTs::One(ts1, ix1) => {
+                            NextTs::One(_ts1, ix1) => {
                                 // TODO check if msp lower than final entry in ix1 buffer.
                                 // if yes, add a new stream for that msp and start over.
                                 // TODO maybe the ts finder should already return also the max to avoid unwrap.
@@ -318,7 +302,7 @@ impl Merging {
                                     break Ready(Some(Ok(CheckInputItem::Item(item))));
                                 }
                             }
-                            NextTs::Two(ts1, ix1, ts2, ix2) => {
+                            NextTs::Two(_ts1, ix1, ts2, _ix2) => {
                                 let b1 = &mut self.inps.get_mut(ix1.0).unwrap().buf;
                                 let b2 = b1.as_mut().unwrap();
                                 if msp_next.map_or(false, |x| x.ns() <= ts2) {
@@ -593,34 +577,152 @@ impl Stream for LspFwdMspMulti {
 }
 
 #[derive(Debug)]
+enum State2 {
+    Run,
+    RangeFinal,
+    Done,
+}
+
+#[derive(Debug)]
 pub struct LspFwdMspMultiOverClusters {
-    scyqu: ScyllaQueue,
+    series_info: SeriesInfo,
+    range: ScyllaSeriesRange,
+    opts: Opts,
+    pending: VecDeque<(Arc<ScyllaQueueCluster>, KeyspaceId)>,
+    act1: Option<
+        FutDbg<(
+            Result<VecDeque<TsMs>, crate::events3::mspbck::Error>,
+            (Arc<ScyllaQueueCluster>, KeyspaceId),
+        )>,
+    >,
+    active: Option<(String, KeyspaceId, LspFwdMspMulti, bool)>,
+    range_final_true: u32,
+    range_final_false: u32,
+    state: State2,
 }
 
 impl LspFwdMspMultiOverClusters {
-    pub fn new(
-        ks: KeyspaceId,
-        series_info: SeriesInfo,
-        range: ScyllaSeriesRange,
-        opts: Opts,
-        scyqu: ScyllaQueue,
-        msps: VecDeque<MspEv>,
-    ) -> Self {
-        todo!()
+    pub fn new(series_info: SeriesInfo, range: ScyllaSeriesRange, opts: Opts, scyqu: ScyllaQueue) -> Self {
+        let pending = scyqu
+            .into_clusters()
+            .flat_map(|c| {
+                let ks_list: Vec<KeyspaceId> = c.keyspaces().iter().cloned().collect();
+                ks_list.into_iter().map(move |ks| (c.clone(), ks))
+            })
+            .collect();
+        Self {
+            series_info,
+            range,
+            opts,
+            pending,
+            act1: None,
+            active: None,
+            range_final_true: 0,
+            range_final_false: 0,
+            state: State2::Run,
+        }
     }
 }
 
 #[derive(Debug)]
 pub struct LspFwdOverClusterItem {
-    cluster_tag: String,
-    ks: KeyspaceId,
-    item: Box<dyn BinningggContainerEventsDyn>,
+    pub cluster_tag: String,
+    pub ks: KeyspaceId,
+    pub item: Box<dyn BinningggContainerEventsDyn>,
 }
 
 impl Stream for LspFwdMspMultiOverClusters {
     type Item = Sitemty2<LspFwdOverClusterItem, Error>;
 
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        todo!()
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        use Poll::*;
+        loop {
+            let self2 = self.as_mut().get_mut();
+            break match &mut self2.state {
+                State2::Run => {
+                    if let Some(fut) = self2.act1.as_mut() {
+                        match fut.poll_unpin(cx) {
+                            Ready((x, (cl, ks))) => {
+                                self2.act1 = None;
+                                match x {
+                                    Ok(x) => {
+                                        let msps = x.into_iter().map(|x| MspEv::from(x)).collect();
+                                        let stream = LspFwdMspMulti::new(
+                                            ks.clone(),
+                                            self2.series_info.clone(),
+                                            self2.range.clone(),
+                                            self2.opts.clone(),
+                                            (*cl).clone(),
+                                            msps,
+                                        );
+                                        self2.active = Some((cl.tag().into(), ks, stream, false));
+                                        continue;
+                                    }
+                                    Err(e) => Ready(Some(Err(e.into()))),
+                                }
+                            }
+                            Pending => Pending,
+                        }
+                    } else if let Some((tag, ks, stream, range_final)) = self2.active.as_mut() {
+                        match Pin::new(stream).poll_next(cx) {
+                            Ready(Some(Ok(item))) => match item {
+                                StreamItem::DataItem(RangeCompletableItem::Data(inner)) => {
+                                    let wrapped = LspFwdOverClusterItem {
+                                        cluster_tag: tag.clone(),
+                                        ks: ks.clone(),
+                                        item: inner,
+                                    };
+                                    Ready(Some(Ok(StreamItem::DataItem(RangeCompletableItem::Data(wrapped)))))
+                                }
+                                StreamItem::DataItem(RangeCompletableItem::RangeComplete) => {
+                                    *range_final = true;
+                                    continue;
+                                }
+                                StreamItem::Log(x) => Ready(Some(Ok(StreamItem::Log(x)))),
+                                StreamItem::Stats(x) => Ready(Some(Ok(StreamItem::Stats(x)))),
+                            },
+                            Ready(Some(Err(e))) => Ready(Some(Err(e))),
+                            Ready(None) => {
+                                if *range_final {
+                                    self2.range_final_true += 1;
+                                } else {
+                                    self2.range_final_false += 1;
+                                }
+                                self2.active = None;
+                                continue;
+                            }
+                            Pending => Pending,
+                        }
+                    } else {
+                        match self2.pending.pop_front() {
+                            None => {
+                                self2.state = State2::RangeFinal;
+                                continue;
+                            }
+                            Some((cl, ks)) => {
+                                let fut = crate::events3::mspbck::msp_bck(
+                                    ks.clone(),
+                                    self2.series_info.clone(),
+                                    self2.range.beg(),
+                                    cl.as_ref().clone(),
+                                )
+                                .map(|x| (x, (cl, ks)));
+                                self2.act1 = Some(fut.box2());
+                                continue;
+                            }
+                        }
+                    }
+                }
+                State2::RangeFinal => {
+                    self2.state = State2::Done;
+                    if self2.range_final_false == 0 && self2.range_final_true != 0 {
+                        Ready(Some(Ok(StreamItem::DataItem(RangeCompletableItem::RangeComplete))))
+                    } else {
+                        continue;
+                    }
+                }
+                State2::Done => Ready(None),
+            };
+        }
     }
 }
