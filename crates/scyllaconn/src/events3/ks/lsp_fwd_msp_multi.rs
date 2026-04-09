@@ -626,7 +626,7 @@ impl LspFwdMspMultiOverClusters {
 
 #[derive(Debug)]
 pub struct LspFwdOverClusterItem {
-    pub cluster_tag: String,
+    pub cl: String,
     pub ks: KeyspaceId,
     pub item: Box<dyn BinningggContainerEventsDyn>,
 }
@@ -668,7 +668,7 @@ impl Stream for LspFwdMspMultiOverClusters {
                             Ready(Some(Ok(item))) => match item {
                                 StreamItem::DataItem(RangeCompletableItem::Data(inner)) => {
                                     let wrapped = LspFwdOverClusterItem {
-                                        cluster_tag: tag.clone(),
+                                        cl: tag.clone(),
                                         ks: ks.clone(),
                                         item: inner,
                                     };
