@@ -641,7 +641,7 @@ impl Stream for LspFwdMspMulti {
 #[derive(Debug)]
 enum State2 {
     Run,
-    RangeFinal,
+    MaybeRangeFinal,
     Done,
 }
 
@@ -758,7 +758,7 @@ impl Stream for LspFwdMspMultiOverClusters {
                     } else {
                         match self2.pending.pop_front() {
                             None => {
-                                self2.state = State2::RangeFinal;
+                                self2.state = State2::MaybeRangeFinal;
                                 continue;
                             }
                             Some((cl, ks)) => {
@@ -775,7 +775,7 @@ impl Stream for LspFwdMspMultiOverClusters {
                         }
                     }
                 }
-                State2::RangeFinal => {
+                State2::MaybeRangeFinal => {
                     self2.state = State2::Done;
                     if self2.range_final_false == 0 && self2.range_final_true != 0 {
                         Ready(Some(Ok(StreamItem::DataItem(RangeCompletableItem::RangeComplete))))

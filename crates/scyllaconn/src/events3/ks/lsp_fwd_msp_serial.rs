@@ -52,7 +52,7 @@ autoerr::create_error_v1!(
     },
 );
 
-pub type Item = Box<dyn BinningggContainerEventsDyn>;
+pub type ContBox = Box<dyn BinningggContainerEventsDyn>;
 
 struct BaseRefs<'a> {
     series_info: &'a SeriesInfo,
@@ -65,7 +65,7 @@ struct BaseRefs<'a> {
 struct Reading {
     msps: Option<ReadMspFwdStream>,
     mspbuf: VecDeque<TsMs>,
-    lsps: Option<LspFwdMspSingleStream>,
+    lsps: Option<(MspEv, LspFwdMspSingleStream)>,
 }
 
 impl Reading {
@@ -77,19 +77,19 @@ impl Reading {
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         brefs: BaseRefs,
-    ) -> Poll<Option<Sitemty2<Item, Error>>> {
+    ) -> Poll<Option<Sitemty2<(MspEv, ContBox), Error>>> {
         use Poll::*;
         loop {
             let mut hpp = HaveProgressPending::new();
             let self2 = self.as_mut().get_mut();
-            if let Some(inp) = self2.lsps.as_mut() {
+            if let Some((msp, inp)) = self2.lsps.as_mut() {
                 match inp.poll_next_unpin(cx) {
                     Ready(Some(x)) => {
                         hpp.mark_progress();
                         match x {
                             Ok(x) => match x {
                                 StreamItem::DataItem(x) => match x {
-                                    RangeCompletableItem::Data(x) => break Ready(Some(sitem2_data(x))),
+                                    RangeCompletableItem::Data(x) => break Ready(Some(sitem2_data((msp.clone(), x)))),
                                     RangeCompletableItem::RangeComplete => {
                                         break Ready(Some(Ok(StreamItem::DataItem(
                                             RangeCompletableItem::RangeComplete,
@@ -106,7 +106,10 @@ impl Reading {
                             Err(e) => break Ready(Some(Err(e.into()))),
                         }
                     }
-                    Ready(None) => {}
+                    Ready(None) => {
+                        hpp.mark_progress();
+                        self2.lsps = None;
+                    }
                     Pending => {
                         hpp.mark_pending();
                     }
@@ -123,7 +126,7 @@ impl Reading {
                     self2.gen_limit(),
                     brefs.scyqu.clone(),
                 );
-                self2.lsps = Some(stream);
+                self2.lsps = Some((msp, stream));
             } else if let Some(inp) = self2.msps.as_mut() {
                 match inp.poll_next_unpin(cx) {
                     Ready(Some(x)) => {
@@ -214,7 +217,7 @@ impl LspFwdMspSerial {
 }
 
 impl Stream for LspFwdMspSerial {
-    type Item = Sitemty2<Item, Error>;
+    type Item = Sitemty2<(MspEv, ContBox), Error>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         use Poll::*;
@@ -265,7 +268,7 @@ impl Stream for LspFwdMspSerial {
 #[derive(Debug)]
 enum State2 {
     Run,
-    RangeFinal,
+    MaybeRangeFinal,
     Done,
 }
 
@@ -309,14 +312,15 @@ impl LspFwdMspSerialOverClusters {
 }
 
 #[derive(Debug)]
-pub struct LspFwdOverClusterItem {
+pub struct LspFwdMspSerialOverClustersItem {
     pub cl: String,
     pub ks: KeyspaceId,
+    pub msp: MspEv,
     pub item: Box<dyn BinningggContainerEventsDyn>,
 }
 
 impl Stream for LspFwdMspSerialOverClusters {
-    type Item = Sitemty2<LspFwdOverClusterItem, Error>;
+    type Item = Sitemty2<LspFwdMspSerialOverClustersItem, Error>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         use Poll::*;
@@ -324,36 +328,15 @@ impl Stream for LspFwdMspSerialOverClusters {
             let self2 = self.as_mut().get_mut();
             break match &mut self2.state {
                 State2::Run => {
-                    if let Some(fut) = self2.act1.as_mut() {
-                        match fut.poll_unpin(cx) {
-                            Ready((x, (cl, ks))) => {
-                                self2.act1 = None;
-                                match x {
-                                    Ok(x) => {
-                                        let msps = x.into_iter().map(|x| MspEv::from(x)).collect();
-                                        let stream = LspFwdMspSerial::new(
-                                            ks.clone(),
-                                            self2.series_info.clone(),
-                                            self2.range.clone(),
-                                            (*cl).clone(),
-                                            msps,
-                                        );
-                                        self2.active = Some((cl.tag().into(), ks, stream, false));
-                                        continue;
-                                    }
-                                    Err(e) => Ready(Some(Err(e.into()))),
-                                }
-                            }
-                            Pending => Pending,
-                        }
-                    } else if let Some((tag, ks, stream, range_final)) = self2.active.as_mut() {
+                    if let Some((tag, ks, stream, range_final)) = self2.active.as_mut() {
                         match Pin::new(stream).poll_next(cx) {
                             Ready(Some(Ok(item))) => match item {
-                                StreamItem::DataItem(RangeCompletableItem::Data(inner)) => {
-                                    let wrapped = LspFwdOverClusterItem {
+                                StreamItem::DataItem(RangeCompletableItem::Data((msp, evs))) => {
+                                    let wrapped = LspFwdMspSerialOverClustersItem {
                                         cl: tag.clone(),
                                         ks: ks.clone(),
-                                        item: inner,
+                                        msp,
+                                        item: evs,
                                     };
                                     Ready(Some(Ok(StreamItem::DataItem(RangeCompletableItem::Data(wrapped)))))
                                 }
@@ -376,10 +359,32 @@ impl Stream for LspFwdMspSerialOverClusters {
                             }
                             Pending => Pending,
                         }
+                    } else if let Some(fut) = self2.act1.as_mut() {
+                        match fut.poll_unpin(cx) {
+                            Ready((x, (cl, ks))) => {
+                                self2.act1 = None;
+                                match x {
+                                    Ok(x) => {
+                                        let msps = x.into_iter().map(|x| MspEv::from(x)).collect();
+                                        let stream = LspFwdMspSerial::new(
+                                            ks.clone(),
+                                            self2.series_info.clone(),
+                                            self2.range.clone(),
+                                            (*cl).clone(),
+                                            msps,
+                                        );
+                                        self2.active = Some((cl.tag().into(), ks, stream, false));
+                                        continue;
+                                    }
+                                    Err(e) => Ready(Some(Err(e.into()))),
+                                }
+                            }
+                            Pending => Pending,
+                        }
                     } else {
                         match self2.pending.pop_front() {
                             None => {
-                                self2.state = State2::RangeFinal;
+                                self2.state = State2::MaybeRangeFinal;
                                 continue;
                             }
                             Some((cl, ks)) => {
@@ -396,7 +401,7 @@ impl Stream for LspFwdMspSerialOverClusters {
                         }
                     }
                 }
-                State2::RangeFinal => {
+                State2::MaybeRangeFinal => {
                     self2.state = State2::Done;
                     if self2.range_final_false == 0 && self2.range_final_true != 0 {
                         Ready(Some(Ok(StreamItem::DataItem(RangeCompletableItem::RangeComplete))))

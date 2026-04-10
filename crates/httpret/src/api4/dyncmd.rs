@@ -62,6 +62,7 @@ autoerr::create_error_v1!(
         Search(#[from] dbconn::search::Error),
         Elapsed(#[from] taskrun::tokio::time::error::Elapsed),
         LspFwdMspMulti(#[from] scyllaconn::events3::ks::lsp_fwd_msp_multi::Error),
+        LspFwdMspSerial(#[from] scyllaconn::events3::ks::lsp_fwd_msp_serial::Error),
         Http(#[from] http::Error),
         Todo,
     },
@@ -143,6 +144,21 @@ struct LspFwdMspMultiCmd {
 }
 
 impl LspFwdMspMultiCmd {
+    fn series(&self) -> SeriesId {
+        SeriesId::new(self.series.parse().unwrap())
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct LspFwdMspSerialCmd {
+    backend: String,
+    series: String,
+    name: String,
+    ts1: String,
+    ts2: String,
+}
+
+impl LspFwdMspSerialCmd {
     fn series(&self) -> SeriesId {
         SeriesId::new(self.series.parse().unwrap())
     }
@@ -245,6 +261,17 @@ impl DynCmdHandler {
                                         let buf = serde_json::to_vec(&x).unwrap();
                                         Ok(response(StatusCode::OK).body(body_bytes(buf))?)
                                     }
+                                } else {
+                                    info!("Failed to parse LspFwdMspMultiCmd");
+                                    Ok(response(StatusCode::BAD_REQUEST).body(body_empty())?)
+                                }
+                            } else if cmd.ty2 == "LspFwdMspSerialCmd" {
+                                if let Ok(cmd) = serde_json::from_slice::<LspFwdMspSerialCmd>(&buf) {
+                                    info!("{cmd:?}");
+                                    let res =
+                                        LspFwdMspSerialCmd::exec_stream_head(cmd, scyqu, shared_res.pgqueue.clone())
+                                            .await?;
+                                    Ok(res)
                                 } else {
                                     info!("Failed to parse LspFwdMspMultiCmd");
                                     Ok(response(StatusCode::BAD_REQUEST).body(body_empty())?)
@@ -678,9 +705,8 @@ impl LspFwdMspMultiCmd {
                                     opts,
                                     cl.as_ref().clone(),
                                     msps,
-                                )
-                                .map_err(Error::from)
-                                .map_ok(move |x| (ks.clone(), x));
+                                );
+                                let stream = stream.map_err(Error::from).map_ok(move |x| (ks.clone(), x));
                                 stream
                             })
                         }
@@ -994,5 +1020,147 @@ impl LspFwdMspMultiCmd {
             "ret1": ret1,
         });
         Ok(ret)
+    }
+}
+
+impl LspFwdMspSerialCmd {
+    async fn exec_stream_body(cmd: Self, scyqu: ScyllaQueue, pgqu: PgQueue) -> Result<StreamBody, Error> {
+        use netpod::FromUrl;
+        use serde_json::json;
+        let range = netpod::query::TimeRangeQuery::from_pairs(
+            &[("begDate", cmd.ts1.clone()), ("endDate", cmd.ts2.clone())]
+                .map(|x| (x.0.into(), x.1))
+                .into_iter()
+                .collect(),
+        )
+        .map_err(|e| Error::from(e.to_string()))?;
+        let series_id = if cmd.series().id() == 0 {
+            let qu = netpod::ChannelSearchQuery {
+                backend: Some(cmd.backend.clone()),
+                name_regex: cmd.name.clone(),
+                source_regex: String::new(),
+                description_regex: String::new(),
+                icase: false,
+                kind: SeriesKind::ChannelData,
+                log_level: String::new(),
+            };
+            let mut res = pgqu.search_channel_scylla(qu).await??;
+            let c1 = res
+                .channels
+                .pop()
+                .ok_or_else(|| Error::Msg(format!("channel not found")))?;
+            SeriesId::new(c1.series)
+        } else {
+            cmd.series()
+        };
+        let chi = pgqu.chconf_for_series(&cmd.backend, series_id.id()).await??;
+        let series_info = SeriesInfo::from(&chi);
+        let range = netpod::range::evrange::NanoRange::from(range);
+        let range = ScyllaSeriesRange::new(range.beg_ts(), range.end_ts());
+        let stream = scyllaconn::events3::ks::lsp_fwd_msp_serial::LspFwdMspSerialOverClusters::new(
+            series_info.clone(),
+            range.clone(),
+            scyqu.clone(),
+        );
+        let stream = stream
+            .map(|x| match x {
+                Ok(x) => match x {
+                    StreamItem::DataItem(x) => match x {
+                        RangeCompletableItem::Data(x) => {
+                            let cl = x.cl;
+                            let ks = x.ks;
+                            let msp = x.msp;
+                            let x = x.item.to_f32_for_binning_v01();
+                            if let Some(x) = x.as_any_ref().downcast_ref::<ContainerEvents<f32>>() {
+                                let (tss, vals, tss_str) = x.iter_zip().fold(
+                                    (Vec::new(), Vec::new(), Vec::new()),
+                                    |(mut tss, mut vals, mut tss_str), (ts, val)| {
+                                        tss.push(ts.ms());
+                                        vals.push(val);
+                                        tss_str.push(ts.fmt().to_string());
+                                        (tss, vals, tss_str)
+                                    },
+                                );
+                                json!({
+                                    "type": "events",
+                                    "cl": cl,
+                                    "ks": ks,
+                                    "msp": msp.to_ms().to_u64(),
+                                    "tss": tss,
+                                    "vals": vals,
+                                })
+                            } else {
+                                json!({
+                                    "type": "error",
+                                    "cl": cl,
+                                    "ks": ks,
+                                    "error": "can not downcast",
+                                })
+                            }
+                        }
+                        RangeCompletableItem::RangeComplete => {
+                            json!({
+                                "type": "RangeFinal",
+                            })
+                        }
+                    },
+                    StreamItem::Log(x) => {
+                        json!({
+                            "type": "log",
+                            "log": x,
+                        })
+                    }
+                    StreamItem::Stats(x) => {
+                        json!({
+                            "type": "stats",
+                            "stats": x,
+                        })
+                    }
+                },
+                Err(e) => json!({
+                    "type": "error",
+                    "error": e.to_string(),
+                }),
+            })
+            .map(|x| serde_json::to_string(&x))
+            .take_while({
+                let mut had_err = false;
+                let mut n = 0;
+                move |x| {
+                    let ret = match x {
+                        Ok(x) => {
+                            if n < 1024 * 1024 * 4 {
+                                n += x.len();
+                                true
+                            } else {
+                                false
+                            }
+                        }
+                        Err(_) => {
+                            if had_err {
+                                false
+                            } else {
+                                had_err = true;
+                                true
+                            }
+                        }
+                    };
+                    ready(ret)
+                }
+            })
+            .inspect(|x| {
+                info!("before chunking: {x:?}");
+            });
+        let stream = bytes_chunks_to_len_framed_str(stream);
+        let res = body_stream(stream);
+        Ok(res)
+    }
+
+    async fn exec_stream_head(cmd: Self, scyqu: &ScyllaQueue, pgqu: PgQueue) -> Result<StreamResponse, Error> {
+        let body = Self::exec_stream_body(cmd, scyqu.clone(), pgqu).await?;
+        let res = response(StatusCode::OK)
+            .header(header::CONTENT_TYPE, APP_JSON_FRAMED)
+            .body(body)?;
+        Ok(res)
     }
 }
