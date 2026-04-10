@@ -741,9 +741,8 @@ where
         if x == 0 { None } else { Some(x - 1) }
     }
 
-    fn find_highest_index_le(&self, ts: TsNano) -> Option<usize> {
-        let x = self.ts1s.partition_point(|&x| x <= ts);
-        if x == 0 { None } else { Some(x - 1) }
+    fn find_pp_le(&self, ts: TsNano) -> usize {
+        self.ts1s.partition_point(|&x| x <= ts)
     }
 
     fn tss_for_testing(&self) -> VecDeque<TsNano> {

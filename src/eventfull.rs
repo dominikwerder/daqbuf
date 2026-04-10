@@ -248,9 +248,8 @@ impl MergeableTy for EventFull {
         None
     }
 
-    fn find_highest_index_le(&self, ts: TsNano) -> Option<usize> {
-        let x = self.tss.partition_point(|&x| x <= ts.ns());
-        if x == 0 { None } else { Some(x - 1) }
+    fn find_pp_le(&self, ts: TsNano) -> usize {
+        self.tss.partition_point(|&x| x <= ts.ns())
     }
 
     fn tss_for_testing(&self) -> VecDeque<TsNano> {

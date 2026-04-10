@@ -872,14 +872,14 @@ impl MergeableTy for ChannelEvents {
         }
     }
 
-    fn find_highest_index_le(&self, ts: TsNano) -> Option<usize> {
+    fn find_pp_le(&self, ts: TsNano) -> usize {
         match self {
-            ChannelEvents::Events(k) => k.find_highest_index_le(ts),
+            ChannelEvents::Events(k) => k.find_pp_le(ts),
             ChannelEvents::Status(k) => {
                 if let Some(k) = k {
-                    if k.ts <= ts { Some(0) } else { None }
+                    if k.ts <= ts { 1 } else { 0 }
                 } else {
-                    None
+                    0
                 }
             }
         }
