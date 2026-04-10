@@ -47,7 +47,7 @@ pub trait MergeableTy: fmt::Debug + WithLen + ByteEstimate + Unpin + Sized {
     fn find_lowest_index_gt(&self, ts: TsNano) -> Option<usize>;
     fn find_lowest_index_ge(&self, ts: TsNano) -> Option<usize>;
     fn find_highest_index_lt(&self, ts: TsNano) -> Option<usize>;
-    fn find_highest_index_le(&self, ts: TsNano) -> Option<usize>;
+    fn find_pp_le(&self, ts: TsNano) -> usize;
     fn tss_for_testing(&self) -> VecDeque<TsNano>;
     fn drain_into(&mut self, dst: &mut Self, range: Range<usize>) -> DrainIntoDstResult;
     fn drain_into_new(&mut self, range: Range<usize>) -> DrainIntoNewResult<Self>;
@@ -61,7 +61,7 @@ pub trait MergeableDyn: fmt::Debug + WithLen + ByteEstimate + Unpin + AsAnyMut {
     fn find_lowest_index_gt(&self, ts: TsNano) -> Option<usize>;
     fn find_lowest_index_ge(&self, ts: TsNano) -> Option<usize>;
     fn find_highest_index_lt(&self, ts: TsNano) -> Option<usize>;
-    fn find_highest_index_le(&self, ts: TsNano) -> Option<usize>;
+    fn find_pp_le(&self, ts: TsNano) -> usize;
     fn tss_for_testing(&self) -> VecDeque<TsNano>;
     fn drain_into(&mut self, dst: &mut dyn MergeableDyn, range: Range<usize>)
     -> DrainIntoDstResult;
