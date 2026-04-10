@@ -1,10 +1,9 @@
+#![allow(unused_macros)]
 const READ_NEXT_TIMEOUT: Duration = Duration::from_millis(5000);
 const QUERY_PAGE_SIZE: i32 = 512;
 
 mod datatypes;
 
-use crate::events2::prepare::StmtsEvents;
-use crate::events2::prepare::StmtsEventsClusterKeyspace;
 use crate::events2::prepare::StmtsEventsQueryOpts;
 use crate::events3::jobtrace::ReadEventKind;
 use crate::events3::jobtrace::ReadJobTrace;
@@ -76,12 +75,12 @@ impl<'a> Clone for ScySessionRef<'a> {
 
 #[derive(Debug)]
 pub(super) struct ReadNextValuesOpts {
-    rt: RetentionTime,
+    _rt: RetentionTime,
     series: SeriesId,
     ts_msp: TsMs,
     range: ScyllaSeriesRange,
     with_values: bool,
-    scylla_opts: query::api4::scyllaopts::ScyllaOptsQuery,
+    _scylla_opts: query::api4::scyllaopts::ScyllaOptsQuery,
     val_ty_dyn: Box<dyn ValTyDyn>,
 }
 
@@ -172,12 +171,12 @@ async fn read_fwd_inner(
         debug!("{selfname}  DEBUG COMPARISON RUN  series id {}", params.series.id());
         let res1 = {
             let opts = ReadNextValuesOpts {
-                rt: params.rt.clone(),
+                _rt: params.rt.clone(),
                 series: params.series,
                 ts_msp: params.ts_msp,
                 range: params.range.clone(),
                 with_values: params.with_values,
-                scylla_opts: params.scylla_opts.clone(),
+                _scylla_opts: params.scylla_opts.clone(),
                 val_ty_dyn: val_ty_dyn.clone_dyn(),
             };
             // TODO run same query with workaround on and off.
@@ -193,12 +192,12 @@ async fn read_fwd_inner(
         };
         let res2 = {
             let opts = ReadNextValuesOpts {
-                rt: params.rt.clone(),
+                _rt: params.rt.clone(),
                 series: params.series,
                 ts_msp: params.ts_msp,
                 range: params.range,
                 with_values: params.with_values,
-                scylla_opts: params.scylla_opts,
+                _scylla_opts: params.scylla_opts,
                 val_ty_dyn,
             };
             // opts.readopts.use_scylla6_workarounds = UseScylla6Workarounds::with_workarounds();
@@ -224,12 +223,12 @@ async fn read_fwd_inner(
         // TODO check how many of these are actually needed:
         //
         let opts = ReadNextValuesOpts {
-            rt: params.rt.clone(),
+            _rt: params.rt.clone(),
             series: params.series,
             ts_msp: params.ts_msp,
             range: params.range,
             with_values: params.with_values,
-            scylla_opts: params.scylla_opts,
+            _scylla_opts: params.scylla_opts,
             val_ty_dyn,
         };
         let res = read_next_values_fwd(opts, stmts, scy, jobtrace)

@@ -4,19 +4,17 @@ use crate::events3::SeriesInfo;
 use crate::events3::msplsp::LspEv;
 use crate::events3::msplsp::MspEv;
 use crate::events3::test_data;
-use crate::range::ScyllaSeriesRange;
 use crate::worker::KeyspaceId;
-use daqbuf_series::SeriesId;
 use futures_util::TryStreamExt;
-use netpod::DtNano;
-use netpod::TsMs;
-use netpod::TsNano;
 use netpod::ttl::RetentionTime;
 use scylla::client::session::Session;
-use std::collections::VecDeque;
 use std::fmt;
 
-macro_rules! error { ($($arg:tt)*) => { log::error!($($arg)*); }; }
+macro_rules! debug { ($($arg:tt)*) => { log::error!($($arg)*); }; }
+
+fn _keep() {
+    debug!("");
+}
 
 autoerr::create_error_v1!(
     name(Error, "Read03LspLst"),
@@ -46,6 +44,7 @@ impl From<async_channel::RecvError> for Error {
 pub type Item = Result<Option<LspEv>, Error>;
 
 pub struct Read03LspLst {
+    #[allow(unused)]
     ks: KeyspaceId,
     series_info: SeriesInfo,
     msp: MspEv,

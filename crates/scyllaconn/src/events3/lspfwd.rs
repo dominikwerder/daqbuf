@@ -9,6 +9,8 @@ use crate::worker::KeyspaceId;
 use futures_util::TryStreamExt;
 use items_0::timebin::BinningggContainerEventsDyn;
 use items_2::binning::container_events::ContainerEvents;
+use netpod::RangeExcl;
+use netpod::ScalarType;
 use netpod::Shape;
 use netpod::ttl::RetentionTime;
 use scylla::client::session::Session;
@@ -44,11 +46,11 @@ pub type Item = Result<Box<dyn BinningggContainerEventsDyn>, Error>;
 
 #[derive(Debug)]
 pub struct Read03LspFwd {
-    #[allow(unused)]
-    ks: KeyspaceId,
+    _ks: KeyspaceId,
     series_info: SeriesInfo,
     msp: MspEv,
     range: ScyllaSeriesRange,
+    begexcl: RangeExcl,
     limit: u32,
     tx: async_channel::Sender<Item>,
 }
@@ -59,14 +61,16 @@ impl Read03LspFwd {
         series_info: SeriesInfo,
         msp: MspEv,
         range: ScyllaSeriesRange,
+        begexcl: RangeExcl,
         limit: u32,
     ) -> (Self, async_channel::Receiver<Item>) {
         let (tx, rx) = async_channel::bounded(1);
         let ret = Self {
-            ks,
+            _ks: ks,
             series_info,
             msp,
             range,
+            begexcl,
             limit,
             tx,
         };
@@ -90,24 +94,88 @@ impl Read03LspFwd {
             }
         };
         let stmt = stmts
-            .lsp(false, false)
+            .lsp(false, true)
             .shape(array)
             .st(self.series_info.scalar_type().to_scylla_table_name_id())?
             .clone();
         let lsp_beg = self.msp.lsp(self.range.beg()).map_or(0i64, |x| x.to_i64());
         let lsp_end = self.msp.lsp(self.range.end()).map_or(0i64, |x| x.to_i64());
+        let lsp_beg = if let RangeExcl::Beg = self.begexcl {
+            lsp_beg + 1
+        } else {
+            lsp_beg
+        };
         let lim = self.limit as i32;
         let params = (self.series_info.id().to_i64(), self.msp.to_i64(), lsp_beg, lsp_end, lim);
-        let mut rows = scy.execute_iter(stmt, params).await?.rows_stream::<(i64,)>()?;
-        // TODO branch on type
-        let mut evs = ContainerEvents::<u32>::new();
-        while let Some((lsp,)) = rows.try_next().await? {
-            let lsp = LspEv::from_i64(lsp);
-            let ts = self.msp.to_ts(lsp);
-            let val = lsp.to_i64() as _;
-            evs.push_back(ts, val);
-        }
-        Ok(Box::new(evs))
+        let ret = match self.series_info.scalar_type() {
+            ScalarType::U8 => {
+                type ST = u8;
+                type SC = i8;
+                let mut rows = scy.execute_iter(stmt, params).await?.rows_stream::<(i64, SC)>()?;
+                let mut evs = ContainerEvents::<ST>::new();
+                while let Some((lsp, val)) = rows.try_next().await? {
+                    let lsp = LspEv::from_i64(lsp);
+                    let ts = self.msp.to_ts(lsp);
+                    evs.push_back(ts, val as ST);
+                }
+                Box::new(evs) as Box<dyn BinningggContainerEventsDyn>
+            }
+            ScalarType::U64 => {
+                type ST = u64;
+                type SC = i64;
+                let mut rows = scy.execute_iter(stmt, params).await?.rows_stream::<(i64, SC)>()?;
+                let mut evs = ContainerEvents::<ST>::new();
+                while let Some((lsp, val)) = rows.try_next().await? {
+                    let lsp = LspEv::from_i64(lsp);
+                    let ts = self.msp.to_ts(lsp);
+                    evs.push_back(ts, val as ST);
+                }
+                Box::new(evs) as Box<dyn BinningggContainerEventsDyn>
+            }
+            ScalarType::I16 => {
+                type ST = i16;
+                type SC = ST;
+                let mut rows = scy.execute_iter(stmt, params).await?.rows_stream::<(i64, SC)>()?;
+                let mut evs = ContainerEvents::<ST>::new();
+                while let Some((lsp, val)) = rows.try_next().await? {
+                    let lsp = LspEv::from_i64(lsp);
+                    let ts = self.msp.to_ts(lsp);
+                    evs.push_back(ts, val as ST);
+                }
+                Box::new(evs) as Box<dyn BinningggContainerEventsDyn>
+            }
+            ScalarType::F32 => {
+                type ST = f32;
+                type SC = ST;
+                let mut rows = scy.execute_iter(stmt, params).await?.rows_stream::<(i64, SC)>()?;
+                let mut evs = ContainerEvents::<ST>::new();
+                while let Some((lsp, val)) = rows.try_next().await? {
+                    let lsp = LspEv::from_i64(lsp);
+                    let ts = self.msp.to_ts(lsp);
+                    evs.push_back(ts, val as ST);
+                }
+                Box::new(evs)
+            }
+            ScalarType::F64 => {
+                type ST = f64;
+                type SC = ST;
+                let mut rows = scy.execute_iter(stmt, params).await?.rows_stream::<(i64, SC)>()?;
+                let mut evs = ContainerEvents::<ST>::new();
+                while let Some((lsp, val)) = rows.try_next().await? {
+                    let lsp = LspEv::from_i64(lsp);
+                    let ts = self.msp.to_ts(lsp);
+                    evs.push_back(ts, val as ST);
+                }
+                Box::new(evs)
+            }
+            _ => {
+                let st = self.series_info.scalar_type();
+                error!("unhandled {st:?}");
+                let evs = ContainerEvents::<i32>::new();
+                Box::new(evs)
+            }
+        };
+        Ok(ret)
     }
 
     pub async fn exec_mock(self, cltag: &str, ks: KeyspaceId) {

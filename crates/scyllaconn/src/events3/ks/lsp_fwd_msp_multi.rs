@@ -12,6 +12,7 @@ use futures_util::StreamExt;
 use items_0::streamitem::RangeCompletableItem;
 use items_0::streamitem::Sitemty2;
 use items_0::streamitem::StreamItem;
+use items_0::streamitem::sitem2_data;
 use items_0::timebin::BinningggContainerEventsDyn;
 use netpod::RangeExcl;
 use netpod::TsMs;
@@ -48,20 +49,21 @@ autoerr::create_error_v1!(
         FindNextTsOnEmptyBuf,
         LoopTooMany,
         MspBck(#[from] crate::events3::mspbck::Error),
+        LspFwdSingle(#[from] crate::events3::ks::lsp_fwd_msp_single::Error),
     },
 );
 
 #[derive(Debug, Clone)]
 pub struct Opts {
     with_values: bool,
-    scylla_opts: query::api4::scyllaopts::ScyllaOptsQuery,
+    _scylla_opts: query::api4::scyllaopts::ScyllaOptsQuery,
 }
 
 impl Opts {
     pub fn new() -> Self {
         Self {
             with_values: false,
-            scylla_opts: query::api4::scyllaopts::ScyllaOptsQuery::new(),
+            _scylla_opts: query::api4::scyllaopts::ScyllaOptsQuery::new(),
         }
     }
 
@@ -176,7 +178,7 @@ impl Merging {
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         _brefs: BaseRefs,
-    ) -> Poll<Option<Result<(), Error>>> {
+    ) -> Poll<Option<Sitemty2<(), Error>>> {
         use Poll::*;
         // TODO when does this loop actually terminate?
         let mut il1 = 0u32;
@@ -200,13 +202,28 @@ impl Merging {
                             Ready(Some(x)) => {
                                 hpp.mark_progress();
                                 match x {
-                                    Ok(x) => {
-                                        if x.len() == 0 {
-                                            // TODO count for metrics
-                                        } else {
-                                            inp.buf = Some(x);
+                                    Ok(x) => match x {
+                                        StreamItem::DataItem(x) => match x {
+                                            RangeCompletableItem::Data(x) => {
+                                                if x.len() == 0 {
+                                                    // TODO count for metrics
+                                                } else {
+                                                    inp.buf = Some(x);
+                                                }
+                                            }
+                                            RangeCompletableItem::RangeComplete => {
+                                                break 'outer Ready(Some(Ok(StreamItem::DataItem(
+                                                    RangeCompletableItem::RangeComplete,
+                                                ))));
+                                            }
+                                        },
+                                        StreamItem::Log(x) => {
+                                            break 'outer Ready(Some(Ok(StreamItem::Log(x))));
                                         }
-                                    }
+                                        StreamItem::Stats(x) => {
+                                            break 'outer Ready(Some(Ok(StreamItem::Stats(x))));
+                                        }
+                                    },
                                     Err(e) => break 'outer Ready(Some(Err(e.into()))),
                                 }
                             }
@@ -231,13 +248,13 @@ impl Merging {
                     hpp.mark_progress();
                 }
             }
-            let n_it = self2.inps.iter().filter(|x| x.buf.is_none());
+            let n_empty = self2.inps.iter().filter(|x| x.buf.is_none()).count();
             break if hpp.have_progress() {
                 continue;
             } else if hpp.have_pending() {
                 Pending
-            } else if n_it.count() == 0 {
-                Ready(Some(Ok(())))
+            } else if n_empty == 0 {
+                Ready(Some(sitem2_data(())))
             } else {
                 Ready(None)
             };
@@ -249,7 +266,7 @@ impl Merging {
         cx: &mut Context<'_>,
         mut brefs: BaseRefs,
         msp_next: Option<TsMs>,
-    ) -> Poll<Option<Result<CheckInputItem, Error>>> {
+    ) -> Poll<Option<Sitemty2<CheckInputItem, Error>>> {
         use Poll::*;
         let mut il1 = 0u32;
         loop {
@@ -276,65 +293,92 @@ impl Merging {
                 Ready(Some(x)) => {
                     hpp.mark_progress();
                     match x {
-                        Ok(()) => match self.as_mut().find_next_ts()? {
-                            NextTs::None => {
-                                if self.inps.len() == 0 {
-                                    info!("LspFwdMspMulti  check_inputs  NextTs::None and no inps");
-                                    break Ready(Some(Ok(CheckInputItem::OpenNextMsp)));
-                                } else {
-                                    error!("LspFwdMspMulti  check_inputs  find_next_ts  None  but inps not empty");
-                                    self.inps.clear();
-                                }
-                            }
-                            NextTs::One(_ts1, ix1) => {
-                                // TODO check if msp lower than final entry in ix1 buffer.
-                                // if yes, add a new stream for that msp and start over.
-                                // TODO maybe the ts finder should already return also the max to avoid unwrap.
-                                let b1 = &mut self.inps.get_mut(ix1.0).unwrap().buf;
-                                let b2 = b1.as_mut().unwrap();
-                                let ts_max = b2.ts_max().unwrap();
-                                if msp_next.map_or(false, |x| x.ns() <= ts_max) {
-                                    info!("LspFwdMspMulti  check_inputs  NextTs::One  open next msp");
-                                    break Ready(Some(Ok(CheckInputItem::OpenNextMsp)));
-                                } else {
-                                    info!("TODO actually drain the events {}", b2.len());
-                                    let item = b1.take().unwrap();
-                                    break Ready(Some(Ok(CheckInputItem::Item(item))));
-                                }
-                            }
-                            NextTs::Two(_ts1, ix1, ts2, _ix2) => {
-                                let b1 = &mut self.inps.get_mut(ix1.0).unwrap().buf;
-                                let b2 = b1.as_mut().unwrap();
-                                if msp_next.map_or(false, |x| x.ns() <= ts2) {
-                                    info!("LspFwdMspMulti  check_inputs  NextTs::Two  open next msp");
-                                    break Ready(Some(Ok(CheckInputItem::OpenNextMsp)));
-                                } else {
-                                    // TODO drain all events with ts <= ts2.
-                                    info!("TODO actually drain the events {}", b2.len());
-                                    // TODO maybe better if api actually returns the index?
-                                    if let Some(i3) = b2.as_mergeable_dyn_mut().find_highest_index_le(ts2) {
-                                        use items_0::merge::DrainIntoNewDynResult;
-                                        match b2.as_mergeable_dyn_mut().drain_into_new(0..i3) {
-                                            // TODO optimizations?
-                                            DrainIntoNewDynResult::Done(c) => {
-                                                break Ready(Some(Ok(CheckInputItem::Item(c))));
+                        Ok(x) => {
+                            match x {
+                                StreamItem::DataItem(x) => match x {
+                                    RangeCompletableItem::Data(()) => {
+                                        match self.as_mut().find_next_ts()? {
+                                            NextTs::None => {
+                                                if self.inps.len() == 0 {
+                                                    info!("LspFwdMspMulti  check_inputs  NextTs::None and no inps");
+                                                    break Ready(Some(sitem2_data(CheckInputItem::OpenNextMsp)));
+                                                } else {
+                                                    error!(
+                                                        "LspFwdMspMulti  check_inputs  find_next_ts  None  but inps not empty"
+                                                    );
+                                                    self.inps.clear();
+                                                }
                                             }
-                                            DrainIntoNewDynResult::Partial(c) => {
-                                                break Ready(Some(Ok(CheckInputItem::Item(c))));
+                                            NextTs::One(_ts1, ix1) => {
+                                                // TODO check if msp lower than final entry in ix1 buffer.
+                                                // if yes, add a new stream for that msp and start over.
+                                                // TODO maybe the ts finder should already return also the max to avoid unwrap.
+                                                let b1 = &mut self.inps.get_mut(ix1.0).unwrap().buf;
+                                                let b2 = b1.as_mut().unwrap();
+                                                let ts_max = b2.ts_max().unwrap();
+                                                if msp_next.map_or(false, |x| x.ns() <= ts_max) {
+                                                    info!("LspFwdMspMulti  check_inputs  NextTs::One  open next msp");
+                                                    break Ready(Some(sitem2_data(CheckInputItem::OpenNextMsp)));
+                                                } else {
+                                                    info!("TODO actually drain the events {}", b2.len());
+                                                    let item = b1.take().unwrap();
+                                                    break Ready(Some(sitem2_data(CheckInputItem::Item(item))));
+                                                }
                                             }
-                                            DrainIntoNewDynResult::NotCompatible => {
-                                                // should not happen because we drain into new
-                                                // TODO metrics
-                                                *b1 = None;
+                                            NextTs::Two(_ts1, ix1, ts2, _ix2) => {
+                                                let b1 = &mut self.inps.get_mut(ix1.0).unwrap().buf;
+                                                let b2 = b1.as_mut().unwrap();
+                                                if msp_next.map_or(false, |x| x.ns() <= ts2) {
+                                                    info!("LspFwdMspMulti  check_inputs  NextTs::Two  open next msp");
+                                                    break Ready(Some(sitem2_data(CheckInputItem::OpenNextMsp)));
+                                                } else {
+                                                    // TODO drain all events with ts <= ts2.
+                                                    info!("TODO actually drain the events {}", b2.len());
+                                                    // TODO maybe better if api actually returns the index?
+                                                    if let Some(i3) =
+                                                        b2.as_mergeable_dyn_mut().find_highest_index_le(ts2)
+                                                    {
+                                                        use items_0::merge::DrainIntoNewDynResult;
+                                                        match b2.as_mergeable_dyn_mut().drain_into_new(0..i3) {
+                                                            // TODO optimizations?
+                                                            DrainIntoNewDynResult::Done(c) => {
+                                                                break Ready(Some(sitem2_data(CheckInputItem::Item(
+                                                                    c,
+                                                                ))));
+                                                            }
+                                                            DrainIntoNewDynResult::Partial(c) => {
+                                                                break Ready(Some(sitem2_data(CheckInputItem::Item(
+                                                                    c,
+                                                                ))));
+                                                            }
+                                                            DrainIntoNewDynResult::NotCompatible => {
+                                                                // should not happen because we drain into new
+                                                                // TODO metrics
+                                                                *b1 = None;
+                                                            }
+                                                        }
+                                                    } else {
+                                                        error!("nothing to drain?");
+                                                        *b1 = None;
+                                                    }
+                                                }
                                             }
                                         }
-                                    } else {
-                                        error!("nothing to drain?");
-                                        *b1 = None;
                                     }
+                                    RangeCompletableItem::RangeComplete => {
+                                        break Ready(Some(Ok(StreamItem::DataItem(
+                                            RangeCompletableItem::RangeComplete,
+                                        ))));
+                                    }
+                                },
+                                StreamItem::Log(x) => {
+                                    break Ready(Some(Ok(StreamItem::Log(x))));
+                                }
+                                StreamItem::Stats(x) => {
+                                    break Ready(Some(Ok(StreamItem::Stats(x))));
                                 }
                             }
-                        },
+                        }
                         Err(e) => break Ready(Some(Err(e.into()))),
                     }
                 }
@@ -355,7 +399,7 @@ impl Merging {
     }
 
     fn gen_limit(&mut self) -> u32 {
-        100
+        73
     }
 
     fn poll_state(
@@ -413,38 +457,48 @@ impl Merging {
             };
             if let Some(msp_next) = msp_next_opt {
                 match Pin::new(&mut *self2).check_inputs(cx, brefs2, msp_next) {
-                    Ready(Some(x)) => {
-                        // hpp.mark_progress();
-                        match x {
-                            Ok(x) => match x {
-                                CheckInputItem::OpenNextMsp => {
-                                    if let Some(msp_next) = self2.mspbuf.pop_front() {
-                                        hpp.mark_progress();
-                                        let msp = MspEv::from(msp_next);
-                                        info!("LspFwdMspMulti  poll_state  OpenNextMsp  {msp_next}  {msp}");
-                                        let stream = LspFwdMspSingleStream::new(
-                                            brefs.ks.clone(),
-                                            brefs.series_info.clone(),
-                                            msp,
-                                            brefs.range.clone(),
-                                            self2.gen_limit(),
-                                            brefs.scyqu.clone(),
-                                        );
-                                        self2.inps.push_back(Inp {
-                                            evs: Some(stream),
-                                            buf: None,
-                                        });
-                                    } else {
-                                        info!("LspFwdMspMulti  poll_state  OpenNextMsp  no msp_next");
+                    Ready(Some(x)) => match x {
+                        Ok(x) => match x {
+                            StreamItem::DataItem(x) => match x {
+                                RangeCompletableItem::Data(x) => match x {
+                                    CheckInputItem::OpenNextMsp => {
+                                        if let Some(msp_next) = self2.mspbuf.pop_front() {
+                                            hpp.mark_progress();
+                                            let msp = MspEv::from(msp_next);
+                                            info!("LspFwdMspMulti  poll_state  OpenNextMsp  {msp_next}  {msp}");
+                                            let stream = LspFwdMspSingleStream::new(
+                                                brefs.ks.clone(),
+                                                brefs.series_info.clone(),
+                                                msp,
+                                                brefs.range.clone(),
+                                                self2.gen_limit(),
+                                                brefs.scyqu.clone(),
+                                            );
+                                            self2.inps.push_back(Inp {
+                                                evs: Some(stream),
+                                                buf: None,
+                                            });
+                                        } else {
+                                            info!("LspFwdMspMulti  poll_state  OpenNextMsp  no msp_next");
+                                        }
                                     }
-                                }
-                                CheckInputItem::Item(x) => {
-                                    break Ready(Some(items_0::streamitem::sitem2_data(x)));
+                                    CheckInputItem::Item(x) => {
+                                        break Ready(Some(items_0::streamitem::sitem2_data(x)));
+                                    }
+                                },
+                                RangeCompletableItem::RangeComplete => {
+                                    break Ready(Some(Ok(StreamItem::DataItem(RangeCompletableItem::RangeComplete))));
                                 }
                             },
-                            Err(e) => break Ready(Some(Err(e.into()))),
-                        }
-                    }
+                            StreamItem::Log(x) => {
+                                break Ready(Some(Ok(StreamItem::Log(x))));
+                            }
+                            StreamItem::Stats(x) => {
+                                break Ready(Some(Ok(StreamItem::Stats(x))));
+                            }
+                        },
+                        Err(e) => break Ready(Some(Err(e.into()))),
+                    },
                     Ready(None) => {}
                     Pending => {
                         hpp.mark_pending();
@@ -475,7 +529,7 @@ pub struct LspFwdMspMulti {
     series_info: SeriesInfo,
     ks: KeyspaceId,
     range: ScyllaSeriesRange,
-    opts: Opts,
+    _opts: Opts,
     state: State,
     scyqu: ScyllaQueueCluster,
     loop_cnt: u32,
@@ -514,7 +568,7 @@ impl LspFwdMspMulti {
             ks,
             series_info,
             range,
-            opts,
+            _opts: opts,
             state,
             scyqu,
             loop_cnt: 0,
@@ -530,6 +584,7 @@ impl Stream for LspFwdMspMulti {
         self.loop_cnt += 1;
         if self.loop_cnt > 10000 {
             error!("LspFwdMspMulti  poll_next  too many");
+            self.state = State::Done;
             return Ready(Some(Err(Error::LoopTooMany)));
         }
         let mut il1 = 0u32;
@@ -537,6 +592,7 @@ impl Stream for LspFwdMspMulti {
             il1 += 1;
             if il1 > 100 {
                 error!("LspFwdMspMulti  poll_next  loop iteration too many");
+                self.state = State::Done;
                 break Ready(Some(Err(Error::LoopTooMany)));
             }
             let mut hpp = HaveProgressPending::new();
@@ -552,7 +608,13 @@ impl Stream for LspFwdMspMulti {
                     match Pin::new(st1).poll_state(cx, brefs) {
                         Ready(Some(x)) => {
                             hpp.mark_progress();
-                            break Ready(Some(x));
+                            match x {
+                                Ok(x) => break Ready(Some(Ok(x))),
+                                Err(e) => {
+                                    self2.state = State::Done;
+                                    break Ready(Some(Err(e)));
+                                }
+                            }
                         }
                         Ready(None) => {
                             hpp.mark_progress();

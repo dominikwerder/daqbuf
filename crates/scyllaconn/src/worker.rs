@@ -274,7 +274,6 @@ enum Job {
         Sender<Result<(Box<dyn BinningggContainerEventsDyn>, ReadJobTrace), Error>>,
     ),
     ReadMsp03Fwd(crate::events3::mspfwd::ReadMsp03Fwd),
-    ReadMsp03Bck(crate::events3::mspbck::ReadMsp03Bck),
     ReadEvents03Fwd(
         ReadEvents03FwdParams,
         Sender<
@@ -503,19 +502,6 @@ impl ScyllaQueueCluster {
         res
     }
 
-    pub async fn read_msp_03_bck(
-        &self,
-        ks: KeyspaceId,
-        series: SeriesId,
-        range: ScyllaSeriesRange,
-    ) -> crate::events3::mspbck::Item {
-        let (job, rx) = crate::events3::mspbck::ReadMsp03Bck::new(ks.clone(), series, range);
-        let job = Job::ReadMsp03Bck(job);
-        self.tx.send((ks, job)).await?;
-        let res = rx.recv().await??;
-        Ok(res)
-    }
-
     pub async fn read_03_lsp_lst(
         &self,
         ks: KeyspaceId,
@@ -536,9 +522,10 @@ impl ScyllaQueueCluster {
         series_info: SeriesInfo,
         msp: MspEv,
         range: ScyllaSeriesRange,
+        begexcl: RangeExcl,
         limit: u32,
     ) -> crate::events3::lspfwd::Item {
-        let (job, rx) = crate::events3::lspfwd::Read03LspFwd::new(ks.clone(), series_info, msp, range, limit);
+        let (job, rx) = crate::events3::lspfwd::Read03LspFwd::new(ks.clone(), series_info, msp, range, begexcl, limit);
         let job = Job::Read03LspFwd(job);
         self.tx.send((ks, job)).await?;
         let res = rx.recv().await??;
@@ -655,21 +642,6 @@ impl ScyllaQueueCluster {
                             error!("ks not found for job");
                         }
                     }
-                    Job::ReadMsp03Bck(job) => {
-                        if let Some(((_ks, _rt), stmts)) = scyconf
-                            .keyspaces
-                            .iter()
-                            .zip(stmtsa.iter())
-                            .filter(|((ks, rt), _)| *ks == ksjob.name && *rt == ksjob.rt)
-                            .next()
-                        {
-                            let stmts = stmts.cache_bypass(true);
-                            job.exec(stmts, &scy).await;
-                        } else {
-                            // TODO use a nested Result instead.
-                            error!("ks not found for job");
-                        }
-                    }
                     Job::ReadEvents03Fwd(params, tx) => {
                         let mut ret = None;
                         for ((_, _), stmts) in scyconf.keyspaces.iter().zip(stmtsa.iter()) {
@@ -768,9 +740,6 @@ impl ScyllaQueueCluster {
                     debug!("can not execute Job::ReadEvents02 in mock");
                 }
                 Job::ReadMsp03Fwd(job) => {
-                    job.exec_mock(&tag, ksjob).await;
-                }
-                Job::ReadMsp03Bck(job) => {
                     job.exec_mock(&tag, ksjob).await;
                 }
                 Job::ReadEvents03Fwd(..) => {
@@ -1137,9 +1106,6 @@ impl ScyllaWorker {
                     }
                     Job::ReadMsp03Fwd(..) => {
                         error!("TODO  Job::ReadMsp03Fwd  only on cluster aware worker");
-                    }
-                    Job::ReadMsp03Bck(..) => {
-                        error!("TODO  Job::ReadMsp03Bck  only on cluster aware worker");
                     }
                     Job::ReadEvents03Fwd(..) => {
                         error!("TODO  Job::ReadEvents03Fwd  only on cluster aware worker");

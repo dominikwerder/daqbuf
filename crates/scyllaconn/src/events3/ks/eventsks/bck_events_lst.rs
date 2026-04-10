@@ -1,15 +1,10 @@
 use crate::events3::SeriesInfo;
 use crate::events3::msplsp::LspEv;
 use crate::events3::msplsp::MspEv;
-use crate::range::ScyllaSeriesRange;
 use crate::worker::KeyspaceId;
 use crate::worker::ScyllaQueueCluster;
 use futures_util::Future;
 use futures_util::FutureExt;
-use futures_util::Stream;
-use items_0::streamitem::Sitemty2;
-use items_2::channelevents::ChannelEvents;
-use netpod::TsMs;
 use netpod::TsNano;
 use netpod::futdbg::FutDbg;
 use netpod::futdbg::FutDbgBox;
@@ -24,6 +19,14 @@ macro_rules! warn { ($($arg:tt)*) => ( if true { log::warn!($($arg)*); } ) }
 macro_rules! info { ($($arg:tt)*) => ( if true { log::info!($($arg)*); } ) }
 macro_rules! debug { ($($arg:tt)*) => ( if true { log::debug!($($arg)*); } ) }
 macro_rules! trace { ($($arg:tt)*) => ( if true { log::trace!($($arg)*); } ) }
+
+fn _keep() {
+    error!("");
+    warn!("");
+    info!("");
+    debug!("");
+    trace!("");
+}
 
 autoerr::create_error_v1!(
     name(Error, "BckLspLst"),
@@ -44,6 +47,7 @@ impl Res1 {
     }
 }
 
+#[allow(unused)]
 #[derive(Debug)]
 pub struct BckLspLst {
     series_info: SeriesInfo,

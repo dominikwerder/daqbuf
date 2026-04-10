@@ -5,33 +5,41 @@ use crate::worker::KeyspaceId;
 use crate::worker::ScyllaQueueCluster;
 use futures_util::FutureExt;
 use futures_util::Stream;
-use std::fmt;
+use items_0::streamitem::LogItem;
+use items_0::streamitem::Sitemty2;
+use items_0::streamitem::StreamItem;
+use items_0::streamitem::sitem2_data;
+use items_0::timebin::BinningggContainerEventsDyn;
+use netpod::RangeExcl;
+use netpod::futdbg::FutDbg;
+use netpod::futdbg::FutDbgBox;
+use std::collections::VecDeque;
 use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
 
-pub type Item = crate::events3::lspfwd::Item;
+autoerr::create_error_v1!(
+    name(Error, "LspFwdMspSingleStream"),
+    enum variants {
+        LspFwd(#[from] crate::events3::lspfwd::Error),
+    },
+);
 
+// pub type Item = crate::events3::lspfwd::Item;
+
+type DataItem = Box<dyn BinningggContainerEventsDyn>;
+
+#[derive(Debug)]
 pub struct LspFwdMspSingleStream {
     ks: KeyspaceId,
     series_info: SeriesInfo,
     msp: MspEv,
     range: ScyllaSeriesRange,
+    begexcl: RangeExcl,
     limit: u32,
-    fut: Option<Pin<Box<dyn Future<Output = Item> + Send>>>,
+    fut: Option<FutDbg<crate::events3::lspfwd::Item>>,
     scyqu: ScyllaQueueCluster,
-}
-
-impl fmt::Debug for LspFwdMspSingleStream {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("LspFwdMspSingleStream")
-            .field("ks", &self.ks)
-            .field("series_info", &self.series_info)
-            .field("msp", &self.msp)
-            .field("range", &self.range)
-            .field("limit", &self.limit)
-            .finish()
-    }
+    outbuf: VecDeque<Sitemty2<DataItem, Error>>,
 }
 
 impl LspFwdMspSingleStream {
@@ -49,9 +57,12 @@ impl LspFwdMspSingleStream {
             series_info,
             msp,
             range,
+            // TODO maybe take already as option?
+            begexcl: RangeExcl::None,
             limit,
             fut: None,
             scyqu,
+            outbuf: VecDeque::new(),
         }
     }
 
@@ -61,11 +72,14 @@ impl LspFwdMspSingleStream {
 }
 
 impl Stream for LspFwdMspSingleStream {
-    type Item = Item;
+    type Item = Sitemty2<DataItem, Error>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         use Poll::*;
         loop {
+            if let Some(x) = self.outbuf.pop_front() {
+                break Ready(Some(x));
+            }
             break match &mut self.fut {
                 Some(fut) => match fut.poll_unpin(cx) {
                     Ready(x) => {
@@ -74,8 +88,12 @@ impl Stream for LspFwdMspSingleStream {
                             Ok(mut v) => {
                                 // TODO mut would not be necessary. Could add as_mergeable_dyn_ref
                                 if let Some(tsmax) = v.as_mergeable_dyn_mut().ts_max() {
-                                    self.range = ScyllaSeriesRange::new(tsmax.add_ns(1), self.range.end());
-                                    Ready(Some(Ok(v)))
+                                    self.range = ScyllaSeriesRange::new(tsmax, self.range.end());
+                                    self.begexcl = RangeExcl::Beg;
+                                    let item =
+                                        LogItem::info(format!("LspFwdMspSingleStream  cont len {n}", n = v.len()));
+                                    self.outbuf.push_back(Ok(StreamItem::Log(item)));
+                                    Ready(Some(sitem2_data(v)))
                                 } else {
                                     self.trigger_done();
                                     continue;
@@ -83,7 +101,7 @@ impl Stream for LspFwdMspSingleStream {
                             }
                             Err(e) => {
                                 self.trigger_done();
-                                Ready(Some(Err(e)))
+                                Ready(Some(Err(e.into())))
                             }
                         }
                     }
@@ -96,9 +114,11 @@ impl Stream for LspFwdMspSingleStream {
                         let series_info = self.series_info.clone();
                         let msp = self.msp;
                         let range = self.range.clone();
+                        let begexcl = self.begexcl.clone();
                         let limit = self.limit;
-                        let fut = async move { scyqu.read_03_lsp_fwd(ks, series_info, msp, range, limit).await };
-                        self.fut = Some(Box::pin(fut));
+                        let fut =
+                            async move { scyqu.read_03_lsp_fwd(ks, series_info, msp, range, begexcl, limit).await };
+                        self.fut = Some(fut.box2());
                         continue;
                     } else {
                         Ready(None)

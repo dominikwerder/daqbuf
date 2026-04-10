@@ -134,6 +134,7 @@ impl StmtsLspDir {
     }
 }
 
+#[allow(unused)]
 #[derive(Debug)]
 pub struct StmtsEventsRt {
     ts_msp_fwd: PreparedStatement,

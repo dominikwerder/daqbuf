@@ -8,6 +8,7 @@ use crate::ServiceSharedResources;
 use bytes::BytesMut;
 use chrono::TimeZone;
 use dbconn::worker::PgQueue;
+use futures_util::future::ready;
 use futures_util::StreamExt;
 use futures_util::TryFutureExt;
 use futures_util::TryStreamExt;
@@ -62,6 +63,7 @@ autoerr::create_error_v1!(
         Elapsed(#[from] taskrun::tokio::time::error::Elapsed),
         LspFwdMspMulti(#[from] scyllaconn::events3::ks::lsp_fwd_msp_multi::Error),
         Http(#[from] http::Error),
+        Todo,
     },
 );
 
@@ -418,14 +420,21 @@ async fn lsp_lst(cmd: Read03LspLst, scyqu: &ScyllaQueue, pgqu: PgQueue) -> Resul
     let si = SeriesInfo::from(&chi);
     let range = netpod::range::evrange::NanoRange::from(range);
     let range = ScyllaSeriesRange::new(range.beg_ts(), range.end_ts());
-    let scylla_opts = ScyllaOptsQuery::new();
     let mut msp_bck = Vec::new();
     let quto = Duration::from_millis(2000);
     for cl in scyqu.clusters() {
         let mut ret2 = Vec::new();
         for ks in cl.keyspaces() {
             let mut ret3 = Vec::new();
-            let msp_bck = timeout(quto, cl.read_msp_03_bck(ks.clone(), series_id, range.clone())).await??;
+            if true {
+                error!("TODO change to forward read over past window");
+                return Err(Error::Todo);
+            }
+            let msp_bck = timeout(
+                quto,
+                cl.read_msp_03_fwd(ks.clone(), series_id, range.clone(), RangeExcl::None, None),
+            )
+            .await??;
             for msp in msp_bck.iter() {
                 let msp = MspEv::from(*msp);
                 let lsp_lst_opn = timeout(quto, cl.read_03_lsp_lst(ks.clone(), si.clone(), msp, None)).await?;
@@ -797,18 +806,20 @@ impl LspFwdMspMultiCmd {
                             let ks = x.ks;
                             let x = x.item.to_f32_for_binning_v01();
                             if let Some(x) = x.as_any_ref().downcast_ref::<ContainerEvents<f32>>() {
-                                let (tss, vals) =
-                                    x.iter_zip()
-                                        .fold((Vec::new(), Vec::new()), |(mut tss, mut vals), (ts, val)| {
-                                            tss.push(ts.fmt().to_string());
-                                            vals.push(val);
-                                            (tss, vals)
-                                        });
+                                let (tss, vals, tss_str) = x.iter_zip().fold(
+                                    (Vec::new(), Vec::new(), Vec::new()),
+                                    |(mut tss, mut vals, mut tss_str), (ts, val)| {
+                                        tss.push(ts.ms());
+                                        vals.push(val);
+                                        tss_str.push(ts.fmt().to_string());
+                                        (tss, vals, tss_str)
+                                    },
+                                );
                                 json!({
                                     "type": "events",
                                     "cl": cl,
                                     "ks": ks,
-                                    "tss:": tss,
+                                    "tss": tss,
                                     "vals": vals,
                                 })
                             } else {
@@ -844,7 +855,35 @@ impl LspFwdMspMultiCmd {
                     "error": e.to_string(),
                 }),
             })
-            .map(|x| serde_json::to_string(&x));
+            .map(|x| serde_json::to_string(&x))
+            .take_while({
+                let mut had_err = false;
+                let mut n = 0;
+                move |x| {
+                    let ret = match x {
+                        Ok(x) => {
+                            if n < 1024 * 1024 * 4 {
+                                n += x.len();
+                                true
+                            } else {
+                                false
+                            }
+                        }
+                        Err(_) => {
+                            if had_err {
+                                false
+                            } else {
+                                had_err = true;
+                                true
+                            }
+                        }
+                    };
+                    ready(ret)
+                }
+            })
+            .inspect(|x| {
+                info!("before chunking: {x:?}");
+            });
         let stream = bytes_chunks_to_len_framed_str(stream);
         let res = body_stream(stream);
         Ok(res)

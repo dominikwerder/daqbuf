@@ -23,11 +23,14 @@ use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
 
-macro_rules! info { ($($arg:tt)*) => ( if true { log::info!($($arg)*); } ); }
 macro_rules! debug { ($($arg:tt)*) => ( if true { log::debug!($($arg)*); } ); }
 macro_rules! trace { ($($arg:tt)*) => ( if true { log::trace!($($arg)*); } ); }
-
 macro_rules! trace_item { ($($arg:tt)*) => ( if true { lg::trace!($($arg)*); } ); }
+
+fn _keep() {
+    debug!("");
+    trace!("");
+}
 
 autoerr::create_error_v1!(
     name(Error, "BinWriteIndexRtStream"),
