@@ -66,11 +66,12 @@ struct Reading {
     msps: Option<ReadMspFwdStream>,
     mspbuf: VecDeque<TsMs>,
     lsps: Option<(MspEv, LspFwdMspSingleStream)>,
+    lsp_limit: u32,
 }
 
 impl Reading {
-    fn gen_limit(&mut self) -> u32 {
-        73
+    fn lsp_limit(&mut self) -> u32 {
+        self.lsp_limit
     }
 
     fn poll_state(
@@ -117,13 +118,13 @@ impl Reading {
             } else if let Some(msp) = self2.mspbuf.pop_front() {
                 hpp.mark_progress();
                 let msp = MspEv::from(msp);
-                info!("LspFwdMspMulti  poll_state  OpenNextMsp  {msp}");
+                trace!("poll_state  open next msp  {msp}");
                 let stream = LspFwdMspSingleStream::new(
                     brefs.ks.clone(),
                     brefs.series_info.clone(),
                     msp,
                     brefs.range.clone(),
-                    self2.gen_limit(),
+                    self2.lsp_limit(),
                     brefs.scyqu.clone(),
                 );
                 self2.lsps = Some((msp, stream));
@@ -185,6 +186,8 @@ impl LspFwdMspSerial {
         range: ScyllaSeriesRange,
         scyqu: ScyllaQueueCluster,
         msps: VecDeque<MspEv>,
+        msp_limit: u32,
+        lsp_limit: u32,
     ) -> Self {
         let (msp_stream_range, msp_begexcl) = if let Some(msp) = msps.back() {
             let beg = msp.to_ms().ns();
@@ -197,7 +200,7 @@ impl LspFwdMspSerial {
             series_info.id(),
             msp_stream_range,
             msp_begexcl,
-            3,
+            msp_limit,
             scyqu.clone(),
         );
         let mspbuf = msps.into_iter().map(|m| m.to_ms()).collect();
@@ -205,6 +208,7 @@ impl LspFwdMspSerial {
             msps: Some(msp_stream),
             mspbuf,
             lsps: None,
+            lsp_limit,
         });
         Self {
             ks,
@@ -287,10 +291,18 @@ pub struct LspFwdMspSerialOverClusters {
     range_final_true: u32,
     range_final_false: u32,
     state: State2,
+    msp_limit: u32,
+    lsp_limit: u32,
 }
 
 impl LspFwdMspSerialOverClusters {
-    pub fn new(series_info: SeriesInfo, range: ScyllaSeriesRange, scyqu: ScyllaQueue) -> Self {
+    pub fn new(
+        series_info: SeriesInfo,
+        range: ScyllaSeriesRange,
+        msp_limit: u32,
+        lsp_limit: u32,
+        scyqu: ScyllaQueue,
+    ) -> Self {
         let pending = scyqu
             .into_clusters()
             .flat_map(|c| {
@@ -307,6 +319,8 @@ impl LspFwdMspSerialOverClusters {
             range_final_true: 0,
             range_final_false: 0,
             state: State2::Run,
+            msp_limit,
+            lsp_limit,
         }
     }
 }
@@ -347,7 +361,10 @@ impl Stream for LspFwdMspSerialOverClusters {
                                 StreamItem::Log(x) => Ready(Some(Ok(StreamItem::Log(x)))),
                                 StreamItem::Stats(x) => Ready(Some(Ok(StreamItem::Stats(x)))),
                             },
-                            Ready(Some(Err(e))) => Ready(Some(Err(e))),
+                            Ready(Some(Err(e))) => {
+                                self2.state = State2::Done;
+                                Ready(Some(Err(e)))
+                            }
                             Ready(None) => {
                                 if *range_final {
                                     self2.range_final_true += 1;
@@ -372,11 +389,16 @@ impl Stream for LspFwdMspSerialOverClusters {
                                             self2.range.clone(),
                                             (*cl).clone(),
                                             msps,
+                                            self2.msp_limit,
+                                            self2.lsp_limit,
                                         );
                                         self2.active = Some((cl.tag().into(), ks, stream, false));
                                         continue;
                                     }
-                                    Err(e) => Ready(Some(Err(e.into()))),
+                                    Err(e) => {
+                                        self2.state = State2::Done;
+                                        Ready(Some(Err(e.into())))
+                                    }
                                 }
                             }
                             Pending => Pending,

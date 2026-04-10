@@ -26,7 +26,7 @@ async fn read_msp_fwd_00_async() {
     let min = DtMs::from_ms_u64(1000 * 60);
     let range = ScyllaSeriesRange::new(MSP_A_00.ns(), MSP_A_00.add_dt_ms(min.mul(60 * 3)).ns());
     let e0 = scyqu
-        .read_msp_03_fwd(ks, series, range, RangeExcl::None, None)
+        .read_msp_03_fwd(ks, series, range, RangeExcl::None, 1)
         .await
         .unwrap();
     let n = e0.len();

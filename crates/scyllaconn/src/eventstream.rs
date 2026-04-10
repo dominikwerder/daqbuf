@@ -23,7 +23,6 @@ autoerr::create_error_v1!(
 );
 
 macro_rules! trace { ($($arg:tt)*) => { if true { log::trace!($($arg)*); } }; }
-macro_rules! debug { ($($arg:tt)*) => { if true { log::debug!($($arg)*); } }; }
 macro_rules! warn { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
 
 pub async fn scylla_channel_event_stream(

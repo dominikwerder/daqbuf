@@ -22,6 +22,11 @@ use std::task::Poll;
 macro_rules! info { ($($arg:tt)*) => ( if true { log::info!($($arg)*); } ); }
 macro_rules! debug { ($($arg:tt)*) => ( if true { log::debug!($($arg)*); } ); }
 
+fn _keep() {
+    info!("");
+    debug!("");
+}
+
 autoerr::create_error_v1!(
     name(Error, "BinIndexReadAllCoarse"),
     enum variants {
@@ -60,7 +65,7 @@ async fn read_all_coarse(
                         ret.push_back(item);
                     }
                 }
-                Err(x) => {
+                Err(_) => {
                     // TODO check for other item types.
                     // match directly instead of into-helper.
                 }
@@ -70,7 +75,7 @@ async fn read_all_coarse(
     Ok(ret)
 }
 
-pub fn select_potential_binlen(options: VecDeque<(RetentionTime, MspU32, LspU32, DtMs)>) -> Result<(), Error> {
+pub fn select_potential_binlen(_options: VecDeque<(RetentionTime, MspU32, LspU32, DtMs)>) -> Result<(), Error> {
     // Check first if there are common binlen over all the range.
     // If not, filter out the options which could build content from finer resolution.
     // Then heuristically select the best match.
@@ -79,7 +84,7 @@ pub fn select_potential_binlen(options: VecDeque<(RetentionTime, MspU32, LspU32,
 }
 
 pub struct ReadAllCoarse {
-    scyqueue: Arc<ScyllaQueue>,
+    _scyqueue: Arc<ScyllaQueue>,
     fut: Option<Pin<Box<dyn Future<Output = Result<VecDeque<(RetentionTime, MspU32, LspU32, DtMs)>, Error>> + Send>>>,
     results: VecDeque<(RetentionTime, MspU32, LspU32, DtMs)>,
 }
@@ -92,7 +97,7 @@ impl ReadAllCoarse {
             async move { read_all_coarse(series, range, scylla_opts, &scyqueue).await }
         };
         Self {
-            scyqueue,
+            _scyqueue: scyqueue,
             fut: Some(Box::pin(fut)),
             results: VecDeque::new(),
         }

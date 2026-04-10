@@ -22,18 +22,6 @@ use std::time::Duration;
 use taskrun::tokio;
 use url::Url;
 
-#[derive(Clone, Serialize, Deserialize)]
-struct GatherFrom {
-    hosts: Vec<GatherHost>,
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-struct GatherHost {
-    host: String,
-    port: u16,
-    inst: String,
-}
-
 #[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Serialize, Deserialize)]
 pub struct Tag(pub String);
 

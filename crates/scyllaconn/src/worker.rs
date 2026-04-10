@@ -489,10 +489,9 @@ impl ScyllaQueueCluster {
         series: SeriesId,
         range: ScyllaSeriesRange,
         begexcl: RangeExcl,
-        limit: Option<u32>,
+        limit: u32,
     ) -> crate::events3::mspfwd::Item {
         debug!("read_msp_03_fwd  {ks:?}  {series:?}  {range:?}  {begexcl:?}  {limit:?}");
-        let limit = limit.unwrap_or(40);
         let (job, rx) = crate::events3::mspfwd::ReadMsp03Fwd::new(ks.clone(), series, range, begexcl, limit);
         let job = Job::ReadMsp03Fwd(job);
         self.tx.send((ks, job)).await?;

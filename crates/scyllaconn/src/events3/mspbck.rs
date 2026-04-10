@@ -14,6 +14,14 @@ use std::collections::VecDeque;
 macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
 macro_rules! warn { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
 macro_rules! debug { ($($arg:tt)*) => { if true { log::debug!($($arg)*); } }; }
+macro_rules! trace { ($($arg:tt)*) => { if true { log::trace!($($arg)*); } }; }
+
+fn _keep() {
+    error!("");
+    warn!("");
+    debug!("");
+    trace!("");
+}
 
 autoerr::create_error_v1!(
     name(Error, "ReadMsp03Bck"),
@@ -60,7 +68,7 @@ pub async fn msp_bck(
         }
     }
     for e in &msps {
-        debug!("got backward msp {e}");
+        trace!("got backward msp {e}");
     }
     Ok(msps)
 }

@@ -229,7 +229,7 @@ impl Stream for ReadMspFwdStream {
                         let series = self.series.clone();
                         let range = self.range.clone();
                         let begexcl = self.begexcl;
-                        let limit = Some(self.limit.clone());
+                        let limit = self.limit;
                         let fut = async move { scyqu.read_msp_03_fwd(ks, series, range, begexcl, limit).await };
                         self.fut = Some(Box::pin(fut));
                     } else {

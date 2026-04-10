@@ -51,7 +51,7 @@ impl LspFwdMspSingleStream {
         limit: u32,
         scyqu: ScyllaQueueCluster,
     ) -> Self {
-        let limit = limit.max(1).min(400);
+        let limit = limit.max(1).min(70312);
         Self {
             ks,
             series_info,

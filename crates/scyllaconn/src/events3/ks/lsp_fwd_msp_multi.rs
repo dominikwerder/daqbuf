@@ -50,6 +50,7 @@ autoerr::create_error_v1!(
         LoopTooMany,
         MspBck(#[from] crate::events3::mspbck::Error),
         LspFwdSingle(#[from] crate::events3::ks::lsp_fwd_msp_single::Error),
+        Logic,
     },
 );
 
@@ -320,7 +321,7 @@ impl Merging {
                                                     info!("LspFwdMspMulti  check_inputs  NextTs::One  open next msp");
                                                     break Ready(Some(sitem2_data(CheckInputItem::OpenNextMsp)));
                                                 } else {
-                                                    info!("TODO actually drain the events {}", b2.len());
+                                                    info!("TODO actually drain the events A {}", b2.len());
                                                     let item = b1.take().unwrap();
                                                     break Ready(Some(sitem2_data(CheckInputItem::Item(item))));
                                                 }
@@ -332,34 +333,29 @@ impl Merging {
                                                     info!("LspFwdMspMulti  check_inputs  NextTs::Two  open next msp");
                                                     break Ready(Some(sitem2_data(CheckInputItem::OpenNextMsp)));
                                                 } else {
-                                                    // TODO drain all events with ts <= ts2.
-                                                    info!("TODO actually drain the events {}", b2.len());
-                                                    // TODO maybe better if api actually returns the index?
-                                                    if let Some(i3) =
-                                                        b2.as_mergeable_dyn_mut().find_highest_index_le(ts2)
-                                                    {
-                                                        use items_0::merge::DrainIntoNewDynResult;
-                                                        match b2.as_mergeable_dyn_mut().drain_into_new(0..i3) {
-                                                            // TODO optimizations?
-                                                            DrainIntoNewDynResult::Done(c) => {
-                                                                break Ready(Some(sitem2_data(CheckInputItem::Item(
-                                                                    c,
-                                                                ))));
+                                                    use items_0::merge::DrainIntoNewDynResult;
+                                                    info!("TODO actually drain the events B {}", b2.len());
+                                                    let na1 = b2.len();
+                                                    let i3 = b2.as_mergeable_dyn_mut().find_pp_le(ts2);
+                                                    match b2.as_mergeable_dyn_mut().drain_into_new(0..i3) {
+                                                        // TODO optimizations?
+                                                        DrainIntoNewDynResult::Done(c)
+                                                        | DrainIntoNewDynResult::Partial(c) => {
+                                                            let na2 = b2.len();
+                                                            if na2 == na1 {
+                                                                error!("we did not drain anything");
+                                                                break Ready(Some(Err(Error::Logic)));
                                                             }
-                                                            DrainIntoNewDynResult::Partial(c) => {
-                                                                break Ready(Some(sitem2_data(CheckInputItem::Item(
-                                                                    c,
-                                                                ))));
-                                                            }
-                                                            DrainIntoNewDynResult::NotCompatible => {
-                                                                // should not happen because we drain into new
-                                                                // TODO metrics
-                                                                *b1 = None;
-                                                            }
+                                                            break Ready(Some(sitem2_data(CheckInputItem::Item(c))));
                                                         }
-                                                    } else {
-                                                        error!("nothing to drain?");
-                                                        *b1 = None;
+                                                        // DrainIntoNewDynResult::Partial(c) => {
+                                                        //     break Ready(Some(sitem2_data(CheckInputItem::Item(c))));
+                                                        // }
+                                                        DrainIntoNewDynResult::NotCompatible => {
+                                                            // should not happen because we drain into new
+                                                            // TODO metrics
+                                                            *b1 = None;
+                                                        }
                                                     }
                                                 }
                                             }
@@ -465,7 +461,7 @@ impl Merging {
                                         if let Some(msp_next) = self2.mspbuf.pop_front() {
                                             hpp.mark_progress();
                                             let msp = MspEv::from(msp_next);
-                                            info!("LspFwdMspMulti  poll_state  OpenNextMsp  {msp_next}  {msp}");
+                                            trace!("poll_state  open next msp  {msp_next}  {msp}");
                                             let stream = LspFwdMspSingleStream::new(
                                                 brefs.ks.clone(),
                                                 brefs.series_info.clone(),
@@ -532,7 +528,6 @@ pub struct LspFwdMspMulti {
     _opts: Opts,
     state: State,
     scyqu: ScyllaQueueCluster,
-    loop_cnt: u32,
 }
 
 impl LspFwdMspMulti {
@@ -571,7 +566,6 @@ impl LspFwdMspMulti {
             _opts: opts,
             state,
             scyqu,
-            loop_cnt: 0,
         }
     }
 }
@@ -581,12 +575,6 @@ impl Stream for LspFwdMspMulti {
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         use Poll::*;
-        self.loop_cnt += 1;
-        if self.loop_cnt > 10000 {
-            error!("LspFwdMspMulti  poll_next  too many");
-            self.state = State::Done;
-            return Ready(Some(Err(Error::LoopTooMany)));
-        }
         let mut il1 = 0u32;
         loop {
             il1 += 1;
@@ -720,7 +708,10 @@ impl Stream for LspFwdMspMultiOverClusters {
                                         self2.active = Some((cl.tag().into(), ks, stream, false));
                                         continue;
                                     }
-                                    Err(e) => Ready(Some(Err(e.into()))),
+                                    Err(e) => {
+                                        self2.state = State2::Done;
+                                        Ready(Some(Err(e.into())))
+                                    }
                                 }
                             }
                             Pending => Pending,
@@ -743,7 +734,10 @@ impl Stream for LspFwdMspMultiOverClusters {
                                 StreamItem::Log(x) => Ready(Some(Ok(StreamItem::Log(x)))),
                                 StreamItem::Stats(x) => Ready(Some(Ok(StreamItem::Stats(x)))),
                             },
-                            Ready(Some(Err(e))) => Ready(Some(Err(e))),
+                            Ready(Some(Err(e))) => {
+                                self2.state = State2::Done;
+                                Ready(Some(Err(e)))
+                            }
                             Ready(None) => {
                                 if *range_final {
                                     self2.range_final_true += 1;
