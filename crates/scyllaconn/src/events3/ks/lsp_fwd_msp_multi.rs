@@ -312,7 +312,7 @@ impl Merging {
                                                     info!("LspFwdMspMulti  check_inputs  NextTs::One  open next msp");
                                                     break Ready(Some(sitem2_data(CheckInputItem::OpenNextMsp)));
                                                 } else {
-                                                    info!("TODO actually drain the events A {}", b2.len());
+                                                    trace!("drain events A {}", b2.len());
                                                     let item = b1.take().unwrap();
                                                     break Ready(Some(sitem2_data(CheckInputItem::Item(item))));
                                                 }
@@ -325,7 +325,7 @@ impl Merging {
                                                     break Ready(Some(sitem2_data(CheckInputItem::OpenNextMsp)));
                                                 } else {
                                                     use items_0::merge::DrainIntoNewDynResult;
-                                                    info!("TODO actually drain the events B {}", b2.len());
+                                                    trace!("drain events B {}", b2.len());
                                                     let na1 = b2.len();
                                                     let i3 = b2.as_mergeable_dyn_mut().find_pp_le(ts2);
                                                     match b2.as_mergeable_dyn_mut().drain_into_new(0..i3) {

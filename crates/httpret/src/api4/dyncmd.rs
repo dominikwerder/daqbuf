@@ -1277,16 +1277,16 @@ impl LspFwdMspCompareCmd {
 
         let ts5 = Instant::now();
 
-        let mut n_single = 0;
-        let mut n_both = 0;
-        let mut n_other = 0;
+        let mut nbin1 = 0;
+        let mut nbin2 = 0;
+        let mut nbinx = 0;
         for (_, n) in map3 {
             if n == 1 {
-                n_single += 1;
+                nbin1 += 1;
             } else if n == 2 {
-                n_both += 1;
+                nbin2 += 1;
             } else {
-                n_other += 1;
+                nbinx += 1;
             }
         }
 
@@ -1301,11 +1301,11 @@ impl LspFwdMspCompareCmd {
             .collect();
 
         let js = json!({
-            "n_single": n_single,
-            "n_both": n_both,
-            "n_other": n_other,
+            "nbin1": nbin1,
+            "nbin2": nbin2,
+            "nbinx": nbinx,
             "timings": timings,
-            "msgs": msgs,
+            "z_msgs": msgs,
         });
         let js = serde_json::to_string(&js).unwrap();
         let stream = futures_util::stream::iter([Ok::<_, Error>(js)]);
