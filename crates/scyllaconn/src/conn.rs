@@ -24,7 +24,7 @@ pub async fn create_scy_session(scyconf: &ScyllaConfig) -> Result<Arc<Session>, 
     Ok(ret)
 }
 
-trait ScyllaHostSet {
+pub trait ScyllaHostSet {
     fn hosts(&self) -> &Vec<String>;
 }
 

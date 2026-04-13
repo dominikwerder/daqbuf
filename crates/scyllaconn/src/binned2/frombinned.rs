@@ -62,6 +62,7 @@ autoerr::create_error_v1!(
 
 type IndexRow = (RetentionTime, MspU32, LspU32, DtMs);
 
+#[allow(unused)]
 #[derive(Debug)]
 struct FetchJob {
     min: (MspU32, LspU32),

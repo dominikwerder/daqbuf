@@ -49,7 +49,7 @@ pub trait ValTyDyn: fmt::Debug + Send {
 }
 
 #[derive(Debug, Clone)]
-pub struct ValTyDynTesting<ST>
+struct ValTyDynTesting<ST>
 where
     ST: ValTy,
 {

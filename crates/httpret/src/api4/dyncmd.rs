@@ -71,6 +71,9 @@ autoerr::create_error_v1!(
 
 impl crate::IntoBoxedError for Error {}
 
+const MSP_LIMIT_DEF: u32 = 4;
+const LSP_LIMIT_DEF: u32 = 73;
+
 #[derive(Debug, Serialize, Deserialize)]
 struct ReadMsp {
     backend: String,
@@ -136,12 +139,10 @@ struct LspFwdMspMultiCmd {
     backend: String,
     series: String,
     name: String,
-    // cl: String,
-    // rt: RetentionTime,
-    // msp: MspEv,
-    // limit: Option<u32>,
     ts1: String,
     ts2: String,
+    msp_limit: Option<u32>,
+    lsp_limit: Option<u32>,
 }
 
 impl LspFwdMspMultiCmd {
@@ -738,6 +739,8 @@ impl LspFwdMspMultiCmd {
                                     opts,
                                     cl.as_ref().clone(),
                                     msps,
+                                    cmd.msp_limit.unwrap_or(MSP_LIMIT_DEF),
+                                    cmd.lsp_limit.unwrap_or(LSP_LIMIT_DEF),
                                 );
                                 let stream = stream.map_err(Error::from).map_ok(move |x| (ks.clone(), x));
                                 stream
@@ -854,6 +857,8 @@ impl LspFwdMspMultiCmd {
             series_info.clone(),
             range.clone(),
             scyllaconn::events3::ks::lsp_fwd_msp_multi::Opts::new(),
+            cmd.msp_limit.unwrap_or(MSP_LIMIT_DEF),
+            cmd.lsp_limit.unwrap_or(LSP_LIMIT_DEF),
             scyqu.clone(),
         );
         let stream = stream
@@ -1002,6 +1007,8 @@ impl LspFwdMspMultiCmd {
                     opts,
                     cl.as_ref().clone(),
                     msps,
+                    cmd.msp_limit.unwrap_or(MSP_LIMIT_DEF),
+                    cmd.lsp_limit.unwrap_or(LSP_LIMIT_DEF),
                 );
                 let mut tss = Vec::new();
                 let mut vals = Vec::new();
@@ -1093,8 +1100,8 @@ impl LspFwdMspSerialCmd {
         let stream = scyllaconn::events3::ks::lsp_fwd_msp_serial::LspFwdMspSerialOverClusters::new(
             series_info.clone(),
             range.clone(),
-            cmd.msp_limit.unwrap_or(4),
-            cmd.lsp_limit.unwrap_or(73),
+            cmd.msp_limit.unwrap_or(MSP_LIMIT_DEF),
+            cmd.lsp_limit.unwrap_or(LSP_LIMIT_DEF),
             scyqu.clone(),
         );
         let stream = stream
@@ -1240,6 +1247,8 @@ impl LspFwdMspCompareCmd {
                 series_info.clone(),
                 range.clone(),
                 scyllaconn::events3::ks::lsp_fwd_msp_multi::Opts::new(),
+                cmd.msp_limit.unwrap_or(MSP_LIMIT_DEF),
+                cmd.lsp_limit.unwrap_or(LSP_LIMIT_DEF),
                 scyqu.clone(),
             );
             stream
@@ -1293,8 +1302,8 @@ impl LspFwdMspCompareCmd {
                 series_info.clone(),
                 range.clone(),
                 // TODO introduce newtype
-                cmd.msp_limit.unwrap_or(4),
-                cmd.lsp_limit.unwrap_or(400),
+                cmd.msp_limit.unwrap_or(MSP_LIMIT_DEF),
+                cmd.lsp_limit.unwrap_or(LSP_LIMIT_DEF),
                 scyqu.clone(),
             );
             stream

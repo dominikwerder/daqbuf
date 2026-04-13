@@ -149,6 +149,6 @@ fn test_iter_05() {
     let it = MspLspIter::new_covering(range, pbp.clone());
     let a: Vec<_> = it.collect();
     assert_eq!(a.len(), 3);
-    let e = &a[0];
-    let e = &a[a.len() - 1];
+    let _ = &a[0];
+    let _ = &a[a.len() - 1];
 }

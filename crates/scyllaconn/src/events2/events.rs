@@ -69,9 +69,11 @@ macro_rules! log_fetch_result {
     ($($arg:tt)*) => { if false { log::trace!("fetch  {}", format_args!($($arg)*)); } };
 }
 
-macro_rules! log_query { ($($arg:tt)*) => ( if true { log::info!($($arg)*); } ) }
-
 macro_rules! debug_scy6 { ($($arg:tt)*) => { if false { log::debug!($($arg)*); } }; }
+
+fn _keep() {
+    info!("");
+}
 
 autoerr::create_error_v1!(
     name(Error, "ScyllaEvents"),
@@ -828,8 +830,11 @@ async fn __use_log_and_instrument_code() {
             };
             let fut = async { 0u8 };
             let fut = tracing::Instrument::instrument(fut, logspan);
+            fut.await
         };
+        fut
     };
+    let _ = futgen;
     todo!()
 }
 
@@ -1058,7 +1063,7 @@ async fn read_events_v02_inner(
             res
         };
         let res2 = {
-            let mut opts = ReadNextValuesOpts {
+            let opts = ReadNextValuesOpts {
                 rt: params.rt.clone(),
                 series: params.series,
                 ts_msp: params.ts_msp,

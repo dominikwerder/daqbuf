@@ -51,6 +51,7 @@ impl From<async_channel::RecvError> for Error {
 pub type Item = Result<VecDeque<TsMs>, Error>;
 
 pub struct ReadMsp03Fwd {
+    #[allow(unused)]
     ks: KeyspaceId,
     series: SeriesId,
     range: ScyllaSeriesRange,

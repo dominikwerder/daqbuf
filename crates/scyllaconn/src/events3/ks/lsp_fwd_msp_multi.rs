@@ -104,15 +104,15 @@ struct BaseRefs<'a> {
 }
 
 impl<'a> BaseRefs<'a> {
-    fn clone_mut<'b>(&'b mut self) -> BaseRefs<'a>
+    fn borrow2<'b>(&'b mut self) -> BaseRefs<'b>
     where
-        'b: 'a,
+        'a: 'b,
     {
         Self {
-            series_info: &self.series_info,
-            ks: &self.ks,
-            range: &self.range,
-            scyqu: &mut self.scyqu,
+            series_info: self.series_info,
+            ks: self.ks,
+            range: self.range,
+            scyqu: self.scyqu,
         }
     }
 }
@@ -128,6 +128,7 @@ struct Merging {
     msps: Option<ReadMspFwdStream>,
     mspbuf: VecDeque<TsMs>,
     inps: VecDeque<Inp>,
+    lsp_limit: u32,
 }
 
 impl Merging {
@@ -185,7 +186,7 @@ impl Merging {
         let mut il1 = 0u32;
         'outer: loop {
             il1 += 1;
-            if il1 > 100 {
+            if il1 > 200 {
                 error!("LspFwdMspMulti  poll_all_inp  loop iteration too many");
                 break Ready(Some(Err(Error::LoopTooMany)));
             }
@@ -272,14 +273,13 @@ impl Merging {
         let mut il1 = 0u32;
         loop {
             il1 += 1;
-            if il1 > 100 {
+            if il1 > 200 {
                 error!("LspFwdMspMulti  check_inputs  loop iteration too many");
                 break Ready(Some(Err(Error::LoopTooMany)));
             }
             let mut hpp = HaveProgressPending::new();
             {
-                // TODO fix
-                // let brefs2 = brefs.clone_mut();
+                let brefs2 = brefs.borrow2();
             }
             let brefs2 = BaseRefs {
                 series_info: brefs.series_info,
@@ -394,8 +394,8 @@ impl Merging {
         }
     }
 
-    fn gen_limit(&mut self) -> u32 {
-        73
+    fn lsp_limit(&mut self) -> u32 {
+        self.lsp_limit
     }
 
     fn poll_state(
@@ -467,7 +467,7 @@ impl Merging {
                                                 brefs.series_info.clone(),
                                                 msp,
                                                 brefs.range.clone(),
-                                                self2.gen_limit(),
+                                                self2.lsp_limit(),
                                                 brefs.scyqu.clone(),
                                             );
                                             self2.inps.push_back(Inp {
@@ -538,6 +538,8 @@ impl LspFwdMspMulti {
         opts: Opts,
         scyqu: ScyllaQueueCluster,
         msps: VecDeque<MspEv>,
+        msp_limit: u32,
+        lsp_limit: u32,
     ) -> Self {
         let (msp_stream_range, msp_begexcl) = if let Some(msp) = msps.back() {
             let beg = msp.to_ms().ns();
@@ -550,7 +552,7 @@ impl LspFwdMspMulti {
             series_info.id(),
             msp_stream_range,
             msp_begexcl,
-            3,
+            msp_limit,
             scyqu.clone(),
         );
         let mspbuf = msps.into_iter().map(|m| m.to_ms()).collect();
@@ -558,6 +560,7 @@ impl LspFwdMspMulti {
             msps: Some(msp_stream),
             mspbuf,
             inps: VecDeque::new(),
+            lsp_limit,
         });
         Self {
             ks,
@@ -578,7 +581,7 @@ impl Stream for LspFwdMspMulti {
         let mut il1 = 0u32;
         loop {
             il1 += 1;
-            if il1 > 100 {
+            if il1 > 200 {
                 error!("LspFwdMspMulti  poll_next  loop iteration too many");
                 self.state = State::Done;
                 break Ready(Some(Err(Error::LoopTooMany)));
@@ -649,10 +652,19 @@ pub struct LspFwdMspMultiOverClusters {
     range_final_true: u32,
     range_final_false: u32,
     state: State2,
+    msp_limit: u32,
+    lsp_limit: u32,
 }
 
 impl LspFwdMspMultiOverClusters {
-    pub fn new(series_info: SeriesInfo, range: ScyllaSeriesRange, opts: Opts, scyqu: ScyllaQueue) -> Self {
+    pub fn new(
+        series_info: SeriesInfo,
+        range: ScyllaSeriesRange,
+        opts: Opts,
+        msp_limit: u32,
+        lsp_limit: u32,
+        scyqu: ScyllaQueue,
+    ) -> Self {
         let pending = scyqu
             .into_clusters()
             .flat_map(|c| {
@@ -670,6 +682,8 @@ impl LspFwdMspMultiOverClusters {
             range_final_true: 0,
             range_final_false: 0,
             state: State2::Run,
+            msp_limit,
+            lsp_limit,
         }
     }
 }
@@ -704,6 +718,8 @@ impl Stream for LspFwdMspMultiOverClusters {
                                             self2.opts.clone(),
                                             (*cl).clone(),
                                             msps,
+                                            self2.msp_limit,
+                                            self2.lsp_limit,
                                         );
                                         self2.active = Some((cl.tag().into(), ks, stream, false));
                                         continue;

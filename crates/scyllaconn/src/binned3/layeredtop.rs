@@ -26,6 +26,7 @@ autoerr::create_error_v1!(
     },
 );
 
+#[allow(unused)]
 fn def<T: Default>() -> T {
     Default::default()
 }
@@ -62,6 +63,7 @@ async fn fetch_index_entries(
     }
 }
 
+#[allow(unused)]
 struct FetchingIndex {
     fut: Pin<Box<dyn Future<Output = FetchingIndexFutRes> + Send>>,
 }
@@ -75,9 +77,11 @@ struct Common {
     msplspiter: MspLspIter,
     scylla_opts: ScyllaOptsQuery,
     scyqueue: ScyllaQueue,
+    #[allow(unused)]
     logoutbuf: VecDeque<LogItem>,
 }
 
+#[allow(unused)]
 enum State {
     StartNextDay1,
     FetchingIndex(FetchingIndex),
@@ -149,7 +153,7 @@ impl Stream for BinReadLayeredTop {
     type Item = Sitemty3<(), Error>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
-        use Poll::*;
+        let _ = cx;
         loop {
             break match &mut self.state {
                 State::StartNextDay1 => {
@@ -159,10 +163,9 @@ impl Stream for BinReadLayeredTop {
                             f(&mut self.state);
                             continue;
                         }
-                        _ => Ready(Some(Err(Error::StateModFn))),
                     }
                 }
-                _ => todo!(),
+                _ => netpod::todoval(),
             };
         }
     }

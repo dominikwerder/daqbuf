@@ -134,12 +134,9 @@ impl StmtsLspDir {
     }
 }
 
-#[allow(unused)]
 #[derive(Debug)]
 pub struct StmtsEventsRt {
     ts_msp_fwd: PreparedStatement,
-    ts_msp_bck: PreparedStatement,
-    ts_msp_bck_workaround: PreparedStatement,
     lsp_all: StmtsLspAll,
     lsp_fwd_val: StmtsLspDir,
     lsp_bck_val: StmtsLspDir,
@@ -153,8 +150,6 @@ impl StmtsEventsRt {
     pub async fn new(ks: &str, rt: &RetentionTime, query_opts: &str, scy: &Session) -> Result<Self, Error> {
         let ret = Self {
             ts_msp_fwd: make_msp_dir(ks, rt, false, query_opts, scy).await?,
-            ts_msp_bck: make_msp_dir(ks, rt, true, query_opts, scy).await?,
-            ts_msp_bck_workaround: make_msp_fwd_for_bck_workaround(ks, rt, query_opts, scy).await?,
             lsp_all: make_lsp_all(ks, rt, query_opts, scy).await?,
             lsp_fwd_val: make_lsp_dir(ks, rt, "ts_lsp, value", false, query_opts, scy).await?,
             lsp_bck_val: make_lsp_dir(ks, rt, "ts_lsp, value", true, query_opts, scy).await?,
@@ -168,15 +163,6 @@ impl StmtsEventsRt {
 
     fn ts_msp_fwd(&self) -> &PreparedStatement {
         &self.ts_msp_fwd
-    }
-
-    fn ts_msp_bck(&self) -> &PreparedStatement {
-        trace_scy6!("StmtsEventsRt ORDER DESC");
-        &self.ts_msp_bck
-    }
-
-    fn ts_msp_bck_workaround(&self) -> &PreparedStatement {
-        &self.ts_msp_bck_workaround
     }
 
     pub fn lsp_all(&self) -> &StmtsLspAll {

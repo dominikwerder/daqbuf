@@ -1,4 +1,3 @@
-use crate::events2::prepare::StmtsEvents;
 use crate::events2::prepare::StmtsEventsQueryOpts;
 use crate::range::ScyllaSeriesRange;
 use crate::worker::ScyllaQueue;
@@ -88,8 +87,8 @@ enum State {
 impl fmt::Debug for State {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::BckAndFirstFwd(arg0) => fmt.debug_tuple("BckAndFirstFwd").finish(),
-            Self::Fwd(arg0) => fmt.debug_tuple("Fwd").finish(),
+            Self::BckAndFirstFwd(_) => fmt.debug_tuple("BckAndFirstFwd").finish(),
+            Self::Fwd(_) => fmt.debug_tuple("Fwd").finish(),
         }
     }
 }

@@ -1,8 +1,6 @@
 mod bck_events_lst;
 
 use crate::events3::SeriesInfo;
-use crate::events3::lsplst;
-use crate::events3::mspfwd::ReadMsp03Fwd;
 use crate::events3::mspfwd::ReadMspFwdStream;
 use crate::events3::msplsp::MspEv;
 use crate::range::ScyllaSeriesRange;
@@ -26,12 +24,9 @@ use netpod::hpp::HaveProgressPending;
 use serde::Serialize;
 use std::collections::BTreeMap;
 use std::collections::VecDeque;
-use std::ops::RangeBounds;
 use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
-use taskrun::tokio::io::Ready;
-use taskrun::tracing_subscriber::field::debug;
 
 macro_rules! error { ($($arg:tt)*) => ( if true { log::error!($($arg)*); } ) }
 macro_rules! warn { ($($arg:tt)*) => ( if true { log::warn!($($arg)*); } ) }
@@ -58,8 +53,7 @@ autoerr::create_error_v1!(
 pub struct Opts {
     with_values: bool,
     one_before: bool,
-    qucap: u32,
-    scylla_opts: query::api4::scyllaopts::ScyllaOptsQuery,
+    _scylla_opts: query::api4::scyllaopts::ScyllaOptsQuery,
 }
 
 impl Opts {
@@ -67,8 +61,7 @@ impl Opts {
         Self {
             with_values: false,
             one_before: false,
-            qucap: 6,
-            scylla_opts: query::api4::scyllaopts::ScyllaOptsQuery::new(),
+            _scylla_opts: query::api4::scyllaopts::ScyllaOptsQuery::new(),
         }
     }
 
@@ -112,7 +105,7 @@ pub struct EventsKs {
     ks: KeyspaceId,
     scyqu: ScyllaQueueCluster,
     range: ScyllaSeriesRange,
-    opts: Opts,
+    _opts: Opts,
     state: State,
 }
 
@@ -159,7 +152,7 @@ impl EventsKs {
             ks,
             scyqu,
             range,
-            opts,
+            _opts: opts,
             state,
         }
     }

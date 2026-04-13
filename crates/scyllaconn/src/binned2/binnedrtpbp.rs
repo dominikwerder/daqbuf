@@ -35,6 +35,7 @@ pub struct BinnedRtPbpStream {
     series: SeriesId,
     rt: RetentionTime,
     pbp: PrebinnedPartitioning,
+    #[allow(unused)]
     range: BinnedRange<TsNano>,
     scylla_opts: ScyllaOptsQuery,
     scyqueue: ScyllaQueue,
