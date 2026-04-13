@@ -28,7 +28,6 @@ use netpod::ttl::RetentionTime;
 use netpod::NodeConfigCached;
 use netpod::RangeExcl;
 use netpod::SeriesKind;
-use netpod::TsMs;
 use netpod::APP_JSON_FRAMED;
 use query::api4::scyllaopts::ScyllaOptsQuery;
 use scyllaconn::events3::msplsp::MspEv;
@@ -106,32 +105,6 @@ impl Read03LspLst {
     fn series(&self) -> SeriesId {
         SeriesId::new(self.series.parse().unwrap())
     }
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct Read03LspForMsp {
-    backend: String,
-    series: String,
-    name: String,
-    cl: String,
-    rt: RetentionTime,
-    msp: MspEv,
-    limit: Option<u32>,
-    ts1: String,
-    ts2: String,
-}
-
-impl Read03LspForMsp {
-    fn series(&self) -> SeriesId {
-        SeriesId::new(self.series.parse().unwrap())
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct ReadEvents03Fwd {
-    series1: u32,
-    series2: u32,
-    msp: TsMs,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -253,14 +226,6 @@ impl DynCmdHandler {
                             } else if cmd.ty2 == "read_03_lsp_lst" {
                                 if let Ok(cmd) = serde_json::from_slice::<Read03LspLst>(&buf) {
                                     let x = lsp_lst(cmd, scyqu, shared_res.pgqueue.clone()).await;
-                                    let buf = serde_json::to_vec(&ok_or_err_jsval(x)).unwrap();
-                                    Ok(response(StatusCode::OK).body(body_bytes(buf))?)
-                                } else {
-                                    Ok(response(StatusCode::BAD_REQUEST).body(body_empty())?)
-                                }
-                            } else if cmd.ty2 == "read_03_lsp_for_msp" {
-                                if let Ok(cmd) = serde_json::from_slice::<Read03LspForMsp>(&buf) {
-                                    let x = lsp_for_msp(cmd, scyqu, shared_res.pgqueue.clone()).await;
                                     let buf = serde_json::to_vec(&ok_or_err_jsval(x)).unwrap();
                                     Ok(response(StatusCode::OK).body(body_bytes(buf))?)
                                 } else {
@@ -539,72 +504,7 @@ async fn lsp_lst(cmd: Read03LspLst, scyqu: &ScyllaQueue, pgqu: PgQueue) -> Resul
     Ok(ret)
 }
 
-async fn lsp_for_msp(cmd: Read03LspForMsp, scyqu: &ScyllaQueue, pgqu: PgQueue) -> Result<serde_json::Value, Error> {
-    use netpod::FromUrl;
-    use serde_json::json;
-    json!({
-        "error": "no scylla",
-    });
-    let date_zero = chrono::Utc.timestamp_millis_opt(0).unwrap();
-    let range = netpod::query::TimeRangeQuery::from_pairs(
-        &[("begDate", cmd.ts1.clone()), ("endDate", cmd.ts2.clone())]
-            .map(|x| (x.0.into(), x.1))
-            .into_iter()
-            .collect(),
-    )
-    .map_err(|e| Error::from(e.to_string()))?;
-    let series_id = if cmd.series().id() == 0 {
-        let qu = netpod::ChannelSearchQuery {
-            backend: Some(cmd.backend.clone()),
-            name_regex: cmd.name.clone(),
-            source_regex: String::new(),
-            description_regex: String::new(),
-            icase: false,
-            kind: SeriesKind::ChannelData,
-            log_level: String::new(),
-        };
-        let mut res = pgqu.search_channel_scylla(qu).await??;
-        let c1 = res
-            .channels
-            .pop()
-            .ok_or_else(|| Error::Msg(format!("channel not found")))?;
-        SeriesId::new(c1.series)
-    } else {
-        cmd.series()
-    };
-    let chi = pgqu.chconf_for_series(&cmd.backend, series_id.id()).await??;
-    let si = SeriesInfo::from(&chi);
-    let range = netpod::range::evrange::NanoRange::from(range);
-    let range = ScyllaSeriesRange::new(range.beg_ts(), range.end_ts());
-    let scylla_opts = ScyllaOptsQuery::new();
-    let mut ret1 = Vec::new();
-    let quto = Duration::from_millis(3000);
-    for cl in scyqu.clusters() {
-        if cl.tag() == cmd.cl {
-            let mut ret2 = Vec::new();
-            for ks in cl.keyspaces() {
-                if ks.rt() == cmd.rt {
-                    let x = json!({
-                        "keyspace": ks,
-                        "msp": cmd.msp,
-                    });
-                    ret2.push(x);
-                }
-            }
-            let x = json!({
-                "cluster": cl.tag(),
-                "keyspaces": ret2,
-            });
-            ret1.push(x);
-        }
-    }
-    let ret = json!({
-        "series_id": format!("{}", series_id.id()),
-        "result": ret1,
-    });
-    Ok(ret)
-}
-
+#[allow(unused)]
 mod res_to_stream {
     use futures_util::Stream;
     use futures_util::StreamExt;
@@ -870,15 +770,13 @@ impl LspFwdMspMultiCmd {
                             let ks = x.ks;
                             let x = x.item.to_f32_for_binning_v01();
                             if let Some(x) = x.as_any_ref().downcast_ref::<ContainerEvents<f32>>() {
-                                let (tss, vals, tss_str) = x.iter_zip().fold(
-                                    (Vec::new(), Vec::new(), Vec::new()),
-                                    |(mut tss, mut vals, mut tss_str), (ts, val)| {
-                                        tss.push(ts.ms());
-                                        vals.push(val);
-                                        tss_str.push(ts.fmt().to_string());
-                                        (tss, vals, tss_str)
-                                    },
-                                );
+                                let (tss, vals) =
+                                    x.iter_zip()
+                                        .fold((Vec::new(), Vec::new()), |(mut tss, mut vals), (ts, val)| {
+                                            tss.push(ts.ms());
+                                            vals.push(val);
+                                            (tss, vals)
+                                        });
                                 json!({
                                     "type": "events",
                                     "cl": cl,
@@ -1114,15 +1012,13 @@ impl LspFwdMspSerialCmd {
                             let msp = x.msp;
                             let x = x.item.to_f32_for_binning_v01();
                             if let Some(x) = x.as_any_ref().downcast_ref::<ContainerEvents<f32>>() {
-                                let (tss, vals, tss_str) = x.iter_zip().fold(
-                                    (Vec::new(), Vec::new(), Vec::new()),
-                                    |(mut tss, mut vals, mut tss_str), (ts, val)| {
-                                        tss.push(ts.ms());
-                                        vals.push(val);
-                                        tss_str.push(ts.fmt().to_string());
-                                        (tss, vals, tss_str)
-                                    },
-                                );
+                                let (tss, vals) =
+                                    x.iter_zip()
+                                        .fold((Vec::new(), Vec::new()), |(mut tss, mut vals), (ts, val)| {
+                                            tss.push(ts.ms());
+                                            vals.push(val);
+                                            (tss, vals)
+                                        });
                                 json!({
                                     "type": "events",
                                     "cl": cl,
@@ -1240,6 +1136,8 @@ impl LspFwdMspCompareCmd {
         let range = netpod::range::evrange::NanoRange::from(range);
         let range = ScyllaSeriesRange::new(range.beg_ts(), range.end_ts());
 
+        let mut msgs = Vec::new();
+
         let ts2 = Instant::now();
 
         let map1 = {
@@ -1285,10 +1183,16 @@ impl LspFwdMspCompareCmd {
                                 }
                                 RangeCompletableItem::RangeComplete => {}
                             },
-                            StreamItem::Log(x) => {}
-                            StreamItem::Stats(x) => {}
+                            StreamItem::Log(x) => {
+                                msgs.push(format!("{x:?}"));
+                            }
+                            StreamItem::Stats(x) => {
+                                msgs.push(format!("{x:?}"));
+                            }
                         },
-                        Err(e) => {}
+                        Err(e) => {
+                            msgs.push(format!("{e:?}"));
+                        }
                     }
                     ready(map1)
                 })
@@ -1337,10 +1241,16 @@ impl LspFwdMspCompareCmd {
                                 }
                                 RangeCompletableItem::RangeComplete => {}
                             },
-                            StreamItem::Log(x) => {}
-                            StreamItem::Stats(x) => {}
+                            StreamItem::Log(x) => {
+                                msgs.push(format!("{x:?}"));
+                            }
+                            StreamItem::Stats(x) => {
+                                msgs.push(format!("{x:?}"));
+                            }
                         },
-                        Err(e) => {}
+                        Err(e) => {
+                            msgs.push(format!("{e:?}"));
+                        }
                     }
                     ready(map1)
                 })
@@ -1395,6 +1305,7 @@ impl LspFwdMspCompareCmd {
             "n_both": n_both,
             "n_other": n_other,
             "timings": timings,
+            "msgs": msgs,
         });
         let js = serde_json::to_string(&js).unwrap();
         let stream = futures_util::stream::iter([Ok::<_, Error>(js)]);

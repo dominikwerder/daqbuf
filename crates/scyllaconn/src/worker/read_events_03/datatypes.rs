@@ -44,7 +44,6 @@ pub trait ValTyDyn: fmt::Debug + Send {
         // TODO
         // jobtrace: &mut ReadJobTrace,
     ) -> Pin<Box<dyn Future<Output = Result<Box<dyn BinningggContainerEventsDyn>, Error>> + Send>>;
-    fn empty_container_for_test(&self) -> Box<dyn BinningggContainerEventsDyn>;
     fn clone_dyn(&self) -> Box<dyn ValTyDyn>;
 }
 
@@ -151,10 +150,6 @@ where
             // TODO
             // jobtrace,
         ))
-    }
-
-    fn empty_container_for_test(&self) -> Box<dyn BinningggContainerEventsDyn> {
-        Box::new(<ST::Container as Empty>::empty())
     }
 
     fn clone_dyn(&self) -> Box<dyn ValTyDyn> {

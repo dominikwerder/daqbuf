@@ -108,7 +108,7 @@ impl<'a> BaseRefs<'a> {
     where
         'a: 'b,
     {
-        Self {
+        BaseRefs {
             series_info: self.series_info,
             ks: self.ks,
             range: self.range,
@@ -278,19 +278,10 @@ impl Merging {
                 break Ready(Some(Err(Error::LoopTooMany)));
             }
             let mut hpp = HaveProgressPending::new();
-            {
-                let brefs2 = brefs.borrow2();
-            }
-            let brefs2 = BaseRefs {
-                series_info: brefs.series_info,
-                ks: brefs.ks,
-                range: brefs.range,
-                scyqu: brefs.scyqu,
-            };
             if self.inps.len() == 0 {
                 info!("LspFwdMspMulti  check_inputs  no inps");
             }
-            match self.as_mut().poll_all_inp(cx, brefs2) {
+            match self.as_mut().poll_all_inp(cx, brefs.borrow2()) {
                 Ready(Some(x)) => {
                     hpp.mark_progress();
                     match x {
@@ -401,7 +392,7 @@ impl Merging {
     fn poll_state(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
-        brefs: BaseRefs,
+        mut brefs: BaseRefs,
     ) -> Poll<Option<Sitemty2<Item, Error>>> {
         use Poll::*;
         let mut il1 = 0u32;
@@ -413,12 +404,6 @@ impl Merging {
             }
             let mut hpp = HaveProgressPending::new();
             let self2 = self.as_mut().get_mut();
-            let brefs2 = BaseRefs {
-                series_info: brefs.series_info,
-                ks: brefs.ks,
-                range: brefs.range,
-                scyqu: brefs.scyqu,
-            };
             let msp_next_opt = if let Some(&msp_next) = self2.mspbuf.front() {
                 Some(Some(msp_next))
             } else {
@@ -452,7 +437,7 @@ impl Merging {
                 }
             };
             if let Some(msp_next) = msp_next_opt {
-                match Pin::new(&mut *self2).check_inputs(cx, brefs2, msp_next) {
+                match Pin::new(&mut *self2).check_inputs(cx, brefs.borrow2(), msp_next) {
                     Ready(Some(x)) => match x {
                         Ok(x) => match x {
                             StreamItem::DataItem(x) => match x {

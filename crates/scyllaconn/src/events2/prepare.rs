@@ -136,7 +136,6 @@ impl StmtsLspDir {
 
 #[derive(Debug)]
 pub struct StmtsEventsRt {
-    ts_msp_fwd: PreparedStatement,
     lsp_all: StmtsLspAll,
     lsp_fwd_val: StmtsLspDir,
     lsp_bck_val: StmtsLspDir,
@@ -149,7 +148,6 @@ pub struct StmtsEventsRt {
 impl StmtsEventsRt {
     pub async fn new(ks: &str, rt: &RetentionTime, query_opts: &str, scy: &Session) -> Result<Self, Error> {
         let ret = Self {
-            ts_msp_fwd: make_msp_dir(ks, rt, false, query_opts, scy).await?,
             lsp_all: make_lsp_all(ks, rt, query_opts, scy).await?,
             lsp_fwd_val: make_lsp_dir(ks, rt, "ts_lsp, value", false, query_opts, scy).await?,
             lsp_bck_val: make_lsp_dir(ks, rt, "ts_lsp, value", true, query_opts, scy).await?,
@@ -159,10 +157,6 @@ impl StmtsEventsRt {
             bin_write_index_read: make_bin_write_index_read(ks, rt, query_opts, scy).await?,
         };
         Ok(ret)
-    }
-
-    fn ts_msp_fwd(&self) -> &PreparedStatement {
-        &self.ts_msp_fwd
     }
 
     pub fn lsp_all(&self) -> &StmtsLspAll {
