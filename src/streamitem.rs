@@ -225,6 +225,10 @@ pub fn sitem2_data<T, E>(x: T) -> Sitemty2<T, E> {
     Ok(StreamItem::DataItem(RangeCompletableItem::Data(x)))
 }
 
+pub fn sitem2_log<T, E>(x: LogItem) -> Sitemty2<T, E> {
+    Ok(StreamItem::Log(x))
+}
+
 pub fn sitem3_data<T, E>(x: T) -> Sitemty3<T, E> {
     Ok(StreamItem::DataItem(x))
 }
