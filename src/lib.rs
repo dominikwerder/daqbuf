@@ -22,6 +22,7 @@ pub mod lenframe;
 pub mod lenframed;
 pub mod logfilter;
 pub mod logqueue;
+pub mod monotonic;
 pub mod needminbuffer;
 pub mod print_on_done;
 pub mod rangefilter2;
@@ -36,6 +37,7 @@ pub mod teststream;
 pub mod timebin;
 pub mod timebinnedjson;
 pub mod wasmtransform;
+pub mod withlenhisto;
 
 pub type ChannelEventsStream = Pin<Box<dyn Stream<Item = Sitemty<ChannelEvents>> + Send>>;
 
