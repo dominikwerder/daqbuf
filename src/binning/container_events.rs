@@ -1085,13 +1085,13 @@ where
         DrainIntoNewResult::Done(dst)
     }
 
-    fn is_strict_monotonic(&self) -> bool {
+    fn is_monotonic(&self) -> bool {
         let mut mono = true;
         let n = self.tss.len();
-        for (&ts1, &ts2) in self.tss.iter().zip(self.tss.range(n.min(1)..n)) {
-            if ts1 >= ts2 {
+        for (i, (&ts1, &ts2)) in self.tss.iter().zip(self.tss.range(n.min(1)..n)).enumerate() {
+            if ts1 > ts2 {
                 mono = false;
-                error!("non-monotonic event data  ts1 {}  ts2 {}", ts1, ts2);
+                error!("ContainerEvents  non-monotonic event data  i {i}  ts1 {ts1}  ts2 {ts2}");
                 break;
             }
         }
@@ -1099,9 +1099,7 @@ where
     }
 
     fn is_consistent(&self) -> bool {
-        let mut good = true;
-        good &= MergeableTy::is_strict_monotonic(self);
-        good
+        MergeableTy::is_monotonic(self)
     }
 }
 
@@ -1157,8 +1155,8 @@ where
         }
     }
 
-    fn is_strict_monotonic(&self) -> bool {
-        MergeableTy::is_strict_monotonic(self)
+    fn is_monotonic(&self) -> bool {
+        MergeableTy::is_monotonic(self)
     }
 
     fn is_consistent(&self) -> bool {

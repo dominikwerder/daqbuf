@@ -48,7 +48,7 @@ autoerr::create_error_v1!(
         ShouldFindTsMin,
         ItemShouldHaveTsMax,
         PartialPathDrainedAllItems,
-        InputNotStrictMonotonic,
+        InputNotMonotonic,
         Logic,
     },
 );
@@ -351,8 +351,8 @@ where
                         Ready(Some(Ok(k))) => match k {
                             StreamItem::DataItem(k) => match k {
                                 RangeCompletableItem::Data(k) => {
-                                    if k.is_strict_monotonic() == false {
-                                        return Err(Error::InputNotStrictMonotonic);
+                                    if k.is_monotonic() == false {
+                                        return Err(Error::InputNotMonotonic);
                                     }
                                     self.items[i] = Some(k);
                                     trace4!("refilled {}", i);

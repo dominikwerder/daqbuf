@@ -256,11 +256,11 @@ impl MergeableTy for EventFull {
         self.tss.iter().map(|&x| TsNano::from_ns(x)).collect()
     }
 
-    fn is_strict_monotonic(&self) -> bool {
+    fn is_monotonic(&self) -> bool {
         let mut mono = true;
         let n = self.tss.len();
         for (&ts_a, &ts_b) in self.tss.iter().zip(self.tss.range(n.min(1)..n)) {
-            if ts_a >= ts_b {
+            if ts_a > ts_b {
                 mono = false;
                 error!("non-monotonic event data  ts1 {}  ts2 {}", ts_a, ts_b);
                 break;
@@ -271,7 +271,7 @@ impl MergeableTy for EventFull {
 
     fn is_consistent(&self) -> bool {
         let mut good = true;
-        good &= MergeableTy::is_strict_monotonic(self);
+        good &= MergeableTy::is_monotonic(self);
         good
     }
 }

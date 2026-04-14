@@ -19,8 +19,8 @@ use items_0::container::ByteEstimate;
 use items_0::framable::FrameTypeInnerStatic;
 use items_0::isodate::IsoDateTime;
 use items_0::merge::DrainIntoDstResult;
-use items_0::merge::DrainIntoNewDynResult;
 use items_0::merge::DrainIntoNewResult;
+use items_0::merge::MergeableDyn;
 use items_0::merge::MergeableTy;
 use items_0::streamitem::ITEMS_2_CHANNEL_EVENTS_FRAME_TYPE_ID;
 use items_0::timebin::BinningggContainerEventsDyn;
@@ -793,7 +793,7 @@ impl MergeableTy for ChannelEvents {
     fn drain_into(&mut self, dst: &mut Self, range: Range<usize>) -> DrainIntoDstResult {
         match self {
             ChannelEvents::Events(k) => match dst {
-                ChannelEvents::Events(j) => k.drain_into(j.as_mergeable_dyn_mut(), range),
+                ChannelEvents::Events(j) => MergeableDyn::drain_into(k.as_mut(), j.as_mut(), range),
                 ChannelEvents::Status(_) => DrainIntoDstResult::NotCompatible,
             },
             ChannelEvents::Status(k) => match dst {
@@ -820,14 +820,12 @@ impl MergeableTy for ChannelEvents {
 
     fn drain_into_new(&mut self, range: Range<usize>) -> DrainIntoNewResult<Self> {
         match self {
-            ChannelEvents::Events(k) => match k.drain_into_new(range) {
-                DrainIntoNewDynResult::Done(x) => {
-                    DrainIntoNewResult::Done(ChannelEvents::Events(x))
-                }
-                DrainIntoNewDynResult::Partial(x) => {
+            ChannelEvents::Events(k) => match MergeableTy::drain_into_new(k, range) {
+                DrainIntoNewResult::Done(x) => DrainIntoNewResult::Done(ChannelEvents::Events(x)),
+                DrainIntoNewResult::Partial(x) => {
                     DrainIntoNewResult::Partial(ChannelEvents::Events(x))
                 }
-                DrainIntoNewDynResult::NotCompatible => DrainIntoNewResult::NotCompatible,
+                DrainIntoNewResult::NotCompatible => DrainIntoNewResult::NotCompatible,
             },
             ChannelEvents::Status(k) => DrainIntoNewResult::Done(ChannelEvents::Status(k.clone())),
         }
@@ -895,9 +893,9 @@ impl MergeableTy for ChannelEvents {
         }
     }
 
-    fn is_strict_monotonic(&self) -> bool {
+    fn is_monotonic(&self) -> bool {
         match self {
-            ChannelEvents::Events(x) => x.is_strict_monotonic(),
+            ChannelEvents::Events(x) => x.is_monotonic(),
             ChannelEvents::Status(_) => true,
         }
     }
