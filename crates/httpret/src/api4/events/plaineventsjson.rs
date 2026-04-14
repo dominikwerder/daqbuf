@@ -33,11 +33,12 @@ pub async fn plain_events_json(
     ctx: &ReqCtx,
     _cluster: &Cluster,
     open_bytes: OpenBoxedBytesStreamsBox,
+    scyqu: Option<scyllaconn::worker::ScyllaQueue>,
     timeout_provider: Arc<dyn StreamTimeout2>,
 ) -> Result<CollectResult<JsonBytes>, Error> {
     debug!("plain_events_json  evquery {:?}", evq);
     let deadline = Instant::now() + evq.timeout_content_or_default();
-    let stream = dyn_events_stream(evq, ch_conf, ctx, open_bytes).await?;
+    let stream = dyn_events_stream(evq, ch_conf, ctx, open_bytes, scyqu).await?;
     //let stream = PlainEventStream::new(stream);
     //let stream = EventsToTimeBinnable::new(stream);
     //let stream = TimeBinnableToCollectable::new(stream);
@@ -69,10 +70,11 @@ pub async fn plain_events_json_stream(
     ch_conf: ChannelTypeConfigGen,
     ctx: &ReqCtx,
     open_bytes: OpenBoxedBytesStreamsBox,
+    scyqu: Option<scyllaconn::worker::ScyllaQueue>,
     timeout_provider: Arc<dyn StreamTimeout2>,
 ) -> Result<JsonStream, Error> {
     trace!("plain_events_json_stream");
-    let stream = dyn_events_stream(evq, ch_conf, ctx, open_bytes).await?;
+    let stream = dyn_events_stream(evq, ch_conf, ctx, open_bytes, scyqu).await?;
     let stream = events_stream_to_json_stream(stream, evq.timeout_content_or_default(), timeout_provider);
     let stream = non_empty(stream);
     let stream = only_first_err(stream);

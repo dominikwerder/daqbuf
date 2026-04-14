@@ -5,6 +5,7 @@ use crate::worker::KeyspaceId;
 use crate::worker::ScyllaQueueCluster;
 use futures_util::FutureExt;
 use futures_util::Stream;
+use items_0::merge::MergeableTy;
 use items_0::streamitem::LogItem;
 use items_0::streamitem::Sitemty2;
 use items_0::streamitem::StreamItem;
@@ -13,6 +14,7 @@ use items_0::timebin::BinningggContainerEventsDyn;
 use netpod::RangeExcl;
 use netpod::futdbg::FutDbg;
 use netpod::futdbg::FutDbgBox;
+use netpod::hpp::HaveProgressPending;
 use std::collections::VecDeque;
 use std::pin::Pin;
 use std::task::Context;
@@ -30,14 +32,21 @@ autoerr::create_error_v1!(
 type DataItem = Box<dyn BinningggContainerEventsDyn>;
 
 #[derive(Debug)]
+enum FutSt {
+    Run(FutDbg<crate::events3::lspfwd::Item>),
+    None,
+}
+
+#[derive(Debug)]
 pub struct LspFwdMspSingleStream {
     ks: KeyspaceId,
     series_info: SeriesInfo,
     msp: MspEv,
     range: ScyllaSeriesRange,
+    done: bool,
     begexcl: RangeExcl,
     limit: u32,
-    fut: Option<FutDbg<crate::events3::lspfwd::Item>>,
+    fut: FutSt,
     scyqu: ScyllaQueueCluster,
     outbuf: VecDeque<Sitemty2<DataItem, Error>>,
 }
@@ -57,16 +66,18 @@ impl LspFwdMspSingleStream {
             series_info,
             msp,
             range,
+            done: false,
             // TODO maybe take already as option?
             begexcl: RangeExcl::None,
             limit,
-            fut: None,
+            fut: FutSt::None,
             scyqu,
             outbuf: VecDeque::new(),
         }
     }
 
     fn trigger_done(&mut self) {
+        self.done = true;
         self.range = ScyllaSeriesRange::new(self.range.end(), self.range.end());
     }
 }
@@ -77,23 +88,26 @@ impl Stream for LspFwdMspSingleStream {
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         use Poll::*;
         loop {
-            if let Some(x) = self.outbuf.pop_front() {
-                break Ready(Some(x));
+            if self.done || self.outbuf.len() > 5 {
+                if let Some(x) = self.outbuf.pop_front() {
+                    break Ready(Some(x));
+                }
             }
-            break match &mut self.fut {
-                Some(fut) => match fut.poll_unpin(cx) {
+            let mut hpp = HaveProgressPending::new();
+            match &mut self.fut {
+                FutSt::Run(fut) => match fut.poll_unpin(cx) {
                     Ready(x) => {
-                        self.fut = None;
+                        hpp.mark_progress();
+                        self.fut = FutSt::None;
                         match x {
-                            Ok(mut v) => {
-                                // TODO mut would not be necessary. Could add as_mergeable_dyn_ref
-                                if let Some(tsmax) = v.as_mergeable_dyn_mut().ts_max() {
+                            Ok(v) => {
+                                if let Some(tsmax) = MergeableTy::ts_max(&v) {
                                     self.range = ScyllaSeriesRange::new(tsmax, self.range.end());
                                     self.begexcl = RangeExcl::Beg;
-                                    let item =
-                                        LogItem::info(format!("LspFwdMspSingleStream  cont len {n}", n = v.len()));
+                                    let item = LogItem::info(format!("cont len {n}", n = v.len()));
                                     self.outbuf.push_back(Ok(StreamItem::Log(item)));
-                                    Ready(Some(sitem2_data(v)))
+                                    self.outbuf.push_back(sitem2_data(v));
+                                    // break Ready(Some(sitem2_data(v)));
                                 } else {
                                     self.trigger_done();
                                     continue;
@@ -101,29 +115,40 @@ impl Stream for LspFwdMspSingleStream {
                             }
                             Err(e) => {
                                 self.trigger_done();
-                                Ready(Some(Err(e.into())))
+                                break Ready(Some(Err(e.into())));
                             }
                         }
                     }
-                    Pending => Pending,
+                    Pending => {
+                        hpp.mark_pending();
+                    }
                 },
-                None => {
-                    if self.range.beg() < self.range.end() {
-                        let scyqu = self.scyqu.clone();
-                        let ks = self.ks.clone();
-                        let series_info = self.series_info.clone();
-                        let msp = self.msp;
-                        let range = self.range.clone();
-                        let begexcl = self.begexcl.clone();
-                        let limit = self.limit;
-                        let fut =
-                            async move { scyqu.read_03_lsp_fwd(ks, series_info, msp, range, begexcl, limit).await };
-                        self.fut = Some(fut.box2());
-                        continue;
+                FutSt::None => {
+                    if self.done == false {
+                        if self.range.beg() < self.range.end() {
+                            let scyqu = self.scyqu.clone();
+                            let ks = self.ks.clone();
+                            let series_info = self.series_info.clone();
+                            let msp = self.msp;
+                            let range = self.range.clone();
+                            let begexcl = self.begexcl.clone();
+                            let limit = self.limit;
+                            let fut =
+                                async move { scyqu.read_03_lsp_fwd(ks, series_info, msp, range, begexcl, limit).await };
+                            hpp.mark_progress();
+                            self.fut = FutSt::Run(fut.box2());
+                        } else {
+                        }
                     } else {
-                        Ready(None)
                     }
                 }
+            }
+            break if hpp.have_progress() {
+                continue;
+            } else if hpp.have_pending() {
+                Pending
+            } else {
+                Ready(None)
             };
         }
     }

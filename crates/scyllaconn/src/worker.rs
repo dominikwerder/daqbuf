@@ -43,6 +43,7 @@ macro_rules! error { ($($arg:tt)*) => ( if true { log::error!($($arg)*); } ); }
 macro_rules! warn { ($($arg:tt)*) => ( if true { log::warn!($($arg)*); } ); }
 macro_rules! info { ($($arg:tt)*) => ( if true { log::info!($($arg)*); } ); }
 macro_rules! debug { ($($arg:tt)*) => ( if true { log::debug!($($arg)*); } ); }
+macro_rules! trace { ($($arg:tt)*) => ( if true { log::trace!($($arg)*); } ); }
 
 const CONCURRENT_QUERIES_PER_WORKER: usize = 80;
 const SCYLLA_WORKER_QUEUE_LEN: usize = 200;
@@ -491,12 +492,12 @@ impl ScyllaQueueCluster {
         begexcl: RangeExcl,
         limit: u32,
     ) -> crate::events3::mspfwd::Item {
-        debug!("read_msp_03_fwd  {ks:?}  {series:?}  {range:?}  {begexcl:?}  {limit:?}");
+        trace!("read_msp_03_fwd  {ks:?}  {series:?}  {range:?}  {begexcl:?}  {limit:?}");
         let (job, rx) = crate::events3::mspfwd::ReadMsp03Fwd::new(ks.clone(), series, range, begexcl, limit);
         let job = Job::ReadMsp03Fwd(job);
         self.tx.send((ks, job)).await?;
         let res = rx.recv().await.inspect_err(|e| {
-            eprintln!("GOT RECV ERROR {e}");
+            error!("GOT RECV ERROR {e}");
         })?;
         res
     }

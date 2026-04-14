@@ -139,9 +139,17 @@ impl EventsHandler {
         } else {
             tracing::Span::none()
         };
-        match plain_events_prep(req, evq, ctx, &shared_res.pgqueue, ncc, logspan.clone())
-            .instrument(logspan)
-            .await
+        match plain_events_prep(
+            req,
+            evq,
+            ctx,
+            shared_res.scyqueue.clone(),
+            &shared_res.pgqueue,
+            ncc,
+            logspan.clone(),
+        )
+        .instrument(logspan)
+        .await
         {
             Ok(ret) => Ok(ret),
             Err(e) => Ok(e.response(ctx.reqid())),
@@ -153,11 +161,12 @@ async fn plain_events_prep(
     req: Requ,
     evq: PlainEventsQuery,
     ctx: &ReqCtx,
+    scyqu: Option<scyllaconn::worker::ScyllaQueue>,
     pgqueue: &PgQueue,
     ncc: &NodeConfigCached,
     logspan: Span,
 ) -> Result<StreamResponse, Error> {
-    let res2 = HandleRes2::new(ctx, logspan, evq.clone(), pgqueue, ncc).await?;
+    let res2 = HandleRes2::new(ctx, logspan, evq.clone(), scyqu, pgqueue, ncc).await?;
     {
         let obj = serde_json::json!({
             "query_type": "events",
@@ -193,6 +202,7 @@ async fn plain_events_cbor_framed(req: Requ, res2: HandleRes2<'_>) -> Result<Str
         res2.ch_conf,
         res2.ctx,
         res2.open_bytes,
+        res2.scyqu,
         res2.timeout_provider,
     )
     .await?;
@@ -212,6 +222,7 @@ async fn plain_events_json_framed(req: Requ, res2: HandleRes2<'_>) -> Result<Str
         res2.ch_conf,
         res2.ctx,
         res2.open_bytes,
+        res2.scyqu.clone(),
         res2.timeout_provider,
     )
     .await?;
@@ -234,6 +245,7 @@ async fn plain_events_json(req: Requ, res2: HandleRes2<'_>) -> Result<StreamResp
         res2.ctx,
         &res2.ncc.node_config.cluster,
         res2.open_bytes,
+        res2.scyqu.clone(),
         res2.timeout_provider,
     )
     .await;
@@ -274,6 +286,7 @@ struct HandleRes2<'a> {
     evq: PlainEventsQuery,
     ch_conf: ChannelTypeConfigGen,
     open_bytes: Pin<Arc<OpenBoxedBytesViaHttp>>,
+    scyqu: Option<scyllaconn::worker::ScyllaQueue>,
     timeout_provider: Arc<dyn StreamTimeout2>,
     #[allow(unused)]
     pgqueue: &'a PgQueue,
@@ -286,6 +299,7 @@ impl<'a> HandleRes2<'a> {
         ctx: &'a ReqCtx,
         logspan: Span,
         evq: PlainEventsQuery,
+        scyqu: Option<scyllaconn::worker::ScyllaQueue>,
         pgqueue: &'a PgQueue,
         ncc: &'a NodeConfigCached,
     ) -> Result<Self, Error> {
@@ -299,6 +313,7 @@ impl<'a> HandleRes2<'a> {
             evq,
             ch_conf,
             open_bytes,
+            scyqu,
             timeout_provider,
             pgqueue,
             ctx,

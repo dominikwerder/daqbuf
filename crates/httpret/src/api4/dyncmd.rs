@@ -158,6 +158,24 @@ impl LspFwdMspCompareCmd {
     }
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+struct LspMergeAllCmd {
+    backend: String,
+    series: String,
+    name: String,
+    ts1: String,
+    ts2: String,
+    msp_limit: Option<u32>,
+    lsp_limit: Option<u32>,
+    res_mime: Option<String>,
+}
+
+impl LspMergeAllCmd {
+    fn series(&self) -> SeriesId {
+        SeriesId::new(self.series.parse().unwrap())
+    }
+}
+
 pub struct DynCmdHandler {}
 
 impl DynCmdHandler {
@@ -268,6 +286,16 @@ impl DynCmdHandler {
                                     let res =
                                         LspFwdMspCompareCmd::exec_stream_head(cmd, scyqu, shared_res.pgqueue.clone())
                                             .await?;
+                                    Ok(res)
+                                } else {
+                                    info!("Failed to parse LspFwdMspMultiCmd");
+                                    Ok(response(StatusCode::BAD_REQUEST).body(body_empty())?)
+                                }
+                            } else if cmd.ty2 == "LspMergeAllCmd" {
+                                if let Ok(cmd) = serde_json::from_slice::<LspMergeAllCmd>(&buf) {
+                                    info!("{cmd:?}");
+                                    let res = LspMergeAllCmd::exec_stream_head(cmd, scyqu, shared_res.pgqueue.clone())
+                                        .await?;
                                     Ok(res)
                                 } else {
                                     info!("Failed to parse LspFwdMspMultiCmd");
@@ -842,9 +870,6 @@ impl LspFwdMspMultiCmd {
                     };
                     ready(ret)
                 }
-            })
-            .inspect(|x| {
-                info!("before chunking: {x:?}");
             });
         let stream = bytes_chunks_to_len_framed_str(stream);
         let res = body_stream(stream);
@@ -1319,6 +1344,170 @@ impl LspFwdMspCompareCmd {
         let body = Self::exec_stream_body(cmd, scyqu.clone(), pgqu).await?;
         let res = response(StatusCode::OK)
             .header(header::CONTENT_TYPE, APP_JSON_FRAMED)
+            .body(body)?;
+        Ok(res)
+    }
+}
+
+impl LspMergeAllCmd {
+    async fn exec_stream_body(cmd: Self, scyqu: ScyllaQueue, pgqu: PgQueue) -> Result<StreamBody, Error> {
+        use netpod::FromUrl;
+        use serde_json::json;
+        let range = netpod::query::TimeRangeQuery::from_pairs(
+            &[("begDate", cmd.ts1.clone()), ("endDate", cmd.ts2.clone())]
+                .map(|x| (x.0.into(), x.1))
+                .into_iter()
+                .collect(),
+        )
+        .map_err(|e| Error::from(e.to_string()))?;
+        let series_id = if cmd.series().id() == 0 {
+            let qu = netpod::ChannelSearchQuery {
+                backend: Some(cmd.backend.clone()),
+                name_regex: cmd.name.clone(),
+                source_regex: String::new(),
+                description_regex: String::new(),
+                icase: false,
+                kind: SeriesKind::ChannelData,
+                log_level: String::new(),
+            };
+            let mut res = pgqu.search_channel_scylla(qu).await??;
+            let c1 = res
+                .channels
+                .pop()
+                .ok_or_else(|| Error::Msg(format!("channel not found")))?;
+            SeriesId::new(c1.series)
+        } else {
+            cmd.series()
+        };
+        let chi = pgqu.chconf_for_series(&cmd.backend, series_id.id()).await??;
+        let series_info = SeriesInfo::from(&chi);
+        let range = netpod::range::evrange::NanoRange::from(range);
+        let range = ScyllaSeriesRange::new(range.beg_ts(), range.end_ts());
+        let mut inps = Vec::new();
+        for cl in scyqu.clusters() {
+            for ks in cl.keyspaces() {
+                let opts = scyllaconn::events3::ks::lsp_fwd_msp_multi::Opts::new();
+                let msps = scyllaconn::events3::mspbck::msp_bck(
+                    ks.clone(),
+                    series_info.clone(),
+                    range.beg(),
+                    cl.as_ref().clone(),
+                )
+                .await?
+                .into_iter()
+                .map(MspEv::from)
+                .collect();
+                let stream = scyllaconn::events3::ks::lsp_fwd_msp_multi::LspFwdMspMulti::new(
+                    ks.clone(),
+                    series_info.clone(),
+                    range.clone(),
+                    opts,
+                    cl.as_ref().clone(),
+                    msps,
+                    cmd.msp_limit.unwrap_or(MSP_LIMIT_DEF),
+                    cmd.lsp_limit.unwrap_or(LSP_LIMIT_DEF),
+                );
+                let stream = streams::withlenhisto::WithLenHisto::new(
+                    stream,
+                    format!(
+                        "after-LspFwdMspMulti-{}-{}-{}",
+                        cl.tag(),
+                        ks.name(),
+                        ks.rt().debug_tag()
+                    ),
+                );
+                inps.push(stream);
+            }
+        }
+        let stream = scyllaconn::events3::ks::lspmerge::LspMerge::new(inps, cmd.lsp_limit.unwrap_or(LSP_LIMIT_DEF));
+        let stream = streams::withlenhisto::WithLenHisto::new(stream, format!("after-LspMerge"));
+        let stream = streams::monotonic::CheckMonotonic::new(stream, format!("after-LspMerge"));
+        let stream = stream
+            .map(|x| match x {
+                Ok(x) => match x {
+                    StreamItem::DataItem(x) => match x {
+                        RangeCompletableItem::Data(x) => {
+                            let x = x.to_f32_for_binning_v01();
+                            if let Some(x) = x.as_any_ref().downcast_ref::<ContainerEvents<f32>>() {
+                                let (tss, vals) =
+                                    x.iter_zip()
+                                        .fold((Vec::new(), Vec::new()), |(mut tss, mut vals), (ts, val)| {
+                                            tss.push(ts.ms());
+                                            vals.push(val);
+                                            (tss, vals)
+                                        });
+                                json!({
+                                    "type": "events",
+                                    "tss": tss,
+                                    "vals": vals,
+                                })
+                            } else {
+                                json!({
+                                    "type": "error",
+                                    "error": "can not downcast",
+                                })
+                            }
+                        }
+                        RangeCompletableItem::RangeComplete => {
+                            json!({
+                                "type": "RangeFinal",
+                            })
+                        }
+                    },
+                    StreamItem::Log(x) => {
+                        json!({
+                            "type": "log",
+                            "log": x,
+                        })
+                    }
+                    StreamItem::Stats(x) => {
+                        json!({
+                            "type": "stats",
+                            "stats": x,
+                        })
+                    }
+                },
+                Err(e) => json!({
+                    "type": "error",
+                    "error": e.to_string(),
+                }),
+            })
+            .map(|x| serde_json::to_string(&x))
+            .take_while({
+                let mut had_err = false;
+                let mut n = 0;
+                move |x| {
+                    let ret = match x {
+                        Ok(x) => {
+                            if n < 1024 * 1024 * 80 {
+                                n += x.len();
+                                true
+                            } else {
+                                false
+                            }
+                        }
+                        Err(_) => {
+                            if had_err {
+                                false
+                            } else {
+                                had_err = true;
+                                true
+                            }
+                        }
+                    };
+                    ready(ret)
+                }
+            });
+        let stream = bytes_chunks_to_len_framed_str(stream);
+        let res = body_stream(stream);
+        Ok(res)
+    }
+
+    async fn exec_stream_head(cmd: Self, scyqu: &ScyllaQueue, pgqu: PgQueue) -> Result<StreamResponse, Error> {
+        let res_mime = cmd.res_mime.as_ref().map_or(APP_JSON_FRAMED.to_string(), |x| x.clone());
+        let body = Self::exec_stream_body(cmd, scyqu.clone(), pgqu).await?;
+        let res = response(StatusCode::OK)
+            .header(header::CONTENT_TYPE, res_mime)
             .body(body)?;
         Ok(res)
     }

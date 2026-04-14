@@ -9,10 +9,12 @@ use crate::worker::ScyllaQueueCluster;
 use futures_util::FutureExt;
 use futures_util::Stream;
 use futures_util::StreamExt;
+use items_0::streamitem::LogItem;
 use items_0::streamitem::RangeCompletableItem;
 use items_0::streamitem::Sitemty2;
 use items_0::streamitem::StreamItem;
 use items_0::streamitem::sitem2_data;
+use items_0::streamitem::sitem2_log;
 use items_0::timebin::BinningggContainerEventsDyn;
 use netpod::RangeExcl;
 use netpod::TsMs;
@@ -51,6 +53,7 @@ autoerr::create_error_v1!(
         MspBck(#[from] crate::events3::mspbck::Error),
         LspFwdSingle(#[from] crate::events3::ks::lsp_fwd_msp_single::Error),
         Logic,
+        ItemInconsistent,
     },
 );
 
@@ -187,7 +190,7 @@ impl Merging {
         'outer: loop {
             il1 += 1;
             if il1 > 200 {
-                error!("LspFwdMspMulti  poll_all_inp  loop iteration too many");
+                error!("poll_all_inp  loop iteration too many");
                 break Ready(Some(Err(Error::LoopTooMany)));
             }
             let mut hpp = HaveProgressPending::new();
@@ -209,6 +212,8 @@ impl Merging {
                                             RangeCompletableItem::Data(x) => {
                                                 if x.len() == 0 {
                                                     // TODO count for metrics
+                                                } else if !x.is_consistent() {
+                                                    break 'outer Ready(Some(Err(Error::ItemInconsistent)));
                                                 } else {
                                                     inp.buf = Some(x);
                                                 }
@@ -250,12 +255,12 @@ impl Merging {
                     hpp.mark_progress();
                 }
             }
-            let n_empty = self2.inps.iter().filter(|x| x.buf.is_none()).count();
+            let n_buf_none = self2.inps.iter().filter(|x| x.buf.is_none());
             break if hpp.have_progress() {
                 continue;
             } else if hpp.have_pending() {
                 Pending
-            } else if n_empty == 0 {
+            } else if n_buf_none.count() == 0 {
                 Ready(Some(sitem2_data(())))
             } else {
                 Ready(None)
@@ -274,13 +279,10 @@ impl Merging {
         loop {
             il1 += 1;
             if il1 > 200 {
-                error!("LspFwdMspMulti  check_inputs  loop iteration too many");
+                error!("check_inputs  loop iteration too many");
                 break Ready(Some(Err(Error::LoopTooMany)));
             }
             let mut hpp = HaveProgressPending::new();
-            if self.inps.len() == 0 {
-                info!("LspFwdMspMulti  check_inputs  no inps");
-            }
             match self.as_mut().poll_all_inp(cx, brefs.borrow2()) {
                 Ready(Some(x)) => {
                     hpp.mark_progress();
@@ -292,12 +294,9 @@ impl Merging {
                                         match self.as_mut().find_next_ts()? {
                                             NextTs::None => {
                                                 if self.inps.len() == 0 {
-                                                    info!("LspFwdMspMulti  check_inputs  NextTs::None and no inps");
                                                     break Ready(Some(sitem2_data(CheckInputItem::OpenNextMsp)));
                                                 } else {
-                                                    error!(
-                                                        "LspFwdMspMulti  check_inputs  find_next_ts  None  but inps not empty"
-                                                    );
+                                                    error!("check_inputs  find_next_ts  None  but inps not empty");
                                                     self.inps.clear();
                                                 }
                                             }
@@ -309,7 +308,7 @@ impl Merging {
                                                 let b2 = b1.as_mut().unwrap();
                                                 let ts_max = b2.ts_max().unwrap();
                                                 if msp_next.map_or(false, |x| x.ns() <= ts_max) {
-                                                    info!("LspFwdMspMulti  check_inputs  NextTs::One  open next msp");
+                                                    debug!("check_inputs  NextTs::One  open next msp");
                                                     break Ready(Some(sitem2_data(CheckInputItem::OpenNextMsp)));
                                                 } else {
                                                     trace!("drain events A {}", b2.len());
@@ -321,7 +320,7 @@ impl Merging {
                                                 let b1 = &mut self.inps.get_mut(ix1.0).unwrap().buf;
                                                 let b2 = b1.as_mut().unwrap();
                                                 if msp_next.map_or(false, |x| x.ns() <= ts2) {
-                                                    info!("LspFwdMspMulti  check_inputs  NextTs::Two  open next msp");
+                                                    debug!("check_inputs  NextTs::Two  open next msp");
                                                     break Ready(Some(sitem2_data(CheckInputItem::OpenNextMsp)));
                                                 } else {
                                                     use items_0::merge::DrainIntoNewDynResult;
@@ -339,9 +338,6 @@ impl Merging {
                                                             }
                                                             break Ready(Some(sitem2_data(CheckInputItem::Item(c))));
                                                         }
-                                                        // DrainIntoNewDynResult::Partial(c) => {
-                                                        //     break Ready(Some(sitem2_data(CheckInputItem::Item(c))));
-                                                        // }
                                                         DrainIntoNewDynResult::NotCompatible => {
                                                             // should not happen because we drain into new
                                                             // TODO metrics
@@ -399,7 +395,7 @@ impl Merging {
         loop {
             il1 += 1;
             if il1 > 100 {
-                error!("LspFwdMspMulti  poll_state  loop iteration too many");
+                error!("poll_state  loop iteration too many");
                 break Ready(Some(Err(Error::LoopTooMany)));
             }
             let mut hpp = HaveProgressPending::new();
@@ -459,8 +455,12 @@ impl Merging {
                                                 evs: Some(stream),
                                                 buf: None,
                                             });
+                                            let item = LogItem::info(format!("open next msp {msp}"));
+                                            break Ready(Some(sitem2_log(item)));
                                         } else {
-                                            info!("LspFwdMspMulti  poll_state  OpenNextMsp  no msp_next");
+                                            // TODO
+                                            // let item = LogItem::info(format!("poll_state  OpenNextMsp  no msp_next"));
+                                            // break Ready(Some(sitem2_log(item)));
                                         }
                                     }
                                     CheckInputItem::Item(x) => {
@@ -567,7 +567,7 @@ impl Stream for LspFwdMspMulti {
         loop {
             il1 += 1;
             if il1 > 200 {
-                error!("LspFwdMspMulti  poll_next  loop iteration too many");
+                error!("poll_next  loop iteration too many");
                 self.state = State::Done;
                 break Ready(Some(Err(Error::LoopTooMany)));
             }

@@ -22,9 +22,10 @@ pub async fn plain_events_cbor_stream(
     ch_conf: ChannelTypeConfigGen,
     ctx: &ReqCtx,
     open_bytes: OpenBoxedBytesStreamsBox,
+    scyqu: Option<scyllaconn::worker::ScyllaQueue>,
     timeout_provider: Arc<dyn StreamTimeout2>,
 ) -> Result<CborStream, Error> {
-    let stream = dyn_events_stream(evq, ch_conf, ctx, open_bytes).await?;
+    let stream = dyn_events_stream(evq, ch_conf, ctx, open_bytes, scyqu).await?;
     let stream = events_stream_to_cbor_stream(stream, evq.timeout_content_or_default(), timeout_provider);
     let stream = non_empty(stream);
     let stream = only_first_err(stream);

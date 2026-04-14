@@ -4,6 +4,10 @@ use netpod::range::evrange::NanoRange;
 use netpod::ChannelTypeConfigGen;
 use netpod::ReqCtx;
 use query::api4::events::PlainEventsQuery;
+use scyllaconn::events3::ks::clksmerge::cl_ks_merged;
+use scyllaconn::events3::SeriesInfo;
+use scyllaconn::worker::ScyllaQueue;
+use series::SeriesId;
 use streams::rangefilter2::RangeFilter2;
 use streams::tcprawclient::container_stream_from_bytes_stream;
 use streams::tcprawclient::make_sub_query;
@@ -22,6 +26,8 @@ autoerr::create_error_v1!(
     enum variants {
         NanoRangeFromSeriesRange,
         TcpRawClient(#[from] streams::tcprawclient::Error),
+        MissingScylla,
+        ClKsMerged(#[from] scyllaconn::events3::ks::clksmerge::Error),
     },
 );
 
@@ -30,23 +36,21 @@ pub async fn dyn_events_stream(
     ch_conf: ChannelTypeConfigGen,
     ctx: &ReqCtx,
     open_bytes: OpenBoxedBytesStreamsBox,
+    scyqu: Option<ScyllaQueue>,
 ) -> Result<ChannelEventsStream, Error> {
     let selfname = "dyn_events_stream";
     trace!("{selfname}  {}", evq.summary_short());
     use query::api4::events::EventsSubQuerySettings;
     let stream = if let Ok(chconf) = ch_conf.to_scylla() {
-        let _ = chconf;
-        let _subq = make_sub_query(
-            ch_conf,
-            evq.range().clone(),
-            evq.one_before_range(),
-            evq.transform().clone(),
-            EventsSubQuerySettings::from(evq),
-            evq.log_level().into(),
-            ctx,
+        let scyqu = scyqu.ok_or(Error::MissingScylla)?;
+        let series_info = SeriesInfo::new(
+            SeriesId::new(chconf.series()),
+            chconf.scalar_type().clone(),
+            chconf.shape().clone(),
         );
-        // scyllaconn scylla_channel_event_stream(subq, chconf);
-        todo!("{selfname}  impl TODO")
+        let range = evq.range().clone();
+        let stream = cl_ks_merged(series_info, range, scyqu).await?;
+        Box::pin(stream) as ChannelEventsStream
     } else {
         let subq = make_sub_query(
             ch_conf,
@@ -74,7 +78,8 @@ pub async fn dyn_events_stream(
             Ok(x) => x,
             Err(_e) => return Err(Error::NanoRangeFromSeriesRange),
         };
-        RangeFilter2::new(stream, range_ty2, evq.one_before_range())
+        let stream = RangeFilter2::new(stream, range_ty2, evq.one_before_range());
+        Box::pin(stream) as ChannelEventsStream
     };
     if let Some(wasmname) = evq.test_do_wasm() {
         let _ = wasmname;
