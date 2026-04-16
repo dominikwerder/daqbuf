@@ -57,7 +57,14 @@ autoerr::create_error_v1!(
 );
 
 pub trait Container<EVT>:
-    fmt::Debug + Send + Unpin + Clone + PreviewRange + Serialize + for<'a> Deserialize<'a>
+    fmt::Debug
+    + Send
+    + Unpin
+    + Clone
+    + PreviewRange
+    + Serialize
+    + for<'a> Deserialize<'a>
+    + FromIterator<EVT>
 where
     EVT: EventValueType,
 {
@@ -67,6 +74,7 @@ where
     fn clear(&mut self);
     fn get_iter_ty_1(&self, pos: usize) -> Option<EVT::IterTy1<'_>>;
     fn iter_ty_1(&self) -> impl Iterator<Item = EVT::IterTy1<'_>>;
+    fn into_iter_ty_2(self) -> impl Iterator<Item = EVT>;
     fn drain_into(&mut self, dst: &mut Self, range: Range<usize>);
     fn truncate_front(&mut self, len: usize);
     fn into_user_facing_fields(self) -> Vec<(String, Box<dyn erased_serde::Serialize>)>;
@@ -118,6 +126,10 @@ where
         self.iter().map(|x| x.clone())
     }
 
+    fn into_iter_ty_2(self) -> impl Iterator<Item = EVT> {
+        self.into_iter()
+    }
+
     fn drain_into(&mut self, dst: &mut Self, range: Range<usize>) {
         dst.extend(self.drain(range));
     }
@@ -165,6 +177,10 @@ impl Container<String> for VecDeque<String> {
 
     fn iter_ty_1(&self) -> impl Iterator<Item = <String as EventValueType>::IterTy1<'_>> {
         self.iter().map(|x| x.as_str())
+    }
+
+    fn into_iter_ty_2(self) -> impl Iterator<Item = String> {
+        self.into_iter()
     }
 
     fn drain_into(&mut self, dst: &mut Self, range: Range<usize>) {
@@ -542,6 +558,21 @@ where
     }
 }
 
+impl<EVT> FromIterator<PulsedVal<EVT>> for VecDequePulsed<EVT>
+where
+    EVT: EventValueType,
+{
+    fn from_iter<T: IntoIterator<Item = PulsedVal<EVT>>>(iter: T) -> Self {
+        let mut pulses = VecDeque::new();
+        let mut vals = EVT::Container::new();
+        iter.into_iter().for_each(|x| {
+            pulses.push_back(x.0);
+            vals.push_back(x.1);
+        });
+        Self { pulses, vals }
+    }
+}
+
 impl<EVT> Container<PulsedVal<EVT>> for VecDequePulsed<EVT>
 where
     EVT: EventValueType,
@@ -583,6 +614,13 @@ where
             .map(|&x| x)
             .zip(self.vals.iter_ty_1())
             .map(|(pulse, evt)| PulsedValIterTy { pulse, evt })
+    }
+
+    fn into_iter_ty_2(self) -> impl Iterator<Item = PulsedVal<EVT>> {
+        self.pulses
+            .into_iter()
+            .zip(self.vals.into_iter_ty_2())
+            .map(|(p, v)| PulsedVal(p, v))
     }
 
     fn drain_into(&mut self, dst: &mut Self, range: Range<usize>) {
@@ -1101,6 +1139,35 @@ where
     fn is_consistent(&self) -> bool {
         MergeableTy::is_monotonic(self)
     }
+
+    fn retain_unique_ts(&mut self, mut tsmin: TsNano) {
+        // TODO recalculate byte estimate afterwards
+        let mask: Vec<_> = self
+            .tss
+            .iter()
+            .map(|&x| {
+                if x > tsmin {
+                    tsmin = x;
+                    true
+                } else {
+                    false
+                }
+            })
+            .collect();
+        self.tss = std::mem::replace(&mut self.tss, VecDeque::new())
+            .into_iter()
+            .zip(mask.iter().map(|x| *x))
+            .filter_map(|(a, b)| b.then_some(a))
+            .collect();
+        self.vals = std::mem::replace(
+            &mut self.vals,
+            <<EVT as EventValueType>::Container as Container<EVT>>::new(),
+        )
+        .into_iter_ty_2()
+        .zip(mask.iter().map(|x| *x))
+        .filter_map(|(a, b)| b.then_some(a))
+        .collect();
+    }
 }
 
 impl<EVT> MergeableDyn for ContainerEvents<EVT>
@@ -1161,6 +1228,10 @@ where
 
     fn is_consistent(&self) -> bool {
         MergeableTy::is_consistent(self)
+    }
+
+    fn retain_unique_ts(&mut self, tsmin: TsNano) {
+        MergeableTy::retain_unique_ts(self, tsmin)
     }
 }
 

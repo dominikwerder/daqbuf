@@ -31,6 +31,19 @@ impl PreviewRange for EnumVariantContainer {
     }
 }
 
+impl FromIterator<EnumVariant> for EnumVariantContainer {
+    fn from_iter<T: IntoIterator<Item = EnumVariant>>(iter: T) -> Self {
+        let mut ixs = VecDeque::new();
+        let mut names = VecDeque::new();
+        iter.into_iter().for_each(|x| {
+            let (ix, name) = x.into_parts();
+            ixs.push_back(ix);
+            names.push_back(name);
+        });
+        Self { ixs, names }
+    }
+}
+
 impl Container<EnumVariant> for EnumVariantContainer {
     fn new() -> Self {
         Self {
@@ -74,6 +87,13 @@ impl Container<EnumVariant> for EnumVariantContainer {
                 ix: *x.0,
                 name: x.1.as_str(),
             })
+    }
+
+    fn into_iter_ty_2(self) -> impl Iterator<Item = EnumVariant> {
+        self.ixs
+            .into_iter()
+            .zip(self.names.into_iter())
+            .map(|(ix, name)| EnumVariant::new(ix, name))
     }
 
     fn drain_into(&mut self, dst: &mut Self, range: std::ops::Range<usize>) {

@@ -799,6 +799,10 @@ where
         good &= same_len;
         good
     }
+
+    fn retain_unique_ts(&mut self, mut tsmin: TsNano) {
+        // We assume that we never produce duplicated bins
+    }
 }
 
 pub struct ContainerBinsTakeUpTo<'a, EVT, BVT>

@@ -274,6 +274,58 @@ impl MergeableTy for EventFull {
         good &= MergeableTy::is_monotonic(self);
         good
     }
+
+    fn retain_unique_ts(&mut self, tsmin: TsNano) {
+        // TODO recalculate byte estimate afterwards
+        let mut tsmin = tsmin.ns();
+        let mask: Vec<_> = self
+            .tss
+            .iter()
+            .map(|&x| {
+                if x > tsmin {
+                    tsmin = x;
+                    true
+                } else {
+                    false
+                }
+            })
+            .collect();
+        self.tss = std::mem::replace(&mut self.tss, VecDeque::new())
+            .into_iter()
+            .zip(mask.iter().map(|x| *x))
+            .filter_map(|(a, b)| b.then_some(a))
+            .collect();
+        self.pulses = std::mem::replace(&mut self.pulses, VecDeque::new())
+            .into_iter()
+            .zip(mask.iter().map(|x| *x))
+            .filter_map(|(a, b)| b.then_some(a))
+            .collect();
+        self.blobs = std::mem::replace(&mut self.blobs, VecDeque::new())
+            .into_iter()
+            .zip(mask.iter().map(|x| *x))
+            .filter_map(|(a, b)| b.then_some(a))
+            .collect();
+        self.scalar_types = std::mem::replace(&mut self.scalar_types, VecDeque::new())
+            .into_iter()
+            .zip(mask.iter().map(|x| *x))
+            .filter_map(|(a, b)| b.then_some(a))
+            .collect();
+        self.be = std::mem::replace(&mut self.be, VecDeque::new())
+            .into_iter()
+            .zip(mask.iter().map(|x| *x))
+            .filter_map(|(a, b)| b.then_some(a))
+            .collect();
+        self.shapes = std::mem::replace(&mut self.shapes, VecDeque::new())
+            .into_iter()
+            .zip(mask.iter().map(|x| *x))
+            .filter_map(|(a, b)| b.then_some(a))
+            .collect();
+        self.comps = std::mem::replace(&mut self.comps, VecDeque::new())
+            .into_iter()
+            .zip(mask.iter().map(|x| *x))
+            .filter_map(|(a, b)| b.then_some(a))
+            .collect();
+    }
 }
 
 autoerr::create_error_v1!(

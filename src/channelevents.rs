@@ -906,6 +906,13 @@ impl MergeableTy for ChannelEvents {
             ChannelEvents::Status(_) => true,
         }
     }
+
+    fn retain_unique_ts(&mut self, tsmin: TsNano) {
+        match self {
+            ChannelEvents::Events(x) => x.retain_unique_ts(tsmin),
+            ChannelEvents::Status(_) => {}
+        }
+    }
 }
 
 impl CollectableDyn for ChannelEvents {
