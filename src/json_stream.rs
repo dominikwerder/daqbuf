@@ -1,6 +1,5 @@
 use crate::streamtimeout::StreamTimeout2;
 use crate::streamtimeout::TimeoutableStream;
-use crate::ChannelEventsStream;
 use futures_util::Stream;
 use futures_util::StreamExt;
 use items_0::apitypes::ToUserFacingApiType;
@@ -36,11 +35,15 @@ where
 
 pub type JsonStream = Pin<Box<dyn Stream<Item = Result<JsonBytes, Error>> + Send>>;
 
-pub fn events_stream_to_json_stream(
-    stream: ChannelEventsStream,
+pub fn events_stream_to_json_stream<S, T>(
+    stream: S,
     ivl: Duration,
     timeout_provider: Arc<dyn StreamTimeout2>,
-) -> impl Stream<Item = Result<JsonBytes, Error>> {
+) -> impl Stream<Item = Result<JsonBytes, Error>>
+where
+    S: Stream<Item = items_0::streamitem::Sitemty<T>>,
+    T: items_0::apitypes::ToUserFacingApiType,
+{
     let stream = TimeoutableStream::new(ivl, timeout_provider, stream);
     let stream = stream.map(|x| match x {
         Some(x) => map_events(x),

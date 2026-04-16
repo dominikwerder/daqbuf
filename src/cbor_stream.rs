@@ -53,11 +53,15 @@ where
 
 pub type CborStream = Pin<Box<dyn Stream<Item = Result<CborBytes, Error>> + Send>>;
 
-pub fn events_stream_to_cbor_stream(
-    stream: crate::ChannelEventsStream,
+pub fn events_stream_to_cbor_stream<S, T>(
+    stream: S,
     ivl: Duration,
     timeout_provider: Arc<dyn StreamTimeout2>,
-) -> impl Stream<Item = Result<CborBytes, Error>> {
+) -> impl Stream<Item = Result<CborBytes, Error>>
+where
+    S: Stream<Item = items_0::streamitem::Sitemty<T>>,
+    T: items_0::apitypes::ToUserFacingApiType,
+{
     let stream = TimeoutableStream::new(ivl, timeout_provider, stream);
     let stream = stream.map(|x| match x {
         Some(x) => map_events(x),
