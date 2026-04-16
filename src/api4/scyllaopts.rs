@@ -1,5 +1,6 @@
 use netpod::get_url_query_pairs;
 use netpod::AppendToUrl;
+use netpod::CacheBypass;
 use netpod::FromUrl;
 use serde::Deserialize;
 use serde::Serialize;
@@ -17,7 +18,7 @@ autoerr::create_error_v1!(
     },
 );
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScyllaOptsQuery {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     msp_cache_bypass: Option<bool>,
@@ -51,51 +52,48 @@ impl ScyllaOptsQuery {
         }
     }
 
-    fn cache_bypass_default(&self) -> bool {
-        true
-    }
-
     fn order_desc_read_all_asc_default(&self) -> bool {
         true
     }
 
-    pub fn msp_cache_bypass(&self) -> bool {
-        self.msp_cache_bypass.unwrap_or(self.cache_bypass_default())
+    pub fn msp_cache_bypass(&self) -> Option<CacheBypass> {
+        self.msp_cache_bypass.map(|x| {
+            if x {
+                CacheBypass::Bypass
+            } else {
+                CacheBypass::Cache
+            }
+        })
     }
 
-    pub fn msp_order_desc_read_all_asc(&self) -> bool {
-        self.msp_order_desc_read_all_asc
-            .unwrap_or(self.order_desc_read_all_asc_default())
+    pub fn lsp_asc_cache_bypass(&self) -> Option<CacheBypass> {
+        self.order_asc_cache_bypass.map(|x| {
+            if x {
+                CacheBypass::Bypass
+            } else {
+                CacheBypass::Cache
+            }
+        })
     }
 
-    pub fn order_asc_cache_bypass(&self) -> bool {
-        self.order_asc_cache_bypass
-            .unwrap_or(self.cache_bypass_default())
+    pub fn lsp_desc_cache_bypass(&self) -> Option<CacheBypass> {
+        self.order_desc_cache_bypass.map(|x| {
+            if x {
+                CacheBypass::Bypass
+            } else {
+                CacheBypass::Cache
+            }
+        })
     }
 
-    pub fn order_desc_cache_bypass(&self) -> bool {
-        self.order_desc_cache_bypass
-            .unwrap_or(self.cache_bypass_default())
-    }
-
-    pub fn order_desc_read_all_asc(&self) -> bool {
-        self.order_desc_read_all_asc
-            .unwrap_or(self.order_desc_read_all_asc_default())
-    }
-
-    pub fn evs_lsp_order_desc_read_all_asc_cache_bypass(&self) -> bool {
-        self.evs_lsp_order_desc_read_all_asc_cache_bypass
-            .unwrap_or(self.cache_bypass_default())
-    }
-
-    pub fn evs_val_order_asc_cache_bypass(&self) -> bool {
-        self.evs_val_order_asc_cache_bypass
-            .unwrap_or(self.cache_bypass_default())
-    }
-
-    pub fn bins_fwd_cache_bypass(&self) -> bool {
-        self.bins_fwd_cache_bypass
-            .unwrap_or(self.cache_bypass_default())
+    pub fn bins_fwd_cache_bypass(&self) -> Option<CacheBypass> {
+        self.bins_fwd_cache_bypass.map(|x| {
+            if x {
+                CacheBypass::Bypass
+            } else {
+                CacheBypass::Cache
+            }
+        })
     }
 }
 

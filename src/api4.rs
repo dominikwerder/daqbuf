@@ -91,15 +91,15 @@ impl AppendToUrl for AccountingIngestedBytesQuery {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AccountingToplistQuery {
-    rt: RetentionTime,
     backend: String,
     ts: TsNano,
+    rt: Option<RetentionTime>,
     limit: u32,
     sort: Option<String>,
 }
 
 impl AccountingToplistQuery {
-    pub fn rt(&self) -> RetentionTime {
+    pub fn rt(&self) -> Option<RetentionTime> {
         self.rt.clone()
     }
 
@@ -150,8 +150,8 @@ impl FromUrl for AccountingToplistQuery {
         let ret = Self {
             rt: pairs
                 .get("retentionTime")
-                .ok_or_else(|| Self::Error::MissingRetentionTime)
-                .and_then(|x| x.parse().map_err(|_| Self::Error::MissingRetentionTime))?,
+                .map(|x| x.parse::<RetentionTime>().ok())
+                .flatten(),
             backend: pairs
                 .get("backend")
                 .ok_or_else(|| Self::Error::MissingBackend)?
