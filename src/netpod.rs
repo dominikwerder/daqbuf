@@ -4853,6 +4853,15 @@ pub enum CacheBypass {
     Bypass,
 }
 
+impl CacheBypass {
+    pub fn to_bool(&self) -> bool {
+        match self {
+            CacheBypass::Cache => false,
+            CacheBypass::Bypass => true,
+        }
+    }
+}
+
 impl From<CacheBypass> for bool {
     fn from(value: CacheBypass) -> Self {
         match value {
