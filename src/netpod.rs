@@ -1035,7 +1035,6 @@ pub struct Cluster {
     pub is_central_storage: bool,
     #[serde(rename = "fileIoBufferSize", default)]
     pub file_io_buffer_size: FileIoBufferSize,
-    scylla: Option<ScyllaConfig>,
     scylla_st: Option<ScyllaConfig>,
     scylla_mt: Option<ScyllaConfig>,
     scylla_lt: Option<ScyllaConfig>,
@@ -1053,9 +1052,7 @@ impl Cluster {
     }
 
     pub fn scylla_st(&self) -> Option<&ScyllaConfig> {
-        self.scylla_st
-            .as_ref()
-            .map_or_else(|| self.scylla.as_ref(), Some)
+        self.scylla_st.as_ref()
     }
 
     pub fn scylla_mt(&self) -> Option<&ScyllaConfig> {
@@ -1090,7 +1087,6 @@ impl Cluster {
             run_map_pulse_task: false,
             is_central_storage: false,
             file_io_buffer_size: FileIoBufferSize(1024 * 8),
-            scylla: None,
             scylla_st: None,
             scylla_mt: None,
             scylla_lt: None,
@@ -4152,7 +4148,6 @@ pub fn test_cluster() -> Cluster {
             user: "testingdaq".into(),
             pass: "testingdaq".into(),
         },
-        scylla: None,
         scylla_st: None,
         scylla_mt: None,
         scylla_lt: None,
@@ -4192,7 +4187,6 @@ pub fn sls_test_cluster() -> Cluster {
             user: "testingdaq".into(),
             pass: "testingdaq".into(),
         },
-        scylla: None,
         scylla_st: None,
         scylla_mt: None,
         scylla_lt: None,
@@ -4232,7 +4226,6 @@ pub fn archapp_test_cluster() -> Cluster {
             user: "testingdaq".into(),
             pass: "testingdaq".into(),
         },
-        scylla: None,
         scylla_st: None,
         scylla_mt: None,
         scylla_lt: None,
@@ -4850,6 +4843,21 @@ mod serde_range_excl {
             D: serde::Deserializer<'de>,
         {
             de.deserialize_str(Vis)
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum CacheBypass {
+    Cache,
+    Bypass,
+}
+
+impl From<CacheBypass> for bool {
+    fn from(value: CacheBypass) -> Self {
+        match value {
+            CacheBypass::Cache => false,
+            CacheBypass::Bypass => true,
         }
     }
 }
