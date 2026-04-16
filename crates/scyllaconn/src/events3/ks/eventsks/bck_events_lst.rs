@@ -2,6 +2,7 @@ use crate::events3::SeriesInfo;
 use crate::events3::msplsp::LspEv;
 use crate::events3::msplsp::MspEv;
 use crate::worker::KeyspaceId;
+use crate::worker::ScyllaOptsSubmit;
 use crate::worker::ScyllaQueueCluster;
 use futures_util::Future;
 use futures_util::FutureExt;
@@ -52,6 +53,7 @@ impl Res1 {
 pub struct BckLspLst {
     series_info: SeriesInfo,
     ks: KeyspaceId,
+    scyopts: ScyllaOptsSubmit,
     scyqu: ScyllaQueueCluster,
     fut: FutDbg<Result<Res1, Error>>,
 }
@@ -62,16 +64,26 @@ impl BckLspLst {
         ks: KeyspaceId,
         msps: VecDeque<MspEv>,
         end: Option<TsNano>,
+        scyopts: ScyllaOptsSubmit,
         scyqu: ScyllaQueueCluster,
     ) -> Self {
         // TODO fetch the latest lsp without value for each msp
-        let fut = Self::fetch(series_info.clone(), ks.clone(), msps, end, scyqu.clone()).box2();
+        let fut = Self::fetch(
+            series_info.clone(),
+            ks.clone(),
+            msps,
+            end,
+            scyopts.clone(),
+            scyqu.clone(),
+        )
+        .box2();
         // TODO if lsps after range begin, backwards search again for the latest before.
         // TODO determine the latest before.
         // TODO record effort information.
         Self {
             series_info,
             ks,
+            scyopts,
             scyqu,
             fut,
         }
@@ -82,6 +94,7 @@ impl BckLspLst {
         ks: KeyspaceId,
         msps: VecDeque<MspEv>,
         end: Option<TsNano>,
+        scyopts: ScyllaOptsSubmit,
         scyqu: ScyllaQueueCluster,
     ) -> Result<Res1, Error> {
         let mut lsps_a = VecDeque::new();
@@ -97,7 +110,7 @@ impl BckLspLst {
                 None
             };
             let x = scyqu
-                .read_03_lsp_lst(ks.clone(), series_info.clone(), msp.clone(), end)
+                .read_03_lsp_lst(ks.clone(), series_info.clone(), msp.clone(), end, scyopts.clone())
                 .await?;
             lsps_a.push_back((*msp, x));
         }

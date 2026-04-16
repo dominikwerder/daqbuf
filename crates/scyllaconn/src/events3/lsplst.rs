@@ -1,19 +1,23 @@
-use crate::events2::prepare::StmtsEventsQueryOpts;
+use crate::events2::prepare::StmtsEventsClusterKeyspace;
 use crate::events3::SERIES_ID_A;
 use crate::events3::SeriesInfo;
 use crate::events3::msplsp::LspEv;
 use crate::events3::msplsp::MspEv;
 use crate::events3::test_data;
 use crate::worker::KeyspaceId;
+use crate::worker::ScyllaOptsDefault;
+use crate::worker::ScyllaOptsSubmit;
 use futures_util::TryStreamExt;
 use netpod::ttl::RetentionTime;
 use scylla::client::session::Session;
 use std::fmt;
 
-macro_rules! debug { ($($arg:tt)*) => { log::error!($($arg)*); }; }
+macro_rules! debug { ($($arg:tt)*) => { log::debug!($($arg)*); }; }
+macro_rules! trace { ($($arg:tt)*) => { log::trace!($($arg)*); }; }
 
 fn _keep() {
     debug!("");
+    trace!("");
 }
 
 autoerr::create_error_v1!(
@@ -49,6 +53,7 @@ pub struct Read03LspLst {
     series_info: SeriesInfo,
     msp: MspEv,
     end: Option<LspEv>,
+    scyopts: ScyllaOptsSubmit,
     tx: async_channel::Sender<Item>,
 }
 
@@ -58,6 +63,7 @@ impl Read03LspLst {
         series_info: SeriesInfo,
         msp: MspEv,
         end: Option<LspEv>,
+        scyopts: ScyllaOptsSubmit,
     ) -> (Self, async_channel::Receiver<Item>) {
         let (tx, rx) = async_channel::bounded(1);
         let ret = Self {
@@ -65,18 +71,23 @@ impl Read03LspLst {
             series_info,
             msp,
             end,
+            scyopts,
             tx,
         };
         (ret, rx)
     }
 
-    pub async fn exec(self, stmts: &StmtsEventsQueryOpts, scy: &Session) {
-        let res = self.exec_inner(stmts, scy).await;
+    pub async fn exec(self, stmts: &StmtsEventsClusterKeyspace, scy: &Session, scyopts: &ScyllaOptsDefault) {
+        let res = self.exec_inner(stmts, scy, scyopts).await;
         let _ = self.tx.send(res).await;
     }
 
-    async fn exec_inner(&self, stmts: &StmtsEventsQueryOpts, scy: &Session) -> Item {
+    async fn exec_inner(&self, stmts: &StmtsEventsClusterKeyspace, scy: &Session, scyopts: &ScyllaOptsDefault) -> Item {
+        let scyopts = self.scyopts.resolve(scyopts);
+        let cby = scyopts.lsp_desc_cache_bypass.to_bool();
+        trace!("Read03LspLst  cache_bypass {cby}");
         let stmt = stmts
+            .cache_bypass(cby)
             .lsp_lst()
             .shape(self.series_info.shape())
             .st(self.series_info.scalar_type().to_scylla_table_name_id())?

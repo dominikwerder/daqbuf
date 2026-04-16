@@ -1,4 +1,5 @@
 use super::BinWriteIndexRtStream;
+use crate::worker::ScyllaOptsSubmit;
 use crate::worker::ScyllaQueue;
 use daqbuf_series::SeriesId;
 use daqbuf_series::msp::LspU32;
@@ -53,7 +54,7 @@ async fn read_all_coarse(
             series,
             pbp,
             range.clone(),
-            scylla_opts.clone(),
+            ScyllaOptsSubmit::no_choice(),
             scyqueue.clone(),
         );
         while let Some(x) = stream.try_next().await? {

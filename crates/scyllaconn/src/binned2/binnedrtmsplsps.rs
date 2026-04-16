@@ -1,3 +1,4 @@
+use crate::worker::ScyllaOptsSubmit;
 use crate::worker::ScyllaQueue;
 use daqbuf_series::SeriesId;
 use daqbuf_series::msp::LspU32;
@@ -77,7 +78,7 @@ impl BinnedRtMspLsps {
         let scylla_opts = self.scylla_opts.clone();
         let fut = async move {
             scyqueue
-                .read_prebinned_f32(rt, series, binlen, msp, offs, scylla_opts)
+                .read_prebinned_f32(rt, series, binlen, msp, offs, ScyllaOptsSubmit::no_choice())
                 .await
         };
         let fut = Box::pin(fut);

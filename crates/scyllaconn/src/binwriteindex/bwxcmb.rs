@@ -1,4 +1,5 @@
 use super::BinWriteIndexRtStream;
+use crate::worker::ScyllaOptsSubmit;
 use crate::worker::ScyllaQueue;
 use daqbuf_series::SeriesId;
 use daqbuf_series::msp::PrebinnedPartitioning;
@@ -53,7 +54,7 @@ impl BinWriteIndexStream {
                 series.clone(),
                 PrebinnedPartitioning::Day1,
                 range.clone(),
-                scylla_opts.clone(),
+                ScyllaOptsSubmit::no_choice(),
                 scyqueue.clone(),
             );
             rtss.push_back(InpSt::Polling(s));

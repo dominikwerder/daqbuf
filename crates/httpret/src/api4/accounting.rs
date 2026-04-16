@@ -15,9 +15,7 @@ use httpclient::IntoBody;
 use httpclient::Requ;
 use httpclient::StreamResponse;
 use httpclient::ToJsonBody;
-use netpod::log::*;
 use netpod::req_uri_to_url;
-use netpod::ttl::RetentionTime;
 use netpod::FromUrl;
 use netpod::NodeConfigCached;
 use netpod::ScalarType;
@@ -28,6 +26,8 @@ use query::api4::AccountingToplistQuery;
 use scyllaconn::accounting::toplist::UsageData;
 use serde::Deserialize;
 use serde::Serialize;
+
+macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AccountedIngested {

@@ -1,4 +1,6 @@
 use crate::events2::prepare::StmtsEvents;
+use crate::worker::ScyllaOptsJob;
+use crate::worker::ScyllaOptsSubmit;
 use crate::worker::ScyllaQueue;
 use daqbuf_series::msp::PrebinnedPartitioning;
 use futures_util::TryStreamExt;
@@ -7,7 +9,6 @@ use items_2::binning::container_bins::ContainerBins;
 use netpod::DtMs;
 use netpod::TsNano;
 use netpod::ttl::RetentionTime;
-use query::api4::scyllaopts::ScyllaOptsQuery;
 use std::ops::Range;
 use streams::timebin::cached::reader::BinsReadRes;
 
@@ -18,14 +19,14 @@ async fn scylla_read_prebinned_f32(
     bin_len: DtMs,
     msp: u64,
     offs: Range<u32>,
-    scylla_opts: ScyllaOptsQuery,
-    scyqueue: ScyllaQueue,
+    scyopts: ScyllaOptsSubmit,
+    scyqu: ScyllaQueue,
 ) -> BinsReadRes {
     let rts = [RetentionTime::Short, RetentionTime::Medium, RetentionTime::Long];
     let mut res = Vec::new();
     for rt in rts {
-        let x = scyqueue
-            .read_prebinned_f32(rt, series, bin_len, msp, offs.clone(), scylla_opts.clone())
+        let x = scyqu
+            .read_prebinned_f32(rt, series, bin_len, msp, offs.clone(), scyopts.clone())
             .await?;
         res.push(x);
     }
@@ -70,13 +71,16 @@ async fn scylla_read_prebinned_f32(
 }
 
 pub struct ScyllaPrebinnedReadProvider {
-    scylla_opts: query::api4::scyllaopts::ScyllaOptsQuery,
-    scyqueue: ScyllaQueue,
+    scyqu: ScyllaQueue,
+    scyopts: ScyllaOptsSubmit,
 }
 
 impl ScyllaPrebinnedReadProvider {
-    pub fn new(scylla_opts: query::api4::scyllaopts::ScyllaOptsQuery, scyqueue: ScyllaQueue) -> Self {
-        Self { scylla_opts, scyqueue }
+    pub fn new(scyqueue: ScyllaQueue, scyopts: ScyllaOptsSubmit) -> Self {
+        Self {
+            scyqu: scyqueue,
+            scyopts,
+        }
     }
 }
 
@@ -89,14 +93,7 @@ impl streams::timebin::CacheReadProvider for ScyllaPrebinnedReadProvider {
         offs: Range<u32>,
     ) -> streams::timebin::cached::reader::CacheReading {
         // let fut = async { todo!("TODO impl scylla cache read") };
-        let fut = scylla_read_prebinned_f32(
-            series,
-            bin_len,
-            msp,
-            offs,
-            self.scylla_opts.clone(),
-            self.scyqueue.clone(),
-        );
+        let fut = scylla_read_prebinned_f32(series, bin_len, msp, offs, self.scyopts.clone(), self.scyqu.clone());
         streams::timebin::cached::reader::CacheReading::new(Box::pin(fut))
     }
 }
@@ -108,7 +105,7 @@ pub async fn worker_read(
     bin_len: DtMs,
     msp: u64,
     offs: core::ops::Range<u32>,
-    scylla_opts: ScyllaOptsQuery,
+    scyopts: ScyllaOptsJob,
     stmts: &StmtsEvents,
     scy: &ScySession,
 ) -> Result<ContainerBins<f32, f32>, streams::timebin::cached::reader::Error> {
@@ -124,7 +121,7 @@ pub async fn worker_read(
     let res = scy
         .execute_iter(
             stmts
-                .cache_bypass(scylla_opts.bins_fwd_cache_bypass())
+                .cache_bypass(scyopts.bins_fwd_cache_bypass.clone().into())
                 .rt(&rt)
                 .prebinned_f32()
                 .clone(),

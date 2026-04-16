@@ -75,6 +75,7 @@ pub async fn plain_events_json_stream(
 ) -> Result<JsonStream, Error> {
     trace!("plain_events_json_stream");
     let stream = dyn_events_stream(evq, ch_conf, ctx, open_bytes, scyqu).await?;
+    let stream = streams::logfilter::LogFilter::new(stream, netpod::log::Level::ERROR);
     let stream = events_stream_to_json_stream(stream, evq.timeout_content_or_default(), timeout_provider);
     let stream = non_empty(stream);
     let stream = only_first_err(stream);

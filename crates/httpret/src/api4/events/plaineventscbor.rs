@@ -26,6 +26,7 @@ pub async fn plain_events_cbor_stream(
     timeout_provider: Arc<dyn StreamTimeout2>,
 ) -> Result<CborStream, Error> {
     let stream = dyn_events_stream(evq, ch_conf, ctx, open_bytes, scyqu).await?;
+    let stream = streams::logfilter::LogFilter::new(stream, netpod::log::Level::ERROR);
     let stream = events_stream_to_cbor_stream(stream, evq.timeout_content_or_default(), timeout_provider);
     let stream = non_empty(stream);
     let stream = only_first_err(stream);

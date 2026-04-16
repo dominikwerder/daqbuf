@@ -38,6 +38,8 @@ use query::api4::binned::BinnedQuery;
 use query::api4::scyllaopts::ScyllaOptsQuery;
 use scyllaconn::worker::ScyllaQueue;
 use std::pin::Pin;
+
+use scyllaconn::worker::ScyllaOptsSubmit;
 use std::sync::Arc;
 use streams::collect::CollectResult;
 use streams::eventsplainreader::DummyCacheReadProvider;
@@ -220,7 +222,7 @@ pub fn make_read_provider(
     } else if ncc.node_config.cluster.scylla_lt().is_some() {
         scyqueue
             .clone()
-            .map(|qu| ScyllaEventReadProvider::new(qu, scylla_opts.clone()))
+            .map(|qu| ScyllaEventReadProvider::new(qu, ScyllaOptsSubmit::no_choice()))
             .map(|x| Arc::new(x) as Arc<dyn EventsReadProvider>)
             .expect("scylla queue")
     } else if ncc.node.sf_databuffer.is_some() {
@@ -233,7 +235,7 @@ pub fn make_read_provider(
     let cache_read_provider = if ncc.node_config.cluster.scylla_lt().is_some() {
         scyqueue
             .clone()
-            .map(|qu| scyllaconn::bincache::ScyllaPrebinnedReadProvider::new(scylla_opts, qu))
+            .map(|qu| scyllaconn::bincache::ScyllaPrebinnedReadProvider::new(qu, ScyllaOptsSubmit::no_choice()))
             .map(|x| Arc::new(x) as Arc<dyn CacheReadProvider>)
             .expect("scylla queue")
     } else if ncc.node.sf_databuffer.is_some() {

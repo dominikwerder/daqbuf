@@ -1,5 +1,6 @@
 use crate::binned2::msplspiter::MspLspIter;
 use crate::binned3::index_entry::IndexEntry;
+use crate::worker::ScyllaOptsSubmit;
 use crate::worker::ScyllaQueue;
 use daqbuf_series::SeriesId;
 use daqbuf_series::msp::LspU32;
@@ -43,7 +44,15 @@ async fn fetch_index_entries(
     let rt = RetentionTime::Long;
     let pbp = PrebinnedPartitioning::Day1;
     match scyqueue
-        .bin_write_index_read(rt, series, pbp.clone(), msp, lsp, LspU32(1 + lsp.to_u32()), scylla_opts)
+        .bin_write_index_read(
+            rt,
+            series,
+            pbp.clone(),
+            msp,
+            lsp,
+            LspU32(1 + lsp.to_u32()),
+            ScyllaOptsSubmit::no_choice(),
+        )
         .await
     {
         Ok(x) => {

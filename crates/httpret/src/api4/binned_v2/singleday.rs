@@ -33,6 +33,7 @@ use netpod::APP_JSON;
 use netpod::HEADER_NAME_REQUEST_ID;
 use query::api4::binned::BinnedQuery;
 use scyllaconn::binwriteindex::BinWriteIndexRtStream;
+use scyllaconn::worker::ScyllaOptsSubmit;
 use scyllaconn::worker::ScyllaQueue;
 use series::msp::PrebinnedPartitioning;
 use series::SeriesId;
@@ -216,7 +217,7 @@ async fn deliver_json(res2: HandleRes2<'_>, ctx: &ReqCtx, _ncc: &NodeConfigCache
         series.clone(),
         pbp1.clone(),
         range.clone(),
-        res2.scylla_opts.clone(),
+        ScyllaOptsSubmit::no_choice(),
         scyqueue.clone(),
     );
     let stream = stream.then(|item| {

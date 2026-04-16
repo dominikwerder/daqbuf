@@ -5,6 +5,7 @@ use crate::events3::SeriesInfo;
 use crate::events3::ks::eventsks::EventsKs;
 use crate::range::ScyllaSeriesRange;
 use crate::worker::KeyspaceId;
+use crate::worker::ScyllaOptsSubmit;
 use crate::worker::ScyllaQueueCluster;
 use futures_util::StreamExt;
 use netpod::DtMs;
@@ -26,7 +27,7 @@ async fn read_msp_fwd_00_async() {
     let min = DtMs::from_ms_u64(1000 * 60);
     let range = ScyllaSeriesRange::new(MSP_A_00.ns(), MSP_A_00.add_dt_ms(min.mul(60 * 3)).ns());
     let e0 = scyqu
-        .read_msp_03_fwd(ks, series, range, RangeExcl::None, 1)
+        .read_03_msp_fwd(ks, series, range, RangeExcl::None, 1, ScyllaOptsSubmit::no_choice())
         .await
         .unwrap();
     let n = e0.len();
@@ -56,7 +57,15 @@ async fn read_msp_bck_00_async() {
     let beg = range.beg().sub(DtNano::from_ms(1000 * win.as_secs()));
     let end = range.beg();
     let range_bck = ScyllaSeriesRange::new(beg, end);
-    let mut s = events3::mspfwd::ReadMspFwdStream::new(ks, series, range_bck, RangeExcl::None, 1, scyqu);
+    let mut s = events3::mspfwd::ReadMspFwdStream::new(
+        ks,
+        series,
+        range_bck,
+        RangeExcl::None,
+        1,
+        ScyllaOptsSubmit::no_choice(),
+        scyqu,
+    );
     while let Some(x) = s.next().await {
         let e0 = x.unwrap();
         let n = e0.len();
@@ -87,7 +96,7 @@ async fn read_ks_async() {
         "2026-03-20T13:37:10.000Z".parse().unwrap(),
         "2026-03-20T13:40:00.000Z".parse().unwrap(),
     );
-    let mut evsks = EventsKs::new(series_info, ks, scyqu, range, events3::ks::eventsks::Opts::new());
+    let mut evsks = EventsKs::new(series_info, ks, scyqu, range, events3::ks::eventsks::Opts::testing());
     while let Some(e) = evsks.next().await {
         info!("{e:?}");
     }

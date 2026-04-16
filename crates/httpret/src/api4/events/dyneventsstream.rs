@@ -6,6 +6,7 @@ use netpod::ReqCtx;
 use query::api4::events::PlainEventsQuery;
 use scyllaconn::events3::ks::clksmerge::cl_ks_merged;
 use scyllaconn::events3::SeriesInfo;
+use scyllaconn::worker::ScyllaOptsSubmit;
 use scyllaconn::worker::ScyllaQueue;
 use series::SeriesId;
 use streams::rangefilter2::RangeFilter2;
@@ -49,7 +50,7 @@ pub async fn dyn_events_stream(
             chconf.shape().clone(),
         );
         let range = evq.range().clone();
-        let stream = cl_ks_merged(series_info, range, scyqu).await?;
+        let stream = cl_ks_merged(series_info, range, scyqu, ScyllaOptsSubmit::no_choice()).await?;
         Box::pin(stream) as ChannelEventsStream
     } else {
         let subq = make_sub_query(

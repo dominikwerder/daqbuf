@@ -9,6 +9,7 @@ use netpod::ChConf;
 use query::api4::events::EventsSubQuery;
 use scyllaconn::events3::ks::clksmerge::cl_ks_merged;
 use scyllaconn::events3::SeriesInfo;
+use scyllaconn::worker::ScyllaOptsSubmit;
 use scyllaconn::worker::ScyllaQueue;
 use scyllaconn::SeriesId;
 use std::pin::Pin;
@@ -27,25 +28,22 @@ pub async fn scylla_channel_event_stream(
     evq: EventsSubQuery,
     chconf: ChConf,
     scyqueue: &ScyllaQueue,
-    _scylla_opts: query::api4::scyllaopts::ScyllaOptsQuery,
+    scyopts: ScyllaOptsSubmit,
 ) -> Result<Pin<Box<dyn Stream<Item = Sitemty<ChannelEvents>> + Send>>, Error> {
     trace!("scylla_channel_event_stream");
     let series_info = SeriesInfo::from(&chconf);
-    let stream = cl_ks_merged(series_info, evq.range().clone(), scyqueue.clone()).await?;
+    let stream = cl_ks_merged(series_info, evq.range().clone(), scyqueue.clone(), scyopts).await?;
     Ok(Box::pin(stream))
 }
 
 pub struct ScyllaEventReadProvider {
     scyqu: ScyllaQueue,
-    _scylla_opts: query::api4::scyllaopts::ScyllaOptsQuery,
+    scyopts: ScyllaOptsSubmit,
 }
 
 impl ScyllaEventReadProvider {
-    pub fn new(scyqu: ScyllaQueue, scylla_opts: query::api4::scyllaopts::ScyllaOptsQuery) -> Self {
-        Self {
-            scyqu,
-            _scylla_opts: scylla_opts,
-        }
+    pub fn new(scyqu: ScyllaQueue, scyopts: ScyllaOptsSubmit) -> Self {
+        Self { scyqu, scyopts }
     }
 }
 
@@ -60,7 +58,7 @@ impl EventsReadProvider for ScyllaEventReadProvider {
                     ch_conf.shape().clone(),
                 );
                 let range = evq.range().clone();
-                let stream = cl_ks_merged(series_info, range, scyqu);
+                let stream = cl_ks_merged(series_info, range, scyqu, self.scyopts.clone());
                 type StreamTy = Pin<Box<dyn Stream<Item = Sitemty<ChannelEvents>> + Send>>;
                 let stream = stream
                     .map(|x| match x {

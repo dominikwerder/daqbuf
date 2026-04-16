@@ -4,7 +4,6 @@ use crate::binwriteindex::BinWriteIndexEntry;
 use crate::conn::create_scy_session_no_ks;
 use crate::events2::prepare::StmtsEvents;
 use crate::events2::prepare::StmtsEventsClusterKeyspace;
-use crate::events2::prepare::StmtsEventsQueryOpts;
 use crate::events3::SeriesInfo;
 use crate::events3::msplsp::LspEv;
 use crate::events3::msplsp::MspEv;
@@ -71,6 +70,70 @@ autoerr::create_error_v1!(
     },
 );
 
+#[derive(Debug, Clone)]
+pub struct ScyllaOptsDefault {
+    msp_cache_bypass: CacheBypass,
+    lsp_asc_cache_bypass: CacheBypass,
+    lsp_desc_cache_bypass: CacheBypass,
+    bins_fwd_cache_bypass: CacheBypass,
+}
+
+impl ScyllaOptsDefault {
+    pub fn todo_impl_take_from_config() -> Self {
+        Self {
+            msp_cache_bypass: CacheBypass::Bypass,
+            lsp_asc_cache_bypass: CacheBypass::Bypass,
+            lsp_desc_cache_bypass: CacheBypass::Bypass,
+            bins_fwd_cache_bypass: CacheBypass::Bypass,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ScyllaOptsSubmit {
+    pub msp_cache_bypass: Option<CacheBypass>,
+    pub lsp_asc_cache_bypass: Option<CacheBypass>,
+    pub lsp_desc_cache_bypass: Option<CacheBypass>,
+    pub bins_fwd_cache_bypass: Option<CacheBypass>,
+}
+
+impl ScyllaOptsSubmit {
+    pub fn no_choice() -> Self {
+        Self {
+            msp_cache_bypass: None,
+            lsp_asc_cache_bypass: None,
+            lsp_desc_cache_bypass: None,
+            bins_fwd_cache_bypass: None,
+        }
+    }
+
+    pub fn resolve(&self, oth: &ScyllaOptsDefault) -> ScyllaOptsJob {
+        ScyllaOptsJob {
+            msp_cache_bypass: self.msp_cache_bypass.clone().unwrap_or(oth.msp_cache_bypass.clone()),
+            lsp_asc_cache_bypass: self
+                .lsp_asc_cache_bypass
+                .clone()
+                .unwrap_or(oth.lsp_asc_cache_bypass.clone()),
+            lsp_desc_cache_bypass: self
+                .lsp_desc_cache_bypass
+                .clone()
+                .unwrap_or(oth.lsp_desc_cache_bypass.clone()),
+            bins_fwd_cache_bypass: self
+                .bins_fwd_cache_bypass
+                .clone()
+                .unwrap_or(oth.bins_fwd_cache_bypass.clone()),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct ScyllaOptsJob {
+    pub msp_cache_bypass: CacheBypass,
+    pub lsp_asc_cache_bypass: CacheBypass,
+    pub lsp_desc_cache_bypass: CacheBypass,
+    pub bins_fwd_cache_bypass: CacheBypass,
+}
+
 pub trait TimelimitedJobResult<T> {
     fn map_err_timeout_job(self) -> Result<T, Error>;
 }
@@ -106,64 +169,13 @@ where
 }
 
 #[derive(Debug)]
-struct FindTsMsp {
-    rt: RetentionTime,
-    series: SeriesId,
-    range: ScyllaSeriesRange,
-    limit: Option<u32>,
-    bck: bool,
-    scylla_opts: query::api4::scyllaopts::ScyllaOptsQuery,
-    tx: Sender<Result<VecDeque<TsMs>, Error>>,
-}
-
-impl FindTsMsp {
-    async fn execute_inner(self, stmts: &StmtsEventsQueryOpts, scy: &ScySessTy) -> Result<VecDeque<TsMs>, Error> {
-        let res = crate::events2::msp::find_ts_msp(
-            &self.rt,
-            self.series.id(),
-            self.range.clone(),
-            self.limit,
-            self.bck.clone(),
-            self.scylla_opts.clone(),
-            &stmts,
-            &scy,
-        )
-        .with_timeout(Duration::from_millis(5000))
-        .await
-        .map_err_timeout_job()
-        .inspect_err(|_| {
-            warn!(
-                "FindTsMsp: job timeout {:?}",
-                (&self.rt, &self.series, &self.range, &self.bck)
-            );
-        })??;
-        Ok(res)
-    }
-
-    async fn execute(self, stmts: &StmtsEventsQueryOpts, scy: &ScySessTy) {
-        // TODO avoid the extra clone
-        let tx = self.tx.clone();
-        let params_dbg = (
-            self.rt.clone(),
-            self.series.clone(),
-            self.range.clone(),
-            self.bck.clone(),
-        );
-        let x = self.execute_inner(stmts, scy).await;
-        if tx.try_send(x).is_err() {
-            warn!("FindTsMsp: failed to send result back to caller {:?}", params_dbg);
-        }
-    }
-}
-
-#[derive(Debug)]
 struct ReadPrebinnedF32 {
     rt: RetentionTime,
     series: u64,
     bin_len: DtMs,
     msp: u64,
     offs: core::ops::Range<u32>,
-    scylla_opts: query::api4::scyllaopts::ScyllaOptsQuery,
+    pub scyopts: ScyllaOptsSubmit,
     tx: Sender<Result<ContainerBins<f32, f32>, streams::timebin::cached::reader::Error>>,
 }
 
@@ -175,12 +187,12 @@ struct BinWriteIndexRead {
     msp: MspU32,
     lsp_min: LspU32,
     lsp_max: LspU32,
-    scylla_opts: query::api4::scyllaopts::ScyllaOptsQuery,
+    scylla_opts: ScyllaOptsSubmit,
     tx: Sender<Result<VecDeque<BinWriteIndexEntry>, Error>>,
 }
 
 impl BinWriteIndexRead {
-    async fn execute_inner(self, stmts: &StmtsEvents, scy: &ScySessTy) -> Result<(), Error> {
+    async fn execute_inner(self, stmts: &StmtsEvents, scy: &ScySessTy, scyopts: ScyllaOptsJob) -> Result<(), Error> {
         let params = (
             self.series.id() as i64,
             self.pbp.db_ix() as i16,
@@ -192,7 +204,7 @@ impl BinWriteIndexRead {
         let res = scy
             .execute_iter(
                 stmts
-                    .cache_bypass(self.scylla_opts.bins_fwd_cache_bypass())
+                    .cache_bypass(scyopts.bins_fwd_cache_bypass.clone().into())
                     .rt(&self.rt)
                     .bin_write_index_read()
                     .clone(),
@@ -215,10 +227,10 @@ impl BinWriteIndexRead {
         Ok(())
     }
 
-    async fn execute(self, stmts: &StmtsEvents, scy: &ScySessTy) {
+    async fn execute(self, stmts: &StmtsEvents, scy: &ScySessTy, scyopts: ScyllaOptsJob) {
         // TODO avoid the extra clone
         let tx = self.tx.clone();
-        match self.execute_inner(stmts, scy).await {
+        match self.execute_inner(stmts, scy, scyopts).await {
             Ok(()) => {}
             Err(e) => {
                 if tx.try_send(Err(e)).is_err() {
@@ -254,7 +266,6 @@ impl fmt::Debug for ExecuteV1 {
 
 #[derive(Debug)]
 enum Job {
-    FindTsMsp(FindTsMsp),
     AccountingReadTs(
         KeyspaceId,
         TsMs,
@@ -269,7 +280,7 @@ enum Job {
     BinWriteIndexRead(BinWriteIndexRead),
     PrepareV1(PrepareV1),
     ExecuteV1(ExecuteV1),
-    ReadMsp03Fwd(crate::events3::mspfwd::ReadMsp03Fwd),
+    Read03MspFwd(crate::events3::mspfwd::Read03MspFwd),
     Read03LspLst(crate::events3::lsplst::Read03LspLst),
     Read03LspFwd(crate::events3::lspfwd::Read03LspFwd),
 }
@@ -359,8 +370,30 @@ pub struct ScyllaQueueCluster {
 impl ScyllaQueueCluster {
     async fn new(scyconf: &ScyllaConfigMultiKeyspace) -> Result<Self, Error> {
         let tag = scyconf.tag.clone();
+        let scyopts = ScyllaOptsDefault {
+            msp_cache_bypass: if scyconf.bypass_cache {
+                CacheBypass::Bypass
+            } else {
+                CacheBypass::Cache
+            },
+            lsp_asc_cache_bypass: if scyconf.bypass_cache {
+                CacheBypass::Bypass
+            } else {
+                CacheBypass::Cache
+            },
+            lsp_desc_cache_bypass: if scyconf.bypass_cache {
+                CacheBypass::Bypass
+            } else {
+                CacheBypass::Cache
+            },
+            bins_fwd_cache_bypass: if scyconf.bypass_cache {
+                CacheBypass::Bypass
+            } else {
+                CacheBypass::Cache
+            },
+        };
         let (tx, rx) = async_channel::bounded(128);
-        let task = Self::worker(rx, scyconf.clone());
+        let task = Self::worker(rx, scyconf.clone(), scyopts.clone());
         let jh = tokio::task::spawn(task);
         let ret = Self {
             tag,
@@ -432,64 +465,18 @@ impl ScyllaQueueCluster {
         Ok(res)
     }
 
-    async fn find_ts_msp(
-        &self,
-        ks: KeyspaceId,
-        series: SeriesId,
-        range: ScyllaSeriesRange,
-        limit: Option<u32>,
-        bck: bool,
-        scylla_opts: query::api4::scyllaopts::ScyllaOptsQuery,
-    ) -> Result<VecDeque<TsMs>, Error> {
-        let (tx, rx) = async_channel::bounded(1);
-        let job = FindTsMsp {
-            rt: ks.rt.clone(),
-            series,
-            range,
-            limit,
-            bck,
-            scylla_opts,
-            tx,
-        };
-        let job = Job::FindTsMsp(job);
-        self.tx.send((ks, job)).await.map_err(|_| Error::JobChannelSend)?;
-        let res = rx.recv().await.map_err(|_| Error::ChannelRecv)??;
-        Ok(res)
-    }
-
-    pub async fn find_ts_msp_fwd(
-        &self,
-        ks: KeyspaceId,
-        series: SeriesId,
-        range: ScyllaSeriesRange,
-        limit: Option<u32>,
-        scylla_opts: query::api4::scyllaopts::ScyllaOptsQuery,
-    ) -> Result<VecDeque<TsMs>, Error> {
-        self.find_ts_msp(ks, series, range, limit, false, scylla_opts).await
-    }
-
-    pub async fn find_ts_msp_bck(
-        &self,
-        ks: KeyspaceId,
-        series: SeriesId,
-        range: ScyllaSeriesRange,
-        limit: Option<u32>,
-        scylla_opts: query::api4::scyllaopts::ScyllaOptsQuery,
-    ) -> Result<VecDeque<TsMs>, Error> {
-        self.find_ts_msp(ks, series, range, limit, true, scylla_opts).await
-    }
-
-    pub async fn read_msp_03_fwd(
+    pub async fn read_03_msp_fwd(
         &self,
         ks: KeyspaceId,
         series: SeriesId,
         range: ScyllaSeriesRange,
         begexcl: RangeExcl,
         limit: u32,
+        scyopts: ScyllaOptsSubmit,
     ) -> crate::events3::mspfwd::Item {
         trace!("read_msp_03_fwd  {ks:?}  {series:?}  {range:?}  {begexcl:?}  {limit:?}");
-        let (job, rx) = crate::events3::mspfwd::ReadMsp03Fwd::new(ks.clone(), series, range, begexcl, limit);
-        let job = Job::ReadMsp03Fwd(job);
+        let (job, rx) = crate::events3::mspfwd::Read03MspFwd::new(ks.clone(), series, range, begexcl, limit, scyopts);
+        let job = Job::Read03MspFwd(job);
         self.tx.send((ks, job)).await?;
         let res = rx.recv().await.inspect_err(|e| {
             error!("GOT RECV ERROR {e}");
@@ -503,8 +490,9 @@ impl ScyllaQueueCluster {
         series_info: SeriesInfo,
         msp: MspEv,
         end: Option<LspEv>,
+        scyopts: ScyllaOptsSubmit,
     ) -> crate::events3::lsplst::Item {
-        let (job, rx) = crate::events3::lsplst::Read03LspLst::new(ks.clone(), series_info, msp, end);
+        let (job, rx) = crate::events3::lsplst::Read03LspLst::new(ks.clone(), series_info, msp, end, scyopts);
         let job = Job::Read03LspLst(job);
         self.tx.send((ks, job)).await?;
         let res = rx.recv().await??;
@@ -519,24 +507,21 @@ impl ScyllaQueueCluster {
         range: ScyllaSeriesRange,
         begexcl: RangeExcl,
         limit: u32,
-        cache_bypass: CacheBypass,
+        scyopts: ScyllaOptsSubmit,
     ) -> crate::events3::lspfwd::Item {
-        let (job, rx) = crate::events3::lspfwd::Read03LspFwd::new(
-            ks.clone(),
-            series_info,
-            msp,
-            range,
-            begexcl,
-            limit,
-            cache_bypass,
-        );
+        let (job, rx) =
+            crate::events3::lspfwd::Read03LspFwd::new(ks.clone(), series_info, msp, range, begexcl, limit, scyopts);
         let job = Job::Read03LspFwd(job);
         self.tx.send((ks, job)).await?;
         let res = rx.recv().await??;
         Ok(res)
     }
 
-    async fn worker(rx: Receiver<(KeyspaceId, Job)>, scyconf: ScyllaConfigMultiKeyspace) -> Result<(), Error> {
+    async fn worker(
+        rx: Receiver<(KeyspaceId, Job)>,
+        scyconf: ScyllaConfigMultiKeyspace,
+        scyopts: ScyllaOptsDefault,
+    ) -> Result<(), Error> {
         let scy = create_scy_session_no_ks(&scyconf).await?;
         let scy = Arc::new(scy);
         let mut stmtsa = Vec::new();
@@ -565,10 +550,11 @@ impl ScyllaQueueCluster {
                 futures_util::future::ready(None)
             }
         })
-        .map(|(ksjob, job, stmtsix)| {
+        .map(|(ksjob, job, _stmtsix)| {
             let scy = scy.clone();
             let stmtsa = stmtsa.clone();
             let scyconf = scyconf.clone();
+            let scyopts = scyopts.clone();
             async move {
                 match job {
                     Job::PrepareV1(job) => {
@@ -580,11 +566,6 @@ impl ScyllaQueueCluster {
                         let res = scy.execute_iter(job.st, job.params).await.map_err(|e| e.into());
                         // TODO log?
                         let _ = job.tx.send(res).await;
-                    }
-                    Job::FindTsMsp(job) => {
-                        let stmts = &stmtsa[stmtsix];
-                        let stmts = stmts.cache_bypass(job.scylla_opts.msp_cache_bypass());
-                        job.execute(stmts, &scy).await;
                     }
                     Job::AccountingReadTs(ks, ts, tx) => {
                         for ((ks2, rt2), _stmts) in scyconf.keyspaces.iter().zip(stmtsa.iter()) {
@@ -627,7 +608,7 @@ impl ScyllaQueueCluster {
                         error!("BinWriteIndexRead adapt to StmtsEventsClusterKeyspace");
                         // job.execute(&stmts, &scy).await
                     }
-                    Job::ReadMsp03Fwd(job) => {
+                    Job::Read03MspFwd(job) => {
                         if let Some(((_ks, _rt), stmts)) = scyconf
                             .keyspaces
                             .iter()
@@ -635,8 +616,7 @@ impl ScyllaQueueCluster {
                             .filter(|((ks, rt), _)| *ks == ksjob.name && *rt == ksjob.rt)
                             .next()
                         {
-                            let stmts = stmts.cache_bypass(true);
-                            job.exec(stmts, &scy).await;
+                            job.exec(stmts, &scy, &scyopts).await;
                         } else {
                             // TODO use a nested Result instead.
                             error!("ks not found for job");
@@ -650,8 +630,7 @@ impl ScyllaQueueCluster {
                             .filter(|((ks, rt), _)| *ks == ksjob.name && *rt == ksjob.rt)
                             .next()
                         {
-                            let stmts = stmts.cache_bypass(true);
-                            job.exec(stmts, &scy).await;
+                            job.exec(stmts, &scy, &scyopts).await;
                         } else {
                             // TODO use a nested Result instead.
                             error!("ks not found for job");
@@ -665,8 +644,7 @@ impl ScyllaQueueCluster {
                             .filter(|((ks, rt), _)| *ks == ksjob.name && *rt == ksjob.rt)
                             .next()
                         {
-                            let stmts = stmts.cache_bypass(job.cache_bypass().into());
-                            job.exec(stmts, &scy).await;
+                            job.exec(stmts, &scy, &scyopts).await;
                         } else {
                             // TODO use a nested Result instead.
                             error!("ks not found for job");
@@ -704,9 +682,6 @@ impl ScyllaQueueCluster {
                 Job::ExecuteV1(..) => {
                     debug!("can not execute Job::ExecuteV1 in mock");
                 }
-                Job::FindTsMsp(..) => {
-                    debug!("can not execute Job::FindTsMsp in mock");
-                }
                 Job::AccountingReadTs(..) => {
                     debug!("can not execute Job::AccountingReadTs in mock");
                 }
@@ -719,7 +694,7 @@ impl ScyllaQueueCluster {
                 Job::BinWriteIndexRead(..) => {
                     debug!("can not execute Job::BinWriteIndexRead in mock");
                 }
-                Job::ReadMsp03Fwd(job) => {
+                Job::Read03MspFwd(job) => {
                     job.exec_mock(&tag, ksjob).await;
                 }
                 Job::Read03LspLst(job) => {
@@ -752,30 +727,6 @@ impl ScyllaQueue {
         self.clusters.into_iter()
     }
 
-    pub async fn find_ts_msp(
-        &self,
-        rt: RetentionTime,
-        series: SeriesId,
-        range: ScyllaSeriesRange,
-        bck: bool,
-        scylla_opts: query::api4::scyllaopts::ScyllaOptsQuery,
-    ) -> Result<VecDeque<TsMs>, Error> {
-        let (tx, rx) = async_channel::bounded(1);
-        let job = FindTsMsp {
-            rt,
-            series,
-            range,
-            limit: None,
-            bck,
-            scylla_opts,
-            tx,
-        };
-        let job = Job::FindTsMsp(job);
-        self.tx.send(job).await.map_err(|_| Error::JobChannelSend)?;
-        let res = rx.recv().await.map_err(|_| Error::ChannelRecv)??;
-        Ok(res)
-    }
-
     pub async fn write_cache_f32(
         &self,
         series: u64,
@@ -801,7 +752,7 @@ impl ScyllaQueue {
         bin_len: DtMs,
         msp: u64,
         offs: core::ops::Range<u32>,
-        scylla_opts: query::api4::scyllaopts::ScyllaOptsQuery,
+        scyopts: ScyllaOptsSubmit,
     ) -> Result<ContainerBins<f32, f32>, streams::timebin::cached::reader::Error> {
         let (tx, rx) = async_channel::bounded(1);
         let job = Job::ReadPrebinnedF32(ReadPrebinnedF32 {
@@ -810,7 +761,7 @@ impl ScyllaQueue {
             bin_len,
             msp,
             offs,
-            scylla_opts,
+            scyopts,
             tx,
         });
         self.tx
@@ -832,7 +783,7 @@ impl ScyllaQueue {
         msp: MspU32,
         lsp_min: LspU32,
         lsp_max: LspU32,
-        scylla_opts: query::api4::scyllaopts::ScyllaOptsQuery,
+        scylla_opts: ScyllaOptsSubmit,
     ) -> Result<VecDeque<BinWriteIndexEntry>, Error> {
         let (tx, rx) = async_channel::bounded(1);
         let job = BinWriteIndexRead {
@@ -926,6 +877,7 @@ pub struct ScyllaWorker {
     scyconf_st: ScyllaConfig,
     scyconf_mt: ScyllaConfig,
     scyconf_lt: ScyllaConfig,
+    scyopts: ScyllaOptsDefault,
 }
 
 impl ScyllaWorker {
@@ -933,6 +885,7 @@ impl ScyllaWorker {
         scyconf_st: ScyllaConfig,
         scyconf_mt: ScyllaConfig,
         scyconf_lt: ScyllaConfig,
+        scyopts: ScyllaOptsDefault,
         scyconf_multi: &[ScyllaConfigMultiKeyspace],
     ) -> Result<(ScyllaQueue, tokio::task::JoinHandle<()>), Error> {
         let clusters = {
@@ -950,6 +903,7 @@ impl ScyllaWorker {
             scyconf_st,
             scyconf_mt,
             scyconf_lt,
+            scyopts,
         };
         let jh = taskrun::spawn(async move {
             match worker.work().await {
@@ -971,9 +925,6 @@ impl ScyllaWorker {
             self.scyconf_mt.keyspace.as_str(),
             self.scyconf_lt.keyspace.as_str(),
         ];
-        let stmts_st = StmtsEventsClusterKeyspace::new(&self.scyconf_st.keyspace, &RetentionTime::Short, &scy).await?;
-        let stmts_mt = StmtsEventsClusterKeyspace::new(&self.scyconf_mt.keyspace, &RetentionTime::Medium, &scy).await?;
-        let stmts_lt = StmtsEventsClusterKeyspace::new(&self.scyconf_lt.keyspace, &RetentionTime::Long, &scy).await?;
         let stmts = StmtsEvents::new(kss.try_into().map_err(|_| Error::MissingKeyspaceConfig)?, &scy).await?;
         let stmts = Arc::new(stmts);
         debug!("scylla worker  prepare done");
@@ -981,15 +932,6 @@ impl ScyllaWorker {
             .clone()
             .map(|job| async {
                 match job {
-                    Job::FindTsMsp(job) => {
-                        let stmts = match job.rt {
-                            RetentionTime::Short => &stmts_st,
-                            RetentionTime::Medium => &stmts_mt,
-                            RetentionTime::Long => &stmts_lt,
-                        };
-                        let stmts = stmts.cache_bypass(job.scylla_opts.msp_cache_bypass());
-                        job.execute(stmts, &scy).await
-                    }
                     Job::AccountingReadTs(ks, ts, tx) => {
                         let res = crate::accounting::toplist::read_ts(ks.name(), ks.rt(), ts, &scy).await;
                         if tx.send(res.map_err(Into::into)).await.is_err() {
@@ -1007,13 +949,14 @@ impl ScyllaWorker {
                     }
                     Job::ReadPrebinnedF32(job) => {
                         // TODO remove I guess?
+                        let scyopts = job.scyopts.resolve(&self.scyopts);
                         let res = super::bincache::worker_read(
                             job.rt,
                             job.series,
                             job.bin_len,
                             job.msp,
                             job.offs,
-                            job.scylla_opts,
+                            scyopts,
                             &stmts,
                             &scy,
                         )
@@ -1022,7 +965,10 @@ impl ScyllaWorker {
                             // TODO count for stats
                         }
                     }
-                    Job::BinWriteIndexRead(job) => job.execute(&stmts, &scy).await,
+                    Job::BinWriteIndexRead(job) => {
+                        let scyopts = job.scylla_opts.resolve(&self.scyopts);
+                        job.execute(&stmts, &scy, scyopts).await
+                    }
                     Job::PrepareV1(job) => {
                         let res = scy.prepare(job.cql).await.map_err(|e| e.into());
                         // TODO log?
@@ -1033,7 +979,7 @@ impl ScyllaWorker {
                         // TODO log?
                         let _ = job.tx.send(res).await;
                     }
-                    Job::ReadMsp03Fwd(..) => {
+                    Job::Read03MspFwd(..) => {
                         error!("TODO  Job::ReadMsp03Fwd  only on cluster aware worker");
                     }
                     Job::Read03LspLst(..) => {

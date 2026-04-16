@@ -4,6 +4,7 @@ use crate::events3::mspfwd::ReadMspFwdStream;
 use crate::events3::msplsp::MspEv;
 use crate::range::ScyllaSeriesRange;
 use crate::worker::KeyspaceId;
+use crate::worker::ScyllaOptsSubmit;
 use crate::worker::ScyllaQueue;
 use crate::worker::ScyllaQueueCluster;
 use futures_util::FutureExt;
@@ -68,6 +69,7 @@ struct Reading {
     lsps: Option<(MspEv, LspFwdMspSingleStream)>,
     lsp_limit: u32,
     lsp_single_buf_max: usize,
+    scyopts: ScyllaOptsSubmit,
 }
 
 impl Reading {
@@ -127,6 +129,7 @@ impl Reading {
                     brefs.range.clone(),
                     self2.lsp_limit(),
                     self2.lsp_single_buf_max,
+                    self2.scyopts.clone(),
                     brefs.scyqu.clone(),
                 );
                 self2.lsps = Some((msp, stream));
@@ -187,6 +190,7 @@ impl LspFwdMspSerial {
         series_info: SeriesInfo,
         range: ScyllaSeriesRange,
         scyqu: ScyllaQueueCluster,
+        scyopts: ScyllaOptsSubmit,
         msps: VecDeque<MspEv>,
         msp_limit: u32,
         lsp_limit: u32,
@@ -204,6 +208,7 @@ impl LspFwdMspSerial {
             msp_stream_range,
             msp_begexcl,
             msp_limit,
+            scyopts.clone(),
             scyqu.clone(),
         );
         let mspbuf = msps.into_iter().map(|m| m.to_ms()).collect();
@@ -213,6 +218,7 @@ impl LspFwdMspSerial {
             lsps: None,
             lsp_limit,
             lsp_single_buf_max,
+            scyopts,
         });
         Self {
             ks,
@@ -298,6 +304,7 @@ pub struct LspFwdMspSerialOverClusters {
     msp_limit: u32,
     lsp_limit: u32,
     lsp_single_buf_max: usize,
+    scyopts: ScyllaOptsSubmit,
 }
 
 impl LspFwdMspSerialOverClusters {
@@ -307,6 +314,7 @@ impl LspFwdMspSerialOverClusters {
         msp_limit: u32,
         lsp_limit: u32,
         lsp_single_buf_max: usize,
+        scyopts: ScyllaOptsSubmit,
         scyqu: ScyllaQueue,
     ) -> Self {
         let pending = scyqu
@@ -328,6 +336,7 @@ impl LspFwdMspSerialOverClusters {
             msp_limit,
             lsp_limit,
             lsp_single_buf_max,
+            scyopts,
         }
     }
 }
@@ -389,12 +398,14 @@ impl Stream for LspFwdMspSerialOverClusters {
                                 self2.act1 = None;
                                 match x {
                                     Ok(x) => {
+                                        let scyopts = self2.scyopts.clone();
                                         let msps = x.into_iter().map(|x| MspEv::from(x)).collect();
                                         let stream = LspFwdMspSerial::new(
                                             ks.clone(),
                                             self2.series_info.clone(),
                                             self2.range.clone(),
                                             (*cl).clone(),
+                                            scyopts,
                                             msps,
                                             self2.msp_limit,
                                             self2.lsp_limit,
@@ -423,6 +434,7 @@ impl Stream for LspFwdMspSerialOverClusters {
                                     self2.series_info.clone(),
                                     self2.range.beg(),
                                     cl.as_ref().clone(),
+                                    self2.scyopts.clone(),
                                 )
                                 .map(|x| (x, (cl, ks)));
                                 self2.act1 = Some(fut.box2());

@@ -2,6 +2,7 @@ use crate::events3::SeriesInfo;
 use crate::events3::msplsp::MspEv;
 use crate::range::ScyllaSeriesRange;
 use crate::worker::KeyspaceId;
+use crate::worker::ScyllaOptsSubmit;
 use crate::worker::ScyllaQueueCluster;
 use futures_util::FutureExt;
 use futures_util::Stream;
@@ -11,7 +12,6 @@ use items_0::streamitem::Sitemty2;
 use items_0::streamitem::StreamItem;
 use items_0::streamitem::sitem2_data;
 use items_0::timebin::BinningggContainerEventsDyn;
-use netpod::CacheBypass;
 use netpod::RangeExcl;
 use netpod::futdbg::FutDbg;
 use netpod::futdbg::FutDbgBox;
@@ -47,6 +47,7 @@ pub struct LspFwdMspSingleStream {
     limit: u32,
     buf_max: usize,
     fut: FutSt,
+    scyopts: ScyllaOptsSubmit,
     scyqu: ScyllaQueueCluster,
     outbuf: VecDeque<Sitemty2<DataItem, Error>>,
 }
@@ -59,6 +60,7 @@ impl LspFwdMspSingleStream {
         range: ScyllaSeriesRange,
         limit: u32,
         buf_max: usize,
+        scyopts: ScyllaOptsSubmit,
         scyqu: ScyllaQueueCluster,
     ) -> Self {
         let limit = limit.max(1).min(70312);
@@ -73,6 +75,7 @@ impl LspFwdMspSingleStream {
             limit,
             buf_max,
             fut: FutSt::None,
+            scyopts,
             scyqu,
             outbuf: VecDeque::new(),
         }
@@ -130,10 +133,10 @@ impl LspFwdMspSingleStream {
                             let range = self.range.clone();
                             let begexcl = self.begexcl.clone();
                             let limit = self.limit;
-                            let cache_bypass = CacheBypass::Cache;
+                            let scyopts = self.scyopts.clone();
                             let fut = async move {
                                 scyqu
-                                    .read_03_lsp_fwd(ks, series_info, msp, range, begexcl, limit, cache_bypass)
+                                    .read_03_lsp_fwd(ks, series_info, msp, range, begexcl, limit, scyopts)
                                     .await
                             };
                             hpp.mark_progress();

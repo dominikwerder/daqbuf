@@ -1,4 +1,4 @@
-use crate::events2::prepare::StmtsEventsQueryOpts;
+use crate::events2::prepare::StmtsEventsClusterKeyspace;
 use crate::events3::SERIES_ID_A;
 use crate::events3::SeriesInfo;
 use crate::events3::msplsp::LspEv;
@@ -6,6 +6,8 @@ use crate::events3::msplsp::MspEv;
 use crate::events3::test_data;
 use crate::range::ScyllaSeriesRange;
 use crate::worker::KeyspaceId;
+use crate::worker::ScyllaOptsDefault;
+use crate::worker::ScyllaOptsSubmit;
 use futures_util::TryStreamExt;
 use items_0::timebin::BinningggContainerEventsDyn;
 use items_2::binning::container_events::ContainerEvents;
@@ -17,6 +19,7 @@ use netpod::ttl::RetentionTime;
 use scylla::client::session::Session;
 
 macro_rules! error { ($($arg:tt)*) => { log::error!($($arg)*); }; }
+macro_rules! trace { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
 
 autoerr::create_error_v1!(
     name(Error, "Read03LspFwd"),
@@ -54,7 +57,7 @@ pub struct Read03LspFwd {
     range: ScyllaSeriesRange,
     begexcl: RangeExcl,
     limit: u32,
-    cache_bypass: netpod::CacheBypass,
+    scyopts: ScyllaOptsSubmit,
     tx: async_channel::Sender<Item>,
 }
 
@@ -66,7 +69,7 @@ impl Read03LspFwd {
         range: ScyllaSeriesRange,
         begexcl: RangeExcl,
         limit: u32,
-        cache_bypass: netpod::CacheBypass,
+        scyopts: ScyllaOptsSubmit,
     ) -> (Self, async_channel::Receiver<Item>) {
         let (tx, rx) = async_channel::bounded(1);
         let ret = Self {
@@ -76,22 +79,19 @@ impl Read03LspFwd {
             range,
             begexcl,
             limit,
-            cache_bypass,
+            scyopts,
             tx,
         };
         (ret, rx)
     }
 
-    pub fn cache_bypass(&self) -> netpod::CacheBypass {
-        self.cache_bypass.clone()
-    }
-
-    pub async fn exec(self, stmts: &StmtsEventsQueryOpts, scy: &Session) {
-        let res = self.exec_inner(stmts, scy).await;
+    pub async fn exec(self, stmts: &StmtsEventsClusterKeyspace, scy: &Session, scyopts: &ScyllaOptsDefault) {
+        let res = self.exec_inner(stmts, scy, scyopts).await;
         let _ = self.tx.send(res).await;
     }
 
-    async fn exec_inner(&self, stmts: &StmtsEventsQueryOpts, scy: &Session) -> Item {
+    async fn exec_inner(&self, stmts: &StmtsEventsClusterKeyspace, scy: &Session, scyopts: &ScyllaOptsDefault) -> Item {
+        let scyopts = self.scyopts.resolve(scyopts);
         // TODO string is also scalar, but maybe stored as valueblob?
         let shape = self.series_info.shape();
         let array = match shape {
@@ -102,7 +102,10 @@ impl Read03LspFwd {
                 true
             }
         };
+        let cby = scyopts.lsp_asc_cache_bypass.to_bool();
+        trace!("Read03LspFwd  cache_bypass {cby}");
         let stmt = stmts
+            .cache_bypass(cby)
             .lsp(false, true)
             .shape(array)
             .st(self.series_info.scalar_type().to_scylla_table_name_id())?

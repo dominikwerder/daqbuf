@@ -4,6 +4,7 @@ use crate::events3::mspfwd::ReadMspFwdStream;
 use crate::events3::msplsp::MspEv;
 use crate::range::ScyllaSeriesRange;
 use crate::worker::KeyspaceId;
+use crate::worker::ScyllaOptsSubmit;
 use crate::worker::ScyllaQueue;
 use crate::worker::ScyllaQueueCluster;
 use futures_util::FutureExt;
@@ -62,25 +63,28 @@ const DO_CHECK_CONSISTENT: bool = false;
 
 #[derive(Debug, Clone)]
 pub struct Opts {
-    with_values: bool,
-    _scylla_opts: query::api4::scyllaopts::ScyllaOptsQuery,
+    msp_limit: u32,
+    lsp_limit: u32,
+    msp_reserve_min: usize,
+    msp_preopen_min: usize,
+    lsp_single_buf_max: usize,
 }
 
 impl Opts {
-    pub fn new() -> Self {
+    pub fn new(
+        msp_limit: u32,
+        lsp_limit: u32,
+        msp_reserve_min: usize,
+        msp_preopen_min: usize,
+        lsp_single_buf_max: usize,
+    ) -> Self {
         Self {
-            with_values: false,
-            _scylla_opts: query::api4::scyllaopts::ScyllaOptsQuery::new(),
+            msp_limit,
+            lsp_limit,
+            msp_reserve_min,
+            msp_preopen_min,
+            lsp_single_buf_max,
         }
-    }
-
-    pub fn set_values(mut self, x: bool) -> Self {
-        self.with_values = x;
-        self
-    }
-
-    pub fn is_values(&self) -> bool {
-        self.with_values
     }
 }
 
@@ -139,6 +143,7 @@ struct Merging {
     msp_reserve_min: usize,
     msp_preopen_min: usize,
     lsp_single_buf_max: usize,
+    scyopts: ScyllaOptsSubmit,
 }
 
 impl Merging {
@@ -535,6 +540,7 @@ impl Merging {
                     brefs.range.clone(),
                     self2.lsp_limit(),
                     self2.lsp_single_buf_max,
+                    self2.scyopts.clone(),
                     brefs.scyqu.clone(),
                 );
                 self2.mspbuf_po.push_back((mspts, inp));
@@ -641,13 +647,9 @@ impl LspFwdMspMulti {
         series_info: SeriesInfo,
         range: ScyllaSeriesRange,
         opts: Opts,
+        scyopts: ScyllaOptsSubmit,
         scyqu: ScyllaQueueCluster,
         msps: VecDeque<MspEv>,
-        msp_limit: u32,
-        lsp_limit: u32,
-        msp_reserve_min: usize,
-        msp_preopen_min: usize,
-        lsp_single_buf_max: usize,
     ) -> Self {
         let (msp_stream_range, msp_begexcl) = if let Some(msp) = msps.back() {
             let beg = msp.to_ms().ns();
@@ -660,7 +662,8 @@ impl LspFwdMspMulti {
             series_info.id(),
             msp_stream_range,
             msp_begexcl,
-            msp_limit,
+            opts.msp_limit,
+            scyopts.clone(),
             scyqu.clone(),
         );
         let mspbuf = msps.into_iter().map(|m| m.to_ms()).collect();
@@ -669,10 +672,11 @@ impl LspFwdMspMulti {
             mspbuf_re: mspbuf,
             mspbuf_po: VecDeque::new(),
             inps: VecDeque::new(),
-            lsp_limit,
-            msp_reserve_min,
-            msp_preopen_min,
-            lsp_single_buf_max,
+            lsp_limit: opts.lsp_limit,
+            msp_reserve_min: opts.msp_reserve_min,
+            msp_preopen_min: opts.msp_preopen_min,
+            lsp_single_buf_max: opts.lsp_single_buf_max,
+            scyopts,
         });
         Self {
             ks,
@@ -764,11 +768,7 @@ pub struct LspFwdMspMultiOverClusters {
     range_final_true: u32,
     range_final_false: u32,
     state: State2,
-    msp_limit: u32,
-    lsp_limit: u32,
-    msp_reserve_min: usize,
-    msp_preopen_min: usize,
-    lsp_single_buf_max: usize,
+    scyopts: ScyllaOptsSubmit,
 }
 
 impl LspFwdMspMultiOverClusters {
@@ -776,11 +776,7 @@ impl LspFwdMspMultiOverClusters {
         series_info: SeriesInfo,
         range: ScyllaSeriesRange,
         opts: Opts,
-        msp_limit: u32,
-        lsp_limit: u32,
-        msp_reserve_min: usize,
-        msp_preopen_min: usize,
-        lsp_single_buf_max: usize,
+        scyopts: ScyllaOptsSubmit,
         scyqu: ScyllaQueue,
     ) -> Self {
         let pending = scyqu
@@ -800,11 +796,7 @@ impl LspFwdMspMultiOverClusters {
             range_final_true: 0,
             range_final_false: 0,
             state: State2::Run,
-            msp_limit,
-            lsp_limit,
-            msp_reserve_min,
-            msp_preopen_min,
-            lsp_single_buf_max,
+            scyopts,
         }
     }
 }
@@ -837,13 +829,9 @@ impl Stream for LspFwdMspMultiOverClusters {
                                             self2.series_info.clone(),
                                             self2.range.clone(),
                                             self2.opts.clone(),
+                                            self2.scyopts.clone(),
                                             (*cl).clone(),
                                             msps,
-                                            self2.msp_limit,
-                                            self2.lsp_limit,
-                                            self2.msp_reserve_min,
-                                            self2.msp_preopen_min,
-                                            self2.lsp_single_buf_max,
                                         );
                                         self2.active = Some((cl.tag().into(), ks, stream, false));
                                         continue;
@@ -901,6 +889,7 @@ impl Stream for LspFwdMspMultiOverClusters {
                                     self2.series_info.clone(),
                                     self2.range.beg(),
                                     cl.as_ref().clone(),
+                                    self2.scyopts.clone(),
                                 )
                                 .map(|x| (x, (cl, ks)));
                                 self2.act1 = Some(fut.box2());

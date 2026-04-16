@@ -54,6 +54,7 @@ use netpod::ServiceVersion;
 use panic::AssertUnwindSafe;
 use panic::UnwindSafe;
 use pin::Pin;
+use scyllaconn::worker::ScyllaOptsDefault;
 use scyllaconn::worker::ScyllaQueue;
 use scyllaconn::worker::ScyllaWorker;
 use std::net;
@@ -137,6 +138,7 @@ pub async fn host(ncc: NodeConfigCached, service_version: ServiceVersion) -> Res
             st.clone(),
             mt.clone(),
             lt.clone(),
+            ScyllaOptsDefault::todo_impl_take_from_config(),
             ncc.node_config.cluster.scylla_clusters(),
         )
         .await
@@ -447,8 +449,6 @@ async fn http_service_inner(
         Ok(h.handle(req, &node_config).await?)
     } else if let Some(h) = channelconfig::ScyllaChannelsActive::handler(&req) {
         Ok(h.handle(req, &node_config).await?)
-    } else if let Some(h) = channelconfig::ScyllaSeriesTsMsp::handler(&req) {
-        Ok(h.handle(req, &shared_res, &node_config).await?)
     } else if let Some(h) = channelconfig::AmbigiousChannelNames::handler(&req) {
         Ok(h.handle(req, &node_config).await?)
     } else if let Some(h) = api4::accounting::AccountingIngested::handler(&req) {

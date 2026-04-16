@@ -22,9 +22,8 @@ use netpod::NodeConfigCached;
 use netpod::ReqCtxArc;
 use query::api4::events::EventsSubQuery;
 use query::api4::events::Frame1Parts;
-use scyllaconn::events3::SeriesInfo;
+use scyllaconn::worker::ScyllaOptsSubmit;
 use scyllaconn::worker::ScyllaQueue;
-use scyllaconn::SeriesId;
 use std::net::SocketAddr;
 use std::pin::Pin;
 use streamio::tcpreadasbytes::TcpReadAsBytes;
@@ -98,19 +97,20 @@ impl<E: Into<Error>> From<(E, OwnedWriteHalf)> for ConnErr {
 async fn make_channel_events_stream_data(
     subq: EventsSubQuery,
     reqctx: ReqCtxArc,
-    scyqueue: Option<&ScyllaQueue>,
+    scyqu: Option<&ScyllaQueue>,
     ncc: &NodeConfigCached,
 ) -> Result<Pin<Box<dyn Stream<Item = Sitemty<ChannelEvents>> + Send>>, Error> {
-    let scylla_opts = subq.scylla_opts().clone();
-    log_query!("make_channel_events_stream_data  scylla_opts  {:?}", scylla_opts);
+    log_query!("make_channel_events_stream_data");
     if subq.backend() == TEST_BACKEND {
         let node_count = ncc.node_config.cluster.nodes.len() as u64;
         let node_ix = ncc.ix as u64;
         let ret = streams::generators::make_test_channel_events_stream_data(subq, node_count, node_ix)?;
         Ok(ret)
-    } else if let Some(scyqueue) = scyqueue {
+    } else if let Some(scyqu) = scyqu {
+        error!("make_channel_events_stream_data  should never read scylla data over this path");
+        let scyopts = ScyllaOptsSubmit::no_choice();
         let cfg = subq.ch_conf().to_scylla()?;
-        let ret = scylla_channel_event_stream(subq, cfg, scyqueue, scylla_opts).await?;
+        let ret = scylla_channel_event_stream(subq, cfg, scyqu, scyopts).await?;
         Ok(ret)
     } else if let Some(_) = &ncc.node.channel_archiver {
         let e = Error::NotAvailable;

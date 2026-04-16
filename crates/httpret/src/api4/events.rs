@@ -21,7 +21,6 @@ use httpclient::Requ;
 use httpclient::StreamBody;
 use httpclient::StreamResponse;
 use httpclient::ToJsonBody;
-use netpod::log::*;
 use netpod::req_uri_to_url;
 use netpod::ChannelTypeConfigGen;
 use netpod::FromUrl;
@@ -44,6 +43,11 @@ use streams::lenframe::bytes_chunks_to_len_framed_str;
 use streams::streamtimeout::StreamTimeout2;
 use tracing::Instrument;
 use tracing::Span;
+
+macro_rules! error { ($($arg:tt)*) => ( if true { log::error!($($arg)*); } ); }
+macro_rules! info { ($($arg:tt)*) => ( if true { log::info!($($arg)*); } ); }
+macro_rules! debug { ($($arg:tt)*) => ( if true { log::debug!($($arg)*); } ); }
+macro_rules! trace { ($($arg:tt)*) => ( if true { log::trace!($($arg)*); } ); }
 
 autoerr::create_error_v1!(
     name(Error, "Api4Events"),

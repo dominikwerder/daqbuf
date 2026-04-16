@@ -1,6 +1,7 @@
 use crate::events3::SeriesInfo;
 use crate::events3::msplsp::MspEv;
 use crate::range::ScyllaSeriesRange;
+use crate::worker::ScyllaOptsSubmit;
 use crate::worker::ScyllaQueue;
 use futures_util::Stream;
 use futures_util::StreamExt;
@@ -32,31 +33,39 @@ pub async fn cl_ks_merged(
     series_info: SeriesInfo,
     range: SeriesRange,
     scyqu: ScyllaQueue,
+    scyopts: ScyllaOptsSubmit,
 ) -> Result<impl Stream<Item = Sitemty<ChannelEvents>> + Send, Error> {
     let range = range.to_time().ok_or(Error::ExpectTimeRange)?;
     let range = ScyllaSeriesRange::new(range.beg_ts(), range.end_ts());
     let mut inps = Vec::new();
     for cl in scyqu.clusters() {
         for ks in cl.keyspaces() {
-            let opts = crate::events3::ks::lsp_fwd_msp_multi::Opts::new();
-            let msps =
-                crate::events3::mspbck::msp_bck(ks.clone(), series_info.clone(), range.beg(), cl.as_ref().clone())
-                    .await?
-                    .into_iter()
-                    .map(MspEv::from)
-                    .collect();
-            let stream = crate::events3::ks::lsp_fwd_msp_multi::LspFwdMspMulti::new(
-                ks.clone(),
-                series_info.clone(),
-                range.clone(),
-                opts,
-                cl.as_ref().clone(),
-                msps,
+            let opts = crate::events3::ks::lsp_fwd_msp_multi::Opts::new(
                 MSP_LIMIT_DEF,
                 LSP_LIMIT_DEF,
                 MSP_RESERVE_MIN,
                 MSP_PREOPEN_MIN,
                 LSP_SINGLE_BUF_MAX,
+            );
+            let msps = crate::events3::mspbck::msp_bck(
+                ks.clone(),
+                series_info.clone(),
+                range.beg(),
+                cl.as_ref().clone(),
+                scyopts.clone(),
+            )
+            .await?
+            .into_iter()
+            .map(MspEv::from)
+            .collect();
+            let stream = crate::events3::ks::lsp_fwd_msp_multi::LspFwdMspMulti::new(
+                ks.clone(),
+                series_info.clone(),
+                range.clone(),
+                opts,
+                scyopts.clone(),
+                cl.as_ref().clone(),
+                msps,
             );
             let stream = streams::withlenhisto::WithLenHisto::new(
                 stream,
