@@ -7,6 +7,7 @@ pub mod cbor_stream;
 pub mod collect;
 #[cfg(feature = "indev")]
 pub mod collect_adapter;
+pub mod dedup;
 pub mod dtflags;
 pub mod events;
 pub mod eventsplainreader;
@@ -36,6 +37,7 @@ pub mod test;
 pub mod teststream;
 pub mod timebin;
 pub mod timebinnedjson;
+pub mod tojsonf32;
 pub mod wasmtransform;
 pub mod withlenhisto;
 

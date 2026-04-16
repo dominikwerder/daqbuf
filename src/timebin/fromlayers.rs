@@ -30,9 +30,8 @@ use std::sync::Arc;
 use std::task::Context;
 use std::task::Poll;
 
-macro_rules! info_init { ($($arg:expr),*) => ( if true { log::info!($($arg),*); } ) }
-
-macro_rules! trace_init { ($($arg:expr),*) => ( if true { log::trace!($($arg),*); } ) }
+macro_rules! info_init { ($($arg:tt)*) => ( if true { log::info!($($arg)*); } ) }
+macro_rules! trace_init { ($($arg:tt)*) => ( if true { log::info!($($arg)*); } ) }
 
 autoerr::create_error_v1!(
     name(Error, "TimeBinnedFromLayers"),
