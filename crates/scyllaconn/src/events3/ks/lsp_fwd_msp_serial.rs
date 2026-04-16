@@ -67,6 +67,7 @@ struct Reading {
     mspbuf: VecDeque<TsMs>,
     lsps: Option<(MspEv, LspFwdMspSingleStream)>,
     lsp_limit: u32,
+    lsp_single_buf_max: usize,
 }
 
 impl Reading {
@@ -125,6 +126,7 @@ impl Reading {
                     msp,
                     brefs.range.clone(),
                     self2.lsp_limit(),
+                    self2.lsp_single_buf_max,
                     brefs.scyqu.clone(),
                 );
                 self2.lsps = Some((msp, stream));
@@ -188,6 +190,7 @@ impl LspFwdMspSerial {
         msps: VecDeque<MspEv>,
         msp_limit: u32,
         lsp_limit: u32,
+        lsp_single_buf_max: usize,
     ) -> Self {
         let (msp_stream_range, msp_begexcl) = if let Some(msp) = msps.back() {
             let beg = msp.to_ms().ns();
@@ -209,6 +212,7 @@ impl LspFwdMspSerial {
             mspbuf,
             lsps: None,
             lsp_limit,
+            lsp_single_buf_max,
         });
         Self {
             ks,
@@ -293,6 +297,7 @@ pub struct LspFwdMspSerialOverClusters {
     state: State2,
     msp_limit: u32,
     lsp_limit: u32,
+    lsp_single_buf_max: usize,
 }
 
 impl LspFwdMspSerialOverClusters {
@@ -301,6 +306,7 @@ impl LspFwdMspSerialOverClusters {
         range: ScyllaSeriesRange,
         msp_limit: u32,
         lsp_limit: u32,
+        lsp_single_buf_max: usize,
         scyqu: ScyllaQueue,
     ) -> Self {
         let pending = scyqu
@@ -321,6 +327,7 @@ impl LspFwdMspSerialOverClusters {
             state: State2::Run,
             msp_limit,
             lsp_limit,
+            lsp_single_buf_max,
         }
     }
 }
@@ -391,6 +398,7 @@ impl Stream for LspFwdMspSerialOverClusters {
                                             msps,
                                             self2.msp_limit,
                                             self2.lsp_limit,
+                                            self2.lsp_single_buf_max,
                                         );
                                         self2.active = Some((cl.tag().into(), ks, stream, false));
                                         continue;

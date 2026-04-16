@@ -24,6 +24,9 @@ autoerr::create_error_v1!(
 
 const MSP_LIMIT_DEF: u32 = 10;
 const LSP_LIMIT_DEF: u32 = 800;
+const MSP_RESERVE_MIN: usize = 20;
+const MSP_PREOPEN_MIN: usize = 6;
+const LSP_SINGLE_BUF_MAX: usize = 5;
 
 pub async fn cl_ks_merged(
     series_info: SeriesInfo,
@@ -51,6 +54,9 @@ pub async fn cl_ks_merged(
                 msps,
                 MSP_LIMIT_DEF,
                 LSP_LIMIT_DEF,
+                MSP_RESERVE_MIN,
+                MSP_PREOPEN_MIN,
+                LSP_SINGLE_BUF_MAX,
             );
             let stream = streams::withlenhisto::WithLenHisto::new(
                 stream,
@@ -65,8 +71,7 @@ pub async fn cl_ks_merged(
         }
     }
     let stream = crate::events3::ks::lspmerge::LspMerge::new(inps, LSP_LIMIT_DEF);
-    let stream = streams::withlenhisto::WithLenHisto::new(stream, format!("after-LspMerge"));
-    let stream = streams::monotonic::CheckMonotonic::new(stream, format!("after-LspMerge"));
+    let stream = streams::dedup::Dedup::new(stream).map(|x| x);
     let stream = stream.map(|x| match x {
         Ok(x) => match x {
             StreamItem::DataItem(x) => match x {

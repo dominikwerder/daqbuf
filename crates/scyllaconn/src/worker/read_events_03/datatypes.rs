@@ -209,7 +209,7 @@ pub fn val_ty_dyn_from_type(shape: Shape, scalar_type: ScalarType) -> Box<dyn Va
     }
 }
 
-trait ValTy: fmt::Debug + Send + Sized + 'static {
+pub trait ValTy: fmt::Debug + Send + Sized + 'static {
     type ScaTy: ScalarOps + std::default::Default;
     type ScyTy: for<'a, 'b> scylla::deserialize::value::DeserializeValue<'a, 'b> + Send;
     type ScyRowTy: for<'a, 'b> scylla::deserialize::row::DeserializeRow<'a, 'b> + Send;

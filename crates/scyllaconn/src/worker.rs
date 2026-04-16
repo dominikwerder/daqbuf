@@ -1,8 +1,7 @@
-mod read_events_03;
+pub(super) mod read_events_03;
 
 use crate::binwriteindex::BinWriteIndexEntry;
 use crate::conn::create_scy_session_no_ks;
-use crate::events2::events::ReadJobTrace;
 use crate::events2::prepare::StmtsEvents;
 use crate::events2::prepare::StmtsEventsClusterKeyspace;
 use crate::events2::prepare::StmtsEventsQueryOpts;
@@ -19,8 +18,8 @@ use daqbuf_series::msp::MspU32;
 use daqbuf_series::msp::PrebinnedPartitioning;
 use futures_util::StreamExt;
 use futures_util::TryStreamExt;
-use items_0::timebin::BinningggContainerEventsDyn;
 use items_2::binning::container_bins::ContainerBins;
+use netpod::CacheBypass;
 use netpod::DtMs;
 use netpod::RangeExcl;
 use netpod::ScalarType;
@@ -257,7 +256,7 @@ impl fmt::Debug for ExecuteV1 {
 enum Job {
     FindTsMsp(FindTsMsp),
     AccountingReadTs(
-        RetentionTime,
+        KeyspaceId,
         TsMs,
         Sender<Result<crate::accounting::toplist::UsageData, crate::accounting::toplist::Error>>,
     ),
@@ -270,23 +269,7 @@ enum Job {
     BinWriteIndexRead(BinWriteIndexRead),
     PrepareV1(PrepareV1),
     ExecuteV1(ExecuteV1),
-    ReadEvents02(
-        ReadEventsJobParams,
-        Sender<Result<(Box<dyn BinningggContainerEventsDyn>, ReadJobTrace), Error>>,
-    ),
     ReadMsp03Fwd(crate::events3::mspfwd::ReadMsp03Fwd),
-    ReadEvents03Fwd(
-        ReadEvents03FwdParams,
-        Sender<
-            Result<
-                (
-                    Box<dyn BinningggContainerEventsDyn>,
-                    crate::events3::jobtrace::ReadJobTrace,
-                ),
-                Error,
-            >,
-        >,
-    ),
     Read03LspLst(crate::events3::lsplst::Read03LspLst),
     Read03LspFwd(crate::events3::lspfwd::Read03LspFwd),
 }
@@ -437,6 +420,18 @@ impl ScyllaQueueCluster {
         Ok(res)
     }
 
+    pub async fn accounting_read_ts(
+        &self,
+        ks: KeyspaceId,
+        ts: TsMs,
+    ) -> Result<crate::accounting::toplist::UsageData, Error> {
+        let (tx, rx) = async_channel::bounded(1);
+        let job = Job::AccountingReadTs(ks.clone(), ts, tx);
+        self.tx.send((ks, job)).await.map_err(|_| Error::JobChannelSend)?;
+        let res = rx.recv().await.map_err(|_| Error::ChannelRecv)??;
+        Ok(res)
+    }
+
     async fn find_ts_msp(
         &self,
         ks: KeyspaceId,
@@ -524,8 +519,17 @@ impl ScyllaQueueCluster {
         range: ScyllaSeriesRange,
         begexcl: RangeExcl,
         limit: u32,
+        cache_bypass: CacheBypass,
     ) -> crate::events3::lspfwd::Item {
-        let (job, rx) = crate::events3::lspfwd::Read03LspFwd::new(ks.clone(), series_info, msp, range, begexcl, limit);
+        let (job, rx) = crate::events3::lspfwd::Read03LspFwd::new(
+            ks.clone(),
+            series_info,
+            msp,
+            range,
+            begexcl,
+            limit,
+            cache_bypass,
+        );
         let job = Job::Read03LspFwd(job);
         self.tx.send((ks, job)).await?;
         let res = rx.recv().await??;
@@ -582,13 +586,13 @@ impl ScyllaQueueCluster {
                         let stmts = stmts.cache_bypass(job.scylla_opts.msp_cache_bypass());
                         job.execute(stmts, &scy).await;
                     }
-                    Job::AccountingReadTs(rt, ts, tx) => {
-                        let _ = rt;
-                        for ((ks, rt), _stmts) in scyconf.keyspaces.iter().zip(stmtsa.iter()) {
-                            let res = crate::accounting::toplist::read_ts(ks, rt.clone(), ts, &scy).await;
-                            error!("TODO return accounting data for dynamic configured list of keyspaces");
-                            if tx.send(res.map_err(Into::into)).await.is_err() {
-                                // TODO count for stats
+                    Job::AccountingReadTs(ks, ts, tx) => {
+                        for ((ks2, rt2), _stmts) in scyconf.keyspaces.iter().zip(stmtsa.iter()) {
+                            if ks2 == ks.name() && *rt2 == ks.rt() {
+                                let res = crate::accounting::toplist::read_ts(ks.name(), ks.rt(), ts, &scy).await;
+                                if tx.send(res.map_err(Into::into)).await.is_err() {
+                                    // TODO count for stats
+                                }
                             }
                         }
                     }
@@ -623,10 +627,6 @@ impl ScyllaQueueCluster {
                         error!("BinWriteIndexRead adapt to StmtsEventsClusterKeyspace");
                         // job.execute(&stmts, &scy).await
                     }
-                    Job::ReadEvents02(_params, _tx) => {
-                        error!("ReadEvents02 adapt to StmtsEventsClusterKeyspace");
-                        // crate::events2::events::read_events_v02(params, tx, stmts.clone(), scy.clone()).await
-                    }
                     Job::ReadMsp03Fwd(job) => {
                         if let Some(((_ks, _rt), stmts)) = scyconf
                             .keyspaces
@@ -640,23 +640,6 @@ impl ScyllaQueueCluster {
                         } else {
                             // TODO use a nested Result instead.
                             error!("ks not found for job");
-                        }
-                    }
-                    Job::ReadEvents03Fwd(params, tx) => {
-                        let mut ret = None;
-                        for ((_, _), stmts) in scyconf.keyspaces.iter().zip(stmtsa.iter()) {
-                            // TODO this whole worker is dedicated to one cluster.
-                            // The job must get routed to the correct worker.
-                            // Here, the job must indicate the keyspace to use.
-                            warn!("TODO  ReadEvents03Fwd  using first available keyspace");
-                            let stmts = stmts.cache_bypass(true);
-                            ret = Some(read_events_03::read_fwd(params, stmts, scy.clone()).await);
-                            break;
-                        }
-                        if let Some(x) = ret {
-                            let _ = tx.send(x.map_err(Into::into));
-                        } else {
-                            let _ = tx.send(Err(Error::ClusterKeyspaceNoMatch));
                         }
                     }
                     Job::Read03LspLst(job) => {
@@ -682,7 +665,7 @@ impl ScyllaQueueCluster {
                             .filter(|((ks, rt), _)| *ks == ksjob.name && *rt == ksjob.rt)
                             .next()
                         {
-                            let stmts = stmts.cache_bypass(true);
+                            let stmts = stmts.cache_bypass(job.cache_bypass().into());
                             job.exec(stmts, &scy).await;
                         } else {
                             // TODO use a nested Result instead.
@@ -736,14 +719,8 @@ impl ScyllaQueueCluster {
                 Job::BinWriteIndexRead(..) => {
                     debug!("can not execute Job::BinWriteIndexRead in mock");
                 }
-                Job::ReadEvents02(..) => {
-                    debug!("can not execute Job::ReadEvents02 in mock");
-                }
                 Job::ReadMsp03Fwd(job) => {
                     job.exec_mock(&tag, ksjob).await;
-                }
-                Job::ReadEvents03Fwd(..) => {
-                    debug!("can not execute Job::ReadEvents03Fwd in mock");
                 }
                 Job::Read03LspLst(job) => {
                     job.exec_mock(&tag, ksjob).await;
@@ -794,46 +771,6 @@ impl ScyllaQueue {
             tx,
         };
         let job = Job::FindTsMsp(job);
-        self.tx.send(job).await.map_err(|_| Error::JobChannelSend)?;
-        let res = rx.recv().await.map_err(|_| Error::ChannelRecv)??;
-        Ok(res)
-    }
-
-    pub async fn read_events_v02(
-        &self,
-        params: ReadEventsJobParams,
-    ) -> Result<(Box<dyn BinningggContainerEventsDyn>, ReadJobTrace), Error> {
-        let (tx, rx) = async_channel::bounded(1);
-        let job = Job::ReadEvents02(params, tx);
-        self.tx.send(job).await.map_err(|_| Error::JobChannelSend)?;
-        let res = rx.recv().await.map_err(|_| Error::ChannelRecv)??;
-        Ok(res)
-    }
-
-    pub async fn read_events_03_fwd(
-        &self,
-        params: ReadEvents03FwdParams,
-    ) -> Result<
-        (
-            Box<dyn BinningggContainerEventsDyn>,
-            crate::events3::jobtrace::ReadJobTrace,
-        ),
-        Error,
-    > {
-        let (tx, rx) = async_channel::bounded(1);
-        let job = Job::ReadEvents03Fwd(params, tx);
-        self.tx.send(job).await.map_err(|_| Error::JobChannelSend)?;
-        let res = rx.recv().await.map_err(|_| Error::ChannelRecv)??;
-        Ok(res)
-    }
-
-    pub async fn accounting_read_ts(
-        &self,
-        rt: RetentionTime,
-        ts: TsMs,
-    ) -> Result<crate::accounting::toplist::UsageData, Error> {
-        let (tx, rx) = async_channel::bounded(1);
-        let job = Job::AccountingReadTs(rt, ts, tx);
         self.tx.send(job).await.map_err(|_| Error::JobChannelSend)?;
         let res = rx.recv().await.map_err(|_| Error::ChannelRecv)??;
         Ok(res)
@@ -1053,13 +990,8 @@ impl ScyllaWorker {
                         let stmts = stmts.cache_bypass(job.scylla_opts.msp_cache_bypass());
                         job.execute(stmts, &scy).await
                     }
-                    Job::AccountingReadTs(rt, ts, tx) => {
-                        let ks = match &rt {
-                            RetentionTime::Short => &self.scyconf_st.keyspace,
-                            RetentionTime::Medium => &self.scyconf_mt.keyspace,
-                            RetentionTime::Long => &self.scyconf_lt.keyspace,
-                        };
-                        let res = crate::accounting::toplist::read_ts(&ks, rt, ts, &scy).await;
+                    Job::AccountingReadTs(ks, ts, tx) => {
+                        let res = crate::accounting::toplist::read_ts(ks.name(), ks.rt(), ts, &scy).await;
                         if tx.send(res.map_err(Into::into)).await.is_err() {
                             // TODO count for stats
                         }
@@ -1101,14 +1033,8 @@ impl ScyllaWorker {
                         // TODO log?
                         let _ = job.tx.send(res).await;
                     }
-                    Job::ReadEvents02(params, tx) => {
-                        crate::events2::events::read_events_v02(params, tx, stmts.clone(), scy.clone()).await
-                    }
                     Job::ReadMsp03Fwd(..) => {
                         error!("TODO  Job::ReadMsp03Fwd  only on cluster aware worker");
-                    }
-                    Job::ReadEvents03Fwd(..) => {
-                        error!("TODO  Job::ReadEvents03Fwd  only on cluster aware worker");
                     }
                     Job::Read03LspLst(..) => {
                         error!("TODO  Job::Read03LspLst  only on cluster aware worker");

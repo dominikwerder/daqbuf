@@ -2,7 +2,7 @@
 const READ_NEXT_TIMEOUT: Duration = Duration::from_millis(5000);
 const QUERY_PAGE_SIZE: i32 = 512;
 
-mod datatypes;
+pub mod datatypes;
 
 use crate::events2::prepare::StmtsEventsQueryOpts;
 use crate::events3::jobtrace::ReadEventKind;

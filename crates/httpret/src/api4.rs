@@ -3,6 +3,7 @@ pub mod backend;
 pub mod binned;
 pub mod binned_v2;
 pub mod binwriteindex;
+pub mod clks;
 pub mod databuffer_tools;
 pub mod datasearch;
 pub mod docs;

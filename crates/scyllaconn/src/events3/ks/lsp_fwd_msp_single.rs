@@ -11,6 +11,7 @@ use items_0::streamitem::Sitemty2;
 use items_0::streamitem::StreamItem;
 use items_0::streamitem::sitem2_data;
 use items_0::timebin::BinningggContainerEventsDyn;
+use netpod::CacheBypass;
 use netpod::RangeExcl;
 use netpod::futdbg::FutDbg;
 use netpod::futdbg::FutDbgBox;
@@ -26,8 +27,6 @@ autoerr::create_error_v1!(
         LspFwd(#[from] crate::events3::lspfwd::Error),
     },
 );
-
-// pub type Item = crate::events3::lspfwd::Item;
 
 type DataItem = Box<dyn BinningggContainerEventsDyn>;
 
@@ -46,6 +45,7 @@ pub struct LspFwdMspSingleStream {
     done: bool,
     begexcl: RangeExcl,
     limit: u32,
+    buf_max: usize,
     fut: FutSt,
     scyqu: ScyllaQueueCluster,
     outbuf: VecDeque<Sitemty2<DataItem, Error>>,
@@ -58,6 +58,7 @@ impl LspFwdMspSingleStream {
         msp: MspEv,
         range: ScyllaSeriesRange,
         limit: u32,
+        buf_max: usize,
         scyqu: ScyllaQueueCluster,
     ) -> Self {
         let limit = limit.max(1).min(70312);
@@ -70,6 +71,7 @@ impl LspFwdMspSingleStream {
             // TODO maybe take already as option?
             begexcl: RangeExcl::None,
             limit,
+            buf_max,
             fut: FutSt::None,
             scyqu,
             outbuf: VecDeque::new(),
@@ -80,49 +82,44 @@ impl LspFwdMspSingleStream {
         self.done = true;
         self.range = ScyllaSeriesRange::new(self.range.end(), self.range.end());
     }
-}
 
-impl Stream for LspFwdMspSingleStream {
-    type Item = Sitemty2<DataItem, Error>;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+    pub fn poll_to_buffer(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Result<(), Error>>> {
         use Poll::*;
         loop {
-            if self.done || self.outbuf.len() > 5 {
-                if let Some(x) = self.outbuf.pop_front() {
-                    break Ready(Some(x));
-                }
-            }
             let mut hpp = HaveProgressPending::new();
-            match &mut self.fut {
-                FutSt::Run(fut) => match fut.poll_unpin(cx) {
-                    Ready(x) => {
-                        hpp.mark_progress();
-                        self.fut = FutSt::None;
-                        match x {
-                            Ok(v) => {
-                                if let Some(tsmax) = MergeableTy::ts_max(&v) {
-                                    self.range = ScyllaSeriesRange::new(tsmax, self.range.end());
-                                    self.begexcl = RangeExcl::Beg;
-                                    let item = LogItem::info(format!("cont len {n}", n = v.len()));
-                                    self.outbuf.push_back(Ok(StreamItem::Log(item)));
-                                    self.outbuf.push_back(sitem2_data(v));
-                                    // break Ready(Some(sitem2_data(v)));
-                                } else {
-                                    self.trigger_done();
-                                    continue;
+            let self2 = self.as_mut().get_mut();
+            match &mut self2.fut {
+                FutSt::Run(fut) => {
+                    if self2.outbuf.len() < self2.buf_max {
+                        match fut.poll_unpin(cx) {
+                            Ready(x) => {
+                                hpp.mark_progress();
+                                self2.fut = FutSt::None;
+                                match x {
+                                    Ok(v) => {
+                                        if let Some(tsmax) = MergeableTy::ts_max(&v) {
+                                            self2.range = ScyllaSeriesRange::new(tsmax, self2.range.end());
+                                            self2.begexcl = RangeExcl::Beg;
+                                            let item = LogItem::info(format!("cont len {n}", n = v.len()));
+                                            self2.outbuf.push_back(Ok(StreamItem::Log(item)));
+                                            self2.outbuf.push_back(sitem2_data(v));
+                                            break Ready(Some(Ok(())));
+                                        } else {
+                                            self2.trigger_done();
+                                        }
+                                    }
+                                    Err(e) => {
+                                        self2.trigger_done();
+                                        break Ready(Some(Err(e.into())));
+                                    }
                                 }
                             }
-                            Err(e) => {
-                                self.trigger_done();
-                                break Ready(Some(Err(e.into())));
+                            Pending => {
+                                hpp.mark_pending();
                             }
                         }
                     }
-                    Pending => {
-                        hpp.mark_pending();
-                    }
-                },
+                }
                 FutSt::None => {
                     if self.done == false {
                         if self.range.beg() < self.range.end() {
@@ -133,8 +130,12 @@ impl Stream for LspFwdMspSingleStream {
                             let range = self.range.clone();
                             let begexcl = self.begexcl.clone();
                             let limit = self.limit;
-                            let fut =
-                                async move { scyqu.read_03_lsp_fwd(ks, series_info, msp, range, begexcl, limit).await };
+                            let cache_bypass = CacheBypass::Cache;
+                            let fut = async move {
+                                scyqu
+                                    .read_03_lsp_fwd(ks, series_info, msp, range, begexcl, limit, cache_bypass)
+                                    .await
+                            };
                             hpp.mark_progress();
                             self.fut = FutSt::Run(fut.box2());
                         } else {
@@ -149,6 +150,44 @@ impl Stream for LspFwdMspSingleStream {
                 Pending
             } else {
                 Ready(None)
+            };
+        }
+    }
+
+    pub fn inp_done(&self) -> bool {
+        self.done
+    }
+
+    pub fn buflen(&self) -> usize {
+        self.outbuf.len()
+    }
+}
+
+impl Stream for LspFwdMspSingleStream {
+    type Item = Sitemty2<DataItem, Error>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        use Poll::*;
+        loop {
+            break if let Some(x) = self.outbuf.pop_front() {
+                Ready(Some(x))
+            } else {
+                match self.as_mut().poll_to_buffer(cx) {
+                    Ready(Some(x)) => match x {
+                        Ok(()) => {
+                            continue;
+                        }
+                        Err(e) => Ready(Some(Err(e))),
+                    },
+                    Ready(None) => {
+                        if self.outbuf.len() != 0 {
+                            continue;
+                        } else {
+                            Ready(None)
+                        }
+                    }
+                    Pending => Pending,
+                }
             };
         }
     }

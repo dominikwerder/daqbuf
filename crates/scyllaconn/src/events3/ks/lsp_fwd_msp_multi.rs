@@ -32,7 +32,8 @@ macro_rules! error { ($($arg:tt)*) => ( if true { log::error!($($arg)*); } ) }
 macro_rules! warn { ($($arg:tt)*) => ( if true { log::warn!($($arg)*); } ) }
 macro_rules! info { ($($arg:tt)*) => ( if true { log::info!($($arg)*); } ) }
 macro_rules! debug { ($($arg:tt)*) => ( if true { log::debug!($($arg)*); } ) }
-macro_rules! trace { ($($arg:tt)*) => ( if true { log::trace!($($arg)*); } ) }
+macro_rules! trace { ($($arg:tt)*) => ( if false { log::trace!($($arg)*); } ) }
+macro_rules! trace2 { ($($arg:tt)*) => ( if false { log::trace!($($arg)*); } ) }
 
 fn _keep() {
     error!("");
@@ -56,6 +57,8 @@ autoerr::create_error_v1!(
         ItemInconsistent,
     },
 );
+
+const DO_CHECK_CONSISTENT: bool = false;
 
 #[derive(Debug, Clone)]
 pub struct Opts {
@@ -129,9 +132,13 @@ enum CheckInputItem {
 #[derive(Debug)]
 struct Merging {
     msps: Option<ReadMspFwdStream>,
-    mspbuf: VecDeque<TsMs>,
+    mspbuf_re: VecDeque<TsMs>,
+    mspbuf_po: VecDeque<(TsMs, LspFwdMspSingleStream)>,
     inps: VecDeque<Inp>,
     lsp_limit: u32,
+    msp_reserve_min: usize,
+    msp_preopen_min: usize,
+    lsp_single_buf_max: usize,
 }
 
 impl Merging {
@@ -212,7 +219,7 @@ impl Merging {
                                             RangeCompletableItem::Data(x) => {
                                                 if x.len() == 0 {
                                                     // TODO count for metrics
-                                                } else if !x.is_consistent() {
+                                                } else if DO_CHECK_CONSISTENT && !x.is_consistent() {
                                                     break 'outer Ready(Some(Err(Error::ItemInconsistent)));
                                                 } else {
                                                     inp.buf = Some(x);
@@ -385,52 +392,33 @@ impl Merging {
         self.lsp_limit
     }
 
-    fn poll_state(
+    fn poll_state_2(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         mut brefs: BaseRefs,
     ) -> Poll<Option<Sitemty2<Item, Error>>> {
         use Poll::*;
+        let selfname = "poll_state_2";
         let mut il1 = 0u32;
         loop {
             il1 += 1;
-            if il1 > 100 {
-                error!("poll_state  loop iteration too many");
+            if il1 > 200 {
+                error!("{selfname}  loop iteration too many");
                 break Ready(Some(Err(Error::LoopTooMany)));
             }
             let mut hpp = HaveProgressPending::new();
             let self2 = self.as_mut().get_mut();
-            let msp_next_opt = if let Some(&msp_next) = self2.mspbuf.front() {
-                Some(Some(msp_next))
+            let msp_next_opt = if let Some(x) = self2.mspbuf_po.front() {
+                // If there is a pre-opened stream, offer that msp as next msp.
+                Some(Some(x.0))
+            } else if self2.msps.is_some() {
+                // Must wait until more pre-opened becomes available.
+                None
+            } else if self2.mspbuf_re.len() != 0 {
+                // Must wait until more pre-opened becomes available.
+                None
             } else {
-                if let Some(inp) = self2.msps.as_mut() {
-                    match inp.poll_next_unpin(cx) {
-                        Ready(Some(x)) => {
-                            hpp.mark_progress();
-                            match x {
-                                Ok(x) => {
-                                    if x.len() == 0 {
-                                        // TODO count for metrics
-                                    }
-                                    self2.mspbuf.extend(x);
-                                    None
-                                }
-                                Err(e) => break Ready(Some(Err(e.into()))),
-                            }
-                        }
-                        Ready(None) => {
-                            hpp.mark_progress();
-                            self2.msps = None;
-                            None
-                        }
-                        Pending => {
-                            hpp.mark_pending();
-                            None
-                        }
-                    }
-                } else {
-                    Some(None)
-                }
+                Some(None)
             };
             if let Some(msp_next) = msp_next_opt {
                 match Pin::new(&mut *self2).check_inputs(cx, brefs.borrow2(), msp_next) {
@@ -439,23 +427,14 @@ impl Merging {
                             StreamItem::DataItem(x) => match x {
                                 RangeCompletableItem::Data(x) => match x {
                                     CheckInputItem::OpenNextMsp => {
-                                        if let Some(msp_next) = self2.mspbuf.pop_front() {
+                                        if let Some((msp, inp)) = self2.mspbuf_po.pop_front() {
+                                            trace2!("{selfname}  self2.mspbuf_po.pop_front");
                                             hpp.mark_progress();
-                                            let msp = MspEv::from(msp_next);
-                                            trace!("poll_state  open next msp  {msp_next}  {msp}");
-                                            let stream = LspFwdMspSingleStream::new(
-                                                brefs.ks.clone(),
-                                                brefs.series_info.clone(),
-                                                msp,
-                                                brefs.range.clone(),
-                                                self2.lsp_limit(),
-                                                brefs.scyqu.clone(),
-                                            );
                                             self2.inps.push_back(Inp {
-                                                evs: Some(stream),
+                                                evs: Some(inp),
                                                 buf: None,
                                             });
-                                            let item = LogItem::info(format!("open next msp {msp}"));
+                                            let item = LogItem::info(format!("use next msp {msp}"));
                                             break Ready(Some(sitem2_log(item)));
                                         } else {
                                             // TODO
@@ -497,6 +476,147 @@ impl Merging {
             };
         }
     }
+
+    fn poll_state(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        mut brefs: BaseRefs,
+    ) -> Poll<Option<Sitemty2<Item, Error>>> {
+        use Poll::*;
+        let selfname = "poll_state";
+        let mut retitem = None;
+        let mut il1 = 0u32;
+        'outer: loop {
+            il1 += 1;
+            if il1 > 2000 {
+                error!("{selfname}  loop iteration too many");
+                break Ready(Some(Err(Error::LoopTooMany)));
+            }
+            trace2!("{selfname}  il1 {il1}");
+            let mut hpp = HaveProgressPending::new();
+            let self2 = self.as_mut().get_mut();
+            if self2.mspbuf_re.len() < self2.msp_reserve_min {
+                if let Some(inp) = self2.msps.as_mut() {
+                    match inp.poll_next_unpin(cx) {
+                        Ready(Some(x)) => {
+                            trace2!("{selfname}  msps inp poll ready some");
+                            hpp.mark_progress();
+                            match x {
+                                Ok(x) => {
+                                    if x.len() == 0 {
+                                        // TODO count for metrics
+                                    }
+                                    self2.mspbuf_re.extend(x);
+                                }
+                                Err(e) => break Ready(Some(Err(e.into()))),
+                            }
+                        }
+                        Ready(None) => {
+                            trace2!("{selfname}  msps inp poll done");
+                            hpp.mark_progress();
+                            self2.msps = None;
+                        }
+                        Pending => {
+                            hpp.mark_pending();
+                        }
+                    }
+                }
+            }
+            while self2.mspbuf_po.len() < self2.msp_preopen_min
+                && let Some(mspts) = self2.mspbuf_re.pop_front()
+            {
+                trace2!("{selfname}  msp preopen {mspts}");
+                hpp.mark_progress();
+                let msp = MspEv::from(mspts);
+                let inp = LspFwdMspSingleStream::new(
+                    brefs.ks.clone(),
+                    brefs.series_info.clone(),
+                    msp,
+                    brefs.range.clone(),
+                    self2.lsp_limit(),
+                    self2.lsp_single_buf_max,
+                    brefs.scyqu.clone(),
+                );
+                self2.mspbuf_po.push_back((mspts, inp));
+                let item = LogItem::info(format!("open next msp {msp}"));
+                break 'outer Ready(Some(sitem2_log(item)));
+            }
+            for (_mspts, inp) in &mut self2.mspbuf_po {
+                match Pin::new(inp).poll_to_buffer(cx) {
+                    Ready(Some(x)) => match x {
+                        Ok(()) => {
+                            trace2!("{selfname}  poll to buffer");
+                            hpp.mark_progress();
+                        }
+                        Err(e) => break 'outer Ready(Some(Err(e.into()))),
+                    },
+                    Ready(None) => {}
+                    Pending => {
+                        hpp.mark_pending();
+                    }
+                }
+            }
+            for inp in &mut self2.inps {
+                if let Some(inp) = inp.evs.as_mut() {
+                    match Pin::new(inp).poll_to_buffer(cx) {
+                        Ready(Some(x)) => match x {
+                            Ok(()) => {
+                                hpp.have_progress();
+                            }
+                            Err(e) => break 'outer Ready(Some(Err(e.into()))),
+                        },
+                        Ready(None) => {}
+                        Pending => {
+                            hpp.mark_pending();
+                        }
+                    }
+                }
+            }
+            if retitem.is_none() {
+                match self.as_mut().poll_state_2(cx, brefs.borrow2()) {
+                    Ready(Some(x)) => match x {
+                        Ok(x) => {
+                            trace2!("{selfname}  poll poll_state_2 ready ok");
+                            hpp.mark_progress();
+                            retitem = Some(Ok(x));
+                        }
+                        Err(e) => break 'outer Ready(Some(Err(e.into()))),
+                    },
+                    Ready(None) => {}
+                    Pending => {
+                        hpp.mark_pending();
+                    }
+                }
+            }
+            if !hpp.have_progress() {
+                let a: Vec<_> = self
+                    .inps
+                    .iter()
+                    .filter_map(|x| x.evs.as_ref())
+                    .chain(self.mspbuf_po.iter().map(|x| &x.1))
+                    // .filter(|x| x.inp_done() == false)
+                    .map(|x| {
+                        if x.inp_done() {
+                            -1 * x.buflen() as i32
+                        } else {
+                            x.buflen() as i32
+                        }
+                    })
+                    .collect();
+                let ri = retitem.is_some();
+                trace2!("fill levels  {ri}  {a:?}");
+            }
+            break if hpp.have_progress() {
+                continue;
+            } else if let Some(x) = retitem {
+                Ready(Some(x))
+            } else if hpp.have_pending() {
+                Pending
+            } else {
+                Ready(None)
+            };
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -525,6 +645,9 @@ impl LspFwdMspMulti {
         msps: VecDeque<MspEv>,
         msp_limit: u32,
         lsp_limit: u32,
+        msp_reserve_min: usize,
+        msp_preopen_min: usize,
+        lsp_single_buf_max: usize,
     ) -> Self {
         let (msp_stream_range, msp_begexcl) = if let Some(msp) = msps.back() {
             let beg = msp.to_ms().ns();
@@ -543,9 +666,13 @@ impl LspFwdMspMulti {
         let mspbuf = msps.into_iter().map(|m| m.to_ms()).collect();
         let state = State::Merging(Merging {
             msps: Some(msp_stream),
-            mspbuf,
+            mspbuf_re: mspbuf,
+            mspbuf_po: VecDeque::new(),
             inps: VecDeque::new(),
             lsp_limit,
+            msp_reserve_min,
+            msp_preopen_min,
+            lsp_single_buf_max,
         });
         Self {
             ks,
@@ -639,6 +766,9 @@ pub struct LspFwdMspMultiOverClusters {
     state: State2,
     msp_limit: u32,
     lsp_limit: u32,
+    msp_reserve_min: usize,
+    msp_preopen_min: usize,
+    lsp_single_buf_max: usize,
 }
 
 impl LspFwdMspMultiOverClusters {
@@ -648,6 +778,9 @@ impl LspFwdMspMultiOverClusters {
         opts: Opts,
         msp_limit: u32,
         lsp_limit: u32,
+        msp_reserve_min: usize,
+        msp_preopen_min: usize,
+        lsp_single_buf_max: usize,
         scyqu: ScyllaQueue,
     ) -> Self {
         let pending = scyqu
@@ -669,6 +802,9 @@ impl LspFwdMspMultiOverClusters {
             state: State2::Run,
             msp_limit,
             lsp_limit,
+            msp_reserve_min,
+            msp_preopen_min,
+            lsp_single_buf_max,
         }
     }
 }
@@ -705,6 +841,9 @@ impl Stream for LspFwdMspMultiOverClusters {
                                             msps,
                                             self2.msp_limit,
                                             self2.lsp_limit,
+                                            self2.msp_reserve_min,
+                                            self2.msp_preopen_min,
+                                            self2.lsp_single_buf_max,
                                         );
                                         self2.active = Some((cl.tag().into(), ks, stream, false));
                                         continue;

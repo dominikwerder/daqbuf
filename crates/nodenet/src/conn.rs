@@ -22,7 +22,9 @@ use netpod::NodeConfigCached;
 use netpod::ReqCtxArc;
 use query::api4::events::EventsSubQuery;
 use query::api4::events::Frame1Parts;
+use scyllaconn::events3::SeriesInfo;
 use scyllaconn::worker::ScyllaQueue;
+use scyllaconn::SeriesId;
 use std::net::SocketAddr;
 use std::pin::Pin;
 use streamio::tcpreadasbytes::TcpReadAsBytes;
@@ -60,6 +62,7 @@ autoerr::create_error_v1!(
         InMem(#[from] streams::frames::inmem::Error),
         FramedStream(#[from] streams::frames::Error),
         Netpod(#[from] netpod::Error),
+        MissingScylla,
     },
 );
 
@@ -123,7 +126,7 @@ async fn make_channel_events_stream_data(
 
 pub async fn create_response_bytes_stream(
     evq: EventsSubQuery,
-    scyqueue: Option<&ScyllaQueue>,
+    scyqu: Option<&ScyllaQueue>,
     ncc: &NodeConfigCached,
 ) -> Result<BoxedBytesStream, Error> {
     debug!(
@@ -145,7 +148,7 @@ pub async fn create_response_bytes_stream(
         let ret = Box::pin(stream) as BoxedBytesStream;
         Ok(ret)
     } else {
-        let stream = make_channel_events_stream_data(evq, reqctx, scyqueue, ncc).await?;
+        let stream = make_channel_events_stream_data(evq, reqctx, scyqu, ncc).await?;
         let stream = frameable_stream_to_bytes_stream(stream).map_err(sitem_err2_from_string);
         let ret = Box::pin(stream) as BoxedBytesStream;
         Ok(ret)

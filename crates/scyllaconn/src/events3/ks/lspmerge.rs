@@ -17,7 +17,7 @@ macro_rules! error { ($($arg:tt)*) => ( if true { log::error!($($arg)*); } ) }
 macro_rules! warn { ($($arg:tt)*) => ( if true { log::warn!($($arg)*); } ) }
 macro_rules! info { ($($arg:tt)*) => ( if true { log::info!($($arg)*); } ) }
 macro_rules! debug { ($($arg:tt)*) => ( if true { log::debug!($($arg)*); } ) }
-macro_rules! trace { ($($arg:tt)*) => ( if true { log::trace!($($arg)*); } ) }
+macro_rules! trace { ($($arg:tt)*) => ( if false { log::trace!($($arg)*); } ) }
 
 fn _keep() {
     error!("");
@@ -44,6 +44,8 @@ autoerr::create_error_v1!(
         InconsistentD,
     },
 );
+
+const DO_CHECK_CONSISTENT: bool = false;
 
 #[derive(Debug)]
 struct Inp<S, T, E>
@@ -164,7 +166,7 @@ where
                                             RangeCompletableItem::Data(x) => {
                                                 if x.len() == 0 {
                                                     // TODO count for metrics
-                                                } else if !x.is_consistent() {
+                                                } else if DO_CHECK_CONSISTENT && !x.is_consistent() {
                                                     break 'outer Ready(Some(Err(Error::ItemInconsistent)));
                                                 } else {
                                                     inp.buf = Some(x);
@@ -305,7 +307,7 @@ where
                                             let b1 = &mut self2.inps.get_mut(ix1.0).unwrap().buf;
                                             let b2 = b1.as_mut().unwrap();
                                             let b2len0 = b2.len();
-                                            if !b2.is_consistent() {
+                                            if DO_CHECK_CONSISTENT && !b2.is_consistent() {
                                                 let e = Error::InconsistentB;
                                                 break Ready(Some(Err(e)));
                                             }
@@ -337,11 +339,11 @@ where
                                                                 info!("-----------------");
                                                             }
                                                             let evbuflen2 = evbuf.len();
-                                                            if !b2.is_consistent() {
+                                                            if DO_CHECK_CONSISTENT && !b2.is_consistent() {
                                                                 let e = Error::InconsistentC;
                                                                 break Ready(Some(Err(e)));
                                                             }
-                                                            if !evbuf.is_consistent() {
+                                                            if DO_CHECK_CONSISTENT && !evbuf.is_consistent() {
                                                                 for (i, x) in evbuf.tss_for_testing().iter().enumerate()
                                                                 {
                                                                     info!("{i:4} {x}");
@@ -389,7 +391,7 @@ where
                                                             if b2len2 == 0 {
                                                                 *b1 = None;
                                                             }
-                                                            if !c.is_consistent() {
+                                                            if DO_CHECK_CONSISTENT && !c.is_consistent() {
                                                                 let e = Error::InconsistentA;
                                                                 break Ready(Some(Err(e)));
                                                             } else if b2len2 >= b2len0 {

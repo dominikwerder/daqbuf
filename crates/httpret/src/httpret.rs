@@ -503,6 +503,8 @@ async fn http_service_inner(
         Ok(h.handle(req, ctx).await?)
     } else if let Some(h) = ui::UiHandler::handler(&req) {
         Ok(h.handle(req, ctx, &shared_res, &node_config).await?)
+    } else if let Some(h) = api4::clks::ClKsInfo::handler(&req) {
+        Ok(h.handle(req, ctx, &shared_res, &node_config).await?)
     } else {
         use std::fmt::Write;
         let mut body = String::new();

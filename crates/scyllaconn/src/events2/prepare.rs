@@ -163,7 +163,7 @@ impl StmtsEventsRt {
         &self.lsp_all
     }
 
-    pub fn lsp(&self, bck: bool, val: bool) -> &StmtsLspDir {
+    pub fn _lsp(&self, bck: bool, val: bool) -> &StmtsLspDir {
         if bck {
             if val { &self.lsp_bck_val } else { &self.lsp_bck_ts }
         } else {

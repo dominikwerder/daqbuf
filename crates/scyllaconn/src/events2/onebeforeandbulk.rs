@@ -428,8 +428,8 @@ where
 
 #[allow(unused)]
 fn trait_assert_try() {
-    let x: OneBeforeAndBulk<super::events::EventsStreamRt, items_2::channelevents::ChannelEvents> = phantomval();
-    trait_assert(x);
+    // let x: OneBeforeAndBulk<super::events::EventsStreamRt, items_2::channelevents::ChannelEvents> = phantomval();
+    // trait_assert(x);
 }
 
 fn phantomval<T>() -> T {

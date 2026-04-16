@@ -9,6 +9,7 @@ use bytes::BytesMut;
 use chrono::TimeZone;
 use dbconn::worker::PgQueue;
 use futures_util::future::ready;
+use futures_util::Stream;
 use futures_util::StreamExt;
 use futures_util::TryFutureExt;
 use futures_util::TryStreamExt;
@@ -22,6 +23,7 @@ use httpclient::Requ;
 use httpclient::StreamBody;
 use httpclient::StreamResponse;
 use items_0::streamitem::RangeCompletableItem;
+use items_0::streamitem::Sitemty;
 use items_0::streamitem::StreamItem;
 use items_2::binning::container_events::ContainerEvents;
 use netpod::ttl::RetentionTime;
@@ -39,6 +41,7 @@ use serde::Serialize;
 use series::SeriesId;
 use std::collections::BTreeMap;
 use std::collections::VecDeque;
+use std::pin::Pin;
 use std::time::Duration;
 use std::time::Instant;
 use streams::lenframe::bytes_chunks_to_len_framed_str;
@@ -72,6 +75,9 @@ impl crate::IntoBoxedError for Error {}
 
 const MSP_LIMIT_DEF: u32 = 4;
 const LSP_LIMIT_DEF: u32 = 73;
+const MSP_RESERVE_MIN: usize = 20;
+const MSP_PREOPEN_MIN: usize = 6;
+const LSP_SINGLE_BUF_MAX: usize = 5;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct ReadMsp {
@@ -116,6 +122,9 @@ struct LspFwdMspMultiCmd {
     ts2: String,
     msp_limit: Option<u32>,
     lsp_limit: Option<u32>,
+    msp_reserve_min: Option<usize>,
+    msp_preopen_min: Option<usize>,
+    lsp_single_buf_max: Option<usize>,
 }
 
 impl LspFwdMspMultiCmd {
@@ -133,6 +142,9 @@ struct LspFwdMspSerialCmd {
     ts2: String,
     msp_limit: Option<u32>,
     lsp_limit: Option<u32>,
+    msp_reserve_min: Option<usize>,
+    msp_preopen_min: Option<usize>,
+    lsp_single_buf_max: Option<usize>,
 }
 
 impl LspFwdMspSerialCmd {
@@ -150,6 +162,9 @@ struct LspFwdMspCompareCmd {
     ts2: String,
     msp_limit: Option<u32>,
     lsp_limit: Option<u32>,
+    msp_reserve_min: Option<usize>,
+    msp_preopen_min: Option<usize>,
+    lsp_single_buf_max: Option<usize>,
 }
 
 impl LspFwdMspCompareCmd {
@@ -167,7 +182,11 @@ struct LspMergeAllCmd {
     ts2: String,
     msp_limit: Option<u32>,
     lsp_limit: Option<u32>,
+    msp_reserve_min: Option<usize>,
+    msp_preopen_min: Option<usize>,
+    lsp_single_buf_max: Option<usize>,
     res_mime: Option<String>,
+    dedup: Option<String>,
 }
 
 impl LspMergeAllCmd {
@@ -669,6 +688,9 @@ impl LspFwdMspMultiCmd {
                                     msps,
                                     cmd.msp_limit.unwrap_or(MSP_LIMIT_DEF),
                                     cmd.lsp_limit.unwrap_or(LSP_LIMIT_DEF),
+                                    cmd.msp_reserve_min.unwrap_or(MSP_RESERVE_MIN),
+                                    cmd.msp_preopen_min.unwrap_or(MSP_PREOPEN_MIN),
+                                    cmd.lsp_single_buf_max.unwrap_or(LSP_SINGLE_BUF_MAX),
                                 );
                                 let stream = stream.map_err(Error::from).map_ok(move |x| (ks.clone(), x));
                                 stream
@@ -787,6 +809,9 @@ impl LspFwdMspMultiCmd {
             scyllaconn::events3::ks::lsp_fwd_msp_multi::Opts::new(),
             cmd.msp_limit.unwrap_or(MSP_LIMIT_DEF),
             cmd.lsp_limit.unwrap_or(LSP_LIMIT_DEF),
+            cmd.msp_reserve_min.unwrap_or(MSP_RESERVE_MIN),
+            cmd.msp_preopen_min.unwrap_or(MSP_PREOPEN_MIN),
+            cmd.lsp_single_buf_max.unwrap_or(LSP_SINGLE_BUF_MAX),
             scyqu.clone(),
         );
         let stream = stream
@@ -932,6 +957,9 @@ impl LspFwdMspMultiCmd {
                     msps,
                     cmd.msp_limit.unwrap_or(MSP_LIMIT_DEF),
                     cmd.lsp_limit.unwrap_or(LSP_LIMIT_DEF),
+                    cmd.msp_reserve_min.unwrap_or(MSP_RESERVE_MIN),
+                    cmd.msp_preopen_min.unwrap_or(MSP_PREOPEN_MIN),
+                    cmd.lsp_single_buf_max.unwrap_or(LSP_SINGLE_BUF_MAX),
                 );
                 let mut tss = Vec::new();
                 let mut vals = Vec::new();
@@ -1025,6 +1053,7 @@ impl LspFwdMspSerialCmd {
             range.clone(),
             cmd.msp_limit.unwrap_or(MSP_LIMIT_DEF),
             cmd.lsp_limit.unwrap_or(LSP_LIMIT_DEF),
+            cmd.lsp_single_buf_max.unwrap_or(LSP_SINGLE_BUF_MAX),
             scyqu.clone(),
         );
         let stream = stream
@@ -1172,6 +1201,9 @@ impl LspFwdMspCompareCmd {
                 scyllaconn::events3::ks::lsp_fwd_msp_multi::Opts::new(),
                 cmd.msp_limit.unwrap_or(MSP_LIMIT_DEF),
                 cmd.lsp_limit.unwrap_or(LSP_LIMIT_DEF),
+                cmd.msp_reserve_min.unwrap_or(MSP_RESERVE_MIN),
+                cmd.msp_preopen_min.unwrap_or(MSP_PREOPEN_MIN),
+                cmd.lsp_single_buf_max.unwrap_or(LSP_SINGLE_BUF_MAX),
                 scyqu.clone(),
             );
             stream
@@ -1233,6 +1265,7 @@ impl LspFwdMspCompareCmd {
                 // TODO introduce newtype
                 cmd.msp_limit.unwrap_or(MSP_LIMIT_DEF),
                 cmd.lsp_limit.unwrap_or(LSP_LIMIT_DEF),
+                cmd.lsp_single_buf_max.unwrap_or(LSP_SINGLE_BUF_MAX),
                 scyqu.clone(),
             );
             stream
@@ -1349,10 +1382,20 @@ impl LspFwdMspCompareCmd {
     }
 }
 
+macro_rules! reqfeat {
+    ($s:tt) => {{
+        #[cfg(not(target_feature = $s))]
+        compile_error!(concat!("codegen feature missing: ", $s));
+        if is_x86_feature_detected!($s) {
+        } else {
+            return Err(Error::Msg(concat!("codegen feature missing: ", $s).into()));
+        }
+    }};
+}
+
 impl LspMergeAllCmd {
     async fn exec_stream_body(cmd: Self, scyqu: ScyllaQueue, pgqu: PgQueue) -> Result<StreamBody, Error> {
         use netpod::FromUrl;
-        use serde_json::json;
         let range = netpod::query::TimeRangeQuery::from_pairs(
             &[("begDate", cmd.ts1.clone()), ("endDate", cmd.ts2.clone())]
                 .map(|x| (x.0.into(), x.1))
@@ -1383,6 +1426,14 @@ impl LspMergeAllCmd {
         let series_info = SeriesInfo::from(&chi);
         let range = netpod::range::evrange::NanoRange::from(range);
         let range = ScyllaSeriesRange::new(range.beg_ts(), range.end_ts());
+        reqfeat!("sse");
+        reqfeat!("sse2");
+        // reqfeat!("sse3");
+        // reqfeat!("sse4.1");
+        // reqfeat!("sse4.2");
+        // reqfeat!("avx");
+        // reqfeat!("avx2");
+        // reqfeat!("avx512f");
         let mut inps = Vec::new();
         for cl in scyqu.clusters() {
             for ks in cl.keyspaces() {
@@ -1406,6 +1457,9 @@ impl LspMergeAllCmd {
                     msps,
                     cmd.msp_limit.unwrap_or(MSP_LIMIT_DEF),
                     cmd.lsp_limit.unwrap_or(LSP_LIMIT_DEF),
+                    cmd.msp_reserve_min.unwrap_or(MSP_RESERVE_MIN),
+                    cmd.msp_preopen_min.unwrap_or(MSP_PREOPEN_MIN),
+                    cmd.lsp_single_buf_max.unwrap_or(LSP_SINGLE_BUF_MAX),
                 );
                 let stream = streams::withlenhisto::WithLenHisto::new(
                     stream,
@@ -1422,82 +1476,39 @@ impl LspMergeAllCmd {
         let stream = scyllaconn::events3::ks::lspmerge::LspMerge::new(inps, cmd.lsp_limit.unwrap_or(LSP_LIMIT_DEF));
         let stream = streams::withlenhisto::WithLenHisto::new(stream, format!("after-LspMerge"));
         let stream = streams::monotonic::CheckMonotonic::new(stream, format!("after-LspMerge"));
-        let stream = stream
-            .map(|x| match x {
-                Ok(x) => match x {
-                    StreamItem::DataItem(x) => match x {
-                        RangeCompletableItem::Data(x) => {
-                            let x = x.to_f32_for_binning_v01();
-                            if let Some(x) = x.as_any_ref().downcast_ref::<ContainerEvents<f32>>() {
-                                let (tss, vals) =
-                                    x.iter_zip()
-                                        .fold((Vec::new(), Vec::new()), |(mut tss, mut vals), (ts, val)| {
-                                            tss.push(ts.ms());
-                                            vals.push(val);
-                                            (tss, vals)
-                                        });
-                                json!({
-                                    "type": "events",
-                                    "tss": tss,
-                                    "vals": vals,
-                                })
-                            } else {
-                                json!({
-                                    "type": "error",
-                                    "error": "can not downcast",
-                                })
-                            }
+        // Box<dyn BinningggContainerEventsDyn>
+        let stream = if cmd.dedup.map_or(true, |x| x == "1") {
+            let stream = streams::dedup::Dedup::new(stream).map(|x| x);
+            Box::pin(stream) as Pin<Box<dyn Stream<Item = _> + Send>>
+        } else {
+            Box::pin(stream) as Pin<Box<dyn Stream<Item = _> + Send>>
+        };
+        let stream = streams::tojsonf32::to_json_f32(stream);
+        let stream = stream.map(|x| serde_json::to_string(&x)).take_while({
+            let mut had_err = false;
+            let mut n = 0;
+            move |x| {
+                let ret = match x {
+                    Ok(x) => {
+                        if n < 1024 * 1024 * 80 {
+                            n += x.len();
+                            true
+                        } else {
+                            false
                         }
-                        RangeCompletableItem::RangeComplete => {
-                            json!({
-                                "type": "RangeFinal",
-                            })
-                        }
-                    },
-                    StreamItem::Log(x) => {
-                        json!({
-                            "type": "log",
-                            "log": x,
-                        })
                     }
-                    StreamItem::Stats(x) => {
-                        json!({
-                            "type": "stats",
-                            "stats": x,
-                        })
+                    Err(_) => {
+                        if had_err {
+                            false
+                        } else {
+                            had_err = true;
+                            true
+                        }
                     }
-                },
-                Err(e) => json!({
-                    "type": "error",
-                    "error": e.to_string(),
-                }),
-            })
-            .map(|x| serde_json::to_string(&x))
-            .take_while({
-                let mut had_err = false;
-                let mut n = 0;
-                move |x| {
-                    let ret = match x {
-                        Ok(x) => {
-                            if n < 1024 * 1024 * 80 {
-                                n += x.len();
-                                true
-                            } else {
-                                false
-                            }
-                        }
-                        Err(_) => {
-                            if had_err {
-                                false
-                            } else {
-                                had_err = true;
-                                true
-                            }
-                        }
-                    };
-                    ready(ret)
-                }
-            });
+                };
+                ready(ret)
+            }
+        });
         let stream = bytes_chunks_to_len_framed_str(stream);
         let res = body_stream(stream);
         Ok(res)

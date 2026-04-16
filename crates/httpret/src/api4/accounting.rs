@@ -172,46 +172,47 @@ impl AccountingIngested {
     ) -> Result<StreamResponse, Error> {
         let url = req_uri_to_url(req.uri())?;
         let qu = AccountingToplistQuery::from_url(&url)?;
-        let res = fetch_data(qu.rt(), qu.ts().to_ts_ms(), ctx, shared_res, ncc).await?;
-        let mut ret = AccountedIngested::new();
-        for e in res.dim0.names {
-            ret.names.push(e)
-        }
-        for e in res.dim0.counts {
-            ret.counts.push(e)
-        }
-        for e in res.dim0.bytes {
-            ret.bytes.push(e)
-        }
-        for e in res.dim0.scalar_types {
-            ret.scalar_types.push(e)
-        }
-        for e in res.dim0.shapes {
-            ret.shapes.push(e)
-        }
-        for e in res.dim1.names {
-            ret.names.push(e)
-        }
-        for e in res.dim1.counts {
-            ret.counts.push(e)
-        }
-        for e in res.dim1.bytes {
-            ret.bytes.push(e)
-        }
-        for e in res.dim1.scalar_types {
-            ret.scalar_types.push(e)
-        }
-        for e in res.dim1.shapes {
-            ret.shapes.push(e)
-        }
-        if let Some(sort) = qu.sort() {
-            if sort == "counts" {
-                // ret.sort_by_counts();
-            } else if sort == "bytes" {
-                // ret.sort_by_bytes();
-            }
-        }
-        let body = ToJsonBody::from(&ret).into_body();
+        let res = fetch_data(qu.ts().to_ts_ms(), ctx, shared_res, ncc).await?;
+        // let mut ret = AccountedIngested::new();
+        // for e in res.dim0.names {
+        //     ret.names.push(e)
+        // }
+        // for e in res.dim0.counts {
+        //     ret.counts.push(e)
+        // }
+        // for e in res.dim0.bytes {
+        //     ret.bytes.push(e)
+        // }
+        // for e in res.dim0.scalar_types {
+        //     ret.scalar_types.push(e)
+        // }
+        // for e in res.dim0.shapes {
+        //     ret.shapes.push(e)
+        // }
+        // for e in res.dim1.names {
+        //     ret.names.push(e)
+        // }
+        // for e in res.dim1.counts {
+        //     ret.counts.push(e)
+        // }
+        // for e in res.dim1.bytes {
+        //     ret.bytes.push(e)
+        // }
+        // for e in res.dim1.scalar_types {
+        //     ret.scalar_types.push(e)
+        // }
+        // for e in res.dim1.shapes {
+        //     ret.shapes.push(e)
+        // }
+        // if let Some(sort) = qu.sort() {
+        //     if sort == "counts" {
+        //         // ret.sort_by_counts();
+        //     } else if sort == "bytes" {
+        //         // ret.sort_by_bytes();
+        //     }
+        // }
+        // let body = ToJsonBody::from(&ret).into_body();
+        let body = ToJsonBody::from(&res).into_body();
         Ok(response(StatusCode::OK)
             .header(header::CONTENT_TYPE, APP_JSON)
             .body(body)?)
@@ -264,7 +265,7 @@ impl AccountingToplistCounts {
     ) -> Result<StreamResponse, Error> {
         let url = req_uri_to_url(req.uri())?;
         let qu = AccountingToplistQuery::from_url(&url)?;
-        let res = fetch_data(qu.rt(), qu.ts().to_ts_ms(), ctx, shared_res, ncc).await?;
+        let res = fetch_data(qu.ts().to_ts_ms(), ctx, shared_res, ncc).await?;
         let body = ToJsonBody::from(&res).into_body();
         Ok(response(StatusCode::OK)
             .header(header::CONTENT_TYPE, APP_JSON)
@@ -273,25 +274,48 @@ impl AccountingToplistCounts {
 }
 
 async fn fetch_data(
-    rt: RetentionTime,
     ts: TsMs,
     _ctx: &ReqCtx,
     shared_res: &ServiceSharedResources,
     _ncc: &NodeConfigCached,
-) -> Result<Toplist, Error> {
+    // ) -> Result<Toplist, Error> {
+) -> Result<serde_json::Value, Error> {
+    use serde_json::json;
     let list_len_max = 10000000;
     let _ = list_len_max;
     if let Some(scyqu) = &shared_res.scyqueue {
-        let x = scyqu
-            .accounting_read_ts(rt, ts)
-            .await
-            .map_err(|e| Error::with_msg_no_trace(e.to_string()))?;
-        let ret = resolve_usages(x, &shared_res.pgqueue).await?;
+        let mut v2 = Vec::new();
+        for cl in scyqu.clusters().iter() {
+            let mut keyspaces = Vec::new();
+            for ks in cl.keyspaces().iter() {
+                let x = cl
+                    .accounting_read_ts(ks.clone(), ts)
+                    .await
+                    .map_err(|e| Error::with_msg_no_trace(e.to_string()))?;
+                let x = resolve_usages(x, &shared_res.pgqueue).await?;
+                let x = json!({
+                    "keyspace": {
+                        "name": ks.name(),
+                        "rt": ks.rt(),
+                    },
+                    "ingested": x,
+                });
+                keyspaces.push(x);
+            }
+            let x = json!({
+                "cluster": cl.tag(),
+                "keyspaces": keyspaces,
+            });
+            v2.push(x);
+        }
         // ret.dim0.sort_by_bytes();
         // ret.dim1.sort_by_bytes();
         // ret.dim0.truncate(list_len_max);
         // ret.dim1.truncate(list_len_max);
-        Ok(ret)
+        let x = json!({
+            "ingested": v2,
+        });
+        Ok(x)
     } else {
         Err(Error::with_public_msg_no_trace("not a scylla backend"))
     }
