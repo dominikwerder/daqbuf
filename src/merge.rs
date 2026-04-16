@@ -53,6 +53,7 @@ pub trait MergeableTy: fmt::Debug + WithLen + ByteEstimate + Unpin + Sized {
     fn drain_into_new(&mut self, range: Range<usize>) -> DrainIntoNewResult<Self>;
     fn is_monotonic(&self) -> bool;
     fn is_consistent(&self) -> bool;
+    fn retain_unique_ts(&mut self, tsmin: TsNano);
 }
 
 pub trait MergeableDyn: fmt::Debug + WithLen + ByteEstimate + Unpin + AsAnyMut {
@@ -68,4 +69,5 @@ pub trait MergeableDyn: fmt::Debug + WithLen + ByteEstimate + Unpin + AsAnyMut {
     fn drain_into_new(&mut self, range: Range<usize>) -> DrainIntoNewDynResult;
     fn is_monotonic(&self) -> bool;
     fn is_consistent(&self) -> bool;
+    fn retain_unique_ts(&mut self, tsmin: TsNano);
 }

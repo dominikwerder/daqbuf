@@ -227,4 +227,8 @@ impl crate::merge::MergeableTy for Box<dyn BinningggContainerEventsDyn> {
     fn is_consistent(&self) -> bool {
         self.as_ref().is_consistent()
     }
+
+    fn retain_unique_ts(&mut self, tsmin: TsNano) {
+        self.as_mut().retain_unique_ts(tsmin)
+    }
 }
