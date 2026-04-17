@@ -54,8 +54,8 @@ pub async fn msp_bck(
         msps.extend(x?);
     }
     let n = msps.len();
-    let msp_max = 20;
-    if n > 10 {
+    let msp_max = 10;
+    if n > 6 {
         debug!("many msp in backward window {n}");
     } else if n > msp_max {
         debug!("too many msp in backward window {n}");

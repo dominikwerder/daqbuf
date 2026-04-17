@@ -103,7 +103,7 @@ impl Read03MspFwd {
         let beg = if self.begexcl.excl_beg() { 1 + beg } else { beg };
         let limit = self.limit;
         let params = (self.series.to_i64(), beg, end, limit as i32);
-        trace!("Read03MspFwd  msp_cache_bypass  {}", scyopts.msp_cache_bypass.to_bool());
+        debug!("Read03MspFwd  msp_cache_bypass  {}", scyopts.msp_cache_bypass.to_bool());
         let stmt = stmts
             .cache_bypass(scyopts.msp_cache_bypass.to_bool())
             .ts_msp_fwd3()

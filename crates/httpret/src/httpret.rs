@@ -138,7 +138,6 @@ pub async fn host(ncc: NodeConfigCached, service_version: ServiceVersion) -> Res
             st.clone(),
             mt.clone(),
             lt.clone(),
-            ScyllaOptsDefault::todo_impl_take_from_config(),
             ncc.node_config.cluster.scylla_clusters(),
         )
         .await

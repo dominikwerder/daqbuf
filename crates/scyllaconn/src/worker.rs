@@ -76,15 +76,37 @@ pub struct ScyllaOptsDefault {
     lsp_asc_cache_bypass: CacheBypass,
     lsp_desc_cache_bypass: CacheBypass,
     bins_fwd_cache_bypass: CacheBypass,
+    avoid_order_desc: bool,
 }
 
 impl ScyllaOptsDefault {
-    pub fn todo_impl_take_from_config() -> Self {
+    pub fn from_config_v0(conf: &ScyllaConfig) -> Self {
         Self {
-            msp_cache_bypass: CacheBypass::Bypass,
-            lsp_asc_cache_bypass: CacheBypass::Bypass,
-            lsp_desc_cache_bypass: CacheBypass::Bypass,
-            bins_fwd_cache_bypass: CacheBypass::Bypass,
+            msp_cache_bypass: CacheBypass::from_bool(conf.cache_bypass_asc),
+            lsp_asc_cache_bypass: CacheBypass::from_bool(conf.cache_bypass_asc),
+            lsp_desc_cache_bypass: CacheBypass::from_bool(conf.cache_bypass_desc),
+            bins_fwd_cache_bypass: CacheBypass::from_bool(conf.cache_bypass_asc),
+            avoid_order_desc: conf.avoid_order_desc,
+        }
+    }
+
+    pub fn from_config_v1(conf: &ScyllaConfigMultiKeyspace) -> Self {
+        Self {
+            msp_cache_bypass: CacheBypass::from_bool(conf.cache_bypass_asc),
+            lsp_asc_cache_bypass: CacheBypass::from_bool(conf.cache_bypass_asc),
+            lsp_desc_cache_bypass: CacheBypass::from_bool(conf.cache_bypass_desc),
+            bins_fwd_cache_bypass: CacheBypass::from_bool(conf.cache_bypass_asc),
+            avoid_order_desc: conf.avoid_order_desc,
+        }
+    }
+
+    pub fn for_mock() -> Self {
+        Self {
+            msp_cache_bypass: CacheBypass::Cache,
+            lsp_asc_cache_bypass: CacheBypass::Cache,
+            lsp_desc_cache_bypass: CacheBypass::Cache,
+            bins_fwd_cache_bypass: CacheBypass::Cache,
+            avoid_order_desc: false,
         }
     }
 }
@@ -95,6 +117,7 @@ pub struct ScyllaOptsSubmit {
     pub lsp_asc_cache_bypass: Option<CacheBypass>,
     pub lsp_desc_cache_bypass: Option<CacheBypass>,
     pub bins_fwd_cache_bypass: Option<CacheBypass>,
+    pub avoid_order_desc: Option<bool>,
 }
 
 impl ScyllaOptsSubmit {
@@ -104,6 +127,7 @@ impl ScyllaOptsSubmit {
             lsp_asc_cache_bypass: None,
             lsp_desc_cache_bypass: None,
             bins_fwd_cache_bypass: None,
+            avoid_order_desc: None,
         }
     }
 
@@ -122,6 +146,7 @@ impl ScyllaOptsSubmit {
                 .bins_fwd_cache_bypass
                 .clone()
                 .unwrap_or(oth.bins_fwd_cache_bypass.clone()),
+            avoid_order_desc: self.avoid_order_desc.clone().unwrap_or(oth.avoid_order_desc.clone()),
         }
     }
 }
@@ -132,6 +157,7 @@ pub struct ScyllaOptsJob {
     pub lsp_asc_cache_bypass: CacheBypass,
     pub lsp_desc_cache_bypass: CacheBypass,
     pub bins_fwd_cache_bypass: CacheBypass,
+    pub avoid_order_desc: bool,
 }
 
 pub trait TimelimitedJobResult<T> {
@@ -281,6 +307,7 @@ enum Job {
     PrepareV1(PrepareV1),
     ExecuteV1(ExecuteV1),
     Read03MspFwd(crate::events3::mspfwd::Read03MspFwd),
+    Read03LspOnly(crate::events3::lsplst::Read03LspOnly),
     Read03LspLst(crate::events3::lsplst::Read03LspLst),
     Read03LspFwd(crate::events3::lspfwd::Read03LspFwd),
 }
@@ -361,6 +388,7 @@ impl KeyspaceId {
 pub struct ScyllaQueueCluster {
     tag: String,
     keyspaces: Vec<KeyspaceId>,
+    scyopts: Arc<ScyllaOptsDefault>,
     tx: Sender<(KeyspaceId, Job)>,
     // TODO the last Self should await jh:
     #[allow(unused)]
@@ -370,28 +398,7 @@ pub struct ScyllaQueueCluster {
 impl ScyllaQueueCluster {
     async fn new(scyconf: &ScyllaConfigMultiKeyspace) -> Result<Self, Error> {
         let tag = scyconf.tag.clone();
-        let scyopts = ScyllaOptsDefault {
-            msp_cache_bypass: if scyconf.bypass_cache {
-                CacheBypass::Bypass
-            } else {
-                CacheBypass::Cache
-            },
-            lsp_asc_cache_bypass: if scyconf.bypass_cache {
-                CacheBypass::Bypass
-            } else {
-                CacheBypass::Cache
-            },
-            lsp_desc_cache_bypass: if scyconf.bypass_cache {
-                CacheBypass::Bypass
-            } else {
-                CacheBypass::Cache
-            },
-            bins_fwd_cache_bypass: if scyconf.bypass_cache {
-                CacheBypass::Bypass
-            } else {
-                CacheBypass::Cache
-            },
-        };
+        let scyopts = ScyllaOptsDefault::from_config_v1(scyconf);
         let (tx, rx) = async_channel::bounded(128);
         let task = Self::worker(rx, scyconf.clone(), scyopts.clone());
         let jh = tokio::task::spawn(task);
@@ -402,6 +409,7 @@ impl ScyllaQueueCluster {
                 .iter()
                 .map(|x| KeyspaceId::new(x.0.clone(), x.1.clone()))
                 .collect(),
+            scyopts: Arc::new(scyopts),
             tx,
             jh: Arc::new(jh),
         };
@@ -414,6 +422,10 @@ impl ScyllaQueueCluster {
 
     pub fn keyspaces(&self) -> &[KeyspaceId] {
         &self.keyspaces
+    }
+
+    pub fn scyopts(&self) -> &ScyllaOptsDefault {
+        &self.scyopts
     }
 
     pub async fn prepare(
@@ -484,6 +496,20 @@ impl ScyllaQueueCluster {
         res
     }
 
+    pub async fn read_03_lsp_only(
+        &self,
+        ks: KeyspaceId,
+        series_info: SeriesInfo,
+        msp: MspEv,
+        scyopts: ScyllaOptsSubmit,
+    ) -> crate::events3::lsplst::ItemLspOnly {
+        let (job, rx) = crate::events3::lsplst::Read03LspOnly::new(ks.clone(), series_info, msp, scyopts);
+        let job = Job::Read03LspOnly(job);
+        self.tx.send((ks, job)).await?;
+        let res = rx.recv().await??;
+        Ok(res)
+    }
+
     pub async fn read_03_lsp_lst(
         &self,
         ks: KeyspaceId,
@@ -527,7 +553,7 @@ impl ScyllaQueueCluster {
         let mut stmtsa = Vec::new();
         for (ks, rt) in &scyconf.keyspaces {
             debug!("scylla worker  prepare start");
-            let stmts = StmtsEventsClusterKeyspace::new(ks, &rt, &scy).await?;
+            let stmts = StmtsEventsClusterKeyspace::new(&scyconf.tag, ks, &rt, &scy).await?;
             stmtsa.push(stmts);
         }
         let stmtsa = Arc::new(stmtsa);
@@ -622,6 +648,20 @@ impl ScyllaQueueCluster {
                             error!("ks not found for job");
                         }
                     }
+                    Job::Read03LspOnly(job) => {
+                        if let Some(((_ks, _rt), stmts)) = scyconf
+                            .keyspaces
+                            .iter()
+                            .zip(stmtsa.iter())
+                            .filter(|((ks, rt), _)| *ks == ksjob.name && *rt == ksjob.rt)
+                            .next()
+                        {
+                            job.exec(stmts, &scy, &scyopts).await;
+                        } else {
+                            // TODO use a nested Result instead.
+                            error!("ks not found for job");
+                        }
+                    }
                     Job::Read03LspLst(job) => {
                         if let Some(((_ks, _rt), stmts)) = scyconf
                             .keyspaces
@@ -666,6 +706,7 @@ impl ScyllaQueueCluster {
         let ret = Self {
             tag,
             keyspaces,
+            scyopts: Arc::new(ScyllaOptsDefault::for_mock()),
             tx,
             jh: Arc::new(jh),
         };
@@ -695,6 +736,9 @@ impl ScyllaQueueCluster {
                     debug!("can not execute Job::BinWriteIndexRead in mock");
                 }
                 Job::Read03MspFwd(job) => {
+                    job.exec_mock(&tag, ksjob).await;
+                }
+                Job::Read03LspOnly(job) => {
                     job.exec_mock(&tag, ksjob).await;
                 }
                 Job::Read03LspLst(job) => {
@@ -885,7 +929,6 @@ impl ScyllaWorker {
         scyconf_st: ScyllaConfig,
         scyconf_mt: ScyllaConfig,
         scyconf_lt: ScyllaConfig,
-        scyopts: ScyllaOptsDefault,
         scyconf_multi: &[ScyllaConfigMultiKeyspace],
     ) -> Result<(ScyllaQueue, tokio::task::JoinHandle<()>), Error> {
         let clusters = {
@@ -900,10 +943,10 @@ impl ScyllaWorker {
         let queue = ScyllaQueue { tx, clusters };
         let worker = Self {
             rx,
+            scyopts: ScyllaOptsDefault::from_config_v0(&scyconf_st),
             scyconf_st,
             scyconf_mt,
             scyconf_lt,
-            scyopts,
         };
         let jh = taskrun::spawn(async move {
             match worker.work().await {
@@ -981,6 +1024,9 @@ impl ScyllaWorker {
                     }
                     Job::Read03MspFwd(..) => {
                         error!("TODO  Job::ReadMsp03Fwd  only on cluster aware worker");
+                    }
+                    Job::Read03LspOnly(..) => {
+                        error!("TODO  Job::Read03LspOnly  only on cluster aware worker");
                     }
                     Job::Read03LspLst(..) => {
                         error!("TODO  Job::Read03LspLst  only on cluster aware worker");

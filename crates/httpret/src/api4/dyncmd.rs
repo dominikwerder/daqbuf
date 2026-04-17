@@ -19,6 +19,7 @@ use http::StatusCode;
 use httpclient::body_bytes;
 use httpclient::body_empty;
 use httpclient::body_stream;
+use httpclient::body_string;
 use httpclient::Requ;
 use httpclient::StreamBody;
 use httpclient::StreamResponse;
@@ -30,6 +31,7 @@ use netpod::CacheBypass;
 use netpod::NodeConfigCached;
 use netpod::RangeExcl;
 use netpod::SeriesKind;
+use netpod::APP_JSON;
 use netpod::APP_JSON_FRAMED;
 use scyllaconn::events3::ks::eventsks::EventsKs;
 use scyllaconn::events3::msplsp::MspEv;
@@ -94,6 +96,15 @@ impl ReadMsp {
     fn series(&self) -> SeriesId {
         SeriesId::new(self.series.parse().unwrap())
     }
+
+    fn to_scyopts(&self) -> ScyllaOptsSubmit {
+        ScyllaOptsSubmit::no_choice()
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct ScyllaConfigGetCmd {
+    backend: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -110,6 +121,10 @@ struct Read03LspLst {
 impl Read03LspLst {
     fn series(&self) -> SeriesId {
         SeriesId::new(self.series.parse().unwrap())
+    }
+
+    fn to_scyopts(&self) -> ScyllaOptsSubmit {
+        ScyllaOptsSubmit::no_choice()
     }
 }
 
@@ -131,6 +146,10 @@ impl LspFwdMspMultiCmd {
     fn series(&self) -> SeriesId {
         SeriesId::new(self.series.parse().unwrap())
     }
+
+    fn to_scyopts(&self) -> ScyllaOptsSubmit {
+        ScyllaOptsSubmit::no_choice()
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -151,6 +170,10 @@ impl LspFwdMspSerialCmd {
     fn series(&self) -> SeriesId {
         SeriesId::new(self.series.parse().unwrap())
     }
+
+    fn to_scyopts(&self) -> ScyllaOptsSubmit {
+        ScyllaOptsSubmit::no_choice()
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -165,11 +188,37 @@ struct LspFwdMspCompareCmd {
     msp_reserve_min: Option<usize>,
     msp_preopen_min: Option<usize>,
     lsp_single_buf_max: Option<usize>,
+    cache_bypass_asc: Option<String>,
+    cache_bypass_desc: Option<String>,
+    avoid_order_desc: Option<String>,
 }
 
 impl LspFwdMspCompareCmd {
     fn series(&self) -> SeriesId {
         SeriesId::new(self.series.parse().unwrap())
+    }
+
+    fn to_scyopts(&self) -> ScyllaOptsSubmit {
+        let asc = self
+            .cache_bypass_asc
+            .as_ref()
+            .map(|x| x.parse().ok())
+            .flatten()
+            .map(CacheBypass::from_bool);
+        let desc = self
+            .cache_bypass_desc
+            .as_ref()
+            .map(|x| x.parse().ok())
+            .flatten()
+            .map(CacheBypass::from_bool);
+        let avoid_order_desc = self.avoid_order_desc.as_ref().map(|x| x.parse().ok()).flatten();
+        ScyllaOptsSubmit {
+            msp_cache_bypass: asc,
+            lsp_asc_cache_bypass: asc,
+            lsp_desc_cache_bypass: desc,
+            bins_fwd_cache_bypass: asc,
+            avoid_order_desc,
+        }
     }
 }
 
@@ -188,12 +237,38 @@ struct LspMergeAllCmd {
     res_mime: Option<String>,
     dedup: Option<String>,
     level: Option<String>,
-    cache_bypass: Option<String>,
+    cache_bypass_asc: Option<String>,
+    cache_bypass_desc: Option<String>,
+    avoid_order_desc: Option<String>,
+    cluster_block: Option<String>,
 }
 
 impl LspMergeAllCmd {
     fn series(&self) -> SeriesId {
         SeriesId::new(self.series.parse().unwrap())
+    }
+
+    fn to_scyopts(&self) -> ScyllaOptsSubmit {
+        let asc = self
+            .cache_bypass_asc
+            .as_ref()
+            .map(|x| x.parse().ok())
+            .flatten()
+            .map(CacheBypass::from_bool);
+        let desc = self
+            .cache_bypass_desc
+            .as_ref()
+            .map(|x| x.parse().ok())
+            .flatten()
+            .map(CacheBypass::from_bool);
+        let avoid_order_desc = self.avoid_order_desc.as_ref().map(|x| x.parse().ok()).flatten();
+        ScyllaOptsSubmit {
+            msp_cache_bypass: asc,
+            lsp_asc_cache_bypass: asc,
+            lsp_desc_cache_bypass: desc,
+            bins_fwd_cache_bypass: asc,
+            avoid_order_desc,
+        }
     }
 }
 
@@ -217,7 +292,7 @@ impl DynCmdHandler {
         req: Requ,
         _ctx: &ReqCtx,
         shared_res: &ServiceSharedResources,
-        _ncc: &NodeConfigCached,
+        ncc: &NodeConfigCached,
     ) -> Result<StreamResponse, crate::RetrievalError> {
         let (req, body) = req.into_parts();
         if req.method != Method::POST {
@@ -287,7 +362,7 @@ impl DynCmdHandler {
                                         Ok(response(StatusCode::OK).body(body_bytes(buf))?)
                                     }
                                 } else {
-                                    info!("Failed to parse LspFwdMspMultiCmd");
+                                    info!("Failed to parse {}", cmd.ty2);
                                     Ok(response(StatusCode::BAD_REQUEST).body(body_empty())?)
                                 }
                             } else if cmd.ty2 == "LspFwdMspSerialCmd" {
@@ -298,7 +373,7 @@ impl DynCmdHandler {
                                             .await?;
                                     Ok(res)
                                 } else {
-                                    info!("Failed to parse LspFwdMspMultiCmd");
+                                    info!("Failed to parse {}", cmd.ty2);
                                     Ok(response(StatusCode::BAD_REQUEST).body(body_empty())?)
                                 }
                             } else if cmd.ty2 == "LspFwdMspCompareCmd" {
@@ -309,7 +384,7 @@ impl DynCmdHandler {
                                             .await?;
                                     Ok(res)
                                 } else {
-                                    info!("Failed to parse LspFwdMspMultiCmd");
+                                    info!("Failed to parse {}", cmd.ty2);
                                     Ok(response(StatusCode::BAD_REQUEST).body(body_empty())?)
                                 }
                             } else if cmd.ty2 == "LspMergeAllCmd" {
@@ -319,7 +394,15 @@ impl DynCmdHandler {
                                         .await?;
                                     Ok(res)
                                 } else {
-                                    info!("Failed to parse LspFwdMspMultiCmd");
+                                    info!("Failed to parse {}", cmd.ty2);
+                                    Ok(response(StatusCode::BAD_REQUEST).body(body_empty())?)
+                                }
+                            } else if cmd.ty2 == "ScyllaConfigGetCmd" {
+                                if let Ok(cmd) = serde_json::from_slice::<ScyllaConfigGetCmd>(&buf) {
+                                    let res = ScyllaConfigGetCmd::exec_stream_head(cmd, ncc).await?;
+                                    Ok(res)
+                                } else {
+                                    info!("Failed to parse {}", cmd.ty2);
                                     Ok(response(StatusCode::BAD_REQUEST).body(body_empty())?)
                                 }
                             } else {
@@ -378,10 +461,28 @@ async fn attached_scyllas(scyqu: &ScyllaQueue) -> Result<serde_json::Value, Erro
     Ok(ret)
 }
 
+impl ScyllaConfigGetCmd {
+    async fn exec_stream_body(_cmd: Self, _scyqu: ScyllaQueue, _pgqu: PgQueue) -> Result<StreamBody, Error> {
+        Ok(netpod::todoval())
+    }
+
+    async fn exec_stream_head(cmd: Self, ncc: &NodeConfigCached) -> Result<StreamResponse, Error> {
+        use serde_json::json;
+        let js = json!({
+            "node_config": ncc.node_config,
+        });
+        // let body = body_stream(stream);
+        let body = body_string(serde_json::to_string(&js).unwrap());
+        let res = response(StatusCode::OK)
+            .header(header::CONTENT_TYPE, APP_JSON)
+            .body(body)?;
+        Ok(res)
+    }
+}
+
 async fn read_msp(cmd: ReadMsp, scyqu: &ScyllaQueue) -> Result<serde_json::Value, Error> {
     use netpod::FromUrl;
     use serde_json::json;
-    let scyopts = ScyllaOptsSubmit::no_choice();
     let msp_limit = 4;
     json!({
         "error": "no scylla",
@@ -407,7 +508,7 @@ async fn read_msp(cmd: ReadMsp, scyqu: &ScyllaQueue) -> Result<serde_json::Value
                     range.clone(),
                     RangeExcl::None,
                     msp_limit,
-                    scyopts.clone(),
+                    cmd.to_scyopts(),
                 )
                 .await?;
             let dates: Vec<_> = x2
@@ -442,7 +543,6 @@ async fn lsp_lst(cmd: Read03LspLst, scyqu: &ScyllaQueue, pgqu: PgQueue) -> Resul
     json!({
         "error": "no scylla",
     });
-    let scyopts = ScyllaOptsSubmit::no_choice();
     let date_zero = chrono::Utc.timestamp_millis_opt(0).unwrap();
     let range = netpod::query::TimeRangeQuery::from_pairs(
         &[("begDate", cmd.ts1.clone()), ("endDate", cmd.ts2.clone())]
@@ -493,22 +593,23 @@ async fn lsp_lst(cmd: Read03LspLst, scyqu: &ScyllaQueue, pgqu: PgQueue) -> Resul
                     range.clone(),
                     RangeExcl::None,
                     msp_limit,
-                    scyopts.clone(),
+                    cmd.to_scyopts(),
                 ),
             )
             .await??;
             for msp in msp_bck.iter() {
                 let msp = MspEv::from(*msp);
+                // TODO also add `read_03_lsp_only` method
                 let lsp_lst_opn = timeout(
                     quto,
-                    cl.read_03_lsp_lst(ks.clone(), si.clone(), msp, None, scyopts.clone()),
+                    cl.read_03_lsp_lst(ks.clone(), si.clone(), msp, None, cmd.to_scyopts()),
                 )
                 .await?;
                 let end = msp.lsp(range.end());
                 // TODO if end is None, we can skip the query.
                 let lsp_lst_lim = timeout(
                     quto,
-                    cl.read_03_lsp_lst(ks.clone(), si.clone(), msp, end, scyopts.clone()),
+                    cl.read_03_lsp_lst(ks.clone(), si.clone(), msp, end, cmd.to_scyopts()),
                 )
                 .await?;
                 if end.is_none() {
@@ -615,7 +716,6 @@ impl LspFwdMspMultiCmd {
         use futures_util::stream::iter;
         use netpod::FromUrl;
         use serde_json::json;
-        let scyopts = ScyllaOptsSubmit::no_choice();
         let range = netpod::query::TimeRangeQuery::from_pairs(
             &[("begDate", cmd.ts1.clone()), ("endDate", cmd.ts2.clone())]
                 .map(|x| (x.0.into(), x.1))
@@ -653,7 +753,7 @@ impl LspFwdMspMultiCmd {
                         let cl = cl.clone();
                         let series_info = series_info.clone();
                         let range = range.clone();
-                        let scyopts = scyopts.clone();
+                        let scyopts = cmd.to_scyopts();
                         move |ks| {
                             scyllaconn::events3::mspbck::msp_bck(
                                 ks.clone(),
@@ -669,7 +769,7 @@ impl LspFwdMspMultiCmd {
                         let cl = cl.clone();
                         let series_info = series_info.clone();
                         let range = range.clone();
-                        let scyopts = scyopts.clone();
+                        let scyopts = cmd.to_scyopts();
                         move |x| {
                             res_to_stream::ResultToStream::new(x, |(ks, msp_bck)| {
                                 for x in msp_bck.iter() {
@@ -776,7 +876,6 @@ impl LspFwdMspMultiCmd {
     async fn exec_stream_body(cmd: Self, scyqu: ScyllaQueue, pgqu: PgQueue) -> Result<StreamBody, Error> {
         use netpod::FromUrl;
         use serde_json::json;
-        let scyopts = ScyllaOptsSubmit::no_choice();
         let range = netpod::query::TimeRangeQuery::from_pairs(
             &[("begDate", cmd.ts1.clone()), ("endDate", cmd.ts2.clone())]
                 .map(|x| (x.0.into(), x.1))
@@ -817,7 +916,7 @@ impl LspFwdMspMultiCmd {
                 cmd.msp_preopen_min.unwrap_or(MSP_PREOPEN_MIN),
                 cmd.lsp_single_buf_max.unwrap_or(LSP_SINGLE_BUF_MAX),
             ),
-            scyopts.clone(),
+            cmd.to_scyopts(),
             scyqu.clone(),
         );
         let stream = stream
@@ -918,7 +1017,6 @@ impl LspFwdMspMultiCmd {
     async fn exec(cmd: Self, scyqu: &ScyllaQueue, pgqu: PgQueue) -> Result<serde_json::Value, Error> {
         use netpod::FromUrl;
         use serde_json::json;
-        let scyopts = ScyllaOptsSubmit::no_choice();
         let range = netpod::query::TimeRangeQuery::from_pairs(
             &[("begDate", cmd.ts1.clone()), ("endDate", cmd.ts2.clone())]
                 .map(|x| (x.0.into(), x.1))
@@ -966,7 +1064,7 @@ impl LspFwdMspMultiCmd {
                     series_info.clone(),
                     range.clone(),
                     opts,
-                    scyopts.clone(),
+                    cmd.to_scyopts(),
                     cl.as_ref().clone(),
                     msps,
                 );
@@ -1025,7 +1123,6 @@ impl LspFwdMspMultiCmd {
 
 impl LspFwdMspSerialCmd {
     async fn exec_stream_body(cmd: Self, scyqu: ScyllaQueue, pgqu: PgQueue) -> Result<StreamBody, Error> {
-        let scyopts = ScyllaOptsSubmit::no_choice();
         use netpod::FromUrl;
         use serde_json::json;
         let range = netpod::query::TimeRangeQuery::from_pairs(
@@ -1064,7 +1161,7 @@ impl LspFwdMspSerialCmd {
             cmd.msp_limit.unwrap_or(MSP_LIMIT_DEF),
             cmd.lsp_limit.unwrap_or(LSP_LIMIT_DEF),
             cmd.lsp_single_buf_max.unwrap_or(LSP_SINGLE_BUF_MAX),
-            scyopts.clone(),
+            cmd.to_scyopts(),
             scyqu.clone(),
         );
         let stream = stream
@@ -1167,7 +1264,6 @@ impl LspFwdMspSerialCmd {
 
 impl LspFwdMspCompareCmd {
     async fn exec_stream_body(cmd: Self, scyqu: ScyllaQueue, pgqu: PgQueue) -> Result<StreamBody, Error> {
-        let scyopts = ScyllaOptsSubmit::no_choice();
         use netpod::FromUrl;
         use serde_json::json;
         let ts1 = Instant::now();
@@ -1217,7 +1313,7 @@ impl LspFwdMspCompareCmd {
                     cmd.msp_preopen_min.unwrap_or(MSP_PREOPEN_MIN),
                     cmd.lsp_single_buf_max.unwrap_or(LSP_SINGLE_BUF_MAX),
                 ),
-                scyopts.clone(),
+                cmd.to_scyopts(),
                 scyqu.clone(),
             );
             stream
@@ -1280,7 +1376,7 @@ impl LspFwdMspCompareCmd {
                 cmd.msp_limit.unwrap_or(MSP_LIMIT_DEF),
                 cmd.lsp_limit.unwrap_or(LSP_LIMIT_DEF),
                 cmd.lsp_single_buf_max.unwrap_or(LSP_SINGLE_BUF_MAX),
-                scyopts.clone(),
+                cmd.to_scyopts(),
                 scyqu.clone(),
             );
             stream
@@ -1411,6 +1507,7 @@ macro_rules! reqfeat {
 impl LspMergeAllCmd {
     async fn exec_stream_body(cmd: Self, scyqu: ScyllaQueue, pgqu: PgQueue) -> Result<StreamBody, Error> {
         use netpod::FromUrl;
+        info!("LspMergeAllCmd  exec_stream_body  {:?}", cmd.to_scyopts());
         let range = netpod::query::TimeRangeQuery::from_pairs(
             &[("begDate", cmd.ts1.clone()), ("endDate", cmd.ts2.clone())]
                 .map(|x| (x.0.into(), x.1))
@@ -1449,81 +1546,75 @@ impl LspMergeAllCmd {
         // reqfeat!("avx");
         // reqfeat!("avx2");
         // reqfeat!("avx512f");
-        let scyopts = if cmd.cache_bypass.map_or(true, |x| x != "false") {
-            ScyllaOptsSubmit {
-                msp_cache_bypass: Some(CacheBypass::Bypass),
-                lsp_asc_cache_bypass: Some(CacheBypass::Bypass),
-                lsp_desc_cache_bypass: Some(CacheBypass::Bypass),
-                bins_fwd_cache_bypass: Some(CacheBypass::Bypass),
-            }
-        } else {
-            ScyllaOptsSubmit {
-                msp_cache_bypass: Some(CacheBypass::Cache),
-                lsp_asc_cache_bypass: Some(CacheBypass::Cache),
-                lsp_desc_cache_bypass: Some(CacheBypass::Cache),
-                bins_fwd_cache_bypass: Some(CacheBypass::Cache),
-            }
-        };
         let mut inps = Vec::new();
+        let clblk = cmd
+            .cluster_block
+            .as_ref()
+            .map(|x| x.split("n").map(|x| x.to_string()).collect())
+            .unwrap_or(Vec::new());
         for cl in scyqu.clusters() {
-            for ks in cl.keyspaces() {
-                if false {
-                    let opts = scyllaconn::events3::ks::lsp_fwd_msp_multi::Opts::new(
-                        cmd.msp_limit.unwrap_or(MSP_LIMIT_DEF),
-                        cmd.lsp_limit.unwrap_or(LSP_LIMIT_DEF),
-                        cmd.msp_reserve_min.unwrap_or(MSP_RESERVE_MIN),
-                        cmd.msp_preopen_min.unwrap_or(MSP_PREOPEN_MIN),
-                        cmd.lsp_single_buf_max.unwrap_or(LSP_SINGLE_BUF_MAX),
-                    );
-                    let msps = scyllaconn::events3::mspbck::msp_bck(
-                        ks.clone(),
-                        series_info.clone(),
-                        range.beg(),
-                        cl.as_ref().clone(),
-                        scyopts.clone(),
-                    )
-                    .await?
-                    .into_iter()
-                    .map(MspEv::from)
-                    .collect();
-                    let stream = scyllaconn::events3::ks::lsp_fwd_msp_multi::LspFwdMspMulti::new(
-                        ks.clone(),
-                        series_info.clone(),
-                        range.clone(),
-                        opts,
-                        scyopts.clone(),
-                        cl.as_ref().clone(),
-                        msps,
-                    );
-                    // inps.push(stream);
-                } else {
-                    let opts = scyllaconn::events3::ks::eventsks::Opts::new(
-                        scyopts.clone(),
-                        cmd.msp_limit.unwrap_or(MSP_LIMIT_DEF),
-                        cmd.lsp_limit.unwrap_or(LSP_LIMIT_DEF),
-                        cmd.msp_reserve_min.unwrap_or(MSP_RESERVE_MIN),
-                        cmd.msp_preopen_min.unwrap_or(MSP_PREOPEN_MIN),
-                        cmd.lsp_single_buf_max.unwrap_or(LSP_SINGLE_BUF_MAX),
-                    );
-                    let stream = EventsKs::new(
-                        series_info.clone(),
-                        ks.clone(),
-                        // TODO avoid this clone
-                        cl.as_ref().clone(),
-                        range.clone(),
-                        opts,
-                    );
-                    let stream = streams::withlenhisto::WithLenHisto::new(
-                        stream,
-                        format!(
-                            "after-LspFwdMspMulti-{}-{}-{}",
-                            cl.tag(),
-                            ks.name(),
-                            ks.rt().debug_tag()
-                        ),
-                    );
-                    if true || ks.rt() == RetentionTime::Short {
-                        inps.push(stream);
+            if clblk.iter().any(|x| x.as_str() == cl.tag()) {
+                // block
+            } else {
+                for ks in cl.keyspaces() {
+                    if false {
+                        let opts = scyllaconn::events3::ks::lsp_fwd_msp_multi::Opts::new(
+                            cmd.msp_limit.unwrap_or(MSP_LIMIT_DEF),
+                            cmd.lsp_limit.unwrap_or(LSP_LIMIT_DEF),
+                            cmd.msp_reserve_min.unwrap_or(MSP_RESERVE_MIN),
+                            cmd.msp_preopen_min.unwrap_or(MSP_PREOPEN_MIN),
+                            cmd.lsp_single_buf_max.unwrap_or(LSP_SINGLE_BUF_MAX),
+                        );
+                        let msps = scyllaconn::events3::mspbck::msp_bck(
+                            ks.clone(),
+                            series_info.clone(),
+                            range.beg(),
+                            cl.as_ref().clone(),
+                            cmd.to_scyopts(),
+                        )
+                        .await?
+                        .into_iter()
+                        .map(MspEv::from)
+                        .collect();
+                        let stream = scyllaconn::events3::ks::lsp_fwd_msp_multi::LspFwdMspMulti::new(
+                            ks.clone(),
+                            series_info.clone(),
+                            range.clone(),
+                            opts,
+                            cmd.to_scyopts(),
+                            cl.as_ref().clone(),
+                            msps,
+                        );
+                        // inps.push(stream);
+                    } else {
+                        let opts = scyllaconn::events3::ks::eventsks::Opts::new(
+                            cmd.to_scyopts(),
+                            cmd.msp_limit.unwrap_or(MSP_LIMIT_DEF),
+                            cmd.lsp_limit.unwrap_or(LSP_LIMIT_DEF),
+                            cmd.msp_reserve_min.unwrap_or(MSP_RESERVE_MIN),
+                            cmd.msp_preopen_min.unwrap_or(MSP_PREOPEN_MIN),
+                            cmd.lsp_single_buf_max.unwrap_or(LSP_SINGLE_BUF_MAX),
+                        );
+                        let stream = EventsKs::new(
+                            series_info.clone(),
+                            ks.clone(),
+                            // TODO avoid this clone
+                            cl.as_ref().clone(),
+                            range.clone(),
+                            opts,
+                        );
+                        let stream = streams::withlenhisto::WithLenHisto::new(
+                            stream,
+                            format!(
+                                "after-LspFwdMspMulti-{}-{}-{}",
+                                cl.tag(),
+                                ks.name(),
+                                ks.rt().debug_tag()
+                            ),
+                        );
+                        if true || ks.rt() == RetentionTime::Short {
+                            inps.push(stream);
+                        }
                     }
                 }
             }

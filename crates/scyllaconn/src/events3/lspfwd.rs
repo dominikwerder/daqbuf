@@ -19,7 +19,14 @@ use netpod::ttl::RetentionTime;
 use scylla::client::session::Session;
 
 macro_rules! error { ($($arg:tt)*) => { log::error!($($arg)*); }; }
+macro_rules! debug { ($($arg:tt)*) => { if true { log::debug!($($arg)*); } }; }
 macro_rules! trace { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
+
+fn _keep() {
+    error!("");
+    debug!("");
+    trace!("");
+}
 
 autoerr::create_error_v1!(
     name(Error, "Read03LspFwd"),

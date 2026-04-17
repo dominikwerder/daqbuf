@@ -320,7 +320,7 @@ impl Merging {
                                                 let b2 = b1.as_mut().unwrap();
                                                 let ts_max = b2.ts_max().unwrap();
                                                 if msp_next.map_or(false, |x| x.ns() <= ts_max) {
-                                                    debug!("check_inputs  NextTs::One  open next msp");
+                                                    trace!("check_inputs  NextTs::One  open next msp");
                                                     break Ready(Some(sitem2_data(CheckInputItem::OpenNextMsp)));
                                                 } else {
                                                     trace!("drain events A {}", b2.len());
@@ -332,7 +332,7 @@ impl Merging {
                                                 let b1 = &mut self.inps.get_mut(ix1.0).unwrap().buf;
                                                 let b2 = b1.as_mut().unwrap();
                                                 if msp_next.map_or(false, |x| x.ns() <= ts2) {
-                                                    debug!("check_inputs  NextTs::Two  open next msp");
+                                                    trace!("check_inputs  NextTs::Two  open next msp");
                                                     break Ready(Some(sitem2_data(CheckInputItem::OpenNextMsp)));
                                                 } else {
                                                     use items_0::merge::DrainIntoNewDynResult;

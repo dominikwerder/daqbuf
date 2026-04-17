@@ -98,6 +98,7 @@ impl BckLspLst {
         scyqu: ScyllaQueueCluster,
     ) -> Result<Res1, Error> {
         let mut lsps_a = VecDeque::new();
+        let scyopts2 = scyopts.resolve(scyqu.scyopts());
         for msp in msps.iter() {
             let end = if let Some(end) = end {
                 let x = if let Some(x) = msp.lsp(end) {
@@ -109,10 +110,26 @@ impl BckLspLst {
             } else {
                 None
             };
-            let x = scyqu
-                .read_03_lsp_lst(ks.clone(), series_info.clone(), msp.clone(), end, scyopts.clone())
-                .await?;
-            lsps_a.push_back((*msp, x));
+            if scyopts2.avoid_order_desc {
+                let lsps = scyqu
+                    .read_03_lsp_only(ks.clone(), series_info.clone(), msp.clone(), scyopts.clone())
+                    .await?;
+                debug!("lsps len {}", lsps.len());
+                let i = if let Some(end) = end {
+                    lsps.partition_point(|x| *x < end)
+                } else {
+                    lsps.len()
+                };
+                if i > lsps.len() {
+                    warn!("bad partition point");
+                }
+                lsps_a.push_back((*msp, lsps.get(i - 1).cloned()));
+            } else {
+                let x = scyqu
+                    .read_03_lsp_lst(ks.clone(), series_info.clone(), msp.clone(), end, scyopts.clone())
+                    .await?;
+                lsps_a.push_back((*msp, x));
+            }
         }
         let ret = Res1 { lsps_a };
         Ok(ret)

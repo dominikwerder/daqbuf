@@ -423,6 +423,118 @@ async fn make_lsp_dir(
 }
 
 #[derive(Debug)]
+pub struct StmtsLspOnlyShape {
+    u8: PreparedStatement,
+    u16: PreparedStatement,
+    u32: PreparedStatement,
+    u64: PreparedStatement,
+    i8: PreparedStatement,
+    i16: PreparedStatement,
+    i32: PreparedStatement,
+    i64: PreparedStatement,
+    f32: PreparedStatement,
+    f64: PreparedStatement,
+    bool: PreparedStatement,
+    string: PreparedStatement,
+    enumvals: PreparedStatement,
+}
+
+impl StmtsLspOnlyShape {
+    async fn make_sty(
+        ks: &str,
+        rt: &RetentionTime,
+        shapepre: &str,
+        stname: &str,
+        query_opts: &str,
+        scy: &Session,
+    ) -> Result<PreparedStatement, Error> {
+        let tp = rt.table_prefix();
+        let cql = format!(
+            "{}{}{}",
+            format_args!("select ts_lsp from {ks}.{tp}events_{shapepre}_{stname}"),
+            format_args!(" where series = ? and ts_msp = ?"),
+            format_args!(" {query_opts}")
+        );
+        log_prepare!("{ks} {rt} {cql}");
+        let qu = scyprep(cql, scy).await?;
+        Ok(qu)
+    }
+
+    async fn make(
+        ks: &str,
+        rt: &RetentionTime,
+        shapepre: &str,
+        query_opts: &str,
+        scy: &Session,
+    ) -> Result<Self, Error> {
+        let ret = Self {
+            u8: Self::make_sty(ks, rt, shapepre, "u8", query_opts, scy).await?,
+            u16: Self::make_sty(ks, rt, shapepre, "u16", query_opts, scy).await?,
+            u32: Self::make_sty(ks, rt, shapepre, "u32", query_opts, scy).await?,
+            u64: Self::make_sty(ks, rt, shapepre, "u64", query_opts, scy).await?,
+            i8: Self::make_sty(ks, rt, shapepre, "i8", query_opts, scy).await?,
+            i16: Self::make_sty(ks, rt, shapepre, "i16", query_opts, scy).await?,
+            i32: Self::make_sty(ks, rt, shapepre, "i32", query_opts, scy).await?,
+            i64: Self::make_sty(ks, rt, shapepre, "i64", query_opts, scy).await?,
+            f32: Self::make_sty(ks, rt, shapepre, "f32", query_opts, scy).await?,
+            f64: Self::make_sty(ks, rt, shapepre, "f64", query_opts, scy).await?,
+            bool: Self::make_sty(ks, rt, shapepre, "bool", query_opts, scy).await?,
+            string: Self::make_sty(ks, rt, shapepre, "string", query_opts, scy).await?,
+            enumvals: if shapepre == "scalar" {
+                Self::make_sty(ks, rt, shapepre, "enum", query_opts, scy).await?
+            } else {
+                Self::make_sty(ks, rt, shapepre, "i16", query_opts, scy).await?
+            },
+        };
+        Ok(ret)
+    }
+
+    pub fn st(&self, stname: &str) -> Result<&PreparedStatement, Error> {
+        let ret = match stname {
+            "u8" => &self.u8,
+            "u16" => &self.u16,
+            "u32" => &self.u32,
+            "u64" => &self.u64,
+            "i8" => &self.i8,
+            "i16" => &self.i16,
+            "i32" => &self.i32,
+            "i64" => &self.i64,
+            "f32" => &self.f32,
+            "f64" => &self.f64,
+            "bool" => &self.bool,
+            "string" => &self.string,
+            "enum" => &self.enumvals,
+            _ => return Err(Error::MissingQuery(format!("no query for stname {stname}"))),
+        };
+        Ok(ret)
+    }
+}
+
+#[derive(Debug)]
+pub struct StmtsLspOnly {
+    scalar: StmtsLspOnlyShape,
+    array: StmtsLspOnlyShape,
+}
+
+impl StmtsLspOnly {
+    async fn make(ks: &str, rt: &RetentionTime, query_opts: &str, scy: &Session) -> Result<Self, Error> {
+        let ret = Self {
+            scalar: StmtsLspOnlyShape::make(ks, rt, "scalar", query_opts, scy).await?,
+            array: StmtsLspOnlyShape::make(ks, rt, "array", query_opts, scy).await?,
+        };
+        Ok(ret)
+    }
+
+    pub fn shape(&self, shape: Shape) -> &StmtsLspOnlyShape {
+        match shape {
+            Shape::Scalar => &self.scalar,
+            Shape::Wave(_) => &self.array,
+            Shape::Image(_, _) => todo!(),
+        }
+    }
+}
+
+#[derive(Debug)]
 pub struct StmtsLspLstShape {
     u8: PreparedStatement,
     u16: PreparedStatement,
@@ -714,13 +826,15 @@ impl StmtsEvents {
 
 #[derive(Debug)]
 pub struct StmtsEventsClusterKeyspace {
+    cltag: String,
     cache_use: StmtsEventsQueryOpts,
     cache_bypass: StmtsEventsQueryOpts,
 }
 
 impl StmtsEventsClusterKeyspace {
-    pub async fn new(ks: &str, rt: &RetentionTime, scy: &Session) -> Result<Self, Error> {
+    pub async fn new(cltag: &str, ks: &str, rt: &RetentionTime, scy: &Session) -> Result<Self, Error> {
         let ret = Self {
+            cltag: cltag.into(),
             cache_use: StmtsEventsQueryOpts::new(ks, rt, "", scy).await?,
             cache_bypass: StmtsEventsQueryOpts::new(ks, rt, "bypass cache", scy).await?,
         };
@@ -733,5 +847,9 @@ impl StmtsEventsClusterKeyspace {
         } else {
             &self.cache_use
         }
+    }
+
+    pub fn cltag(&self) -> &str {
+        &self.cltag
     }
 }
