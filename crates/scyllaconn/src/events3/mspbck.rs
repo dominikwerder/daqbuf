@@ -41,11 +41,12 @@ pub async fn msp_bck(
     scyqu: ScyllaQueueCluster,
     scyopts: ScyllaOptsSubmit,
 ) -> Result<VecDeque<TsMs>, Error> {
-    debug!("msp_bck  begin");
+    let clt = scyqu.tag().to_string();
+    let kst = ks.name();
     let ks = ks.clone();
     let series = series_info.id();
     let win = DtNano::from_sec(ks.rt().msp_rollover_ivl_on_read().as_secs());
-    trace!("backward window {win} h", win = win.sec_u64() / 60 / 60);
+    debug!("{clt}  {kst}  win {win} h", win = win.sec_u64() / 60 / 60);
     let range = ScyllaSeriesRange::new(beg.sub(win), beg);
     // TODO change the limit to larger for non-test-data
     let mut stream = ReadMspFwdStream::new(ks, series, range, RangeExcl::None, 1, scyopts, scyqu);
@@ -55,14 +56,18 @@ pub async fn msp_bck(
     }
     let n = msps.len();
     let msp_max = 10;
-    if n > 6 {
-        debug!("many msp in backward window {n}");
+    if n < 6 {
+        debug!("{clt}  {kst}  win msp len {n}");
+    } else if n <= msp_max {
+        debug!("{clt}  {kst}  win msp len {n}");
     } else if n > msp_max {
-        debug!("too many msp in backward window {n}");
+        debug!("{clt}  {kst}  win msp len {n}");
         // return Err(Error::MspBckTooMany);
         let a = msps.split_off(msps.len() - msp_max);
         msps = a;
     }
+    let n = msps.len();
+    debug!("{clt}  {kst}  win msp len2 {n}");
     for e in &msps {
         trace2!("got backward msp {e}");
     }

@@ -15,12 +15,9 @@ use std::task::Context;
 use std::task::Poll;
 
 macro_rules! error { ($($arg:tt)*) => ( if true { log::error!($($arg)*); } ) }
-
 macro_rules! debug { ($($arg:tt)*) => ( if true { log::debug!($($arg)*); } ) }
-
-macro_rules! trace_transition { ($($arg:tt)*) => ( if true { log::trace!($($arg)*); } ) }
-
-macro_rules! trace_emit { ($($arg:tt)*) => ( if true { log::trace!($($arg)*); } ) }
+macro_rules! trace_transition { ($($arg:tt)*) => ( if false { log::trace!($($arg)*); } ) }
+macro_rules! trace_emit { ($($arg:tt)*) => ( if false { log::trace!($($arg)*); } ) }
 
 macro_rules! tracer_poll_enter {
     ($self:expr) => {
@@ -69,6 +66,7 @@ where
     T: MergeableTy + Unpin,
 {
     ts0: TsNano,
+    one_before: bool,
     inp: S,
     state: State,
     buf: Option<T>,
@@ -91,15 +89,15 @@ where
         std::any::type_name::<Self>()
     }
 
-    pub fn new<E>(inp: S, ts0: TsNano, dbgname: String) -> Self
+    pub fn new<E>(inp: S, ts0: TsNano, one_before: bool, dbgname: String) -> Self
     where
         S: Stream<Item = Sitemty2<T, E>> + Unpin,
         T: MergeableTy + Unpin,
-        E: std::error::Error + Send + 'static,
     {
         trace_transition!("{}::new", Self::selfname());
         Self {
             ts0,
+            one_before,
             inp,
             state: State::Begin,
             buf: None,
@@ -191,9 +189,13 @@ where
                                                 // all entries are bulk
                                                 trace_transition!("transition with bulk to Bulk");
                                                 self.state = State::Bulk;
-                                                if let Some(before) = self.consume_buf_get_latest() {
+                                                if let Some(mut before) = self.consume_buf_get_latest() {
                                                     self.out.push_back(item);
                                                     let emit_len = before.len();
+                                                    if self.one_before {
+                                                    } else {
+                                                        before.drain_into_new(0..before.len());
+                                                    }
                                                     let item = Output::Before(before);
                                                     trace_emit!(
                                                         "State::Begin  Before  {}  emit_len {}",
@@ -222,8 +224,12 @@ where
                                                 match self.buf.as_mut() {
                                                     Some(buf) => match item.drain_into(buf, 0..pp) {
                                                         DrainIntoDstResult::Done => {
-                                                            if let Some(before) = self.consume_buf_get_latest() {
+                                                            if let Some(mut before) = self.consume_buf_get_latest() {
                                                                 self.out.push_back(item);
+                                                                if self.one_before {
+                                                                } else {
+                                                                    before.drain_into_new(0..before.len());
+                                                                }
                                                                 let emit_len = before.len();
                                                                 let item = Output::Before(before);
                                                                 trace_emit!(
@@ -253,8 +259,12 @@ where
                                                     None => match item.drain_into_new(0..pp) {
                                                         DrainIntoNewResult::Done(buf) => {
                                                             self.buf = Some(buf);
-                                                            if let Some(before) = self.consume_buf_get_latest() {
+                                                            if let Some(mut before) = self.consume_buf_get_latest() {
                                                                 self.out.push_back(item);
+                                                                if self.one_before {
+                                                                } else {
+                                                                    before.drain_into_new(0..before.len());
+                                                                }
                                                                 let emit_len = before.len();
                                                                 let item = Output::Before(before);
                                                                 trace_emit!(
@@ -330,7 +340,11 @@ where
                         Ready(None) => {
                             self.state = State::Done;
                             trace_transition!("transition from Begin to end of stream");
-                            if let Some(before) = self.consume_buf_get_latest() {
+                            if let Some(mut before) = self.consume_buf_get_latest() {
+                                if self.one_before {
+                                } else {
+                                    before.drain_into_new(0..before.len());
+                                }
                                 let emit_len = before.len();
                                 let item = Output::Before(before);
                                 trace_emit!("State::Begin  EOS  {}  emit_len {}", self.dbgname, emit_len);

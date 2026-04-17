@@ -97,13 +97,18 @@ impl Read03MspFwd {
         scy: &Session,
         scyopts: &ScyllaOptsDefault,
     ) -> Result<VecDeque<TsMs>, Error> {
+        let clt = stmts.cltag();
+        let kst = self.ks.name();
         let scyopts = self.scyopts.resolve(scyopts);
         let beg = self.range.beg().to_dt_ms().to_i64();
         let end = self.range.end().to_dt_ms().to_i64();
         let beg = if self.begexcl.excl_beg() { 1 + beg } else { beg };
         let limit = self.limit;
         let params = (self.series.to_i64(), beg, end, limit as i32);
-        debug!("Read03MspFwd  msp_cache_bypass  {}", scyopts.msp_cache_bypass.to_bool());
+        debug!(
+            "Read03MspFwd  {clt}  {kst}  msp_cache_bypass  {}",
+            scyopts.msp_cache_bypass.to_bool()
+        );
         let stmt = stmts
             .cache_bypass(scyopts.msp_cache_bypass.to_bool())
             .ts_msp_fwd3()

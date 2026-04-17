@@ -23,6 +23,8 @@ use httpclient::body_string;
 use httpclient::Requ;
 use httpclient::StreamBody;
 use httpclient::StreamResponse;
+use items_0::on_sitemty_data;
+use items_0::streamitem::sitem2_data;
 use items_0::streamitem::RangeCompletableItem;
 use items_0::streamitem::StreamItem;
 use items_2::binning::container_events::ContainerEvents;
@@ -33,6 +35,7 @@ use netpod::RangeExcl;
 use netpod::SeriesKind;
 use netpod::APP_JSON;
 use netpod::APP_JSON_FRAMED;
+use scyllaconn::events2::onebeforeandbulk::OneBeforeAndBulk;
 use scyllaconn::events3::ks::eventsks::EventsKs;
 use scyllaconn::events3::msplsp::MspEv;
 use scyllaconn::events3::SeriesInfo;
@@ -52,6 +55,7 @@ use taskrun::tokio::time::timeout;
 
 macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
 macro_rules! info { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
+macro_rules! debug { ($($arg:tt)*) => { if true { log::debug!($($arg)*); } }; }
 
 autoerr::create_error_v1!(
     name(Error, "DynCmd"),
@@ -225,10 +229,13 @@ impl LspFwdMspCompareCmd {
 #[derive(Debug, Serialize, Deserialize)]
 struct LspMergeAllCmd {
     backend: String,
+    cluster_block: Option<String>,
+    keyspace_block: Option<String>,
     series: String,
     name: String,
     ts1: String,
     ts2: String,
+    one_before: Option<bool>,
     msp_limit: Option<u32>,
     lsp_limit: Option<u32>,
     msp_reserve_min: Option<usize>,
@@ -240,7 +247,6 @@ struct LspMergeAllCmd {
     cache_bypass_asc: Option<String>,
     cache_bypass_desc: Option<String>,
     avoid_order_desc: Option<String>,
-    cluster_block: Option<String>,
 }
 
 impl LspMergeAllCmd {
@@ -269,6 +275,10 @@ impl LspMergeAllCmd {
             bins_fwd_cache_bypass: asc,
             avoid_order_desc,
         }
+    }
+
+    fn one_before(&self) -> bool {
+        self.one_before.unwrap_or(true)
     }
 }
 
@@ -1550,14 +1560,21 @@ impl LspMergeAllCmd {
         let clblk = cmd
             .cluster_block
             .as_ref()
-            .map(|x| x.split("n").map(|x| x.to_string()).collect())
+            .map(|x| x.split(",").map(|x| x.to_string()).collect())
+            .unwrap_or(Vec::new());
+        let ksblk = cmd
+            .keyspace_block
+            .as_ref()
+            .map(|x| x.split(",").map(|x| x.to_string()).collect())
             .unwrap_or(Vec::new());
         for cl in scyqu.clusters() {
             if clblk.iter().any(|x| x.as_str() == cl.tag()) {
-                // block
+                debug!("ignore {}", cl.tag());
             } else {
                 for ks in cl.keyspaces() {
-                    if false {
+                    if ksblk.iter().any(|x| x.as_str() == ks.name()) {
+                        debug!("ignore {}", ks.name());
+                    } else if false {
                         let opts = scyllaconn::events3::ks::lsp_fwd_msp_multi::Opts::new(
                             cmd.msp_limit.unwrap_or(MSP_LIMIT_DEF),
                             cmd.lsp_limit.unwrap_or(LSP_LIMIT_DEF),
@@ -1594,7 +1611,8 @@ impl LspMergeAllCmd {
                             cmd.msp_reserve_min.unwrap_or(MSP_RESERVE_MIN),
                             cmd.msp_preopen_min.unwrap_or(MSP_PREOPEN_MIN),
                             cmd.lsp_single_buf_max.unwrap_or(LSP_SINGLE_BUF_MAX),
-                        );
+                        )
+                        .set_one_before(cmd.one_before());
                         let stream = EventsKs::new(
                             series_info.clone(),
                             ks.clone(),
@@ -1622,12 +1640,26 @@ impl LspMergeAllCmd {
         let stream = scyllaconn::events3::ks::lspmerge::LspMerge::new(inps, cmd.lsp_limit.unwrap_or(LSP_LIMIT_DEF));
         let stream = streams::withlenhisto::WithLenHisto::new(stream, format!("after-LspMerge"));
         let stream = streams::monotonic::CheckMonotonic::new(stream, format!("after-LspMerge"));
+        let stream = OneBeforeAndBulk::new(
+            stream,
+            range.beg(),
+            cmd.one_before(),
+            format!("dyncmd-final-bulk-taker"),
+        )
+        .map(|x| {
+            use scyllaconn::events2::onebeforeandbulk::Output;
+            on_sitemty_data!(x, |x| match x {
+                Output::Before(x) => sitem2_data(x),
+                Output::Bulk(x) => sitem2_data(x),
+            })
+        });
         // Box<dyn BinningggContainerEventsDyn>
+        type StreamBox<T> = Pin<Box<dyn Stream<Item = T> + Send>>;
         let stream = if cmd.dedup.map_or(true, |x| x == "1") {
             let stream = streams::dedup::Dedup::new(stream).map(|x| x);
-            Box::pin(stream) as Pin<Box<dyn Stream<Item = _> + Send>>
+            Box::pin(stream) as StreamBox<_>
         } else {
-            Box::pin(stream) as Pin<Box<dyn Stream<Item = _> + Send>>
+            Box::pin(stream) as StreamBox<_>
         };
         // TODO factor into helper with default.
         let lvl: netpod::log::Level = cmd

@@ -97,6 +97,9 @@ impl BckLspLst {
         scyopts: ScyllaOptsSubmit,
         scyqu: ScyllaQueueCluster,
     ) -> Result<Res1, Error> {
+        let selfname = std::any::type_name::<Self>();
+        let clt = scyqu.tag();
+        let kst = ks.name();
         let mut lsps_a = VecDeque::new();
         let scyopts2 = scyopts.resolve(scyqu.scyopts());
         for msp in msps.iter() {
@@ -114,14 +117,14 @@ impl BckLspLst {
                 let lsps = scyqu
                     .read_03_lsp_only(ks.clone(), series_info.clone(), msp.clone(), scyopts.clone())
                     .await?;
-                debug!("lsps len {}", lsps.len());
+                debug!("{selfname}  {clt}  {kst}  lsps len {}", lsps.len());
                 let i = if let Some(end) = end {
                     lsps.partition_point(|x| *x < end)
                 } else {
                     lsps.len()
                 };
                 if i > lsps.len() {
-                    warn!("bad partition point");
+                    warn!("{selfname}  {clt}  {kst}  bad partition point");
                 }
                 lsps_a.push_back((*msp, lsps.get(i - 1).cloned()));
             } else {
