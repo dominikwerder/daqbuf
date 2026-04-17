@@ -10,6 +10,10 @@ pub mod stream_impl_tracer;
 pub mod streamext;
 pub mod ttl;
 
+fn bool_false() -> bool {
+    false
+}
+
 fn bool_true() -> bool {
     true
 }
@@ -1011,8 +1015,12 @@ pub struct Database {
 pub struct ScyllaConfig {
     pub hosts: Vec<String>,
     pub keyspace: String,
-    #[serde(default = "bool_true")]
-    pub bypass_cache: bool,
+    #[serde(default = "bool_false")]
+    pub cache_bypass_asc: bool,
+    #[serde(default = "bool_false")]
+    pub cache_bypass_desc: bool,
+    #[serde(default = "bool_false")]
+    pub avoid_order_desc: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1020,8 +1028,12 @@ pub struct ScyllaConfigMultiKeyspace {
     pub tag: String,
     pub hosts: Vec<String>,
     pub keyspaces: Vec<(String, RetentionTime)>,
-    #[serde(default = "bool_true")]
-    pub bypass_cache: bool,
+    #[serde(default = "bool_false")]
+    pub cache_bypass_asc: bool,
+    #[serde(default = "bool_false")]
+    pub cache_bypass_desc: bool,
+    #[serde(default = "bool_false")]
+    pub avoid_order_desc: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1042,8 +1054,6 @@ pub struct Cluster {
     scylla_clusters: Vec<ScyllaConfigMultiKeyspace>,
     cache_scylla: Option<ScyllaConfig>,
     pub announce_backends: Option<Vec<String>>,
-    #[serde(with = "serde_UseScylla6Workarounds", default)]
-    use_scylla6_workarounds: Option<UseScylla6Workarounds>,
 }
 
 impl Cluster {
@@ -1067,12 +1077,6 @@ impl Cluster {
         &self.scylla_clusters
     }
 
-    pub fn use_scylla6_workarounds(&self) -> UseScylla6Workarounds {
-        self.use_scylla6_workarounds
-            .clone()
-            .unwrap_or(UseScylla6Workarounds::with_workarounds())
-    }
-
     pub fn test_00() -> Self {
         Self {
             backend: "testbackend-00".into(),
@@ -1093,7 +1097,6 @@ impl Cluster {
             scylla_clusters: Vec::new(),
             cache_scylla: None,
             announce_backends: None,
-            use_scylla6_workarounds: None,
         }
     }
 }
@@ -1111,11 +1114,8 @@ cluster:
     pass: some
     name: some
   nodes:
-  use_scylla6_workarounds: false
 "###;
     let cfg = serde_yaml::from_slice::<NodeConfig>(cfg.as_bytes()).unwrap();
-    let v = cfg.cluster.use_scylla6_workarounds().get();
-    assert!(v == false);
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -4157,7 +4157,6 @@ pub fn test_cluster() -> Cluster {
         is_central_storage: false,
         file_io_buffer_size: Default::default(),
         announce_backends: None,
-        use_scylla6_workarounds: None,
     }
 }
 
@@ -4196,7 +4195,6 @@ pub fn sls_test_cluster() -> Cluster {
         is_central_storage: false,
         file_io_buffer_size: Default::default(),
         announce_backends: None,
-        use_scylla6_workarounds: None,
     }
 }
 
@@ -4235,7 +4233,6 @@ pub fn archapp_test_cluster() -> Cluster {
         is_central_storage: false,
         file_io_buffer_size: Default::default(),
         announce_backends: None,
-        use_scylla6_workarounds: None,
     }
 }
 
@@ -4847,7 +4844,7 @@ mod serde_range_excl {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum CacheBypass {
     Cache,
     Bypass,
@@ -4858,6 +4855,14 @@ impl CacheBypass {
         match self {
             CacheBypass::Cache => false,
             CacheBypass::Bypass => true,
+        }
+    }
+
+    pub fn from_bool(v: bool) -> Self {
+        if v {
+            CacheBypass::Bypass
+        } else {
+            CacheBypass::Cache
         }
     }
 }
