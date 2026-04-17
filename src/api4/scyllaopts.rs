@@ -52,10 +52,6 @@ impl ScyllaOptsQuery {
         }
     }
 
-    fn order_desc_read_all_asc_default(&self) -> bool {
-        true
-    }
-
     pub fn msp_cache_bypass(&self) -> Option<CacheBypass> {
         self.msp_cache_bypass.map(|x| {
             if x {
