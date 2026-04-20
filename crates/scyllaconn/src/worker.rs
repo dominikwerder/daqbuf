@@ -77,6 +77,7 @@ pub struct ScyllaOptsDefault {
     lsp_desc_cache_bypass: CacheBypass,
     bins_fwd_cache_bypass: CacheBypass,
     avoid_order_desc: bool,
+    lsp_lst_concurrent: usize,
 }
 
 impl ScyllaOptsDefault {
@@ -87,6 +88,7 @@ impl ScyllaOptsDefault {
             lsp_desc_cache_bypass: CacheBypass::from_bool(conf.cache_bypass_desc),
             bins_fwd_cache_bypass: CacheBypass::from_bool(conf.cache_bypass_asc),
             avoid_order_desc: conf.avoid_order_desc,
+            lsp_lst_concurrent: 10,
         }
     }
 
@@ -97,6 +99,7 @@ impl ScyllaOptsDefault {
             lsp_desc_cache_bypass: CacheBypass::from_bool(conf.cache_bypass_desc),
             bins_fwd_cache_bypass: CacheBypass::from_bool(conf.cache_bypass_asc),
             avoid_order_desc: conf.avoid_order_desc,
+            lsp_lst_concurrent: 10,
         }
     }
 
@@ -107,6 +110,7 @@ impl ScyllaOptsDefault {
             lsp_desc_cache_bypass: CacheBypass::Cache,
             bins_fwd_cache_bypass: CacheBypass::Cache,
             avoid_order_desc: false,
+            lsp_lst_concurrent: 10,
         }
     }
 }
@@ -118,6 +122,7 @@ pub struct ScyllaOptsSubmit {
     pub lsp_desc_cache_bypass: Option<CacheBypass>,
     pub bins_fwd_cache_bypass: Option<CacheBypass>,
     pub avoid_order_desc: Option<bool>,
+    pub lsp_lst_concurrent: Option<usize>,
 }
 
 impl ScyllaOptsSubmit {
@@ -128,6 +133,7 @@ impl ScyllaOptsSubmit {
             lsp_desc_cache_bypass: None,
             bins_fwd_cache_bypass: None,
             avoid_order_desc: None,
+            lsp_lst_concurrent: None,
         }
     }
 
@@ -147,6 +153,10 @@ impl ScyllaOptsSubmit {
                 .clone()
                 .unwrap_or(oth.bins_fwd_cache_bypass.clone()),
             avoid_order_desc: self.avoid_order_desc.clone().unwrap_or(oth.avoid_order_desc.clone()),
+            lsp_lst_concurrent: self
+                .lsp_lst_concurrent
+                .clone()
+                .unwrap_or(oth.lsp_lst_concurrent.clone()),
         }
     }
 }
@@ -158,6 +168,7 @@ pub struct ScyllaOptsJob {
     pub lsp_desc_cache_bypass: CacheBypass,
     pub bins_fwd_cache_bypass: CacheBypass,
     pub avoid_order_desc: bool,
+    pub lsp_lst_concurrent: usize,
 }
 
 pub trait TimelimitedJobResult<T> {

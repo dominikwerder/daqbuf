@@ -6,6 +6,7 @@ use crate::worker::ScyllaOptsSubmit;
 use crate::worker::ScyllaQueueCluster;
 use futures_util::Future;
 use futures_util::FutureExt;
+use futures_util::StreamExt;
 use netpod::TsNano;
 use netpod::futdbg::FutDbg;
 use netpod::futdbg::FutDbgBox;
@@ -98,44 +99,106 @@ impl BckLspLst {
         scyqu: ScyllaQueueCluster,
     ) -> Result<Res1, Error> {
         let selfname = std::any::type_name::<Self>();
-        let clt = scyqu.tag();
-        let kst = ks.name();
+        let clt = scyqu.tag().to_string();
+        let kst = ks.name().to_string();
         let mut lsps_a = VecDeque::new();
         let scyopts2 = scyopts.resolve(scyqu.scyopts());
-        for msp in msps.iter() {
-            let end = if let Some(end) = end {
-                let x = if let Some(x) = msp.lsp(end) {
-                    x
-                } else {
-                    return Err(Error::LspImpossible);
-                };
-                Some(x)
-            } else {
-                None
-            };
-            if scyopts2.avoid_order_desc {
-                let lsps = scyqu
-                    .read_03_lsp_only(ks.clone(), series_info.clone(), msp.clone(), scyopts.clone())
-                    .await?;
-                debug!("{selfname}  {clt}  {kst}  lsps len {}", lsps.len());
-                let i = if let Some(end) = end {
-                    lsps.partition_point(|x| *x < end)
-                } else {
-                    lsps.len()
-                };
-                if i > lsps.len() {
-                    warn!("{selfname}  {clt}  {kst}  bad partition point");
+        if scyopts2.lsp_lst_concurrent != 0 {
+            let futs = msps.iter().map({
+                let series_info = series_info.clone();
+                let ks = ks.clone();
+                let scyopts = scyopts.clone();
+                let scyqu = scyqu.clone();
+                let clt = clt.clone();
+                let kst = kst.clone();
+                move |msp: &MspEv| {
+                    let msp = *msp;
+                    let series_info = series_info.clone();
+                    let ks = ks.clone();
+                    let scyopts = scyopts.clone();
+                    let scyqu = scyqu.clone();
+                    let clt = clt.clone();
+                    let kst = kst.clone();
+                    async move {
+                        let end = if let Some(end) = end {
+                            let x = if let Some(x) = msp.lsp(end) {
+                                x
+                            } else {
+                                return Err(Error::LspImpossible);
+                            };
+                            Some(x)
+                        } else {
+                            None
+                        };
+                        if scyopts2.avoid_order_desc {
+                            let lsps = scyqu
+                                .read_03_lsp_only(ks.clone(), series_info.clone(), msp.clone(), scyopts.clone())
+                                .await?;
+                            debug!("{selfname}  {clt}  {kst}  lsps len {}", lsps.len());
+                            let i = if let Some(end) = end {
+                                lsps.partition_point(|x| *x < end)
+                            } else {
+                                lsps.len()
+                            };
+                            if i > lsps.len() {
+                                warn!("{selfname}  {clt}  {kst}  bad partition point");
+                            }
+                            Ok((msp, lsps.get(i - 1).cloned()))
+                        } else {
+                            let lsp = scyqu
+                                .read_03_lsp_lst(ks.clone(), series_info.clone(), msp.clone(), end, scyopts.clone())
+                                .await?;
+                            Ok((msp, lsp))
+                        }
+                    }
                 }
-                lsps_a.push_back((*msp, lsps.get(i - 1).cloned()));
-            } else {
-                let x = scyqu
-                    .read_03_lsp_lst(ks.clone(), series_info.clone(), msp.clone(), end, scyopts.clone())
-                    .await?;
-                lsps_a.push_back((*msp, x));
+            });
+            let futs: Vec<_> = futs.collect();
+            let futs = futures_util::stream::iter(futs);
+            let mut it = futs.buffer_unordered(scyopts2.lsp_lst_concurrent);
+            let mut lsps_a = VecDeque::new();
+            while let Some(x) = it.next().await {
+                let x = x?;
+                lsps_a.push_back(x);
             }
+            let ret = Res1 { lsps_a };
+            Ok(ret)
+        } else {
+            for msp in msps.iter().copied().collect::<Vec<_>>() {
+                let end = if let Some(end) = end {
+                    let x = if let Some(x) = msp.lsp(end) {
+                        x
+                    } else {
+                        return Err(Error::LspImpossible);
+                    };
+                    Some(x)
+                } else {
+                    None
+                };
+                if scyopts2.avoid_order_desc {
+                    let lsps = scyqu
+                        .read_03_lsp_only(ks.clone(), series_info.clone(), msp.clone(), scyopts.clone())
+                        .await?;
+                    debug!("{selfname}  {clt}  {kst}  lsps len {}", lsps.len());
+                    let i = if let Some(end) = end {
+                        lsps.partition_point(|x| *x < end)
+                    } else {
+                        lsps.len()
+                    };
+                    if i > lsps.len() {
+                        warn!("{selfname}  {clt}  {kst}  bad partition point");
+                    }
+                    lsps_a.push_back((msp, lsps.get(i - 1).cloned()));
+                } else {
+                    let x = scyqu
+                        .read_03_lsp_lst(ks.clone(), series_info.clone(), msp.clone(), end, scyopts.clone())
+                        .await?;
+                    lsps_a.push_back((msp, x));
+                }
+            }
+            let ret = Res1 { lsps_a };
+            Ok(ret)
         }
-        let ret = Res1 { lsps_a };
-        Ok(ret)
     }
 }
 

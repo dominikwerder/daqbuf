@@ -52,6 +52,7 @@ use std::time::Duration;
 use std::time::Instant;
 use streams::lenframe::bytes_chunks_to_len_framed_str;
 use taskrun::tokio::time::timeout;
+use tracing::Level;
 
 macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
 macro_rules! info { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
@@ -195,6 +196,7 @@ struct LspFwdMspCompareCmd {
     cache_bypass_asc: Option<String>,
     cache_bypass_desc: Option<String>,
     avoid_order_desc: Option<String>,
+    lsp_lst_concurrent: Option<usize>,
 }
 
 impl LspFwdMspCompareCmd {
@@ -216,12 +218,14 @@ impl LspFwdMspCompareCmd {
             .flatten()
             .map(CacheBypass::from_bool);
         let avoid_order_desc = self.avoid_order_desc.as_ref().map(|x| x.parse().ok()).flatten();
+        let lsp_lst_concurrent = self.lsp_lst_concurrent;
         ScyllaOptsSubmit {
             msp_cache_bypass: asc,
             lsp_asc_cache_bypass: asc,
             lsp_desc_cache_bypass: desc,
             bins_fwd_cache_bypass: asc,
             avoid_order_desc,
+            lsp_lst_concurrent,
         }
     }
 }
@@ -247,6 +251,7 @@ struct LspMergeAllCmd {
     cache_bypass_asc: Option<String>,
     cache_bypass_desc: Option<String>,
     avoid_order_desc: Option<String>,
+    lsp_lst_concurrent: Option<usize>,
 }
 
 impl LspMergeAllCmd {
@@ -268,12 +273,14 @@ impl LspMergeAllCmd {
             .flatten()
             .map(CacheBypass::from_bool);
         let avoid_order_desc = self.avoid_order_desc.as_ref().map(|x| x.parse().ok()).flatten();
+        let lsp_lst_concurrent = self.lsp_lst_concurrent;
         ScyllaOptsSubmit {
             msp_cache_bypass: asc,
             lsp_asc_cache_bypass: asc,
             lsp_desc_cache_bypass: desc,
             bins_fwd_cache_bypass: asc,
             avoid_order_desc,
+            lsp_lst_concurrent,
         }
     }
 
@@ -1361,7 +1368,9 @@ impl LspFwdMspCompareCmd {
                                 RangeCompletableItem::RangeComplete => {}
                             },
                             StreamItem::Log(x) => {
-                                msgs.push(format!("{x:?}"));
+                                if x.level() <= Level::WARN {
+                                    msgs.push(format!("{x:?}"));
+                                }
                             }
                             StreamItem::Stats(x) => {
                                 msgs.push(format!("{x:?}"));
@@ -1421,7 +1430,9 @@ impl LspFwdMspCompareCmd {
                                 RangeCompletableItem::RangeComplete => {}
                             },
                             StreamItem::Log(x) => {
-                                msgs.push(format!("{x:?}"));
+                                if x.level() <= Level::WARN {
+                                    msgs.push(format!("{x:?}"));
+                                }
                             }
                             StreamItem::Stats(x) => {
                                 msgs.push(format!("{x:?}"));
