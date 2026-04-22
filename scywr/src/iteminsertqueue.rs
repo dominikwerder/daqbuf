@@ -12,7 +12,6 @@ use crate::store::DataStore;
 use bytes::BufMut;
 use futures_util::Future;
 use futures_util::FutureExt;
-use futures_util::TryFutureExt;
 use netpod::DtNano;
 use netpod::Shape;
 use netpod::TsMs;
@@ -29,12 +28,19 @@ use series::SeriesId;
 use std::fmt;
 use std::net::SocketAddrV4;
 use std::pin::Pin;
-use std::ptr::NonNull;
 use std::sync::Arc;
 use std::task::Context;
 use std::task::Poll;
 use std::time::Instant;
 use std::time::SystemTime;
+
+macro_rules! debug { ($($arg:tt)*) => { if true { log::debug!($($arg)*); } }; }
+macro_rules! trace { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
+
+fn _keep() {
+    debug!("");
+    trace!("");
+}
 
 autoerr::create_error_v1!(
     name(Error, "ScyllaItemInsertQueue"),
@@ -649,15 +655,8 @@ pub enum InsertFutKindDbgTag {
     Other,
 }
 
-#[pin_project::pin_project]
 pub struct InsertFut {
-    #[allow(unused)]
-    scy: Arc<ScySession>,
-    #[allow(unused)]
-    qu: Arc<PreparedStatement>,
     fut: Pin<Box<dyn Future<Output = Result<QueryResult, InsertFutError>> + Send>>,
-    // #[pin]
-    // fut: StackFuture<'static, Result<QueryResult, QueryError>, { 1024 * 3 }>,
 }
 
 impl InsertFut {
@@ -668,28 +667,21 @@ impl InsertFut {
         wid: Arc<InsertWorkerId>,
         tag: InsertFutKindDbgTag,
     ) -> Self {
-        let scy_ref = unsafe { NonNull::from(scy.as_ref()).as_ref() };
-        let qu_ref = unsafe { NonNull::from(qu.as_ref()).as_ref() };
-        let params_dbg = if DO_DEBUG_PARAMS {
-            format!("{params:?}")
-        } else {
-            "(hidden)".to_string()
+        let fut = async move {
+            if DO_DEBUG_PARAMS {
+                trace!("InsertFut  {} {:?} {:?}", wid.short_name(), tag, params);
+            }
+            let fut = scy.execute_unpaged(&qu, params);
+            let fut = taskrun::tokio::task::unconstrained(fut);
+            let res = fut.await?;
+            Ok::<_, InsertFutError>(res)
         };
-        let fut = scy_ref.execute_unpaged(qu_ref, params);
-        let fut = taskrun::tokio::task::unconstrained(fut);
-        let fut = fut.map_err(|e| e.into()).then(|x| async move {
-            log::debug!("{} {:?} {}", wid.short_name(), tag, params_dbg);
-            x
-        });
         let fut = Box::pin(fut);
-        // let _ff = StackFuture::from(fut);
-        Self { scy, qu, fut }
+        Self { fut }
     }
 
-    pub fn dummy(scy: Arc<ScySession>, qu: Arc<PreparedStatement>) -> Self {
+    pub fn dummy(_scy: Arc<ScySession>, _qu: Arc<PreparedStatement>) -> Self {
         Self {
-            scy,
-            qu,
             fut: Box::pin(async { Err(InsertFutError::NoFuture) }),
         }
     }
@@ -698,9 +690,8 @@ impl InsertFut {
 impl Future for InsertFut {
     type Output = Result<QueryResult, InsertFutError>;
 
-    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        let this = self.project();
-        this.fut.poll_unpin(cx)
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        self.fut.poll_unpin(cx)
     }
 }
 

@@ -30,6 +30,7 @@ macro_rules! warn { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
 macro_rules! info { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
 macro_rules! debug { ($($arg:tt)*) => { if true { log::debug!($($arg)*); } }; }
 macro_rules! trace { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
+macro_rules! trace2 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
 
 autoerr::create_error_v1!(
     name(Error, "FindIoc"),
@@ -662,13 +663,13 @@ impl FindIocStream {
         use Poll::*;
         let mut ret = Vec::new();
         loop {
-            debug!("{selfname}");
+            trace2!("{selfname}");
             let mut hpp = HaveProgressPending::new();
             if let Some(rx) = self.channels_input.as_mut() {
                 match rx.poll_next_unpin(cx) {
                     Ready(Some(item)) => {
                         hpp.mark_progress();
-                        debug!("{selfname}  {}", item.0);
+                        trace!("{selfname}  {}", item.0);
                         ret.push(item);
                     }
                     Ready(None) => {
@@ -747,7 +748,7 @@ impl Stream for FindIocStream {
         }
         // self.thr_msg_0.trigger("FindIocStream::poll_next", &[]);
         loop {
-            debug!("FindIocStream::poll_next");
+            trace!("FindIocStream::poll_next");
             let mut hpp = HaveProgressPending::new();
             if let Some(fut) = self.ping.as_mut() {
                 match fut.poll_unpin(cx) {

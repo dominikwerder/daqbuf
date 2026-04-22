@@ -522,9 +522,18 @@ fn make_routes_conn2(ca_ingest_ctrls: Arc<dyn CaIngestCtrls>) -> axum::Router {
                 || async move {
                     if let Some(c2) = ca_ingest_ctrls.conn2_ctrls().await {
                         let ret = c2.connection_list_get_v1().await.unwrap();
-                        axum::Json(serde_json::to_value(&ret).unwrap())
+                        // http://127.0.0.1:36153
+                        (
+                            StatusCode::OK,
+                            [(http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")],
+                            axum::Json(serde_json::to_value(&ret).unwrap()),
+                        )
                     } else {
-                        axum::Json(json!({"error": "no ctrl"}))
+                        (
+                            StatusCode::OK,
+                            [(http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")],
+                            axum::Json(json!({"error": "no ctrl"})),
+                        )
                     }
                 }
             }),
