@@ -77,12 +77,12 @@ impl ByteEstimate for ConnStatusEvent {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub enum ChannelStatus {
+pub enum ChannelStatusPubApi {
     Connect,
     Disconnect,
 }
 
-impl ChannelStatus {
+impl ChannelStatusPubApi {
     pub fn from_ca_ingest_status_kind(k: u32) -> Self {
         match k {
             1 => Self::Connect,
@@ -95,7 +95,7 @@ impl ChannelStatus {
 pub struct ChannelStatusEvents {
     pub tss: VecDeque<u64>,
     pub datetimes: VecDeque<IsoDateTime>,
-    pub statuses: VecDeque<ChannelStatus>,
+    pub statuses: VecDeque<ChannelStatusPubApi>,
 }
 
 impl Empty for ChannelStatusEvents {
@@ -132,11 +132,11 @@ pub struct ChannelStatusEvent {
     #[serde(with = "humantime_serde")]
     //pub datetime: chrono::DateTime<chrono::Utc>,
     pub datetime: SystemTime,
-    pub status: ChannelStatus,
+    pub status: ChannelStatusPubApi,
 }
 
 impl ChannelStatusEvent {
-    pub fn new(ts: u64, status: ChannelStatus) -> Self {
+    pub fn new(ts: u64, status: ChannelStatusPubApi) -> Self {
         let datetime = SystemTime::UNIX_EPOCH + Duration::from_millis(ts / 1000000);
         Self {
             ts,
