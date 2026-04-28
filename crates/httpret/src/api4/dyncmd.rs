@@ -1557,6 +1557,7 @@ impl LspMergeAllCmd {
         };
         let chi = pgqu.chconf_for_series(&cmd.backend, series_id.id()).await??;
         let series_info = SeriesInfo::from(&chi);
+        debug!("series_info {series_info:?}");
         let range = netpod::range::evrange::NanoRange::from(range);
         let range = ScyllaSeriesRange::new(range.beg_ts(), range.end_ts());
         reqfeat!("sse");

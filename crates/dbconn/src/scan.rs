@@ -435,15 +435,17 @@ async fn update_db_with_all_channel_configs_inner(
 pub async fn update_db_with_all_channel_configs(
     node_config: NodeConfigCached,
 ) -> Result<Pin<Box<Receiver<Result<UpdatedDbWithAllChannelConfigs, Error>>>>, Error> {
+    let selfname = "update_db_with_all_channel_configs";
     let (tx, rx) = bounded(16);
     let tx2 = tx.clone();
     let tx3 = tx.clone();
     let block1 = update_db_with_all_channel_configs_inner(tx, node_config).then({
         |item| async move {
+            let selfname = "update_db_with_all_channel_configs/closure";
             match item {
                 Ok(_) => {}
                 Err(e) => {
-                    let msg = format!("Seeing error: {:?}", e);
+                    let msg = format!("{selfname}  error  {e}");
                     let ret = UpdatedDbWithAllChannelConfigs { msg, count: 0 };
                     tx2.send(Ok(ret)).await.err_conv()?;
                 }
@@ -457,7 +459,7 @@ pub async fn update_db_with_all_channel_configs(
             Err(e) => match tx3.send(Err(e)).await {
                 Ok(_) => {}
                 Err(e) => {
-                    error!("can not deliver error through channel: {:?}", e);
+                    error!("{selfname}  can not deliver error through channel: {e}");
                 }
             },
         }
@@ -467,11 +469,12 @@ pub async fn update_db_with_all_channel_configs(
 }
 
 pub async fn update_search_cache(node_config: &NodeConfigCached) -> Result<bool, Error> {
+    let selfname = "update_search_cache";
     let (dbc, _pgjh) = create_connection(&node_config.node_config.cluster.database).await?;
     dbc.query("select update_cache()", &[])
         .await
         .err_conv()
-        .map_err(|e| format!("error update_search_cache: {e}"))?;
+        .map_err(|e| format!("{selfname}  error  {e}"))?;
     Ok(true)
 }
 
@@ -492,6 +495,7 @@ async fn update_db_with_channel_config(
     count_inserted: &mut usize,
     count_updated: &mut usize,
 ) -> Result<UpdateChannelConfigResult, Error> {
+    let selfname = "update_db_with_channel_config";
     let base_path = &node_config
         .node
         .sf_databuffer
@@ -518,8 +522,11 @@ async fn update_db_with_channel_config(
         )
         .await
         .err_conv()?;
+    let dbg_params = [&node_disk_ident.rowid(), &channel_id];
     if rows.len() > 1 {
-        return Err(Error::with_msg("more than one row"));
+        return Err(Error::with_msg(format!(
+            "{selfname}  more than one row  {dbg_params:?}"
+        )));
     }
     let (config_id, do_parse) = if let Some(row) = rows.first() {
         let rowid: i64 = row.get(0);
@@ -534,9 +541,8 @@ async fn update_db_with_channel_config(
             dbc.query(sql, &[&rowid])
                 .await
                 .err_conv()
-                .map_err(|e| format!("on config history insert {e}"))?;
+                .map_err(|e| format!("{selfname}  insert into configs_history  rowid {rowid}  {e}"))?;
         }
-        //ensure!(meta.len() >= parsed_until as u64, ConfigFileOnDiskShrunk{path});
         (Some(rowid), true)
     } else {
         (None, true)
@@ -546,6 +552,12 @@ async fn update_db_with_channel_config(
         let config = parse::channelconfig::parse_config(&buf).map_err(|e| Error::from(e.to_string()))?;
         match config_id {
             None => {
+                let dbg_params = [
+                    &node_disk_ident.rowid(),
+                    &channel_id,
+                    &(meta.len() as i64),
+                    &(buf.len() as i64),
+                ];
                 dbc.query(
                     "insert into configs (node, channel, fileSize, parsedUntil, config) values ($1, $2, $3, $4, $5) on conflict (node, channel) do update set fileSize = $3, parsedUntil = $4, config = $5",
                     &[
@@ -555,10 +567,16 @@ async fn update_db_with_channel_config(
                         &(buf.len() as i64),
                         &serde_json::to_value(config)?,
                     ],
-                ).await.err_conv().map_err(|e| format!("on config insert {e}"))?;
+                ).await.err_conv().map_err(|e| format!("{selfname}  on config insert  {dbg_params:?}  {e}"))?;
                 *count_inserted += 1;
             }
             Some(_config_id) => {
+                let dbg_params = [
+                    &node_disk_ident.rowid(),
+                    &channel_id,
+                    &(meta.len() as i64),
+                    &(buf.len() as i64),
+                ];
                 dbc.query(
                     "update configs set fileSize = $3, parsedUntil = $4, config = $5 where node = $1 and channel = $2",
                     &[
@@ -571,7 +589,7 @@ async fn update_db_with_channel_config(
                 )
                 .await
                 .err_conv()
-                .map_err(|e| format!("on config update {e}"))?;
+                .map_err(|e| format!("{selfname}  on config update  {dbg_params:?}  {e}"))?;
                 *count_updated += 1;
             }
         }

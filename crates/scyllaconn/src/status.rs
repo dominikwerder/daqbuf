@@ -5,16 +5,16 @@ use futures_util::Future;
 use futures_util::FutureExt;
 use futures_util::Stream;
 use futures_util::TryStreamExt;
-use items_0::isodate::IsoDateTime;
 use items_0::Empty;
 use items_0::Extendable;
 use items_0::WithLen;
-use items_2::channelevents::ChannelStatus;
+use items_0::isodate::IsoDateTime;
 use items_2::channelevents::ChannelStatusEvents;
+use items_2::channelevents::ChannelStatusPubApi;
+use netpod::CONNECTION_STATUS_DIV;
 use netpod::log::*;
 use netpod::range::evrange::NanoRange;
 use netpod::timeunits::MS;
-use netpod::CONNECTION_STATUS_DIV;
 use scylla::client::session::Session as ScySession;
 use std::collections::VecDeque;
 use std::pin::Pin;
@@ -44,11 +44,7 @@ async fn read_next_status_events(
         let ts_lsp_max = if ts_msp < range.end { range.end - ts_msp } else { 0 };
         trace!(
             "FWD  ts_msp {}  ts_lsp_min {}  ts_lsp_max {}  beg {}  end {}",
-            ts_msp,
-            ts_lsp_min,
-            ts_lsp_max,
-            range.beg,
-            range.end
+            ts_msp, ts_lsp_min, ts_lsp_max, range.beg, range.end
         );
         // TODO use prepared!
         let cql = concat!(
@@ -85,7 +81,7 @@ async fn read_next_status_events(
         let ts = ts_msp + row.0 as u64;
         let kind = row.1 as u32;
         let datetime = IsoDateTime::from_unix_millis(ts / MS);
-        let status = ChannelStatus::from_ca_ingest_status_kind(kind);
+        let status = ChannelStatusPubApi::from_ca_ingest_status_kind(kind);
         if ts >= range.end {
         } else if ts >= range.beg {
             ret.tss.push_back(ts);
