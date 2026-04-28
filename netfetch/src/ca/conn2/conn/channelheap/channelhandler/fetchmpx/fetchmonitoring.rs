@@ -130,7 +130,7 @@ impl FetchMonitoring {
         (b * dur) / a
     }
 
-    pub fn transition_to_enable(&mut self) -> Result<(), Error> {
+    pub fn transition_to_enable(&mut self) -> () {
         self.llog.push(format!("transition_to_enable  {}", self.state));
         match &mut self.state {
             State::DoNothing(..) => {
@@ -150,10 +150,9 @@ impl FetchMonitoring {
                 *stdir = StateDirection::Enable;
             }
         }
-        Ok(())
     }
 
-    pub fn transition_to_disable(&mut self) -> Result<(), Error> {
+    pub fn transition_to_disable(&mut self) -> () {
         self.llog.push(format!("transition_to_disable  {}", self.state));
         match &mut self.state {
             State::DoNothing() => {}
@@ -169,7 +168,6 @@ impl FetchMonitoring {
             State::RemoveMonitorSend(..) => {}
             State::RemoveMonitorRecv(..) => {}
         }
-        Ok(())
     }
 
     pub fn inp_push_try(&mut self, item: ProtoRxItem) -> Option<ProtoRxItem> {

@@ -509,6 +509,33 @@ impl ChannelHeap {
         ret
     }
 
+    pub fn channels_by_regex_v1(&mut self, kind: String, reg: String) -> Vec<serde_json::Value> {
+        let mut ret = Vec::new();
+        let re1 = match regex::Regex::new(&reg) {
+            Ok(x) => x,
+            Err(_) => return ret,
+        };
+        match &mut self.state {
+            State::Running => {
+                self.by_cid
+                    .iter_mut()
+                    .map(|(_, che)| che)
+                    .filter(move |che| re1.is_match(&che.name))
+                    .map(|che| match &mut che.ch_handler {
+                        ChHandler::ChHandlerActive(hh) => {
+                            let x = hh.handler.channel_info_v2();
+                            let x = serde_json::to_value(&x).unwrap();
+                            ret.push(x);
+                        }
+                        ChHandler::Done => {}
+                    })
+                    .for_each(|_| {});
+            }
+            State::Done => {}
+        }
+        ret
+    }
+
     pub fn mett_take(&mut self) -> CaConnConnectedMetrics {
         for (cid, ee) in self.by_cid.iter_mut() {
             match &mut ee.ch_handler {
@@ -627,6 +654,10 @@ impl ChannelHeap {
                                 }
                                 channelhandler::ItemInner::TestValue(x) => PollHandlerItem::TestValue(x),
                                 channelhandler::ItemInner::LocalLog(x) => PollHandlerItem::LocalLog(x),
+                                channelhandler::ItemInner::ChannelStatus(x) => {
+                                    warn!("{selfname}  TODO  do something with received {x:?}");
+                                    PollHandlerItem::None
+                                }
                             };
                             break Ready(Some(Ok(item)));
                         }
@@ -987,7 +1018,7 @@ impl ChannelHeap {
                     .filter_map(|x| x)
                     .collect();
                 let fut = async move {
-                    let selfname = "handle_command:RemoveChannel:fut";
+                    let selfname = "{selfname}  RemoveChannel  fut";
                     for mut tx in handler_txs {
                         let (inner_done_tx, mut inner_done_rx) =
                             asynchan::bounded(4, "ChannelHeap-ChannelHandler-done-tx");
@@ -1006,7 +1037,7 @@ impl ChannelHeap {
                         // TODO handle
                     }
                     let donecb = |cheap: &mut ChannelHeap| {
-                        let selfname = "handle_command:RemoveChannel:fut:donecb";
+                        let selfname = "{selfname}  RemoveChannel  fut  donecb";
                         error!("{selfname}  TODO impl donecb");
                         for cid in cids {
                             cheap.remove_cid(cid);

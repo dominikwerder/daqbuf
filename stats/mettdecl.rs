@@ -4,6 +4,8 @@ mod Metrics {
         monitor_read_expected,
         read_notify_send,
         read_notify_recv,
+        event_add_recv,
+        chan_tx_err,
     }
 }
 

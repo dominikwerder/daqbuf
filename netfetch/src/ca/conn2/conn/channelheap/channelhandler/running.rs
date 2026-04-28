@@ -1,39 +1,26 @@
-use super::super::super::channelheap;
 use super::fetchmpx::Fetchmpx;
 use crate::ca::conn2::asynchan2 as asynchan;
 use crate::ca::conn2::caids::CaDbrTy;
-use crate::ca::conn2::caids::Cid;
-use crate::ca::conn2::caids::Ioid;
 use crate::ca::conn2::caids::Sid;
-use crate::ca::conn2::caids::SubidOwned;
 use crate::ca::conn2::conn::channelheap::ProtoRxItem;
 use crate::ca::conn2::conn::channelheap::channelhandler::fetchmpx;
 use crate::ca::conn2::locallog;
-use crate::ca::conn2::timeoutable;
 use crate::ca::progpend::HaveProgressPending;
 use crate::conf::ChannelConfig;
-use crate::futwrap::FutDbg;
-use crate::futwrap::FutDbgBox;
 use ca_proto::ca::proto;
 use ca_proto::ca::proto::CaMsg;
-use ca_proto::ca::proto::CaMsgTy;
-use channelheap::channelhandler::ChannelHandlerItem;
-use channelheap::channelhandler::ItemInner;
 use dbpg::seriesbychannel::ChannelInfoResult;
-use futures::FutureExt;
 use futures::Stream;
 use futures::StreamExt;
-use futures::TryFutureExt;
 use netpod::ScalarType;
 use netpod::Shape;
+use netpod::channelstatus::ChannelStatus;
 use stats::mett::ChannelHandlerMetrics;
 use std::collections::VecDeque;
 use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
-use std::time::Duration;
 use std::time::Instant;
-use taskrun::tokio;
 
 macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
 macro_rules! warn { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
@@ -44,6 +31,11 @@ macro_rules! trace2 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; 
 macro_rules! trace3 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
 macro_rules! trace4 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
 macro_rules! trace_pending { ($($arg:tt)*) => { if false { trace!("{}  Pending", format_args!($($arg)*)); } }; }
+
+fn _keep() {
+    info!("");
+    trace2!("");
+}
 
 autoerr::create_error_v1!(
     name(Error, "ChannelHandlerRunning"),
@@ -79,6 +71,7 @@ pub enum RunningItem {
     ScyllaWrite,
     TestValue(crate::ca::connset2::connset::TestValue),
     LocalLog(locallog::Entry),
+    ChannelStatus(ChannelStatus),
 }
 
 #[derive(Debug)]
@@ -110,13 +103,21 @@ pub struct Running {
 }
 
 impl Running {
-    pub fn new(sid: Sid, scalar_type: ScalarType, shape: Shape, ca_dbr_ty: CaDbrTy, chi: ChannelInfoResult) -> Self {
+    pub fn new(
+        sid: Sid,
+        scalar_type: ScalarType,
+        shape: Shape,
+        ca_dbr_ty: CaDbrTy,
+        chi: ChannelInfoResult,
+        chconf: ChannelConfig,
+    ) -> Self {
         Self {
             state: State::Normal(Fetchmpx::new(
                 sid.clone(),
                 scalar_type.clone(),
                 shape.clone(),
                 ca_dbr_ty.clone(),
+                chconf,
             )),
             sid,
             chi,
@@ -184,7 +185,7 @@ impl Running {
         }
     }
 
-    fn poll_inp_dispatch(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Result<(), Error>>> {
+    fn poll_inp_dispatch(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Result<(), Error>>> {
         let selfname = "poll_inp_dispatch";
         use Poll::*;
         loop {
@@ -313,6 +314,13 @@ impl Stream for Running {
                                 fetchmpx::FetchmpxItem::LocalLog(x) => {
                                     let g = RunningItem::LocalLog(x);
                                     break Ready(Some(Ok(g)));
+                                }
+                                fetchmpx::FetchmpxItem::ChannelStatus(x) => {
+                                    let g = RunningItem::ChannelStatus(x);
+                                    break Ready(Some(Ok(g)));
+                                }
+                                fetchmpx::FetchmpxItem::InputDone => {
+                                    info!("got FetchmpxItem::InputDone  but that's just a notice");
                                 }
                             }
                         }

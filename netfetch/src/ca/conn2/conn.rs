@@ -205,6 +205,16 @@ struct Connecting {
     ca_cmd_rx: asynchan::Receiver<activeca::CaCommand>,
 }
 
+impl Connecting {
+    async fn handle_channel_handler_cmd(&mut self, cmd: ChannelHandlerCmd) -> Result<serde_json::Value, Error> {
+        use serde_json::json;
+        let ret = json!({
+            "TODO": "Connecting",
+        });
+        Ok(ret)
+    }
+}
+
 impl Future for Connecting {
     type Output = Result<tokio::net::TcpStream, Error>;
 
@@ -215,7 +225,6 @@ impl Future for Connecting {
 
 #[derive(Debug)]
 pub struct ChannelHandlerCmd {
-    name: String,
     cmd: serde_json::Value,
     tx: asynchan::Sender<serde_json::Value>,
 }
@@ -306,33 +315,23 @@ impl CaConnComm {
 
     pub async fn channel_handler_cmd(&mut self, cmd: serde_json::Value) -> serde_json::Value {
         let (tx, mut rx) = asynchan::bounded(1, "CaConnComm-ChannelHandlerCmd");
-        if let Some(name) = cmd.get("name").and_then(|x| x.as_str()) {
-            let cmd = ChannelHandlerCmd {
-                name: name.into(),
-                cmd,
-                tx,
-            };
-            let cmd = CaConnCmd {
-                kind: CaConnCmdKind::ChannelHandlerCmd(cmd),
-            };
-            if self.cmd_tx.send(cmd).await.is_err() {
-                serde_json::json!({
-                    "error": "can not send command",
-                })
-            } else {
-                match rx.recv().await {
-                    Ok(x) => x,
-                    Err(_) => {
-                        serde_json::json!({
-                            "error": "can not receive result",
-                        })
-                    }
+        let cmd = ChannelHandlerCmd { cmd, tx };
+        let cmd = CaConnCmd {
+            kind: CaConnCmdKind::ChannelHandlerCmd(cmd),
+        };
+        if self.cmd_tx.send(cmd).await.is_err() {
+            serde_json::json!({
+                "error": "can not send command",
+            })
+        } else {
+            match rx.recv().await {
+                Ok(x) => x,
+                Err(_) => {
+                    serde_json::json!({
+                        "error": "can not receive result",
+                    })
                 }
             }
-        } else {
-            serde_json::json!({
-                "error": "no channel name in command",
-            })
         }
     }
 }
@@ -519,6 +518,14 @@ impl CaConn {
             State::Done => Vec::new(),
         }
     }
+
+    fn handle_channel_command(
+        &mut self,
+        cmd: serde_json::Value,
+        tx: asynchan::Sender<serde_json::Value>,
+        futbox: &mut Option<FutDbg<Result<(), Error>>>,
+    ) -> serde_json::Value {
+    }
 }
 
 macro_rules! handle_poll_res {
@@ -618,16 +625,8 @@ impl Stream for CaConn {
                                 }
                                 CaConnCmdKind::ChannelHandlerCmd(cmd) => {
                                     trace!("{selfname}:Received:ChannelHandlerCmd  {cmd:?}");
-                                    match &mut self2.state {
-                                        State::Connecting(st1) => {
-                                            warn!("TODO handle cmd while Connecting {cmd:?}");
-                                        }
-                                        State::Connected(st1) => {
-                                            st1.handle_channel_handler_cmd(cmd);
-                                            // self2.ca_cmd_tx_fut = Some(fut.box2());
-                                        }
-                                        State::Done => {}
-                                    }
+                                    let mut tx = cmd.tx;
+                                    self2.handle_channel_command(cmd.cmd, tx, &mut self2.ca_cmd_tx_fut);
                                 }
                                 CaConnCmdKind::ChannelsForAddrInfoV1(mut tx) => {
                                     trace!("{selfname}:Received:ChannelsForAddrInfoV1");

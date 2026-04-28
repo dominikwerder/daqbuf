@@ -229,19 +229,26 @@ impl Connected {
         }
     }
 
-    pub fn handle_channel_handler_cmd(&mut self, cmd: super::ChannelHandlerCmd) {
+    pub async fn handle_channel_handler_cmd(
+        &mut self,
+        cmd: super::ChannelHandlerCmd,
+    ) -> Result<serde_json::Value, Error> {
         match &mut self.state {
             State::Init(..) => {
                 warn!("TODO handle while in Init {cmd:?}");
+                Ok(())
             }
             State::Handshake(..) => {
                 warn!("TODO handle while in Handshake {cmd:?}");
+                Ok(())
             }
             State::ActiveCa(st, ..) => {
                 st.handle_channel_handler_cmd(cmd);
+                Ok(())
             }
             State::Done => {
                 warn!("TODO handle while in Done {cmd:?}");
+                Ok(())
             }
         }
     }

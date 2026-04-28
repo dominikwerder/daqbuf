@@ -10,19 +10,19 @@ use crate::ca::conn2::conn::channelheap::channelhandler::fetchmpx::fetchmonitori
 use crate::ca::conn2::conn::channelheap::channelhandler::fetchmpx::fetchpolling::FetchPolling;
 use crate::ca::conn2::locallog;
 use crate::ca::progpend::HaveProgressPending;
+use crate::conf::ChannelConfig;
 use ca_proto::ca::proto;
 use futures::Stream;
 use netpod::ScalarType;
 use netpod::Shape;
+use netpod::channelstatus::ChannelStatus;
 use serde::Deserialize;
 use stats::mett::ChannelHandlerMetrics;
 use std::collections::VecDeque;
 use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
-use std::time::Duration;
 use std::time::Instant;
-use taskrun::tokio;
 
 macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
 macro_rules! warn { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
@@ -34,14 +34,15 @@ macro_rules! trace3 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; 
 macro_rules! trace4 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
 macro_rules! trace_pending { ($($arg:tt)*) => { if false { trace!("{}  Pending", format_args!($($arg)*)); } }; }
 
+fn _keep() {
+    info!("");
+}
+
 autoerr::create_error_v1!(
     name(Error, "ChannelHandlerRunning"),
     enum variants {
-        // Register(#[from] dbpg::seriesbychannel::Error),
         CreateMonitorUnexpectedMessage,
         Recv,
-        Timeout,
-        Logic,
     },
 );
 
@@ -73,6 +74,12 @@ where
     Box::new(f)
 }
 
+#[allow(unused)]
+fn _cb_tmp() {
+    let _ = make_cb(|_| ());
+    let _ = make_cb2(|_| ());
+}
+
 #[derive(Debug)]
 pub enum FetchmpxItem {
     CaMsgOut(proto::CaMsg),
@@ -81,6 +88,8 @@ pub enum FetchmpxItem {
     ScyllaWrite,
     TestValue(crate::ca::connset2::connset::TestValue),
     LocalLog(locallog::Entry),
+    ChannelStatus(ChannelStatus),
+    InputDone,
 }
 
 #[derive(Debug)]
@@ -115,11 +124,14 @@ pub struct Fetchmpx {
 }
 
 impl Fetchmpx {
-    pub fn new(sid: Sid, scalar_type: ScalarType, shape: Shape, ca_dbr_ty: CaDbrTy) -> Self {
+    pub fn new(sid: Sid, scalar_type: ScalarType, shape: Shape, ca_dbr_ty: CaDbrTy, chconf: ChannelConfig) -> Self {
         let mut polling = FetchPolling::new(sid.clone(), scalar_type.clone(), shape.clone(), ca_dbr_ty.clone());
         let mut monitoring = FetchMonitoring::new(sid.clone(), scalar_type.clone(), shape.clone(), ca_dbr_ty.clone());
-        // polling.transition_to_enable();
-        monitoring.transition_to_enable();
+        if chconf.is_polled() {
+            polling.transition_to_enable();
+        } else {
+            monitoring.transition_to_enable();
+        }
         Self {
             state: State::Normal,
             sid,
@@ -133,9 +145,11 @@ impl Fetchmpx {
     }
 
     fn trigger_closing(&mut self, reason: channelhandler::ClosingReason) {
+        let selfname = "trigger_closing";
+        trace2!("{selfname}  {}  {:?}", self.sid, reason);
         match &mut self.state {
             State::Normal => {
-                warn!("TODO collect all information that we want to store or log and move into future");
+                warn!("{selfname}  TODO collect all information that we want to store or log and move into future");
                 self.state = State::Closing1;
             }
             State::Closing1 => {}
@@ -150,8 +164,10 @@ impl Fetchmpx {
 
     pub fn handle_channel_handler_cmd(&mut self, mut cmd: super::super::super::ChannelHandlerCmd) {
         use serde_json::json;
+        let selfname = "handle_channel_handler_cmd";
         match &mut self.state {
             State::Normal => {
+                #[allow(unused)]
                 #[derive(Debug, Deserialize)]
                 struct CmdTmp {
                     #[serde(rename = "type")]
@@ -163,22 +179,30 @@ impl Fetchmpx {
                     Ok(x) => {
                         if x.fetchmpx == "polling_disable" {
                             self.polling.transition_to_disable();
-                            cmd.tx.try_send(json!({"done":"polling_disable"}));
+                            if cmd.tx.try_send(json!({"done":"polling_disable"})).is_err() {
+                                self.mett.chan_tx_err().inc();
+                            }
                         } else if x.fetchmpx == "polling_enable" {
                             self.polling.transition_to_enable();
-                            cmd.tx.try_send(json!({"done":"polling_enable"}));
+                            if cmd.tx.try_send(json!({"done":"polling_enable"})).is_err() {
+                                self.mett.chan_tx_err().inc();
+                            }
                         } else if x.fetchmpx == "monitoring_disable" {
                             self.monitoring.transition_to_disable();
-                            cmd.tx.try_send(json!({"done":"monitoring_disable"}));
+                            if cmd.tx.try_send(json!({"done":"monitoring_disable"})).is_err() {
+                                self.mett.chan_tx_err().inc();
+                            }
                         } else if x.fetchmpx == "monitoring_enable" {
                             self.monitoring.transition_to_enable();
-                            cmd.tx.try_send(json!({"done":"monitoring_enable"}));
+                            if cmd.tx.try_send(json!({"done":"monitoring_enable"})).is_err() {
+                                self.mett.chan_tx_err().inc();
+                            }
                         } else {
                             warn!("TODO handle while in {} {:?}", self.state.str(), cmd);
                         }
                     }
                     Err(e) => {
-                        warn!("TODO handle while in {} {:?}", self.state.str(), cmd);
+                        warn!("{selfname}  can not parse cmd  {}  {:?}  {e}", self.state.str(), cmd);
                     }
                 }
             }
@@ -212,7 +236,10 @@ impl Fetchmpx {
         self.monitoring.inp_done();
     }
 
-    fn poll_inp_dispatch(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Result<(), Error>>> {
+    fn poll_inp_dispatch(
+        mut self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<Option<FetchmpxItem>, Error>>> {
         let selfname = "poll_inp_dispatch";
         trace3!("{selfname}");
         use Poll::*;
@@ -226,19 +253,16 @@ impl Fetchmpx {
                         match &item.msg.ty {
                             proto::CaMsgTy::EventAddRes(_)
                             | proto::CaMsgTy::EventAddResEmpty(_)
-                            | proto::CaMsgTy::EventCancelRes(_) => {
-                                match self2.monitoring.inp_push_try(item) {
-                                    Some(x) => {
-                                        hpp.mark_pending();
-                                        self2.inp_buf.push_front(x);
-                                    }
-                                    None => {
-                                        hpp.mark_progress();
-                                        // TODO count
-                                        // self2.mett.read_notify_recv().inc();
-                                    }
+                            | proto::CaMsgTy::EventCancelRes(_) => match self2.monitoring.inp_push_try(item) {
+                                Some(x) => {
+                                    hpp.mark_pending();
+                                    self2.inp_buf.push_front(x);
                                 }
-                            }
+                                None => {
+                                    hpp.mark_progress();
+                                    self2.mett.event_add_recv().inc();
+                                }
+                            },
                             proto::CaMsgTy::ReadNotifyRes(_) => match self2.polling.inp_push_try(item) {
                                 Some(x) => {
                                     hpp.mark_pending();
@@ -250,15 +274,16 @@ impl Fetchmpx {
                                 }
                             },
                             _ => {
-                                debug!("{selfname}  TODO  handle  {item:?}");
+                                warn!("{selfname}  unexpected  {item:?}");
                                 let e = Error::CreateMonitorUnexpectedMessage;
                                 return Ready(Some(Err(e)));
                             }
                         }
                     } else if self2.inp_done {
                         hpp.mark_progress();
-                        // TODO status event about this specific case
                         self2.trigger_closing(channelhandler::ClosingReason::InputDone);
+                        let item = FetchmpxItem::InputDone;
+                        break Ready(Some(Ok(Some(item))));
                     } else {
                         hpp.mark_pending();
                     }
@@ -299,14 +324,21 @@ impl Stream for Fetchmpx {
             match &mut self2.state {
                 State::Normal => {
                     match self.as_mut().poll_inp_dispatch(cx) {
-                        Ready(Some(x)) => match x {
-                            Ok(()) => {}
-                            Err(e) => {
-                                error!("TODO handle error {e}");
-                                self.state = State::Done;
-                                hpp.mark_progress();
+                        Ready(Some(x)) => {
+                            hpp.mark_progress();
+                            match x {
+                                Ok(x) => match x {
+                                    Some(x) => {
+                                        break Ready(Some(Ok(x)));
+                                    }
+                                    None => {}
+                                },
+                                Err(e) => {
+                                    error!("TODO handle error {e}");
+                                    self.state = State::Done;
+                                }
                             }
-                        },
+                        }
                         Ready(None) => {}
                         Pending => {
                             hpp.mark_pending();

@@ -508,6 +508,7 @@ fn make_routes_daqingest_private(
                 axum::Json(json!({"ts":s}))
             }),
         )
+        .layer(tower_http::cors::CorsLayer::new().allow_origin(tower_http::cors::Any))
 }
 
 fn make_routes_conn2(ca_ingest_ctrls: Arc<dyn CaIngestCtrls>) -> axum::Router {
@@ -522,16 +523,15 @@ fn make_routes_conn2(ca_ingest_ctrls: Arc<dyn CaIngestCtrls>) -> axum::Router {
                 || async move {
                     if let Some(c2) = ca_ingest_ctrls.conn2_ctrls().await {
                         let ret = c2.connection_list_get_v1().await.unwrap();
-                        // http://127.0.0.1:36153
                         (
                             StatusCode::OK,
-                            [(http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")],
+                            [("x-test-01", "none")],
                             axum::Json(serde_json::to_value(&ret).unwrap()),
                         )
                     } else {
                         (
                             StatusCode::OK,
-                            [(http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")],
+                            [("x-test-01", "none")],
                             axum::Json(json!({"error": "no ctrl"})),
                         )
                     }

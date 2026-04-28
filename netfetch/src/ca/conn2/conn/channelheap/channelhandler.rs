@@ -3,25 +3,18 @@ mod fetchmpx;
 mod running;
 
 use crate::ca::conn2::asynchan;
-use crate::ca::conn2::caids::CaDbrTy;
 use crate::ca::conn2::caids::Cid;
 use crate::ca::conn2::caids::CidOwned;
-use crate::ca::conn2::caids::Ioid;
 use crate::ca::conn2::caids::Sid;
-use crate::ca::conn2::caids::Subid;
-use crate::ca::conn2::caids::SubidOwned;
 use crate::ca::conn2::conn::channelheap::ProtoRxItem;
 use crate::ca::conn2::conn::channelheap::channelhandler::create::Creating;
 use crate::ca::conn2::conn::channelheap::channelhandler::running::Running;
 use crate::ca::conn2::locallog;
 use crate::ca::conn2::timeoutable;
-use crate::ca::futstack::ErasedFuture;
 use crate::ca::progpend::HaveProgressPending;
 use crate::conf::ChannelConfig;
 use crate::futwrap::FutDbg;
 use crate::futwrap::FutDbgBox;
-use asynchan::SendPoll;
-use asynchan::SendPollError;
 use ca_proto::ca::proto;
 use ca_proto::ca::proto::CaMsg;
 use ca_proto::ca::proto::CaMsgTy;
@@ -29,8 +22,7 @@ use futures::FutureExt;
 use futures::Stream;
 use futures::StreamExt;
 use hashbrown::HashMap;
-use netpod::ScalarType;
-use netpod::Shape;
+use netpod::channelstatus::ChannelStatus;
 use serieswriter::binwriter::BinWriter;
 use stats::mett::ChannelHandlerMetrics;
 use std::collections::VecDeque;
@@ -142,6 +134,7 @@ pub enum ItemInner {
     ScyllaWrite,
     TestValue(crate::ca::connset2::connset::TestValue),
     LocalLog(locallog::Entry),
+    ChannelStatus(ChannelStatus),
 }
 
 #[derive(Debug)]
@@ -168,8 +161,17 @@ impl Counters {
 }
 
 #[derive(Debug)]
+pub struct ChannelHandlerStatusResponse {}
+
+#[derive(Debug)]
+pub struct ChannelHandlerStatusRequest {
+    tx: asynchan::Sender<ChannelHandlerStatusResponse>,
+}
+
+#[derive(Debug)]
 pub enum Cmd {
     Remove(asynchan::Sender<u32>),
+    ChannelHandlerStatus(ChannelHandlerStatusRequest),
 }
 
 #[derive(Debug)]
@@ -339,6 +341,11 @@ impl ChannelHandler {
                     self.handle_cmd_remove(done_tx);
                 }
             }
+            Cmd::ChannelHandlerStatus(cmd) => {
+                self.channel_info_v1();
+                self.channel_info_v2();
+                self.status_info();
+            }
         }
     }
 
@@ -497,8 +504,14 @@ impl Stream for ChannelHandler {
                                         break Ready(Some(Ok(item)));
                                     }
                                     create::CreatingItem::Done((sid, scalar_type, shape, ca_dbr_ty, chi)) => {
-                                        self2.state =
-                                            State::Running(Running::new(sid, scalar_type, shape, ca_dbr_ty, chi));
+                                        self2.state = State::Running(Running::new(
+                                            sid,
+                                            scalar_type,
+                                            shape,
+                                            ca_dbr_ty,
+                                            chi,
+                                            self2.conf.clone(),
+                                        ));
                                     }
                                 },
                                 Err(e) => {
@@ -565,6 +578,12 @@ impl Stream for ChannelHandler {
                                         break Ready(Some(Ok(ChannelHandlerItem {
                                             ts_create: tsloop,
                                             inner: ItemInner::LocalLog(x),
+                                        })));
+                                    }
+                                    running::RunningItem::ChannelStatus(x) => {
+                                        break Ready(Some(Ok(ChannelHandlerItem {
+                                            ts_create: tsloop,
+                                            inner: ItemInner::ChannelStatus(x),
                                         })));
                                     }
                                 },
