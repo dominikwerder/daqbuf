@@ -156,14 +156,13 @@ impl Running {
         // When we are in removing mode, and received all cleanup confirmations, then trigger state change.
     }
 
-    pub fn handle_channel_handler_cmd(&mut self, cmd: super::super::super::ChannelHandlerCmd) {
+    pub fn handle_channel_handler_cmd(&mut self, cmd: serde_json::Value) -> serde_json::Value {
+        use serde_json::json;
         match &mut self.state {
-            State::Normal(st) => {
-                st.handle_channel_handler_cmd(cmd);
-            }
-            State::Done => {
-                warn!("TODO handle while in {} {:?}", self.state.str(), cmd);
-            }
+            State::Normal(st) => st.handle_channel_handler_cmd(cmd),
+            State::Done => json!({
+                "error": format!("Running  {}", self.state.str()),
+            }),
         }
     }
 

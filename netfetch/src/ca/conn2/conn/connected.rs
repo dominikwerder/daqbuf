@@ -229,27 +229,19 @@ impl Connected {
         }
     }
 
-    pub async fn handle_channel_handler_cmd(
-        &mut self,
-        cmd: super::ChannelHandlerCmd,
-    ) -> Result<serde_json::Value, Error> {
+    pub fn handle_channel_handler_cmd(&mut self, cmd: serde_json::Value) -> serde_json::Value {
+        use serde_json::json;
         match &mut self.state {
-            State::Init(..) => {
-                warn!("TODO handle while in Init {cmd:?}");
-                Ok(())
-            }
-            State::Handshake(..) => {
-                warn!("TODO handle while in Handshake {cmd:?}");
-                Ok(())
-            }
-            State::ActiveCa(st, ..) => {
-                st.handle_channel_handler_cmd(cmd);
-                Ok(())
-            }
-            State::Done => {
-                warn!("TODO handle while in Done {cmd:?}");
-                Ok(())
-            }
+            State::Init(..) => json!({
+                "error": "CaConn  Connected  State::Init",
+            }),
+            State::Handshake(..) => json!({
+                "error": "CaConn  Connected  State::Handshake",
+            }),
+            State::ActiveCa(st1, ..) => st1.handle_channel_handler_cmd(cmd),
+            State::Done => json!({
+                "error": "CaConn  Connected  State::Done",
+            }),
         }
     }
 }

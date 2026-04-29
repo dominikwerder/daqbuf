@@ -224,14 +224,13 @@ impl ChannelHandler {
         }
     }
 
-    pub fn handle_channel_handler_cmd(&mut self, cmd: super::super::ChannelHandlerCmd) {
+    pub fn handle_channel_handler_cmd(&mut self, cmd: serde_json::Value) -> serde_json::Value {
+        use serde_json::json;
         match &mut self.state {
-            State::Running(st) => {
-                st.handle_channel_handler_cmd(cmd);
-            }
-            _ => {
-                warn!("TODO handle while in {} {:?}", self.state.str(), cmd);
-            }
+            State::Running(st) => st.handle_channel_handler_cmd(cmd),
+            _ => json!({
+                "error": format!("ChannelHandler  {:?}", self.state),
+            }),
         }
     }
 

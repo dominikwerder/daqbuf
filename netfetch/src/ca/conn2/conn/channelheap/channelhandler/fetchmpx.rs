@@ -162,7 +162,7 @@ impl Fetchmpx {
         self.trigger_closing(channelhandler::ClosingReason::Command);
     }
 
-    pub fn handle_channel_handler_cmd(&mut self, mut cmd: super::super::super::ChannelHandlerCmd) {
+    pub fn handle_channel_handler_cmd(&mut self, mut cmd: serde_json::Value) -> serde_json::Value {
         use serde_json::json;
         let selfname = "handle_channel_handler_cmd";
         match &mut self.state {
@@ -175,45 +175,37 @@ impl Fetchmpx {
                     name: String,
                     fetchmpx: String,
                 }
-                match serde_json::from_value::<CmdTmp>(cmd.cmd.clone()) {
+                match serde_json::from_value::<CmdTmp>(cmd.clone()) {
                     Ok(x) => {
                         if x.fetchmpx == "polling_disable" {
                             self.polling.transition_to_disable();
-                            if cmd.tx.try_send(json!({"done":"polling_disable"})).is_err() {
-                                self.mett.chan_tx_err().inc();
-                            }
+                            json!({"done":"polling_disable"})
                         } else if x.fetchmpx == "polling_enable" {
                             self.polling.transition_to_enable();
-                            if cmd.tx.try_send(json!({"done":"polling_enable"})).is_err() {
-                                self.mett.chan_tx_err().inc();
-                            }
+                            json!({"done":"polling_enable"})
                         } else if x.fetchmpx == "monitoring_disable" {
                             self.monitoring.transition_to_disable();
-                            if cmd.tx.try_send(json!({"done":"monitoring_disable"})).is_err() {
-                                self.mett.chan_tx_err().inc();
-                            }
+                            json!({"done":"monitoring_disable"})
                         } else if x.fetchmpx == "monitoring_enable" {
                             self.monitoring.transition_to_enable();
-                            if cmd.tx.try_send(json!({"done":"monitoring_enable"})).is_err() {
-                                self.mett.chan_tx_err().inc();
-                            }
+                            json!({"done":"monitoring_enable"})
                         } else {
-                            warn!("TODO handle while in {} {:?}", self.state.str(), cmd);
+                            json!({"error":format!("TODO handle while in {} {:?}", self.state.str(), cmd)})
                         }
                     }
                     Err(e) => {
-                        warn!("{selfname}  can not parse cmd  {}  {:?}  {e}", self.state.str(), cmd);
+                        json!({"error":format!("TODO can not parse {} {:?}", self.state.str(), cmd)})
                     }
                 }
             }
             State::Done => {
-                warn!("TODO handle while in {} {:?}", self.state.str(), cmd);
+                json!({"error":format!("TODO handle while in {} {:?}", self.state.str(), cmd)})
             }
             State::Closing1 => {
-                warn!("TODO handle while in {} {:?}", self.state.str(), cmd);
+                json!({"error":format!("TODO handle while in {} {:?}", self.state.str(), cmd)})
             }
             State::Done2 => {
-                warn!("TODO handle while in {} {:?}", self.state.str(), cmd);
+                json!({"error":format!("TODO handle while in {} {:?}", self.state.str(), cmd)})
             }
         }
     }

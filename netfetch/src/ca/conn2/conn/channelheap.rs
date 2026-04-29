@@ -414,25 +414,41 @@ impl ChannelHeap {
         StatusInfo { handlers }
     }
 
-    pub fn handle_channel_handler_cmd(&mut self, cmd: super::ChannelHandlerCmd) {
-        match &mut self.state {
-            State::Running => {
-                for ch in self.by_cid.iter_mut().filter(|x| x.1.name == cmd.name) {
-                    match &mut ch.1.ch_handler {
-                        ChHandler::ChHandlerActive(st2) => {
-                            self.wakeup_cids.insert(ch.0.clone(), ());
-                            st2.handler.handle_channel_handler_cmd(cmd);
-                        }
-                        ChHandler::Done => {
-                            warn!("TODO handle while in ChHandler::Done {cmd:?}");
-                        }
+    pub fn handle_channel_handler_cmd(&mut self, cmd: serde_json::Value) -> serde_json::Value {
+        use serde::Deserialize;
+        use serde_json::json;
+        #[allow(unused)]
+        #[derive(Debug, Deserialize)]
+        struct CmdTmp {
+            // #[serde(rename = "type")]
+            // ty: String,
+            chname: String,
+        }
+        match serde_json::from_value::<CmdTmp>(cmd.clone()) {
+            Ok(cmd2) => match &mut self.state {
+                State::Running => {
+                    for ch in self.by_cid.iter_mut().filter(|x| x.1.name == cmd2.chname) {
+                        return match &mut ch.1.ch_handler {
+                            ChHandler::ChHandlerActive(st2) => {
+                                self.wakeup_cids.insert(ch.0.clone(), ());
+                                st2.handler.handle_channel_handler_cmd(cmd)
+                            }
+                            ChHandler::Done => json!({
+                                "error": "ChannelHeap  ChHandler::Done",
+                            }),
+                        };
                     }
-                    break;
+                    json!({
+                        "error": "ChannelHeap  chname not found",
+                    })
                 }
-            }
-            State::Done => {
-                warn!("TODO handle while in Done {cmd:?}");
-            }
+                State::Done => json!({
+                    "error": "ChannelHeap  State::Done",
+                }),
+            },
+            Err(_) => json!({
+                "error": "unexpected",
+            }),
         }
     }
 
@@ -472,33 +488,6 @@ impl ChannelHeap {
                         ChHandler::ChHandlerActive(hh) => {
                             let x = hh.handler.channel_info_v2();
                             ret.channels.push(x);
-                        }
-                        ChHandler::Done => {}
-                    })
-                    .for_each(|_| {});
-            }
-            State::Done => {}
-        }
-        ret
-    }
-
-    pub fn channels_by_regex_v1(&mut self, kind: String, reg: String) -> Vec<serde_json::Value> {
-        let mut ret = Vec::new();
-        let re1 = match regex::Regex::new(&reg) {
-            Ok(x) => x,
-            Err(_) => return ret,
-        };
-        match &mut self.state {
-            State::Running => {
-                self.by_cid
-                    .iter_mut()
-                    .map(|(_, che)| che)
-                    .filter(move |che| re1.is_match(&che.name))
-                    .map(|che| match &mut che.ch_handler {
-                        ChHandler::ChHandlerActive(hh) => {
-                            let x = hh.handler.channel_info_v2();
-                            let x = serde_json::to_value(&x).unwrap();
-                            ret.push(x);
                         }
                         ChHandler::Done => {}
                     })

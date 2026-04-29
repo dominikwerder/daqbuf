@@ -185,14 +185,13 @@ impl ActiveCa {
         self.chanheap.mett_take()
     }
 
-    pub fn handle_channel_handler_cmd(&mut self, cmd: super::ChannelHandlerCmd) {
+    pub fn handle_channel_handler_cmd(&mut self, cmd: serde_json::Value) -> serde_json::Value {
+        use serde_json::json;
         match &mut self.state {
-            State::Running => {
-                self.chanheap.handle_channel_handler_cmd(cmd);
-            }
-            State::Done => {
-                warn!("TODO handle while in Done {cmd:?}");
-            }
+            State::Running => self.chanheap.handle_channel_handler_cmd(cmd),
+            State::Done => json!({
+                "error": "ActiveCa  State::Done",
+            }),
         }
     }
 

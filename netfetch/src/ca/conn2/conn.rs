@@ -519,12 +519,36 @@ impl CaConn {
         }
     }
 
+    async fn handle_channel_command_2(
+        &mut self,
+        cmd: serde_json::Value,
+        mut tx: asynchan::Sender<serde_json::Value>,
+    ) -> Result<(), Error> {
+        if tx.send(serde_json::Value::Null).await.is_err() {
+            // TODO metrics
+        }
+        Ok(())
+    }
+
     fn handle_channel_command(
         &mut self,
         cmd: serde_json::Value,
-        tx: asynchan::Sender<serde_json::Value>,
-        futbox: &mut Option<FutDbg<Result<(), Error>>>,
-    ) -> serde_json::Value {
+        mut tx: asynchan::Sender<serde_json::Value>,
+    ) -> Result<(), Error> {
+        use serde_json::json;
+        let x = match &mut self.state {
+            State::Connecting(st1) => json!({
+                "error": "CaConn  State::Connecting",
+            }),
+            State::Connected(st1) => st1.handle_channel_handler_cmd(cmd),
+            State::Done => json!({
+                "error": "CaConn  State::Done",
+            }),
+        };
+        if tx.try_send(x).is_err() {
+            // TODO metrics
+        }
+        Ok(())
     }
 }
 
@@ -560,8 +584,8 @@ impl Stream for CaConn {
         trace4!("{selfname}");
         let mut durs = DurationMeasureSteps::new();
         let ret = loop {
-            trace4!("{selfname}  loop  state {}", self.state.display_short());
             let self2 = self.as_mut().get_mut();
+            trace4!("{selfname}  loop  state {}", self2.state.display_short());
             let tsloop = Instant::now();
             let hpp = &mut HaveProgressPending::new();
             if let Some(item) = self2.out_qu.pop_front() {
@@ -625,8 +649,14 @@ impl Stream for CaConn {
                                 }
                                 CaConnCmdKind::ChannelHandlerCmd(cmd) => {
                                     trace!("{selfname}:Received:ChannelHandlerCmd  {cmd:?}");
-                                    let mut tx = cmd.tx;
-                                    self2.handle_channel_command(cmd.cmd, tx, &mut self2.ca_cmd_tx_fut);
+                                    // self2.ca_cmd_tx_fut = Some(fut.box2());
+                                    let tx = cmd.tx;
+                                    match self2.handle_channel_command(cmd.cmd, tx) {
+                                        Ok(()) => {}
+                                        Err(e) => {
+                                            break Ready(Some(Err(e)));
+                                        }
+                                    }
                                 }
                                 CaConnCmdKind::ChannelsForAddrInfoV1(mut tx) => {
                                     trace!("{selfname}:Received:ChannelsForAddrInfoV1");
