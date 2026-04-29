@@ -313,12 +313,12 @@ impl PgWorker {
         self.do_job_attempt(job, pg).await
     }
 
-    async fn work_inner(&mut self, pg: &Client) -> Result<(), Error> {
+    async fn work_inner(&mut self, pg: Client) -> Result<(), Error> {
         let selfname = "PgWorker::work_inner";
         loop {
             match self.rx.recv().await {
                 Ok(job) => {
-                    self.do_job(job, pg).await?;
+                    self.do_job(job, &pg).await?;
                 }
                 Err(_) => {
                     error!("{selfname} can not receive from channel");
@@ -332,32 +332,33 @@ impl PgWorker {
         let selfname = "PgWorker::work";
         loop {
             if self.rx.is_closed() {
-                info!("Postgres worker input queue closed, exiting");
+                info!("{selfname}  input queue closed, exiting");
                 break Ok(());
             }
             let (pg, pgjh) = create_connection(&self.pgconf).await?;
-            match self.work_inner(&pg).await {
+            match self.work_inner(pg).await {
                 Ok(()) => {}
                 Err(e) => match e {
                     Error::ChannelRecv => {
                         if self.rx.is_closed() == false {
-                            warn!("{selfname} sees {e} error, but channel not closed");
+                            warn!("{selfname}  channel nut closed but error  {e}");
                         }
                     }
                     Error::DatabaseConnectionBad => {
-                        warn!("{selfname} sees {e}");
+                        warn!("{selfname}  DatabaseConnectionBad  error  {e}");
                     }
-                    _ => {}
+                    _ => {
+                        warn!("{selfname}  error  {e}");
+                    }
                 },
             }
-            drop(pg);
             match tokio::time::timeout(Duration::from_millis(8000), pgjh).await {
                 Ok(Ok(Ok(()))) => {}
                 Ok(x) => {
-                    warn!("{selfname} postgres connection join unclean: {x:?}");
+                    warn!("{selfname}  postgres connection  join unclean: {x:?}");
                 }
                 Err(_) => {
-                    warn!("{selfname} drop postgres connection after await timeout");
+                    warn!("{selfname}  postgres connection  drop after await timeout");
                 }
             }
             tokio::time::sleep(std::time::Duration::from_millis(rand::random_range(1200..3500))).await;

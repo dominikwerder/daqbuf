@@ -84,7 +84,7 @@ pub async fn make_event_pipe(
         out_max_len,
         reqctx,
     );
-    error!("TODO replace AggKind in the called code");
+    // TODO replace AggKind in the called code
     let pipe = make_num_pipeline_stream_evs(fetch_info, AggKind::TimeWeightedScalar, event_blobs);
     Ok(pipe)
 }
