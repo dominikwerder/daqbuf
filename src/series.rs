@@ -18,7 +18,7 @@ impl<T> Existence<T> {
     }
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 pub struct SeriesId(u64);
 
 impl SeriesId {
