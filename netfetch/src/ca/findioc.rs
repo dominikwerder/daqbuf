@@ -206,6 +206,10 @@ impl FindIocStream {
     ) -> Self {
         let sock = unsafe { Self::create_socket() }.unwrap();
         let afd = AsyncFd::new(sock.0).unwrap();
+        info!("search targets:");
+        for x in &tgts {
+            info!("  {x}");
+        }
         Self {
             tgts,
             channels_input: Some(Box::pin(channels_input)),
@@ -217,7 +221,7 @@ impl FindIocStream {
             batch_send_queue: VecDeque::new(),
             sock,
             afd,
-            buf1: vec![0; 1024],
+            buf1: Vec::with_capacity(2048),
             send_addr: SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 5064),
             out_queue: VecDeque::new(),
             ping: Some(Box::pin(tokio::time::sleep(Duration::from_millis(200)))),
@@ -344,8 +348,7 @@ impl FindIocStream {
                 return Poll::Ready(Err(Error::SendFailure));
             }
         } else {
-            let s = String::from_utf8_lossy(buf);
-            debug!("SENT  {addr}  {s}\n");
+            debug!("try_send  sent  to {addr}  buf len {}\n", buf.len());
         }
         Poll::Ready(Ok(()))
     }
@@ -385,11 +388,7 @@ impl FindIocStream {
             let src_addr = Ipv4Addr::from(saddr2.sin_addr.s_addr.to_ne_bytes());
             let src_port = u16::from_be(saddr2.sin_port);
             let src = SocketAddrV4::new(src_addr, src_port);
-            {
-                let n = ec as usize;
-                let s = String::from_utf8_lossy(&buf[..n]);
-                debug!("RECEIVED  {src}  {s}");
-            }
+            trace!("RECEIVED  {}  {}", src, String::from_utf8_lossy(&buf[..(ec as usize)]));
             let parsed = Self::parse_response(src, ec as _, &buf, tsnow)?;
             Poll::Ready(Ok(parsed))
         }
@@ -442,7 +441,7 @@ impl FindIocStream {
             }
             let msg = CaMsg::from_proto_infos(&hi, nb.data(), tsnow, 32)?;
             nb.adv(hi.payload_len() as usize)?;
-            debug!("RECEIVED  from {src}  msg {msg:?}");
+            trace!("RECEIVED  from {src}  msg {msg:?}");
             msgs.push(msg);
             accounted += 16 + hi.payload_len();
         }
@@ -481,7 +480,7 @@ impl FindIocStream {
                             Ipv4Addr::from_octets(k.addr.to_be_bytes())
                         };
                         let addr = SocketAddrV4::new(ip, k.tcp_port);
-                        debug!("src {}  addr {} {}", src, k.addr, addr);
+                        trace!("src {}  addr {} {}", src, k.addr, addr);
                         res.push((SearchId(k.id), addr));
                     }
                     _ => {
@@ -770,6 +769,43 @@ impl Stream for FindIocStream {
             }
             self.clear_timed_out();
             if self.buf1.is_empty() {
+                match self.batch_send_queue.pop_front() {
+                    Some(bid) => {
+                        hpp.mark_progress();
+                        match self.buf_and_batch(&bid) {
+                            Some((buf1, batch)) => match batch.tgts.pop_front() {
+                                Some(tgtix) => {
+                                    Self::serialize_batch(buf1, batch);
+                                    trace!("serialized for search {:?}", batch.channels);
+                                    match self.tgts.get(tgtix) {
+                                        Some(tgt) => {
+                                            let tgt = tgt.clone();
+                                            self.send_addr = tgt.clone();
+                                            self.batch_send_queue.push_back(bid);
+                                        }
+                                        None => {
+                                            self.buf1.clear();
+                                            self.batch_send_queue.push_back(bid);
+                                            error!("tgtix does not exist");
+                                        }
+                                    }
+                                }
+                                None => {}
+                            },
+                            None => {
+                                if self.bids_all_done.contains_key(&bid) {
+                                    // TODO count for metrics
+                                } else {
+                                    warn!("bid {:?} from batch send queue not in flight  NOT done", bid);
+                                }
+                            }
+                        }
+                    }
+                    None => {}
+                }
+            } else {
+            }
+            if self.buf1.is_empty() {
             } else {
                 match self.afd.poll_write_ready(cx) {
                     Ready(Ok(mut g)) => match unsafe { Self::try_send(self.sock.0, &self.send_addr, &self.buf1) } {
@@ -796,47 +832,6 @@ impl Stream for FindIocStream {
                     Pending => {
                         hpp.mark_pending();
                     }
-                }
-            }
-            while self.buf1.is_empty() {
-                match self.batch_send_queue.pop_front() {
-                    Some(bid) => {
-                        match self.buf_and_batch(&bid) {
-                            Some((buf1, batch)) => match batch.tgts.pop_front() {
-                                Some(tgtix) => {
-                                    Self::serialize_batch(buf1, batch);
-                                    trace!("serialized for search {:?}", batch.channels);
-                                    match self.tgts.get(tgtix) {
-                                        Some(tgt) => {
-                                            let tgt = tgt.clone();
-                                            self.send_addr = tgt.clone();
-                                            self.batch_send_queue.push_back(bid);
-                                            hpp.mark_progress();
-                                        }
-                                        None => {
-                                            self.buf1.clear();
-                                            self.batch_send_queue.push_back(bid);
-                                            hpp.mark_progress();
-                                            error!("tgtix does not exist");
-                                        }
-                                    }
-                                }
-                                None => {
-                                    hpp.mark_progress();
-                                }
-                            },
-                            None => {
-                                if self.bids_all_done.contains_key(&bid) {
-                                    // Already answered from another target
-                                    //trace!("bid {bid:?} from batch send queue not in flight  AND  all done");
-                                } else {
-                                    warn!("bid {:?} from batch send queue not in flight  NOT done", bid);
-                                }
-                                hpp.mark_progress();
-                            }
-                        }
-                    }
-                    None => break,
                 }
             }
             if self.channels_input.is_some() {

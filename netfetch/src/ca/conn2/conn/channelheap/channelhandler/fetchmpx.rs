@@ -4,6 +4,7 @@ mod fetchpolling;
 use crate::ca::conn2::asynchan2 as asynchan;
 use crate::ca::conn2::caids::CaDbrTy;
 use crate::ca::conn2::caids::Sid;
+use crate::ca::conn2::channel_event_value::ChannelEventValue;
 use crate::ca::conn2::conn::channelheap::ProtoRxItem;
 use crate::ca::conn2::conn::channelheap::channelhandler;
 use crate::ca::conn2::conn::channelheap::channelhandler::fetchmpx::fetchmonitoring::FetchMonitoring;
@@ -17,6 +18,7 @@ use netpod::ScalarType;
 use netpod::Shape;
 use netpod::channelstatus::ChannelStatus;
 use serde::Deserialize;
+use series::SeriesId;
 use stats::mett::ChannelHandlerMetrics;
 use std::collections::VecDeque;
 use std::pin::Pin;
@@ -43,6 +45,8 @@ autoerr::create_error_v1!(
     enum variants {
         CreateMonitorUnexpectedMessage,
         Recv,
+        FetchPolling(#[from] fetchpolling::Error),
+        FetchMonitoring(#[from] fetchmonitoring::Error),
     },
 );
 
@@ -85,11 +89,11 @@ pub enum FetchmpxItem {
     CaMsgOut(proto::CaMsg),
     CaMsgOutIoid(proto::CaMsg, Sid, Instant),
     CaMsgOutSubid(proto::CaMsg, Instant),
-    ScyllaWrite,
     TestValue(crate::ca::connset2::connset::TestValue),
     LocalLog(locallog::Entry),
     ChannelStatus(ChannelStatus),
     InputDone,
+    ChannelEventValue(ChannelEventValue),
 }
 
 #[derive(Debug)]
@@ -114,6 +118,7 @@ impl State {
 #[derive(Debug)]
 pub struct Fetchmpx {
     state: State,
+    series: SeriesId,
     sid: Sid,
     polling: FetchPolling,
     monitoring: FetchMonitoring,
@@ -124,9 +129,28 @@ pub struct Fetchmpx {
 }
 
 impl Fetchmpx {
-    pub fn new(sid: Sid, scalar_type: ScalarType, shape: Shape, ca_dbr_ty: CaDbrTy, chconf: ChannelConfig) -> Self {
-        let mut polling = FetchPolling::new(sid.clone(), scalar_type.clone(), shape.clone(), ca_dbr_ty.clone());
-        let mut monitoring = FetchMonitoring::new(sid.clone(), scalar_type.clone(), shape.clone(), ca_dbr_ty.clone());
+    pub fn new(
+        series: SeriesId,
+        sid: Sid,
+        scalar_type: ScalarType,
+        shape: Shape,
+        ca_dbr_ty: CaDbrTy,
+        chconf: ChannelConfig,
+    ) -> Self {
+        let mut polling = FetchPolling::new(
+            series.clone(),
+            sid.clone(),
+            scalar_type.clone(),
+            shape.clone(),
+            ca_dbr_ty.clone(),
+        );
+        let mut monitoring = FetchMonitoring::new(
+            series.clone(),
+            sid.clone(),
+            scalar_type.clone(),
+            shape.clone(),
+            ca_dbr_ty.clone(),
+        );
         if chconf.is_polled() {
             polling.transition_to_enable();
         } else {
@@ -134,6 +158,7 @@ impl Fetchmpx {
         }
         Self {
             state: State::Normal,
+            series,
             sid,
             polling,
             monitoring,
@@ -326,7 +351,7 @@ impl Stream for Fetchmpx {
                                     None => {}
                                 },
                                 Err(e) => {
-                                    error!("TODO handle error {e}");
+                                    error!("{selfname}  TODO handle error {e}");
                                     self.state = State::Done;
                                 }
                             }
@@ -350,6 +375,10 @@ impl Stream for Fetchmpx {
                                         let g = FetchmpxItem::CaMsgOutIoid(msg, sid, ts);
                                         break Ready(Some(Ok(g)));
                                     }
+                                    fetchpolling::Item::ChannelEventValue(x) => {
+                                        let g = FetchmpxItem::ChannelEventValue(x);
+                                        break Ready(Some(Ok(g)));
+                                    }
                                     fetchpolling::Item::TestValue(x) => {
                                         let g = FetchmpxItem::TestValue(x);
                                         break Ready(Some(Ok(g)));
@@ -360,9 +389,9 @@ impl Stream for Fetchmpx {
                                     }
                                 },
                                 Err(e) => {
-                                    error!("polling error {e}");
+                                    error!("{selfname}  {e}");
                                     self.state = State::Done;
-                                    hpp.mark_progress();
+                                    break Ready(Some(Err(e.into())));
                                 }
                             }
                         }
@@ -390,12 +419,16 @@ impl Stream for Fetchmpx {
                                             let g = FetchmpxItem::LocalLog(x);
                                             break Ready(Some(Ok(g)));
                                         }
+                                        MonitoringItem::ChannelEventValue(x) => {
+                                            let g = FetchmpxItem::ChannelEventValue(x);
+                                            break Ready(Some(Ok(g)));
+                                        }
                                     }
                                 }
                                 Err(e) => {
-                                    error!("polling error {e}");
+                                    error!("{selfname}  {e}");
                                     self.state = State::Done;
-                                    hpp.mark_progress();
+                                    break Ready(Some(Err(e.into())));
                                 }
                             }
                         }

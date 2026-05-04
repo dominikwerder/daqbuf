@@ -82,9 +82,9 @@ pub async fn ca_search_workers_start(
 > {
     let selfname = "ca_search_workers_start";
     let (search_tgts, blacklist) = search_tgts_from_opts(&opts).await?;
-    let batch_run_max = Duration::from_millis(1200);
-    let in_flight_max = 32;
-    let batch_size = 8;
+    let batch_run_max = Duration::from_millis(600);
+    let in_flight_max = 1;
+    let batch_size = 1;
     let (inp_tx, inp2_rx) = async_channel::bounded(64);
     let (inp2_tx, inp_rx) = async_channel::bounded(64);
     tokio::spawn(async move {

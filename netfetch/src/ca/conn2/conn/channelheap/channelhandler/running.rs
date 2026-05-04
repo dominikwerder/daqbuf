@@ -2,6 +2,7 @@ use super::fetchmpx::Fetchmpx;
 use crate::ca::conn2::asynchan2 as asynchan;
 use crate::ca::conn2::caids::CaDbrTy;
 use crate::ca::conn2::caids::Sid;
+use crate::ca::conn2::channel_event_value::ChannelEventValue;
 use crate::ca::conn2::conn::channelheap::ProtoRxItem;
 use crate::ca::conn2::conn::channelheap::channelhandler::fetchmpx;
 use crate::ca::conn2::locallog;
@@ -15,6 +16,7 @@ use futures::StreamExt;
 use netpod::ScalarType;
 use netpod::Shape;
 use netpod::channelstatus::ChannelStatus;
+use series::SeriesId;
 use stats::mett::ChannelHandlerMetrics;
 use std::collections::VecDeque;
 use std::pin::Pin;
@@ -68,10 +70,10 @@ pub enum RunningItem {
     CaMsgOut(CaMsg),
     CaMsgOutIoid(CaMsg, Sid, Instant),
     CaMsgOutSubid(CaMsg, Instant),
-    ScyllaWrite,
     TestValue(crate::ca::connset2::connset::TestValue),
     LocalLog(locallog::Entry),
     ChannelStatus(ChannelStatus),
+    ChannelEventValue(ChannelEventValue),
 }
 
 #[derive(Debug)]
@@ -113,6 +115,7 @@ impl Running {
     ) -> Self {
         Self {
             state: State::Normal(Fetchmpx::new(
+                chi.series.to_series(),
                 sid.clone(),
                 scalar_type.clone(),
                 shape.clone(),
@@ -303,9 +306,6 @@ impl Stream for Running {
                                     let g = RunningItem::CaMsgOutSubid(msg, tscmd);
                                     break Ready(Some(Ok(g)));
                                 }
-                                fetchmpx::FetchmpxItem::ScyllaWrite => {
-                                    error!("TODO ScyllaWrite");
-                                }
                                 fetchmpx::FetchmpxItem::TestValue(x) => {
                                     let g = RunningItem::TestValue(x);
                                     break Ready(Some(Ok(g)));
@@ -316,6 +316,10 @@ impl Stream for Running {
                                 }
                                 fetchmpx::FetchmpxItem::ChannelStatus(x) => {
                                     let g = RunningItem::ChannelStatus(x);
+                                    break Ready(Some(Ok(g)));
+                                }
+                                fetchmpx::FetchmpxItem::ChannelEventValue(x) => {
+                                    let g = RunningItem::ChannelEventValue(x);
                                     break Ready(Some(Ok(g)));
                                 }
                                 fetchmpx::FetchmpxItem::InputDone => {

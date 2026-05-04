@@ -34,6 +34,9 @@ use std::task::Poll;
 use std::time::Duration;
 use taskrun::tokio;
 
+const ADDR_SEARCH_TIMEOUT: Duration = Duration::from_millis(30000);
+const CSSID_SEARCH_TIMEOUT: Duration = Duration::from_millis(10000);
+
 macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
 macro_rules! warn { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
 macro_rules! debug { ($($arg:tt)*) => { if true { log::debug!($($arg)*); } }; }
@@ -54,14 +57,7 @@ autoerr::create_error_v1!(
 );
 
 async fn addr_search(conf: ChannelConfig, mut fh: FinderHandleV02) -> Result<SocketAddrV4, Error> {
-    static I1: AtomicUsize = AtomicUsize::new(0);
     let selfname = "addr_search";
-    if false {
-        let i1 = I1.fetch_add(1, Ordering::AcqRel);
-        if i1 == 0 {
-            tokio::time::sleep(Duration::from_millis(4000)).await;
-        }
-    }
     let res = fh.find_uncached(conf.name().into()).await?;
     trace!("{selfname}  res {res:?}");
     let ret = res.addr().ok_or_else(|| Error::AddrNotFound(conf.name().into()))?;
@@ -289,7 +285,7 @@ impl Channel {
     fn produce_cssid_req_state(&mut self, mut ch_info: ChannelInfoQuerySender) -> State {
         let backend = self.backend.clone();
         let name = self.conf.name().into();
-        let to = tokio::time::sleep(Duration::from_millis(2000)).box2();
+        let to = tokio::time::sleep(CSSID_SEARCH_TIMEOUT).box2();
         State::CssidReq(CssidReq {
             fut: async move {
                 ch_info
@@ -305,7 +301,7 @@ impl Channel {
     fn produce_addr_search_state(&mut self, chi: ChannelInfoResult, fh: FinderHandleV02) -> State {
         let cssid = ChannelStatusSeriesId::new(chi.series.to_series().id());
         let conf = self.conf.clone();
-        let to = tokio::time::sleep(Duration::from_millis(2000)).box2();
+        let to = tokio::time::sleep(ADDR_SEARCH_TIMEOUT).box2();
         State::AddrSearch(AddrSearch {
             cssid,
             chi,

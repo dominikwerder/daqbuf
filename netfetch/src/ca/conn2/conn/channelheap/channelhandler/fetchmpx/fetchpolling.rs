@@ -1,6 +1,8 @@
+use crate::ca::conn2::ChannelEventValue;
 use crate::ca::conn2::caids::CaDbrTy;
 use crate::ca::conn2::caids::Sid;
 use crate::ca::conn2::conn::channelheap::ProtoRxItem;
+use crate::ca::conn2::conn::channelheap::channelhandler::fetchmpx::fetchmonitoring::MonitoringItem;
 use crate::ca::conn2::locallog;
 use crate::ca::progpend::HaveProgressPending;
 use crate::futwrap::FutDbg;
@@ -9,6 +11,8 @@ use ca_proto::ca::proto;
 use futures::FutureExt;
 use netpod::ScalarType;
 use netpod::Shape;
+use netpod::TsNano;
+use series::SeriesId;
 use stats::mett::ChannelHandlerMetrics;
 use std::collections::VecDeque;
 use std::fmt;
@@ -17,6 +21,7 @@ use std::task::Context;
 use std::task::Poll;
 use std::time::Duration;
 use std::time::Instant;
+use std::time::SystemTime;
 use taskrun::tokio;
 
 macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
@@ -30,7 +35,7 @@ macro_rules! trace4 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; 
 macro_rules! trace_pending { ($($arg:tt)*) => { if false { trace!("{}  Pending", format_args!($($arg)*)); } }; }
 
 autoerr::create_error_v1!(
-    name(Error, "ChannelHandlerRunning"),
+    name(Error, "FetchPolling"),
     enum variants {
         // Register(#[from] dbpg::seriesbychannel::Error),
         // CreateMonitorUnexpectedMessage,
@@ -51,8 +56,8 @@ pub enum Item {
     None,
     ProtoOut(proto::CaMsg),
     ProtoOutIoid(proto::CaMsg, Sid, Instant),
-    // ScyllaWrite,
     // CallbackOnRunning(Box<dyn FnOnce(&mut SomeData)>, Vec<ChannelHandlerItem>),
+    ChannelEventValue(ChannelEventValue),
     TestValue(crate::ca::connset2::connset::TestValue),
     LocalLog(locallog::Entry),
 }
@@ -84,6 +89,7 @@ impl fmt::Display for State {
 #[derive(Debug)]
 pub struct FetchPolling {
     state: State,
+    series: SeriesId,
     sid: Sid,
     scalar_type: ScalarType,
     shape: Shape,
@@ -99,10 +105,11 @@ pub struct FetchPolling {
 }
 
 impl FetchPolling {
-    pub fn new(sid: Sid, scalar_type: ScalarType, shape: Shape, ca_dbr_ty: CaDbrTy) -> Self {
+    pub fn new(series: SeriesId, sid: Sid, scalar_type: ScalarType, shape: Shape, ca_dbr_ty: CaDbrTy) -> Self {
         let tsnow = Instant::now();
         Self {
             state: State::DoNothing,
+            series,
             sid,
             scalar_type,
             shape,
@@ -239,7 +246,7 @@ impl FetchPolling {
                             let dtcmd = tsnow.saturating_duration_since(item.tscmd);
                             let dtreg = tsnow.saturating_duration_since(item.tsreg);
                             let dtdisp = tsnow.saturating_duration_since(item.tsdisp);
-                            let valf32 = v.value.f32_for_binning();
+                            let val_f32 = v.value.f32_for_binning();
                             match stdir {
                                 StateDirection::DoNothing => {
                                     transition_state(&mut self2.state, State::DoNothing, &mut self2.llog);
@@ -254,13 +261,19 @@ impl FetchPolling {
                                     transition_state(&mut self2.state, State::Idle(fut.box2()), &mut self2.llog);
                                 }
                             }
-                            let item = Item::TestValue(crate::ca::connset2::connset::TestValue {
-                                val: valf32,
-                                dttrig: 1e3 * dttrig.as_secs_f32(),
-                                dtcmd: 1e3 * dtcmd.as_secs_f32(),
-                                dtreg: 1e3 * dtreg.as_secs_f32(),
-                                dtdisp: 1e3 * dtdisp.as_secs_f32(),
-                            });
+                            if false {
+                                let item = Item::TestValue(crate::ca::connset2::connset::TestValue {
+                                    val: val_f32,
+                                    dttrig: 1e3 * dttrig.as_secs_f32(),
+                                    dtcmd: 1e3 * dtcmd.as_secs_f32(),
+                                    dtreg: 1e3 * dtreg.as_secs_f32(),
+                                    dtdisp: 1e3 * dtdisp.as_secs_f32(),
+                                });
+                            }
+                            let stnow = SystemTime::now();
+                            let ts = TsNano::from_system_time(stnow);
+                            let item =
+                                Item::ChannelEventValue(ChannelEventValue::new(self.series.clone(), ts, val_f32));
                             return Ready(Some(Ok(item)));
                         }
                         _ => {

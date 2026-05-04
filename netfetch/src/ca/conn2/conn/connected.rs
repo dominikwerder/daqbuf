@@ -1,5 +1,6 @@
 use super::handshake::Handshake;
 use crate::ca::conn2::asynchan;
+use crate::ca::conn2::channel_event_value::ChannelEventValue;
 use crate::ca::conn2::conn::activeca;
 use crate::ca::conn2::conn::activeca::ActiveCa;
 use crate::ca::conn2::conn::ctchan::CtChan;
@@ -13,6 +14,7 @@ use ca_proto_tokio::tcpasyncwriteread::TcpAsyncWriteRead;
 use futures::FutureExt;
 use futures::Stream;
 use futures::StreamExt;
+use netpod::futdbg::FutDbgBox;
 use stats::mett::CaConnConnectedMetrics;
 use std::collections::VecDeque;
 use std::fmt;
@@ -59,9 +61,9 @@ enum State {
 #[derive(Debug)]
 pub enum ItemInner {
     ChannelInfoQuery(dbpg::seriesbychannel::ChannelInfoQuery),
-    ScyllaWrite,
     TestValue(crate::ca::connset2::connset::TestValue),
     LocalLog(locallog::Entry),
+    ChannelEventValue(ChannelEventValue),
 }
 
 #[derive(Debug)]
@@ -229,19 +231,23 @@ impl Connected {
         }
     }
 
-    pub fn handle_channel_handler_cmd(&mut self, cmd: serde_json::Value) -> serde_json::Value {
+    pub fn handle_dyn_cmd_v03(&mut self, cmd: serde_json::Value) -> impl Future<Output = serde_json::Value> + use<> {
+        use futures::future::ready;
         use serde_json::json;
         match &mut self.state {
-            State::Init(..) => json!({
+            State::Init(..) => ready(json!({
                 "error": "CaConn  Connected  State::Init",
-            }),
-            State::Handshake(..) => json!({
+            }))
+            .box2(),
+            State::Handshake(..) => ready(json!({
                 "error": "CaConn  Connected  State::Handshake",
-            }),
-            State::ActiveCa(st1, ..) => st1.handle_channel_handler_cmd(cmd),
-            State::Done => json!({
+            }))
+            .box2(),
+            State::ActiveCa(st, ..) => st.handle_dyn_cmd_v03(cmd).box2(),
+            State::Done => ready(json!({
                 "error": "CaConn  Connected  State::Done",
-            }),
+            }))
+            .box2(),
         }
     }
 }
@@ -375,10 +381,6 @@ impl Stream for Connected {
                                             ts_create: item.ts_create,
                                             inner: ItemInner::ChannelInfoQuery(item2),
                                         },
-                                        activeca::ItemInner::ScyllaWrite => ConnectedItem {
-                                            ts_create: item.ts_create,
-                                            inner: ItemInner::ScyllaWrite,
-                                        },
                                         activeca::ItemInner::TestValue(x) => ConnectedItem {
                                             ts_create: item.ts_create,
                                             inner: ItemInner::TestValue(x),
@@ -386,6 +388,10 @@ impl Stream for Connected {
                                         activeca::ItemInner::LocalLog(x) => ConnectedItem {
                                             ts_create: item.ts_create,
                                             inner: ItemInner::LocalLog(x),
+                                        },
+                                        activeca::ItemInner::ChannelEventValue(x) => ConnectedItem {
+                                            ts_create: item.ts_create,
+                                            inner: ItemInner::ChannelEventValue(x),
                                         },
                                     };
                                     break Ready(Some(Ok(item)));

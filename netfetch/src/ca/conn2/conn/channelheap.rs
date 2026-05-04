@@ -13,6 +13,7 @@ use crate::ca::conn2::caids::Cid;
 use crate::ca::conn2::caids::Ioid;
 use crate::ca::conn2::caids::Sid;
 use crate::ca::conn2::caids::Subid;
+use crate::ca::conn2::channel_event_value::ChannelEventValue;
 use crate::ca::conn2::conn::channelheap::channelhandler::ChannelHandler;
 use crate::ca::conn2::locallog;
 use crate::ca::conn2::timeoutable::TimeoutError;
@@ -192,9 +193,9 @@ mod waker1 {
 #[derive(Debug)]
 pub enum ItemInner {
     ChannelInfoQuery(dbpg::seriesbychannel::ChannelInfoQuery),
-    ScyllaWrite,
     TestValue(crate::ca::connset2::connset::TestValue),
     LocalLog(locallog::Entry),
+    ChannelEventValue(ChannelEventValue),
 }
 
 #[derive(Debug)]
@@ -212,6 +213,7 @@ enum PollHandlerItem {
     ChannelInfoQuery(dbpg::seriesbychannel::ChannelInfoQuery),
     TestValue(crate::ca::connset2::connset::TestValue),
     LocalLog(locallog::Entry),
+    ChannelEventValue(ChannelEventValue),
 }
 
 #[derive(Debug)]
@@ -345,6 +347,7 @@ enum PollHandlerItemB {
     ChannelInfoQuery(dbpg::seriesbychannel::ChannelInfoQuery),
     TestValue(crate::ca::connset2::connset::TestValue),
     LocalLog(locallog::Entry),
+    ChannelEventValue(ChannelEventValue),
 }
 
 #[derive(Debug)]
@@ -414,41 +417,67 @@ impl ChannelHeap {
         StatusInfo { handlers }
     }
 
-    pub fn handle_channel_handler_cmd(&mut self, cmd: serde_json::Value) -> serde_json::Value {
+    pub fn handle_dyn_cmd_v03(&mut self, cmd: serde_json::Value) -> impl Future<Output = serde_json::Value> + use<> {
+        use futures::future::ready;
         use serde::Deserialize;
         use serde_json::json;
-        #[allow(unused)]
         #[derive(Debug, Deserialize)]
         struct CmdTmp {
-            // #[serde(rename = "type")]
-            // ty: String,
+            type_channel_heap: String,
+        }
+        #[derive(Debug, Deserialize)]
+        struct CmdTmpNamed {
             chname: String,
         }
         match serde_json::from_value::<CmdTmp>(cmd.clone()) {
-            Ok(cmd2) => match &mut self.state {
-                State::Running => {
-                    for ch in self.by_cid.iter_mut().filter(|x| x.1.name == cmd2.chname) {
-                        return match &mut ch.1.ch_handler {
-                            ChHandler::ChHandlerActive(st2) => {
-                                self.wakeup_cids.insert(ch.0.clone(), ());
-                                st2.handler.handle_channel_handler_cmd(cmd)
+            Ok(cmd2) => {
+                if cmd2.type_channel_heap == "heaptest01" {
+                    ready(json!({
+                        "TODO": "ChannelHeap  heaptest01  ok..",
+                    }))
+                    .box2()
+                } else if cmd2.type_channel_heap == "heaptest02"
+                    && let Ok(cmd3) = serde_json::from_value::<CmdTmpNamed>(cmd.clone())
+                {
+                    match &mut self.state {
+                        State::Running => {
+                            for ch in self.by_cid.iter_mut().filter(|x| x.1.name == cmd3.chname) {
+                                return match &mut ch.1.ch_handler {
+                                    ChHandler::ChHandlerActive(st2) => {
+                                        st2.handler.handle_dyn_cmd_v03(cmd).box2()
+                                        // self.wakeup_cids.insert(ch.0.clone(), ());
+                                        // st2.handler.handle_channel_handler_cmd(cmd)
+                                        // ready(json!({
+                                        //     "error": "ChannelHeap  TODO  ChHandler::ChHandlerActive",
+                                        // }))
+                                    }
+                                    ChHandler::Done => ready(json!({
+                                        "error": "ChannelHeap  ChHandler::Done",
+                                    }))
+                                    .box2(),
+                                };
                             }
-                            ChHandler::Done => json!({
-                                "error": "ChannelHeap  ChHandler::Done",
-                            }),
-                        };
+                            ready(json!({
+                                "error": "ChannelHeap  chname not found",
+                            }))
+                            .box2()
+                        }
+                        State::Done => ready(json!({
+                            "error": "ChannelHeap  State::Done",
+                        }))
+                        .box2(),
                     }
-                    json!({
-                        "error": "ChannelHeap  chname not found",
-                    })
+                } else {
+                    ready(json!({
+                        "error": format!("unexpected command {cmd:?}"),
+                    }))
+                    .box2()
                 }
-                State::Done => json!({
-                    "error": "ChannelHeap  State::Done",
-                }),
-            },
-            Err(_) => json!({
-                "error": "unexpected",
-            }),
+            }
+            Err(_) => ready(json!({
+                "error": "unexpected command {cmd:?}",
+            }))
+            .box2(),
         }
     }
 
@@ -604,14 +633,6 @@ impl ChannelHeap {
                     match x {
                         Ok(item) => {
                             let item = match item.inner {
-                                channelhandler::ItemInner::ScyllaWrite => {
-                                    warn!("TODO check handling of ScyllaWrite item");
-                                    let item = ChannelHeapItem {
-                                        ts_create: item.ts_create,
-                                        inner: ItemInner::ScyllaWrite,
-                                    };
-                                    PollHandlerItem::ChannelHeapItem(item)
-                                }
                                 channelhandler::ItemInner::ProtoOut(item) => {
                                     trace!("received channelhandler::ItemInner::ProtoOut {item:?}");
                                     PollHandlerItem::ProtoOut(item)
@@ -646,6 +667,9 @@ impl ChannelHeap {
                                 channelhandler::ItemInner::ChannelStatus(x) => {
                                     warn!("{selfname}  TODO  do something with received {x:?}");
                                     PollHandlerItem::None
+                                }
+                                channelhandler::ItemInner::ChannelEventValue(x) => {
+                                    PollHandlerItem::ChannelEventValue(x)
                                 }
                             };
                             break Ready(Some(Ok(item)));
@@ -854,6 +878,9 @@ impl ChannelHeap {
                                         PollHandlerItem::LocalLog(x) => {
                                             break Ready(Some(Ok(PollHandlerItemB::LocalLog(x))));
                                         }
+                                        PollHandlerItem::ChannelEventValue(x) => {
+                                            break Ready(Some(Ok(PollHandlerItemB::ChannelEventValue(x))));
+                                        }
                                     },
                                     Err(e) => {
                                         error!("TODO handle Self::poll_handler  error  {e}");
@@ -957,6 +984,9 @@ impl ChannelHeap {
                                 }
                                 PollHandlerItemB::LocalLog(x) => {
                                     break Ready(Some(Ok(PollHandlerItem::LocalLog(x))));
+                                }
+                                PollHandlerItemB::ChannelEventValue(x) => {
+                                    break Ready(Some(Ok(PollHandlerItem::ChannelEventValue(x))));
                                 }
                             },
                             Err(e) => {
@@ -1184,6 +1214,14 @@ impl ChannelHeap {
                                         }
                                         PollHandlerItem::LocalLog(x) => {
                                             let inner = ItemInner::LocalLog(x);
+                                            let item = ChannelHeapItem {
+                                                ts_create: tsloop,
+                                                inner,
+                                            };
+                                            break Ready(Some(Ok(item)));
+                                        }
+                                        PollHandlerItem::ChannelEventValue(x) => {
+                                            let inner = ItemInner::ChannelEventValue(x);
                                             let item = ChannelHeapItem {
                                                 ts_create: tsloop,
                                                 inner,

@@ -151,6 +151,7 @@ pub fn start_finder_handle_v02(
     backend: String,
     opts: CaIngestOpts,
 ) -> (FinderHandleV02, JoinHandle<Result<(), Error>>) {
+    info!("start_finder_handle_v02");
     let (qtx, qrx) = async_channel::bounded(CURRENT_SEARCH_PENDING_MAX);
     // old:
     // qtx -> qrx -> rtx -> rrx -> job-tx

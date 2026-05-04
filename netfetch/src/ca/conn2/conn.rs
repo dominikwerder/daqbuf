@@ -6,6 +6,7 @@ pub mod handshake;
 
 use crate::ca::conn2::asynchan;
 use crate::ca::conn2::asynchan::SendPoll;
+use crate::ca::conn2::channel_event_value::ChannelEventValue;
 use crate::ca::conn2::locallog;
 use crate::ca::connset2::connset::TestValue;
 use crate::ca::progpend::HaveProgressPending;
@@ -238,6 +239,7 @@ enum CaConnCmdKind {
     ChannelsForAddrInfoV2(String, asynchan::Sender<crate::metrics::ChannelsForAddrInfoV2>),
     ChannelsByRegexV1(String, String, asynchan::Sender<Vec<serde_json::Value>>),
     ChannelHandlerCmd(ChannelHandlerCmd),
+    DynCmdV03(serde_json::Value, asynchan::Sender<serde_json::Value>),
 }
 
 #[derive(Debug)]
@@ -334,6 +336,27 @@ impl CaConnComm {
             }
         }
     }
+
+    pub async fn dyn_cmd_v03(&mut self, cmd: serde_json::Value) -> serde_json::Value {
+        let (tx, mut rx) = asynchan::bounded(1, "CaConnComm-dyn_cmd_v03");
+        let cmd = CaConnCmd {
+            kind: CaConnCmdKind::DynCmdV03(cmd, tx),
+        };
+        if self.cmd_tx.send(cmd).await.is_err() {
+            serde_json::json!({
+                "error": "can not send command",
+            })
+        } else {
+            match rx.recv().await {
+                Ok(x) => x,
+                Err(_) => {
+                    serde_json::json!({
+                        "error": "can not receive result",
+                    })
+                }
+            }
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -356,6 +379,7 @@ pub enum CaConnItem {
     ChannelInfoQuery(ChannelInfoQuery),
     TestValue(TestValue),
     LocalLog(locallog::Entry),
+    ChannelEventValue(ChannelEventValue),
 }
 
 #[derive(Debug)]
@@ -519,36 +543,45 @@ impl CaConn {
         }
     }
 
-    async fn handle_channel_command_2(
-        &mut self,
-        cmd: serde_json::Value,
-        mut tx: asynchan::Sender<serde_json::Value>,
-    ) -> Result<(), Error> {
-        if tx.send(serde_json::Value::Null).await.is_err() {
-            // TODO metrics
-        }
-        Ok(())
-    }
-
     fn handle_channel_command(
         &mut self,
         cmd: serde_json::Value,
         mut tx: asynchan::Sender<serde_json::Value>,
     ) -> Result<(), Error> {
         use serde_json::json;
-        let x = match &mut self.state {
-            State::Connecting(st1) => json!({
-                "error": "CaConn  State::Connecting",
-            }),
-            State::Connected(st1) => st1.handle_channel_handler_cmd(cmd),
-            State::Done => json!({
-                "error": "CaConn  State::Done",
-            }),
-        };
+        let x = json!({
+            "error": "please use dyn_cmd_v03 instead",
+        });
         if tx.try_send(x).is_err() {
             // TODO metrics
         }
         Ok(())
+    }
+
+    fn handle_dyn_cmd_v03(
+        &mut self,
+        cmd: serde_json::Value,
+        mut tx: asynchan::Sender<serde_json::Value>,
+    ) -> impl Future<Output = Result<(), Error>> + use<> {
+        use futures::future::ready;
+        use serde_json::json;
+        let x = match &mut self.state {
+            State::Connecting(st1) => ready(json!({
+                "error": "CaConn  State::Connecting",
+            }))
+            .box2(),
+            State::Connected(st1) => st1.handle_dyn_cmd_v03(cmd).box2(),
+            State::Done => ready(json!({
+                "error": "CaConn  State::Done",
+            }))
+            .box2(),
+        };
+        async move {
+            if tx.send(x.await).await.is_err() {
+                // TODO metrics
+            }
+            Ok(())
+        }
     }
 }
 
@@ -649,7 +682,6 @@ impl Stream for CaConn {
                                 }
                                 CaConnCmdKind::ChannelHandlerCmd(cmd) => {
                                     trace!("{selfname}:Received:ChannelHandlerCmd  {cmd:?}");
-                                    // self2.ca_cmd_tx_fut = Some(fut.box2());
                                     let tx = cmd.tx;
                                     match self2.handle_channel_command(cmd.cmd, tx) {
                                         Ok(()) => {}
@@ -657,6 +689,11 @@ impl Stream for CaConn {
                                             break Ready(Some(Err(e)));
                                         }
                                     }
+                                }
+                                CaConnCmdKind::DynCmdV03(cmd, tx) => {
+                                    trace!("{selfname}:Received:DynCmd  {cmd:?}");
+                                    let fut = self2.handle_dyn_cmd_v03(cmd, tx);
+                                    self2.ca_cmd_tx_fut = Some(fut.box2());
                                 }
                                 CaConnCmdKind::ChannelsForAddrInfoV1(mut tx) => {
                                     trace!("{selfname}:Received:ChannelsForAddrInfoV1");
@@ -724,13 +761,17 @@ impl Stream for CaConn {
                                         let item = CaConnItem::ChannelInfoQuery(item);
                                         break Ready(Some(Ok(item)));
                                     }
-                                    connected::ItemInner::ScyllaWrite => todo!("TODO handle ScyllaWrite"),
                                     connected::ItemInner::TestValue(x) => {
+                                        info!("{selfname}  sees  connected::ItemInner::TestValue  {x:?}");
                                         let item = CaConnItem::TestValue(x);
                                         break Ready(Some(Ok(item)));
                                     }
                                     connected::ItemInner::LocalLog(x) => {
                                         let item = CaConnItem::LocalLog(x);
+                                        break Ready(Some(Ok(item)));
+                                    }
+                                    connected::ItemInner::ChannelEventValue(x) => {
+                                        let item = CaConnItem::ChannelEventValue(x);
                                         break Ready(Some(Ok(item)));
                                     }
                                 },

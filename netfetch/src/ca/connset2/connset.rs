@@ -179,6 +179,7 @@ impl fmt::Display for TestValue {
 #[derive(Debug)]
 pub enum ConnSetItem {
     TestValue(TestValue),
+    ChannelEventValue(conn2::ChannelEventValue),
 }
 
 #[derive(Debug)]
@@ -462,7 +463,7 @@ impl ConnSet {
     fn poll_conn_comm(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Result<ConnSetItem, Error>>> {
         let selfname = "poll_conn_comm";
         use Poll::*;
-        loop {
+        'outer: loop {
             let mut hpp = HaveProgressPending::new();
             if let Some(fut) = self.cmd_fut_comm.as_mut() {
                 match fut.poll_unpin(cx) {
@@ -500,7 +501,7 @@ impl ConnSet {
                                                 None => {}
                                             },
                                             Err(e) => {
-                                                return Ready(Some(Err(e)));
+                                                break 'outer Ready(Some(Err(e)));
                                             }
                                         }
                                     }
@@ -520,14 +521,19 @@ impl ConnSet {
                                         self2.cmd_fut_comm = Some(fut.box2());
                                     }
                                     conn2::conn::CaConnItem::TestValue(x) => {
-                                        return Ready(Some(Ok(ConnSetItem::TestValue(x))));
+                                        break 'outer Ready(Some(Ok(ConnSetItem::TestValue(x))));
                                     }
                                     conn2::conn::CaConnItem::LocalLog(x) => {
                                         self2.llog.push_entry(x);
                                     }
+                                    conn2::conn::CaConnItem::ChannelEventValue(x) => {
+                                        let item = ConnSetItem::ChannelEventValue(x);
+                                        break 'outer Ready(Some(Ok(item)));
+                                    }
                                 },
                                 Err(e) => {
-                                    todo!("{selfname}  ERROR from CaConnComm  {e}");
+                                    self2.state = State::Done;
+                                    break 'outer Ready(Some(Err(e.into())));
                                 }
                             }
                         }
@@ -572,7 +578,7 @@ impl ConnSet {
         mut self: Pin<&mut Self>,
         cmd: String,
         mut tx: asynchan::Sender<serde_json::Value>,
-        cx: &mut Context,
+        _cx: &mut Context,
     ) -> Option<FutDbg<Result<(), Error>>> {
         match serde_json::from_str::<crate::metrics::CmdType>(&cmd) {
             Ok(cmdty) => {
@@ -736,6 +742,101 @@ impl ConnSet {
                             let _ = tx.try_send(val);
                             None
                         }
+                    }
+                } else if cmdty.ty == "dyn_cmd_v03" {
+                    #[derive(Debug, Deserialize)]
+                    struct DynCmdV03Base {
+                        type2: String,
+                    }
+                    #[derive(Debug, Deserialize)]
+                    struct DynCmdV03WithConnAddr {
+                        // type2: String,
+                        conn_addr_regex: String,
+                    }
+                    if let Ok(cmd2) = serde_json::from_str::<DynCmdV03Base>(&cmd) {
+                        info!("{cmd2:?}");
+                        if cmd2.type2 == "test01" {
+                            if let Ok(cmd3) = serde_json::from_str::<DynCmdV03WithConnAddr>(&cmd) {
+                                info!("{cmd3:?}");
+                                match serde_json::from_str::<serde_json::Value>(&cmd) {
+                                    Ok(cmd) => {
+                                        use serde_json::json;
+                                        info!("{cmd:?}");
+
+                                        // TODO check first if we should scatter the command over connections or if it is simply for us.
+
+                                        // TODO scatter gather
+
+                                        match regex::Regex::new(&cmd3.conn_addr_regex) {
+                                            Ok(re) => {
+                                                let comms = self
+                                                    .ca_conns
+                                                    .iter()
+                                                    .filter_map(|x| {
+                                                        let s1 = x.0.to_string();
+                                                        if re.is_match(&s1) {
+                                                            Some((x.0.clone(), x.1.comm.clone()))
+                                                        } else {
+                                                            None
+                                                        }
+                                                    })
+                                                    .collect::<Vec<_>>();
+                                                let fut = async move {
+                                                    let mut ret = BTreeMap::new();
+                                                    for (addr, mut comm) in comms {
+                                                        // TODO maybe use a recursive command format and extract sub-part?
+                                                        let val = comm.dyn_cmd_v03(cmd.clone()).await;
+                                                        ret.insert(addr.to_string(), val);
+                                                    }
+                                                    let x = json!({
+                                                        "conns": ret,
+                                                    });
+                                                    let _ = tx.send(x).await;
+                                                    Ok(())
+                                                };
+                                                Some(fut.box2())
+                                            }
+                                            Err(e) => {
+                                                let val = json!({
+                                                    "error": e.to_string(),
+                                                });
+                                                let _ = tx.try_send(val);
+                                                None
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        let val = serde_json::json!({
+                                            "type": "error",
+                                            "msg": format!("{e}"),
+                                        });
+                                        let _ = tx.try_send(val);
+                                        None
+                                    }
+                                }
+                            } else {
+                                let val = serde_json::json!({
+                                    "type": "error",
+                                    "msg": format!("not a DynCmdV03WithConnAddr"),
+                                });
+                                let _ = tx.try_send(val);
+                                None
+                            }
+                        } else {
+                            let val = serde_json::json!({
+                                "type": "error",
+                                "msg": format!("command unknown"),
+                            });
+                            let _ = tx.try_send(val);
+                            None
+                        }
+                    } else {
+                        let val = serde_json::json!({
+                            "type": "error",
+                            "msg": format!("not a DynCmdV03Base"),
+                        });
+                        let _ = tx.try_send(val);
+                        None
                     }
                 } else if cmdty.ty == "ConnSetLlogV1" {
                     let local_log = self.llog.to_vec_string();

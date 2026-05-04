@@ -2,6 +2,7 @@ use crate::ca::conn2::asynchan;
 use crate::ca::conn2::asynchan::Receiver;
 use crate::ca::conn2::asynchan::SendPoll;
 use crate::ca::conn2::asynchan::Sender;
+use crate::ca::conn2::channel_event_value::ChannelEventValue;
 use crate::ca::conn2::conn::channelheap;
 use crate::ca::conn2::conn::channelheap::ChannelHeap;
 use crate::ca::conn2::conn::ctchan::CtChan;
@@ -13,6 +14,7 @@ use ca_proto::ca::proto::CaMsg;
 use futures::FutureExt;
 use futures::Stream;
 use futures::StreamExt;
+use netpod::futdbg::FutDbgBox;
 use stats::mett::CaConnConnectedMetrics;
 use std::cell::RefCell;
 use std::collections::VecDeque;
@@ -101,9 +103,9 @@ impl fmt::Debug for CommandFut {
 #[derive(Debug)]
 pub enum ItemInner {
     ChannelInfoQuery(dbpg::seriesbychannel::ChannelInfoQuery),
-    ScyllaWrite,
     TestValue(crate::ca::connset2::connset::TestValue),
     LocalLog(locallog::Entry),
+    ChannelEventValue(ChannelEventValue),
 }
 
 #[derive(Debug)]
@@ -185,13 +187,15 @@ impl ActiveCa {
         self.chanheap.mett_take()
     }
 
-    pub fn handle_channel_handler_cmd(&mut self, cmd: serde_json::Value) -> serde_json::Value {
+    pub fn handle_dyn_cmd_v03(&mut self, cmd: serde_json::Value) -> impl Future<Output = serde_json::Value> + use<> {
+        use futures::future::ready;
         use serde_json::json;
         match &mut self.state {
-            State::Running => self.chanheap.handle_channel_handler_cmd(cmd),
-            State::Done => json!({
+            State::Running => self.chanheap.handle_dyn_cmd_v03(cmd).box2(),
+            State::Done => ready(json!({
                 "error": "ActiveCa  State::Done",
-            }),
+            }))
+            .box2(),
         }
     }
 
@@ -415,7 +419,6 @@ impl ActiveCa {
                                             };
                                             break Ready(Some(Ok(item)));
                                         }
-                                        channelheap::ItemInner::ScyllaWrite => todo!("handle ScyllaWrite"),
                                         channelheap::ItemInner::TestValue(x) => {
                                             let item = ActiveCaItem {
                                                 ts_create: item.ts_create,
@@ -427,6 +430,13 @@ impl ActiveCa {
                                             let item = ActiveCaItem {
                                                 ts_create: item.ts_create,
                                                 inner: ItemInner::LocalLog(x),
+                                            };
+                                            break Ready(Some(Ok(item)));
+                                        }
+                                        channelheap::ItemInner::ChannelEventValue(x) => {
+                                            let item = ActiveCaItem {
+                                                ts_create: item.ts_create,
+                                                inner: ItemInner::ChannelEventValue(x),
                                             };
                                             break Ready(Some(Ok(item)));
                                         }

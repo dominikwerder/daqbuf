@@ -508,7 +508,12 @@ fn make_routes_daqingest_private(
                 axum::Json(json!({"ts":s}))
             }),
         )
-        .layer(tower_http::cors::CorsLayer::new().allow_origin(tower_http::cors::Any))
+        // TODO possible to add layer also to all nested routers?
+        .layer(
+            tower_http::cors::CorsLayer::new()
+                .allow_origin(tower_http::cors::Any)
+                .allow_headers(tower_http::cors::Any),
+        )
 }
 
 fn make_routes_conn2(ca_ingest_ctrls: Arc<dyn CaIngestCtrls>) -> axum::Router {
@@ -702,6 +707,37 @@ fn make_routes_conn2(ca_ingest_ctrls: Arc<dyn CaIngestCtrls>) -> axum::Router {
                     }
                 }
             }),
+        )
+        .route(
+            "/dyn_cmd_v03",
+            post({
+                let ca_ingest_ctrls = ca_ingest_ctrls.clone();
+                |Query(params): Query<HashMap<String, String>>,
+                 axum::extract::Json(mut cmd): axum::extract::Json<serde_json::Value>| async move {
+                    info!("dyn_cmd_v03  {cmd:?}");
+                    if let Some(c2) = ca_ingest_ctrls.conn2_ctrls().await {
+                        if let Some(v2) = cmd.as_object_mut() {
+                            v2.insert("type".into(), serde_json::Value::String("dyn_cmd_v03".into()));
+                            let s = serde_json::to_string(&cmd).unwrap();
+                            match c2.cmd_dyn_v1(s).await {
+                                Ok(x) => axum::Json(x),
+                                Err(e) => axum::Json(json!({
+                                    "error": e.to_string(),
+                                })),
+                            }
+                        } else {
+                            axum::Json(json!({"error": "cmd is not a json object"}))
+                        }
+                    } else {
+                        axum::Json(json!({"error": "no ctrl"}))
+                    }
+                }
+            }),
+        )
+        .layer(
+            tower_http::cors::CorsLayer::new()
+                .allow_origin(tower_http::cors::Any)
+                .allow_headers(tower_http::cors::Any),
         )
 }
 

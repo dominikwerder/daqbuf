@@ -6,6 +6,7 @@ use crate::ca::conn2::asynchan;
 use crate::ca::conn2::caids::Cid;
 use crate::ca::conn2::caids::CidOwned;
 use crate::ca::conn2::caids::Sid;
+use crate::ca::conn2::channel_event_value::ChannelEventValue;
 use crate::ca::conn2::conn::channelheap::ProtoRxItem;
 use crate::ca::conn2::conn::channelheap::channelhandler::create::Creating;
 use crate::ca::conn2::conn::channelheap::channelhandler::running::Running;
@@ -131,10 +132,10 @@ pub enum ItemInner {
     ProtoOut(CaMsg),
     ProtoOutIoid(CaMsg, Sid, Instant),
     ProtoOutSubid(CaMsg, Instant),
-    ScyllaWrite,
     TestValue(crate::ca::connset2::connset::TestValue),
     LocalLog(locallog::Entry),
     ChannelStatus(ChannelStatus),
+    ChannelEventValue(ChannelEventValue),
 }
 
 #[derive(Debug)]
@@ -224,14 +225,21 @@ impl ChannelHandler {
         }
     }
 
-    pub fn handle_channel_handler_cmd(&mut self, cmd: serde_json::Value) -> serde_json::Value {
+    pub fn handle_dyn_cmd_v03(&mut self, cmd: serde_json::Value) -> impl Future<Output = serde_json::Value> + use<> {
+        use futures::future::ready;
         use serde_json::json;
-        match &mut self.state {
-            State::Running(st) => st.handle_channel_handler_cmd(cmd),
-            _ => json!({
-                "error": format!("ChannelHandler  {:?}", self.state),
-            }),
-        }
+        // let s = format!("{:?}", self.conf);
+        let x = json!({
+            // "DUMMY": format!("response from handle {s}"),
+            "config": serde_json::to_value(&self.conf).unwrap(),
+        });
+        ready(x)
+        // match &mut self.state {
+        //     State::Running(st) => st.handle_channel_handler_cmd(cmd),
+        //     _ => json!({
+        //         "error": format!("ChannelHandler  {:?}", self.state),
+        //     }),
+        // }
     }
 
     pub fn channel_info_v1(&mut self) -> crate::metrics::ChannelInfoV1 {
@@ -566,7 +574,6 @@ impl Stream for ChannelHandler {
                                             inner: ItemInner::ProtoOutSubid(msg, tscmd),
                                         })));
                                     }
-                                    running::RunningItem::ScyllaWrite => todo!(),
                                     running::RunningItem::TestValue(x) => {
                                         break Ready(Some(Ok(ChannelHandlerItem {
                                             ts_create: tsloop,
@@ -583,6 +590,12 @@ impl Stream for ChannelHandler {
                                         break Ready(Some(Ok(ChannelHandlerItem {
                                             ts_create: tsloop,
                                             inner: ItemInner::ChannelStatus(x),
+                                        })));
+                                    }
+                                    running::RunningItem::ChannelEventValue(x) => {
+                                        break Ready(Some(Ok(ChannelHandlerItem {
+                                            ts_create: tsloop,
+                                            inner: ItemInner::ChannelEventValue(x),
                                         })));
                                     }
                                 },

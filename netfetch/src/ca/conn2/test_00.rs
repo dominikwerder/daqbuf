@@ -1,6 +1,7 @@
 use super::super::conn2;
 use crate as netfetch;
 use crate::ca::conn2::asynchan;
+use crate::ca::connset2;
 use crate::ca::connset2::connset::ConnSet;
 use crate::conf::ChannelConfig;
 use crate::daemon_common::ChannelName;
@@ -315,7 +316,18 @@ pub async fn test_01() {
             });
         }
         let fut = async move {
-            if false {
+            if true {
+                for j in 10..20 {
+                    let g = 1000 * j;
+                    let h = 20 + g;
+                    for i in g..h {
+                        let chname = format!("TEST:FAST:SCALAR:F32:{i:06}");
+                        trace!("test_01 adding channel {chname}");
+                        let conf = crate::conf::ChannelConfig::st_monitor(chname, "TEST");
+                        cmder.channel_add(conf).await.unwrap();
+                    }
+                }
+            } else if false {
                 let channels = [
                     "TEST:SLOW:SCALAR:F32:000000",
                     "TEST:SLOW:SCALAR:F32:000001",
@@ -330,29 +342,31 @@ pub async fn test_01() {
                     let conf = crate::conf::ChannelConfig::st_monitor(chname, "TEST");
                     cmder.channel_add(conf).await.unwrap();
                 }
-            }
-            if let Some(channels_config) = channels_config {
-                for chconf in channels_config.channels() {
-                    cmder.channel_add(chconf.clone()).await.unwrap();
+            } else {
+                if let Some(channels_config) = channels_config {
+                    for chconf in channels_config.channels() {
+                        cmder.channel_add(chconf.clone()).await.unwrap();
+                    }
                 }
             }
         };
-        let print_ivl = Duration::from_millis(2000);
+        let print_ivl = Duration::from_millis(1000);
         let mut print_next = Instant::now() + print_ivl;
-        let mut i1 = 0;
         tokio::spawn(fut);
+        let mut prep = connset2::event_prepare_write::EventPrepareWrite::new();
         while let Some(e) = connset.next().await {
             let tsnow = Instant::now();
             if tsnow >= print_next {
                 print_next = tsnow + print_ivl;
-                info!("i1 {i1}");
-                i1 = 0;
+                info!("{}", prep.oneline());
             }
             match e {
                 Ok(x) => match x {
                     crate::ca::connset2::connset::ConnSetItem::TestValue(x) => {
-                        // info!("{x}");
-                        i1 += 1;
+                        info!("{x}");
+                    }
+                    crate::ca::connset2::connset::ConnSetItem::ChannelEventValue(x) => {
+                        prep.ingest(x);
                     }
                 },
                 _ => {
