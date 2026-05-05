@@ -25,7 +25,7 @@ macro_rules! warn { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
 macro_rules! info { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
 macro_rules! debug { ($($arg:tt)*) => { if true { log::debug!($($arg)*); } }; }
 macro_rules! debug_batch { ($($arg:tt)*) => { if false { log::debug!($($arg)*); } }; }
-macro_rules! trace { ($($arg:tt)*) => { if true { log::trace!($($arg)*); } }; }
+macro_rules! trace { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
 
 autoerr::create_error_v1!(
     name(Error, "Finder"),
@@ -177,7 +177,7 @@ where
             loop {
                 match rx1.recv().await {
                     Ok(v) => {
-                        debug!("{selfname}  rx1 recv  {v:?}");
+                        trace!("{selfname}  rx1 recv  {v:?}");
                         let mut a = VecDeque::new();
                         for f in v {
                             match f {
@@ -291,7 +291,7 @@ async fn finder_worker_single(
     loop {
         match inp.recv().await {
             Ok(batch) => {
-                debug!("{selfname}  recv  {batch:?}");
+                trace!("{selfname}  recv  {batch:?}");
                 // TODO
                 // stats.dbsearcher_batch_recv().inc();
                 // stats.dbsearcher_item_recv().add(batch.len() as _);
@@ -380,7 +380,7 @@ async fn send_not_found_requests(
         }
         net_tx.send((name, tx)).await.map_err(|_| Error::Send)?;
     }
-    debug!("{selfname}  done");
+    trace!("{selfname}  done");
     Ok(())
 }
 

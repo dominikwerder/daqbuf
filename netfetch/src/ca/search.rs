@@ -3,7 +3,6 @@ use crate::ca::findioc::FindIocStream;
 use crate::conf::CaIngestOpts;
 use async_channel::Receiver;
 use async_channel::Sender;
-use futures::FutureExt;
 use futures::StreamExt;
 use std::collections::VecDeque;
 use std::net::IpAddr;
@@ -15,7 +14,6 @@ use tokio::task::JoinHandle;
 
 macro_rules! error { ($($arg:tt)*) => ( if true { log::error!($($arg)*); } ); }
 macro_rules! warn { ($($arg:tt)*) => ( if true { log::warn!($($arg)*); } ); }
-macro_rules! info { ($($arg:tt)*) => ( if true { log::info!($($arg)*); } ); }
 macro_rules! debug { ($($arg:tt)*) => ( if true { log::debug!($($arg)*); } ); }
 macro_rules! trace { ($($arg:tt)*) => ( if false { log::trace!($($arg)*); } ); }
 
@@ -80,23 +78,12 @@ pub async fn ca_search_workers_start(
     ),
     Error,
 > {
-    let selfname = "ca_search_workers_start";
     let (search_tgts, blacklist) = search_tgts_from_opts(&opts).await?;
-    let batch_run_max = Duration::from_millis(600);
-    let in_flight_max = 1;
-    let batch_size = 1;
-    let (inp_tx, inp2_rx) = async_channel::bounded(64);
-    let (inp2_tx, inp_rx) = async_channel::bounded(64);
-    tokio::spawn(async move {
-        while let Ok(x) = inp2_rx.recv().await {
-            trace!("{selfname}  SEE ITEM  {x:?}");
-            if inp2_tx.send(x).await.is_err() {
-                break;
-            }
-        }
-    });
+    let search_timeout = Duration::from_millis(1000 * 10);
+    let batch_len_max = 8;
+    let (inp_tx, inp_rx) = async_channel::bounded(10 * batch_len_max);
     let (out_tx, out_rx) = async_channel::bounded(64);
-    let finder = FindIocStream::new(inp_rx, search_tgts, blacklist, batch_run_max, in_flight_max, batch_size);
+    let finder = FindIocStream::new(inp_rx, search_tgts, blacklist, search_timeout, batch_len_max);
     let jh = taskrun::spawn(finder_run(finder, out_tx));
     Ok((inp_tx, out_rx, jh))
 }
@@ -167,6 +154,6 @@ async fn finder_run(
             Err(_) => break,
         }
     }
-    trace!("finder_run done");
+    debug!("{selfname} done");
     Ok(())
 }

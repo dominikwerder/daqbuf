@@ -19,19 +19,12 @@ pub async fn find(cmd: CaFind, broadcast: String) -> Result<(), Error> {
     eprintln!("{:?}", tgts);
     let (channels_input_tx, channels_input_rx) = async_channel::bounded(10);
     let blacklist = Vec::new();
-    let batch_run_max = Duration::from_millis(1200);
-    let in_flight_max = 1;
-    let batch_size = 1;
+    let search_timeout = Duration::from_millis(2400);
+    let batch_len_max = 1;
     let (res_tx, _res_rx) = netfetch::ca::conn2::asynchan::bounded(1, "channel-lookup-res");
     channels_input_tx.send((cmd.channel, res_tx)).await.unwrap();
-    let stream = netfetch::ca::findioc::FindIocStream::new(
-        channels_input_rx,
-        tgts,
-        blacklist,
-        batch_run_max,
-        in_flight_max,
-        batch_size,
-    );
+    let stream =
+        netfetch::ca::findioc::FindIocStream::new(channels_input_rx, tgts, blacklist, search_timeout, batch_len_max);
     let deadline = taskrun::tokio::time::sleep(Duration::from_millis(2000));
     let mut stream = Box::pin(stream.take_until(deadline));
     while let Some(e) = stream.next().await {

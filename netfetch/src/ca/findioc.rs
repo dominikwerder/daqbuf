@@ -10,7 +10,6 @@ use libc::c_int;
 use proto::CaMsg;
 use proto::CaMsgTy;
 use proto::HeadInfo;
-use std::collections::BTreeMap;
 use std::collections::VecDeque;
 use std::fmt;
 use std::net::Ipv4Addr;
@@ -23,7 +22,11 @@ use std::task::Poll;
 use std::time::Duration;
 use std::time::Instant;
 use taskrun::tokio;
+use taskrun::tokio::time::Sleep;
+use taskrun::tokio::time::sleep;
 use tokio::io::unix::AsyncFd;
+
+const BATCH_IVL: Duration = Duration::from_millis(100);
 
 macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
 macro_rules! warn { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
@@ -84,12 +87,16 @@ impl SearchId {
 }
 
 struct SearchBatch {
-    ts_beg: Instant,
     tgts: VecDeque<usize>,
     channels: Vec<String>,
     sids: Vec<SearchId>,
-    done: Vec<bool>,
-    txs: Vec<Option<asynchan::Sender<FindIocRes>>>,
+}
+
+struct ChannelSearchRequest {
+    chn: String,
+    sid: SearchId,
+    beg: Instant,
+    tx: Option<asynchan::Sender<FindIocRes>>,
 }
 
 pub struct OptResTx(Option<Pin<Box<asynchan::Sender<FindIocRes>>>>);
@@ -171,22 +178,18 @@ fn _assert_traits() {
 pub struct FindIocStream {
     tgts: Vec<SocketAddrV4>,
     channels_input: Option<Pin<Box<Receiver<(String, asynchan::Sender<FindIocRes>)>>>>,
-    in_flight: BTreeMap<BatchId, SearchBatch>,
-    in_flight_max: usize,
-    channels_per_batch: usize,
-    batch_run_max: Duration,
-    bid_by_sid: BTreeMap<SearchId, BatchId>,
-    batch_send_queue: VecDeque<BatchId>,
+    batch_cur: Option<SearchBatch>,
+    batch_len_max: usize,
+    search_timeout: Duration,
     sock: SockBox,
     afd: AsyncFd<i32>,
-    buf1: Vec<u8>,
-    send_addr: SocketAddrV4,
+    send_job: Option<(SocketAddrV4, Vec<u8>)>,
+    send_idle: Option<(Vec<u8>,)>,
     out_queue: VecDeque<(FindIocRes, asynchan::Sender<FindIocRes>)>,
     ping: Option<Pin<Box<tokio::time::Sleep>>>,
-    bids_all_done: BTreeMap<BatchId, ()>,
-    bids_timed_out: BTreeMap<BatchId, ()>,
-    sids_done: BTreeMap<SearchId, ()>,
-    result_for_done_sid_count: u64,
+    chn_reqs: VecDeque<ChannelSearchRequest>,
+    batch_ivl: Option<Pin<Box<Sleep>>>,
+    is_done: bool,
     #[allow(unused)]
     thr_msg_0: ThrottleTrace,
     #[allow(unused)]
@@ -200,9 +203,8 @@ impl FindIocStream {
         channels_input: Receiver<(String, asynchan::Sender<FindIocRes>)>,
         tgts: Vec<SocketAddrV4>,
         #[allow(unused)] blacklist: Vec<SocketAddrV4>,
-        batch_run_max: Duration,
-        in_flight_max: usize,
-        batch_size: usize,
+        search_timeout: Duration,
+        batch_len_max: usize,
     ) -> Self {
         let sock = unsafe { Self::create_socket() }.unwrap();
         let afd = AsyncFd::new(sock.0).unwrap();
@@ -213,22 +215,18 @@ impl FindIocStream {
         Self {
             tgts,
             channels_input: Some(Box::pin(channels_input)),
-            in_flight: BTreeMap::new(),
-            in_flight_max,
-            channels_per_batch: batch_size,
-            batch_run_max,
-            bid_by_sid: BTreeMap::new(),
-            batch_send_queue: VecDeque::new(),
+            batch_cur: None,
+            batch_len_max,
+            search_timeout,
             sock,
             afd,
-            buf1: Vec::with_capacity(2048),
-            send_addr: SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 5064),
+            send_job: None,
+            send_idle: Some((Vec::with_capacity(2048),)),
             out_queue: VecDeque::new(),
             ping: Some(Box::pin(tokio::time::sleep(Duration::from_millis(200)))),
-            bids_all_done: BTreeMap::new(),
-            bids_timed_out: BTreeMap::new(),
-            sids_done: BTreeMap::new(),
-            result_for_done_sid_count: 0,
+            chn_reqs: VecDeque::with_capacity(2),
+            batch_ivl: None,
+            is_done: false,
             thr_msg_0: ThrottleTrace::new(Duration::from_millis(1000)),
             thr_msg_1: ThrottleTrace::new(Duration::from_millis(1000)),
             thr_msg_2: ThrottleTrace::new(Duration::from_millis(1000)),
@@ -237,21 +235,10 @@ impl FindIocStream {
 
     pub fn quick_state(&self) -> String {
         format!(
-            "channels_input {:?}  in_flight {}  bid_by_sid {}  out_queue {}  result_for_done_sid_count {}  bids_timed_out {}",
+            "channels_input {:?}  out_queue {}",
             self.channels_input.as_ref().map(|x| x.len()),
-            self.in_flight.len(),
-            self.bid_by_sid.len(),
             self.out_queue.len(),
-            self.result_for_done_sid_count,
-            self.bids_timed_out.len()
         )
-    }
-
-    fn buf_and_batch(&mut self, bid: &BatchId) -> Option<(&mut Vec<u8>, &mut SearchBatch)> {
-        match self.in_flight.get_mut(bid) {
-            Some(batch) => Some((&mut self.buf1, batch)),
-            None => None,
-        }
     }
 
     unsafe fn create_socket() -> Result<SockBox, Error> {
@@ -343,14 +330,14 @@ impl FindIocStream {
         if ec == -1 {
             let errno = unsafe { *libc::__errno_location() };
             if errno == libc::EAGAIN {
-                return Poll::Pending;
+                Poll::Pending
             } else {
-                return Poll::Ready(Err(Error::SendFailure));
+                Poll::Ready(Err(Error::SendFailure))
             }
         } else {
-            debug!("try_send  sent  to {addr}  buf len {}\n", buf.len());
+            trace!("try_send  sent  to {addr}  buf len {}\n", buf.len());
+            Poll::Ready(Ok(()))
         }
-        Poll::Ready(Ok(()))
     }
 
     unsafe fn try_read(sock: i32) -> Poll<Result<(SocketAddrV4, Vec<(SearchId, SocketAddrV4)>), Error>> {
@@ -514,157 +501,67 @@ impl FindIocStream {
         }
     }
 
-    fn create_in_flight(&mut self, chns: Vec<(String, asynchan::Sender<FindIocRes>)>) {
-        let bid = BatchId::next();
-        let mut sids = Vec::new();
-        let mut chs = Vec::new();
-        let mut txs = Vec::new();
-        for (ch, tx) in chns {
-            let sid = SearchId::next();
-            self.bid_by_sid.insert(sid.clone(), bid.clone());
-            sids.push(sid);
-            chs.push(ch);
-            txs.push(Some(tx));
-        }
-        let n = chs.len();
-        let batch = SearchBatch {
-            ts_beg: Instant::now(),
-            channels: chs,
-            tgts: self.tgts.iter().enumerate().map(|x| x.0).collect(),
-            sids,
-            done: vec![false; n],
-            txs,
-        };
-        self.in_flight.insert(bid.clone(), batch);
-        self.batch_send_queue.push_back(bid);
-        // stats.ca_udp_batch_created().inc();
-    }
-
     fn handle_result(&mut self, src: SocketAddrV4, res: Vec<(SearchId, SocketAddrV4)>) {
         let tsnow = Instant::now();
-        let mut sids_remove = Vec::new();
         for (sid, addr) in res {
-            self.sids_done.insert(sid.clone(), ());
-            match self.bid_by_sid.get(&sid) {
-                Some(bid) => {
-                    sids_remove.push(sid.clone());
-                    match self.in_flight.get_mut(bid) {
-                        Some(batch) => {
-                            let mut found_sid = false;
-                            for (i2, s2) in batch.sids.iter().enumerate() {
-                                if s2 == &sid {
-                                    found_sid = true;
-                                    batch.done[i2] = true;
-                                    match batch.channels.get(i2) {
-                                        Some(ch) => {
-                                            if let Some(tx) = batch.txs[i2].take() {
-                                                let dt = tsnow.saturating_duration_since(batch.ts_beg);
-                                                let res = FindIocRes {
-                                                    channel: ch.into(),
-                                                    response_addr: Some(src.clone()),
-                                                    addr: Some(addr),
-                                                    dt,
-                                                };
-                                                // trace!("udp search response {res:?}");
-                                                // stats.ca_udp_recv_result().inc();
-                                                self.out_queue.push_back((res, tx));
-                                            } else {
-                                                info!("result for {ch} but no tx");
-                                            }
-                                        }
-                                        None => {
-                                            // stats.ca_udp_logic_error().inc();
-                                            error!(
-                                                "logic error  batch sids / channels lens:  {} vs {}",
-                                                batch.sids.len(),
-                                                batch.channels.len()
-                                            );
-                                        }
-                                    }
-                                }
-                            }
-                            if !found_sid {
-                                error!("can not find sid {:?} in batch {:?}", sid, bid);
-                            }
-                            let all_done = batch.done.iter().all(|x| *x);
-                            if all_done {
-                                self.bids_all_done.insert(bid.clone(), ());
-                                self.in_flight.remove(bid);
-                            }
-                        }
-                        None => {
-                            // TODO analyze reasons
-                            error!("no batch for {:?}", bid);
-                        }
-                    }
-                }
-                None => {
-                    // TODO analyze reasons
-                    if self.sids_done.contains_key(&sid) {
-                        self.result_for_done_sid_count += 1;
-                    } else {
-                        error!("no bid for {:?}", sid);
+            for x in self.chn_reqs.iter_mut() {
+                if sid == x.sid {
+                    let n = &x.chn;
+                    debug!("Found  {sid:?}  {n}  {addr}");
+                    if let Some(tx) = x.tx.take() {
+                        let dt = tsnow.saturating_duration_since(x.beg);
+                        let res = FindIocRes {
+                            channel: x.chn.clone(),
+                            response_addr: Some(src.clone()),
+                            addr: Some(addr),
+                            dt,
+                        };
+                        self.out_queue.push_back((res, tx));
                     }
                 }
             }
-        }
-        for sid in sids_remove {
-            self.bid_by_sid.remove(&sid);
         }
     }
 
     fn clear_timed_out(&mut self) {
         let tsnow = Instant::now();
-        let mut bids = Vec::new();
-        let mut sids = Vec::new();
-        let mut chns = Vec::new();
-        let mut dts = Vec::new();
-        let mut txs = Vec::new();
-        for (bid, batch) in &mut self.in_flight {
-            let dt = tsnow.saturating_duration_since(batch.ts_beg);
-            if dt > self.batch_run_max {
-                self.bids_timed_out.insert(bid.clone(), ());
-                for (i2, sid) in batch.sids.iter().enumerate() {
-                    if batch.done[i2] == false {
-                        // debug!("Timeout: {bid:?} {}", batch.channels[i2]);
-                        if let Some(tx) = batch.txs[i2].take() {
-                            sids.push(sid.clone());
-                            chns.push(batch.channels[i2].clone());
-                            dts.push(dt);
-                            txs.push(tx);
-                        } else if batch.done[i2] == false {
-                            warn!("batch not yet done, but no tx");
-                        }
-                        // stats.ca_udp_recv_timeout().inc();
+        for x in self.chn_reqs.iter_mut() {
+            if x.tx.is_some() {
+                let dt = tsnow.saturating_duration_since(x.beg);
+                if dt > self.search_timeout {
+                    if let Some(tx) = x.tx.take() {
+                        let res = FindIocRes {
+                            response_addr: None,
+                            channel: x.chn.clone(),
+                            addr: None,
+                            dt,
+                        };
+                        self.out_queue.push_back((res, tx));
                     }
                 }
-                bids.push(bid.clone());
             }
-        }
-        for (((sid, ch), dt), tx) in sids.into_iter().zip(chns).zip(dts).zip(txs) {
-            debug!("timed out  {ch}");
-            let res = FindIocRes {
-                response_addr: None,
-                channel: ch,
-                addr: None,
-                dt,
-            };
-            self.out_queue.push_back((res, tx));
-            self.bid_by_sid.remove(&sid);
-        }
-        for bid in bids {
-            self.in_flight.remove(&bid);
         }
     }
 
-    fn get_input_up_to_batch_max(&mut self, cx: &mut Context) -> Poll<Vec<(String, asynchan::Sender<FindIocRes>)>> {
+    fn out_item(&mut self) -> Option<VecDeque<(FindIocRes, asynchan::Sender<FindIocRes>)>> {
+        if self.out_queue.is_empty() {
+            None
+        } else {
+            let ret = std::mem::replace(&mut self.out_queue, VecDeque::new());
+            Some(ret)
+        }
+    }
+
+    fn refill_some(&mut self, cx: &mut Context, tsnow: Instant) -> Poll<Option<()>> {
         let selfname = "get_input_up_to_batch_max";
         use Poll::*;
         let mut ret = Vec::new();
+        let mut hpp2 = HaveProgressPending::new();
         loop {
-            trace2!("{selfname}");
             let mut hpp = HaveProgressPending::new();
-            if let Some(rx) = self.channels_input.as_mut() {
+            if ret.len() < self.batch_len_max
+                && let Some(rx) = self.channels_input.as_mut()
+            {
                 match rx.poll_next_unpin(cx) {
                     Ready(Some(item)) => {
                         hpp.mark_progress();
@@ -677,62 +574,43 @@ impl FindIocStream {
                     }
                     Pending => {
                         hpp.mark_pending();
+                        hpp2.mark_pending();
                     }
                 }
-            }
-            break if ret.len() >= self.channels_per_batch {
-                Ready(ret)
-            } else if hpp.have_progress() {
-                continue;
-            } else if hpp.have_pending() {
-                if ret.len() != 0 { Ready(ret) } else { Pending }
             } else {
-                Ready(Vec::new())
-            };
-        }
-    }
-
-    fn ready_for_end_of_stream(&self) -> bool {
-        self.channels_input.is_none() && self.in_flight.is_empty() && self.out_queue.is_empty()
-    }
-
-    fn out_item(&mut self) -> Option<VecDeque<(FindIocRes, asynchan::Sender<FindIocRes>)>> {
-        if self.out_queue.is_empty() {
-            None
-        } else {
-            let ret = std::mem::replace(&mut self.out_queue, VecDeque::new());
-            Some(ret)
-        }
-    }
-
-    fn refill_some(&mut self, cx: &mut Context) -> Poll<Option<()>> {
-        use Poll::*;
-        loop {
-            let mut hpp = HaveProgressPending::new();
-            if self.in_flight.len() >= self.in_flight_max {
-                break Ready(Some(()));
-            }
-            match self.get_input_up_to_batch_max(cx) {
-                Ready(chns) => {
-                    if chns.len() == 0 {
-                    } else {
-                        hpp.mark_progress();
-                        self.create_in_flight(chns);
-                    }
-                }
-                Pending => {
-                    hpp.mark_pending();
-                }
             }
             break if hpp.have_progress() {
-                // TODO refactor such that we do not go over limits when looping
-                // continue;
-                Ready(Some(()))
-            } else if hpp.have_pending() {
-                Pending
+                continue;
             } else {
-                Ready(None)
+                ()
             };
+        }
+        if ret.len() != 0 {
+            // let bid = BatchId::next();
+            let mut chns = Vec::new();
+            let mut sids = Vec::new();
+            for (ch, tx) in ret {
+                let sid = SearchId::next();
+                chns.push(ch.clone());
+                sids.push(sid.clone());
+                self.chn_reqs.push_back(ChannelSearchRequest {
+                    chn: ch,
+                    sid,
+                    beg: tsnow,
+                    tx: Some(tx),
+                });
+            }
+            let batch = SearchBatch {
+                tgts: self.tgts.iter().enumerate().map(|x| x.0).collect(),
+                channels: chns,
+                sids,
+            };
+            self.batch_cur = Some(batch);
+            Ready(Some(()))
+        } else if hpp2.have_pending() {
+            Pending
+        } else {
+            Ready(None)
         }
     }
 }
@@ -742,21 +620,27 @@ impl Stream for FindIocStream {
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         use Poll::*;
+        let selfname = "FindIocStream::poll_next";
         if self.channels_input.is_none() {
             debug!("{}", self.quick_state());
         }
         // self.thr_msg_0.trigger("FindIocStream::poll_next", &[]);
         loop {
-            trace!("FindIocStream::poll_next");
+            trace!("{selfname}");
             let mut hpp = HaveProgressPending::new();
-            if let Some(fut) = self.ping.as_mut() {
+            let self2 = self.as_mut().get_mut();
+            if let Some(x) = self2.out_item() {
+                break Ready(Some(Ok(x)));
+            }
+            if let Some(fut) = self2.ping.as_mut() {
                 match fut.poll_unpin(cx) {
-                    Ready(_) => {
+                    Ready(()) => {
                         hpp.mark_progress();
-                        if self.ready_for_end_of_stream() {
-                            self.ping = None;
+                        self2.clear_timed_out();
+                        if self2.channels_input.is_some() {
+                            self2.ping = Some(Box::pin(tokio::time::sleep(Duration::from_millis(500))));
                         } else {
-                            self.ping = Some(Box::pin(tokio::time::sleep(Duration::from_millis(200))));
+                            self2.ping = None;
                         }
                     }
                     Pending => {
@@ -764,78 +648,90 @@ impl Stream for FindIocStream {
                     }
                 }
             }
-            if let Some(x) = self.out_item() {
-                break Ready(Some(Ok(x)));
-            }
-            self.clear_timed_out();
-            if self.buf1.is_empty() {
-                match self.batch_send_queue.pop_front() {
-                    Some(bid) => {
-                        hpp.mark_progress();
-                        match self.buf_and_batch(&bid) {
-                            Some((buf1, batch)) => match batch.tgts.pop_front() {
-                                Some(tgtix) => {
-                                    Self::serialize_batch(buf1, batch);
-                                    trace!("serialized for search {:?}", batch.channels);
-                                    match self.tgts.get(tgtix) {
-                                        Some(tgt) => {
-                                            let tgt = tgt.clone();
-                                            self.send_addr = tgt.clone();
-                                            self.batch_send_queue.push_back(bid);
-                                        }
-                                        None => {
-                                            self.buf1.clear();
-                                            self.batch_send_queue.push_back(bid);
-                                            error!("tgtix does not exist");
-                                        }
-                                    }
-                                }
-                                None => {}
-                            },
-                            None => {
-                                if self.bids_all_done.contains_key(&bid) {
-                                    // TODO count for metrics
-                                } else {
-                                    warn!("bid {:?} from batch send queue not in flight  NOT done", bid);
-                                }
-                            }
-                        }
-                    }
-                    None => {}
-                }
-            } else {
-            }
-            if self.buf1.is_empty() {
-            } else {
-                match self.afd.poll_write_ready(cx) {
-                    Ready(Ok(mut g)) => match unsafe { Self::try_send(self.sock.0, &self.send_addr, &self.buf1) } {
-                        Ready(Ok(())) => {
+            if let Some(job) = self2.send_job.as_mut() {
+                if let Some(fut) = self2.batch_ivl.as_mut() {
+                    match fut.poll_unpin(cx) {
+                        Ready(()) => {
                             hpp.mark_progress();
-                            self.buf1.clear();
-                        }
-                        Ready(Err(e)) => {
-                            hpp.mark_progress();
-                            error!("FindIocStream {}", e);
+                            self2.batch_ivl = None
                         }
                         Pending => {
                             hpp.mark_pending();
-                            g.clear_ready();
-                            // TODO count for stats
-                            // warn!("socket seemed ready for write, but is not");
                         }
-                    },
-                    Ready(Err(e)) => {
-                        hpp.mark_progress();
-                        error!("poll_write_ready {}", e);
-                        // TODO should we abort?
                     }
-                    Pending => {
-                        hpp.mark_pending();
+                } else {
+                    let (addr, buf1) = job;
+                    match self2.afd.poll_write_ready(cx) {
+                        Ready(Ok(mut g)) => {
+                            match unsafe { Self::try_send(self2.sock.0, addr, buf1) } {
+                                Ready(Ok(())) => {
+                                    hpp.mark_progress();
+                                    g.clear_ready();
+                                    let s = String::from_utf8_lossy(buf1);
+                                    self2.send_idle = Some((std::mem::replace(buf1, Vec::new()),));
+                                    self2.send_job = None;
+                                    self2.batch_ivl = Some(Box::pin(sleep(BATCH_IVL)));
+                                }
+                                Ready(Err(e)) => {
+                                    hpp.mark_progress();
+                                    g.clear_ready();
+                                    self2.send_idle = Some((std::mem::replace(buf1, Vec::new()),));
+                                    self2.send_job = None;
+                                    error!("{selfname}  {e}");
+                                    break Ready(Some(Err(Error::SendFailure)));
+                                }
+                                Pending => {
+                                    hpp.mark_pending();
+                                    g.clear_ready();
+                                    // TODO count for stats
+                                    info!("{selfname}  socket seemed ready for write, but is not");
+                                }
+                            }
+                        }
+                        Ready(Err(e)) => {
+                            hpp.mark_progress();
+                            error!("{selfname}  poll_write_ready {e}");
+                            self2.send_idle = Some((std::mem::replace(buf1, Vec::new()),));
+                            self2.send_job = None;
+                            break Ready(Some(Err(Error::SendFailure)));
+                        }
+                        Pending => {
+                            hpp.mark_pending();
+                        }
                     }
                 }
-            }
-            if self.channels_input.is_some() {
-                match self.refill_some(cx) {
+            } else if let Some(batch) = self2.batch_cur.as_mut() {
+                if let Some((mut buf1,)) = self2.send_idle.take() {
+                    match batch.tgts.pop_front() {
+                        Some(tgtix) => match self2.tgts.get(tgtix) {
+                            Some(tgt) => {
+                                hpp.mark_progress();
+                                buf1.clear();
+                                Self::serialize_batch(&mut buf1, batch);
+                                debug!("{selfname}  serialized for search {:?}", batch.channels);
+                                let tgt = tgt.clone();
+                                self2.send_job = Some((tgt.clone(), buf1));
+                            }
+                            None => {
+                                hpp.mark_progress();
+                                self2.send_idle = Some((buf1,));
+                                error!("{selfname}  tgtix does not exist");
+                            }
+                        },
+                        None => {
+                            hpp.mark_progress();
+                            warn!("{selfname}  batch has no more target");
+                            self2.send_idle = Some((buf1,));
+                            self2.batch_cur = None;
+                        }
+                    }
+                } else {
+                    error!("{selfname}  send buffer lost");
+                    break Ready(Some(Err(Error::SendFailure)));
+                }
+            } else if self2.channels_input.is_some() {
+                let tsnow = Instant::now();
+                match self2.refill_some(cx, tsnow) {
                     Ready(Some(())) => {
                         hpp.mark_progress();
                     }
@@ -845,37 +741,32 @@ impl Stream for FindIocStream {
                     }
                 }
             }
-            if self.ready_for_end_of_stream() {
-            } else {
-                match self.afd.poll_read_ready(cx) {
-                    Ready(Ok(mut g)) => {
-                        // debug!("BLOCK AA");
-                        match unsafe { Self::try_read(self.sock.0) } {
-                            Ready(Ok((src, res))) => {
-                                self.handle_result(src, res);
-                                if self.ready_for_end_of_stream() {
-                                    debug!("ready_for_end_of_stream  continue after handle_result");
-                                }
-                                hpp.mark_progress();
-                            }
-                            Ready(Err(e)) => {
-                                error!("try_read {}", e);
-                                break Ready(Some(Err(e)));
-                            }
-                            Pending => {
-                                g.clear_ready();
-                                hpp.mark_pending();
-                            }
+            if self2.channels_input.is_some() {
+                match self2.afd.poll_read_ready(cx) {
+                    Ready(Ok(mut g)) => match unsafe { Self::try_read(self2.sock.0) } {
+                        Ready(Ok((src, res))) => {
+                            self2.handle_result(src, res);
+                            hpp.mark_progress();
                         }
-                    }
+                        Ready(Err(e)) => {
+                            error!("{selfname}  try_read {e}");
+                            break Ready(Some(Err(e)));
+                        }
+                        Pending => {
+                            g.clear_ready();
+                            hpp.mark_pending();
+                        }
+                    },
                     Ready(Err(e)) => {
-                        error!("poll_read_ready {}", e);
+                        error!("{selfname}  poll_read_ready {e}");
                         break Ready(Some(Err(e.into())));
                     }
                     Pending => {
                         hpp.mark_pending();
                     }
                 }
+            } else {
+                // If input closes, we stop reading. Could also continue for some time.
             }
             break if hpp.have_progress() {
                 continue;
@@ -883,6 +774,7 @@ impl Stream for FindIocStream {
                 Pending
             } else {
                 info!("FindIocStream  Done");
+                self2.is_done = true;
                 Ready(None)
             };
         }
@@ -891,6 +783,6 @@ impl Stream for FindIocStream {
 
 impl futures::stream::FusedStream for FindIocStream {
     fn is_terminated(&self) -> bool {
-        false
+        self.is_done
     }
 }
