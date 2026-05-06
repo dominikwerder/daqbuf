@@ -776,15 +776,13 @@ impl Stream for CaConn {
                                     }
                                 },
                                 Err(e) => {
-                                    trace!("{selfname}:Connected:Err:{e}");
-                                    error!("{selfname}:Connected:Err:  TODO handle error and shutdown");
+                                    error!("{selfname}:Connected:Err  TODO handle error more elegant?  {e}");
                                     self.state = State::Done;
                                     break Ready(Some(Err(e.into())));
                                 }
                             }
                         }
                         Ready(None) => {
-                            trace!("{selfname}:Connected:Done");
                             error!("{selfname}:Connected:Done  TODO handle shutdown");
                             self.state = State::Done;
                             hpp.mark_progress();

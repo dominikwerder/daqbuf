@@ -1,4 +1,5 @@
 mod channels;
+mod cmd_handler;
 mod cmder;
 mod futs;
 mod streamtask;
@@ -67,6 +68,7 @@ autoerr::create_error_v1!(
         Send,
         Timeout(#[from] timeoutable::TimeoutError),
         Command(String),
+        ConnSetCmderBox(Box<dyn std::error::Error + Send>),
         Logic,
     },
 );
@@ -305,6 +307,7 @@ impl ConnSet {
         cx: &mut Context,
     ) -> Poll<Result<Option<(FutDbg<Result<(), Error>>,)>, Error>> {
         use Poll::*;
+        let selfname = "poll_channels";
         // TODO caller wants to handle only one potential future at a time.
         let mut hpp = HaveProgressPending::new();
         let self2 = self.get_mut();
@@ -384,6 +387,7 @@ impl ConnSet {
                                 }
                             }
                             Err(e) => {
+                                error!("{selfname}  recv error {e}");
                                 break Ready(Err(e));
                             }
                         }
@@ -421,16 +425,17 @@ impl ConnSet {
     fn handle_conn_comm_status_info(
         e1: conn2::conn::StatusInfo,
         cmder: &ConnSetCmder,
-        cx: &mut Context,
+        _cx: &mut Context,
     ) -> Result<Option<FutDbg<Result<(), Error>>>, Error> {
         let selfname = "handle_conn_comm_status_info";
+        // TODO process periodic status info
         match e1.state {
             conn2::conn::StatusState::Connecting => {}
             conn2::conn::StatusState::Connected(e2) => match e2.status {
                 conn2::conn::connected::StatusInfoState::Init => {}
                 conn2::conn::connected::StatusInfoState::Handshake => {}
                 conn2::conn::connected::StatusInfoState::ActiveCa(e3) => match e3.state {
-                    conn2::conn::activeca::StatusInfoState::Running(e4) => {
+                    conn2::conn::activeca::StatusInfoState::Running(st1, e4) => {
                         for e5 in e4.handlers {
                             match e5.status {
                                 conn2::conn::channelheap::StatusChannelHandlerState::Active(e6) => {
@@ -439,7 +444,10 @@ impl ConnSet {
                                             trace!("{selfname}  channel counter reach limit");
                                             let cmder = cmder.clone();
                                             let fut = async move {
-                                                cmder.channel_remove(&e5.name).await;
+                                                cmder
+                                                    .channel_remove(&e5.name)
+                                                    .await
+                                                    .map_err(|e| Error::ConnSetCmderBox(Box::new(e)))?;
                                                 trace!("{selfname}  channel removed  {}", e5.name);
                                                 Ok(())
                                             };
@@ -483,6 +491,7 @@ impl ConnSet {
                 }
             } else {
                 let mut addr_found_done = Vec::new();
+                let mut addr_found_error = Vec::new();
                 let self2 = self.as_mut().get_mut();
                 // TODO introduce fairness for congested case
                 for (addr, conn_reg) in self2.ca_conns.iter_mut() {
@@ -506,7 +515,6 @@ impl ConnSet {
                                         }
                                     }
                                     conn2::conn::CaConnItem::ChannelInfoQuery(item) => {
-                                        debug!("===================   recv  {item:?}");
                                         let mut tx = self2.ch_info_tx.clone();
                                         let fut = async move {
                                             match tx.send(item).await {
@@ -532,8 +540,17 @@ impl ConnSet {
                                     }
                                 },
                                 Err(e) => {
-                                    self2.state = State::Done;
-                                    break 'outer Ready(Some(Err(e.into())));
+                                    error!("{selfname}  recv error  {e}");
+                                    use conn2::conn::Error as E2;
+                                    match e {
+                                        E2::IO(e) => {
+                                            error!("{selfname}  check IO error  {e}");
+                                        }
+                                        _ => {}
+                                    }
+                                    // TODO ??
+                                    // self.conn_idle_disconnect_futs;
+                                    addr_found_error.push(*addr);
                                 }
                             }
                         }
@@ -555,12 +572,31 @@ impl ConnSet {
                         }
                     }
                 }
+                let mut signal_channels_on_address = Vec::with_capacity(addr_found_done.len() + addr_found_error.len());
                 for addr in addr_found_done {
+                    signal_channels_on_address.push(addr);
                     if let Some(conn) = self.ca_conns.remove(&addr) {
                         // TODO await the jh
                         let jh = conn.jh;
                     } else {
-                        error!("finished connection not in registry");
+                        error!("finished connection not in registry  {addr}");
+                    }
+                }
+                for addr in addr_found_error {
+                    signal_channels_on_address.push(addr);
+                    if let Some(conn) = self.ca_conns.remove(&addr) {
+                        // TODO await the jh
+                        let jh = conn.jh;
+                    } else {
+                        error!("connection with error not in registry  {addr}");
+                    }
+                }
+                for addr in signal_channels_on_address {
+                    for (chn, cc) in self.channels.iter_mut() {
+                        if cc.channel.addr().map_or(false, |x| x == addr) {
+                            warn!("signal_ca_conn_down  {addr}  {chn}");
+                            cc.channel.signal_ca_conn_down();
+                        }
                     }
                 }
             }
@@ -578,7 +614,7 @@ impl ConnSet {
         mut self: Pin<&mut Self>,
         cmd: String,
         mut tx: asynchan::Sender<serde_json::Value>,
-        _cx: &mut Context,
+        cx: &mut Context,
     ) -> Option<FutDbg<Result<(), Error>>> {
         match serde_json::from_str::<crate::metrics::CmdType>(&cmd) {
             Ok(cmdty) => {
@@ -661,183 +697,8 @@ impl ConnSet {
                             None
                         }
                     }
-                } else if cmdty.ty == "ConnSetCmdV1" {
-                    info!("ConnSetCmdV1 {cmd:?}");
-                    #[derive(Deserialize)]
-                    struct ChannelAddV0 {
-                        // TODO missing archiving conf
-                        type2: String,
-                        channels: Vec<String>,
-                    }
-                    if let Ok(cmd) = serde_json::from_str::<ChannelAddV0>(&cmd) {
-                        if cmd.type2 == "ChannelAddV0" {
-                            for x in cmd.channels {
-                                let conf = ChannelConfig::polled_2_20_120(x, "web-api");
-                                let (tx, _rx) = asynchan::bounded(1, "ChannelAddV0-sub");
-                                self.handle_channel_add(conf, tx);
-                            }
-                            let fut = async move {
-                                tx.send(serde_json::json!({"done":"ok"})).await;
-                                Ok(())
-                            };
-                            Some(fut.box2())
-                        } else {
-                            info!("command unknown");
-                            None
-                        }
-                    } else {
-                        info!("command unknown");
-                        None
-                    }
-                } else if cmdty.ty == "ChannelHandlerCmdV1" {
-                    match serde_json::from_str::<serde_json::Value>(&cmd) {
-                        Ok(cmd) => {
-                            info!("ChannelHandlerCmdV1 {cmd:?}");
-                            if let Some(name) = cmd.get("name").and_then(|x| x.as_str()) {
-                                let mut retfut = None;
-                                for addr in self.channels.iter().filter(|x| x.0 == name).map(|x| x.1.channel.addr()) {
-                                    if let Some(addr) = addr {
-                                        let cmdtxs: Vec<_> = self
-                                            .ca_conns
-                                            .iter()
-                                            .filter(|x| *x.0 == addr)
-                                            .map(|x| (x.0.clone(), x.1.comm.clone()))
-                                            .collect();
-                                        if cmdtxs.len() > 1 {
-                                            error!("TODO ChannelHandlerCmdV1 allow only unique channel names");
-                                        }
-                                        let fut = async move {
-                                            let mut val = serde_json::Value::Null;
-                                            for (addr, mut cmdtx) in cmdtxs {
-                                                val = cmdtx.channel_handler_cmd(cmd).await;
-                                                if let Some(v2) = val.as_object_mut() {
-                                                    v2.insert(
-                                                        "__connaddr".into(),
-                                                        serde_json::Value::String(format!("{}", addr)),
-                                                    );
-                                                }
-                                                break;
-                                            }
-                                            let _ = tx.send(val).await;
-                                            Ok(())
-                                        };
-                                        retfut = Some(fut.box2());
-                                        break;
-                                    } else {
-                                        // TODO dispatch message even though not connected.
-                                        warn!("TODO dispatch ChannelHandlerCmdV1 {cmd:?} even though no addr");
-                                    }
-                                }
-                                if let Some(fut) = retfut { Some(fut as _) } else { None }
-                            } else {
-                                info!("TODO return error if channel not found {cmd:?}");
-                                None
-                            }
-                        }
-                        Err(e) => {
-                            let val = serde_json::json!({
-                                "type": "error",
-                                "msg": format!("{e}"),
-                            });
-                            let _ = tx.try_send(val);
-                            None
-                        }
-                    }
                 } else if cmdty.ty == "dyn_cmd_v03" {
-                    #[derive(Debug, Deserialize)]
-                    struct DynCmdV03Base {
-                        type2: String,
-                    }
-                    #[derive(Debug, Deserialize)]
-                    struct DynCmdV03WithConnAddr {
-                        // type2: String,
-                        conn_addr_regex: String,
-                    }
-                    if let Ok(cmd2) = serde_json::from_str::<DynCmdV03Base>(&cmd) {
-                        info!("{cmd2:?}");
-                        if cmd2.type2 == "test01" {
-                            if let Ok(cmd3) = serde_json::from_str::<DynCmdV03WithConnAddr>(&cmd) {
-                                info!("{cmd3:?}");
-                                match serde_json::from_str::<serde_json::Value>(&cmd) {
-                                    Ok(cmd) => {
-                                        use serde_json::json;
-                                        info!("{cmd:?}");
-
-                                        // TODO check first if we should scatter the command over connections or if it is simply for us.
-
-                                        // TODO scatter gather
-
-                                        match regex::Regex::new(&cmd3.conn_addr_regex) {
-                                            Ok(re) => {
-                                                let comms = self
-                                                    .ca_conns
-                                                    .iter()
-                                                    .filter_map(|x| {
-                                                        let s1 = x.0.to_string();
-                                                        if re.is_match(&s1) {
-                                                            Some((x.0.clone(), x.1.comm.clone()))
-                                                        } else {
-                                                            None
-                                                        }
-                                                    })
-                                                    .collect::<Vec<_>>();
-                                                let fut = async move {
-                                                    let mut ret = BTreeMap::new();
-                                                    for (addr, mut comm) in comms {
-                                                        // TODO maybe use a recursive command format and extract sub-part?
-                                                        let val = comm.dyn_cmd_v03(cmd.clone()).await;
-                                                        ret.insert(addr.to_string(), val);
-                                                    }
-                                                    let x = json!({
-                                                        "conns": ret,
-                                                    });
-                                                    let _ = tx.send(x).await;
-                                                    Ok(())
-                                                };
-                                                Some(fut.box2())
-                                            }
-                                            Err(e) => {
-                                                let val = json!({
-                                                    "error": e.to_string(),
-                                                });
-                                                let _ = tx.try_send(val);
-                                                None
-                                            }
-                                        }
-                                    }
-                                    Err(e) => {
-                                        let val = serde_json::json!({
-                                            "type": "error",
-                                            "msg": format!("{e}"),
-                                        });
-                                        let _ = tx.try_send(val);
-                                        None
-                                    }
-                                }
-                            } else {
-                                let val = serde_json::json!({
-                                    "type": "error",
-                                    "msg": format!("not a DynCmdV03WithConnAddr"),
-                                });
-                                let _ = tx.try_send(val);
-                                None
-                            }
-                        } else {
-                            let val = serde_json::json!({
-                                "type": "error",
-                                "msg": format!("command unknown"),
-                            });
-                            let _ = tx.try_send(val);
-                            None
-                        }
-                    } else {
-                        let val = serde_json::json!({
-                            "type": "error",
-                            "msg": format!("not a DynCmdV03Base"),
-                        });
-                        let _ = tx.try_send(val);
-                        None
-                    }
+                    self.handle_dyn_cmd_v03(cmd, tx, cx)
                 } else if cmdty.ty == "ConnSetLlogV1" {
                     let local_log = self.llog.to_vec_string();
                     let val = serde_json::json!({

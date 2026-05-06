@@ -24,6 +24,7 @@ use futures::Stream;
 use futures::StreamExt;
 use hashbrown::HashMap;
 use netpod::channelstatus::ChannelStatus;
+use serde::Serialize;
 use serieswriter::binwriter::BinWriter;
 use stats::mett::ChannelHandlerMetrics;
 use std::collections::VecDeque;
@@ -145,12 +146,12 @@ pub struct ChannelHandlerItem {
     pub inner: ItemInner,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct StatusInfo {
     pub counters: Counters,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Counters {
     pub event_add_res_cnt: u64,
 }

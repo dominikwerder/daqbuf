@@ -27,11 +27,11 @@ use series::ChannelStatusSeriesId;
 use std::fmt;
 use std::net::SocketAddrV4;
 use std::pin::Pin;
-use std::sync::atomic::AtomicUsize;
-use std::sync::atomic::Ordering;
 use std::task::Context;
 use std::task::Poll;
+use std::task::Waker;
 use std::time::Duration;
+use std::time::Instant;
 use taskrun::tokio;
 
 const ADDR_SEARCH_TIMEOUT: Duration = Duration::from_millis(30000);
@@ -42,17 +42,15 @@ macro_rules! warn { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
 macro_rules! debug { ($($arg:tt)*) => { if true { log::debug!($($arg)*); } }; }
 macro_rules! trace { ($($arg:tt)*) => { if false { log::info!($($arg)*); } }; }
 macro_rules! trace2 { ($($arg:tt)*) => { if false { log::info!($($arg)*); } }; }
-macro_rules! trace3 { ($($arg:tt)*) => { if false { log::info!($($arg)*); } }; }
-macro_rules! trace4 { ($($arg:tt)*) => { if false { log::info!($($arg)*); } }; }
-macro_rules! trace_pending { ($($arg:tt)*) => { if false { log::info!("{}  Pending", format_args!($($arg)*)); } }; }
 
 autoerr::create_error_v1!(
-    name(Error, "connset:Channel"),
+    name(Error, "ConnSetChannel"),
     enum variants {
         Finder(#[from] crate::ca::finder::Error),
         AddrNotFound(String),
         LogicSendBlock,
         Lookup(#[from] dbpg::seriesbychannel::Error),
+        Logic,
     },
 );
 
@@ -90,6 +88,7 @@ impl RemovingCommon {
 
 struct Backoff {
     to: FutDbg<()>,
+    until: Instant,
     make_state: Box<dyn FnOnce(&mut Channel) -> State + Send>,
 }
 
@@ -151,6 +150,12 @@ impl fmt::Display for State {
 }
 
 #[derive(Debug, Serialize)]
+pub struct BackoffInfo {
+    #[serde(with = "serde_helper::serde_Duration_human")]
+    until: Duration,
+}
+
+#[derive(Debug, Serialize)]
 pub struct AddrSearchInfo {
     cssid: ChannelStatusSeriesId,
 }
@@ -170,7 +175,7 @@ pub struct RemovingInfo2 {
 #[derive(Debug, Serialize)]
 pub enum StateInfo {
     Init,
-    Backoff,
+    Backoff(BackoffInfo),
     CssidReq,
     AddrSearch(AddrSearchInfo),
     Observing(ObservingInfo),
@@ -184,6 +189,7 @@ pub enum StateInfo {
 #[derive(Debug, Serialize)]
 pub struct ChannelInfo {
     state: StateInfo,
+    backoff_i: u32,
     local_log: Vec<locallog::Entry>,
 }
 
@@ -204,6 +210,7 @@ pub struct Channel {
     addr: Option<SocketAddrV4>,
     backoff_i: u32,
     llog: LocalLog,
+    waker: Option<Waker>,
 }
 
 impl Channel {
@@ -218,6 +225,7 @@ impl Channel {
             addr: None,
             backoff_i: 0,
             llog: LocalLog::new(),
+            waker: None,
         }
     }
 
@@ -229,7 +237,10 @@ impl Channel {
         ChannelInfo {
             state: match &self.state {
                 State::Init => StateInfo::Init,
-                State::Backoff(..) => StateInfo::Backoff,
+                State::Backoff(x) => {
+                    let until = x.until.saturating_duration_since(Instant::now());
+                    StateInfo::Backoff(BackoffInfo { until })
+                }
                 State::CssidReq(..) => StateInfo::CssidReq,
                 State::AddrSearch(st, ..) => StateInfo::AddrSearch(AddrSearchInfo {
                     cssid: st.cssid.clone(),
@@ -253,7 +264,20 @@ impl Channel {
                 State::Removed => StateInfo::Removed,
                 State::Done => StateInfo::Done,
             },
+            backoff_i: self.backoff_i,
             local_log: self.llog.to_vec_string(),
+        }
+    }
+
+    pub fn signal_ca_conn_down(&mut self) {
+        let selfname = "signal_ca_conn_down";
+        // TODO must back off, later retry.
+        self.state = State::Init;
+        if let Some(waker) = self.waker.take() {
+            debug!("{selfname}  wake");
+            waker.wake();
+        } else {
+            debug!("{selfname}  no waker");
         }
     }
 
@@ -310,6 +334,14 @@ impl Channel {
         })
     }
 
+    fn backoff_to_until(&mut self) -> (FutDbg<()>, Instant) {
+        self.backoff_i = (1 + self.backoff_i).min(999);
+        let x = 120e3 * (self.backoff_i as f32 / 20.).tanh();
+        let until = Instant::now() + Duration::from_millis(x as u64);
+        let to = tokio::time::sleep_until(until.into());
+        (to.box2(), until)
+    }
+
     fn handle_command(&mut self, cmd: Cmd) -> Result<(), Error> {
         let selfname = "handle_command";
         debug!("{selfname} called");
@@ -363,6 +395,10 @@ impl PollCstm for Channel {
 
     fn poll<'a>(mut self: Pin<&mut Self>, ress: &'a mut PollRess, cx: &mut Context) -> Poll<Self::Output> {
         use Poll::*;
+        if self.waker.as_ref().map_or(false, |x| x.will_wake(cx.waker())) {
+        } else {
+            self.waker = Some(cx.waker().clone());
+        }
         loop {
             let mut hpp = HaveProgressPending::new();
             if let Some(x) = self.llog.pop() {
@@ -391,7 +427,6 @@ impl PollCstm for Channel {
                 }
                 State::Backoff(st) => match st.to.poll_unpin(cx) {
                     Ready(()) => {
-                        debug!("Backoff done");
                         hpp.mark_progress();
                         if let State::Backoff(j) = std::mem::replace(&mut self2.state, State::Done) {
                             let stn = (j.make_state)(self2);
@@ -409,9 +444,9 @@ impl PollCstm for Channel {
                     match st1.fut.poll_unpin(cx) {
                         Ready(x) => {
                             hpp.mark_progress();
-                            self2.backoff_i = 0;
                             match x {
                                 Ok(chi) => {
+                                    self2.backoff_i = 0;
                                     let stn = self2.produce_addr_search_state(chi, ress.finder_handle.clone());
                                     llog!(self2, "transition {} -> {}", self2.state, stn);
                                     self2.state = stn;
@@ -436,16 +471,11 @@ impl PollCstm for Channel {
                             hpp.mark_progress();
                             // TODO emtrics instead of log
                             warn!("CssidReq timeout");
-                            let to = {
-                                self2.backoff_i += 1;
-                                let x = 2000. * (self2.backoff_i as f32).powf(0.5);
-                                debug!("backoff {x:.1} ms");
-                                tokio::time::sleep(Duration::from_millis(x as u64))
-                            }
-                            .box2();
+                            let (to, until) = self2.backoff_to_until();
                             let ch_info = ress.ch_info.clone();
                             let stn = State::Backoff(Backoff {
                                 to,
+                                until,
                                 make_state: Box::new(move |this: &mut Self| this.produce_cssid_req_state(ch_info)),
                             });
                             llog!(self2, "transition {} -> {}", self2.state, stn);
@@ -460,10 +490,10 @@ impl PollCstm for Channel {
                     match st1.fut.poll_unpin(cx) {
                         Ready(x) => {
                             hpp.mark_progress();
-                            self2.backoff_i = 0;
                             match x {
                                 Ok(x) => {
                                     trace!("State::AddrSearch  found {x}");
+                                    self2.backoff_i = 0;
                                     let stn = State::Observing(Observing {
                                         cssid: st1.cssid.clone(),
                                         addr: x.clone(),
@@ -476,11 +506,29 @@ impl PollCstm for Channel {
                                 }
                                 Err(e) => {
                                     match e {
-                                        // Error::AddrNotFound(_) => {
-                                        //     // TODO instead, back off and try again. Count metrics.
-                                        //     self.state = State::Removed;
-                                        //     continue;
-                                        // }
+                                        Error::AddrNotFound(_) => {
+                                            // TODO metrics
+                                            let (to, until) = self2.backoff_to_until();
+                                            if let State::AddrSearch(st1) =
+                                                std::mem::replace(&mut self2.state, State::Done)
+                                            {
+                                                let chi = st1.chi;
+                                                let fh = ress.finder_handle.clone();
+                                                let stn = State::Backoff(Backoff {
+                                                    to,
+                                                    until,
+                                                    make_state: Box::new(move |this: &mut Self| {
+                                                        this.produce_addr_search_state(chi, fh)
+                                                    }),
+                                                });
+                                                llog!(self2, "transition {} -> {}", self2.state, stn);
+                                                self2.state = stn;
+                                                continue;
+                                            } else {
+                                                self2.state = State::Done;
+                                                break Ready(Some(Err(Error::Logic)));
+                                            }
+                                        }
                                         e => {
                                             warn!("State::AddrSearch  finder error {e}");
                                             let stn = State::Done;
@@ -501,18 +549,13 @@ impl PollCstm for Channel {
                             hpp.mark_progress();
                             // TODO emtrics instead of log
                             warn!("AddrSearch timeout");
-                            let to = {
-                                self2.backoff_i += 1;
-                                let x = 2000. * (self2.backoff_i as f32).powf(0.5);
-                                debug!("backoff {x:.1} ms");
-                                tokio::time::sleep(Duration::from_millis(x as u64))
-                            }
-                            .box2();
+                            let (to, until) = self2.backoff_to_until();
                             if let State::AddrSearch(st1) = std::mem::replace(&mut self2.state, State::Done) {
                                 let chi = st1.chi;
                                 let fh = ress.finder_handle.clone();
                                 let stn = State::Backoff(Backoff {
                                     to,
+                                    until,
                                     make_state: Box::new(move |this: &mut Self| {
                                         this.produce_addr_search_state(chi, fh)
                                     }),
@@ -621,7 +664,8 @@ impl PollCstm for Channel {
             } else if hpp.have_pending() {
                 Pending
             } else {
-                trace!("HPP:Done");
+                let chn = self.conf.name();
+                debug!("HPP:Done  {chn}");
                 Ready(None)
             };
         }

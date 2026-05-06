@@ -29,6 +29,7 @@ use futures::FutureExt;
 use futures::StreamExt;
 use futures::future::ready;
 use hashbrown::HashMap;
+use serde::Serialize;
 use stats::mett::CaConnConnectedMetrics;
 use std::collections::VecDeque;
 use std::pin::Pin;
@@ -216,20 +217,20 @@ enum PollHandlerItem {
     ChannelEventValue(ChannelEventValue),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub enum StatusChannelHandlerState {
     Active(channelhandler::StatusInfo),
     Done,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct StatusChannelHandler {
     pub name: String,
     pub cid: Cid,
     pub status: StatusChannelHandlerState,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct StatusInfo {
     pub handlers: Vec<StatusChannelHandler>,
 }

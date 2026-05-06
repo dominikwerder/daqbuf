@@ -708,7 +708,7 @@ impl Stream for FindIocStream {
                                 hpp.mark_progress();
                                 buf1.clear();
                                 Self::serialize_batch(&mut buf1, batch);
-                                debug!("{selfname}  serialized for search {:?}", batch.channels);
+                                trace!("{selfname}  serialized for search {:?}", batch.channels);
                                 let tgt = tgt.clone();
                                 self2.send_job = Some((tgt.clone(), buf1));
                             }
@@ -720,7 +720,6 @@ impl Stream for FindIocStream {
                         },
                         None => {
                             hpp.mark_progress();
-                            warn!("{selfname}  batch has no more target");
                             self2.send_idle = Some((buf1,));
                             self2.batch_cur = None;
                         }

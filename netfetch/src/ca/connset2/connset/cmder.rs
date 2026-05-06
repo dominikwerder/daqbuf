@@ -4,7 +4,6 @@ use super::ConnSetCmd;
 use super::ConnSetCmdKind;
 use crate::ca::conn2::asynchan;
 use crate::conf::ChannelConfig;
-use libc::NAME_MAX;
 use std::net::SocketAddrV4;
 
 macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }

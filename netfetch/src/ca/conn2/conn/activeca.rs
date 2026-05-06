@@ -14,7 +14,9 @@ use ca_proto::ca::proto::CaMsg;
 use futures::FutureExt;
 use futures::Stream;
 use futures::StreamExt;
+use netpod::futdbg::FutDbg;
 use netpod::futdbg::FutDbgBox;
+use serde::Serialize;
 use stats::mett::CaConnConnectedMetrics;
 use std::cell::RefCell;
 use std::collections::VecDeque;
@@ -25,8 +27,12 @@ use std::pin::Pin;
 use std::rc::Rc;
 use std::task::Context;
 use std::task::Poll;
+use std::time::Duration;
 use std::time::Instant;
 use taskrun::tokio;
+use taskrun::tokio::time::Sleep;
+use taskrun::tokio::time::sleep;
+use taskrun::tokio::time::sleep_until;
 use tokio::time::error::Elapsed;
 
 macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
@@ -45,6 +51,8 @@ autoerr::create_error_v1!(
         ProtoTxClosed,
         ChannelHeap(#[from] channelheap::Error),
         Send,
+        Logic,
+        IocEchoTimeout,
     },
 );
 
@@ -80,15 +88,124 @@ enum CaCommandKind {
     DisconnectOnIdle(asynchan::Sender<u32>),
 }
 
+struct Sleep2 {
+    until: Instant,
+    fut: Pin<Box<Sleep>>,
+}
+
+impl Sleep2 {
+    fn new_until(until: Instant) -> Self {
+        Self {
+            until,
+            fut: Box::pin(sleep_until(until.into())),
+        }
+    }
+
+    fn new_dur(dur: Duration) -> Self {
+        let until = Instant::now() + dur;
+        Self {
+            until,
+            fut: Box::pin(sleep_until(until.into())),
+        }
+    }
+
+    fn until(&self) -> Instant {
+        self.until
+    }
+}
+
+impl Future for Sleep2 {
+    type Output = ();
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        self.fut.poll_unpin(cx)
+    }
+}
+
+impl fmt::Debug for Sleep2 {
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let tsnow = Instant::now();
+        let dt = self.until.saturating_duration_since(tsnow);
+        let dt = humantime::format_duration(dt);
+        fmt.debug_struct("Sleep2").field("until", &dt).finish()
+    }
+}
+
+#[derive(Debug)]
+enum PingPong {
+    Idle(Sleep2),
+    Send(Option<CaMsg>, Sleep2),
+    Wait(Sleep2),
+}
+
+impl PingPong {
+    fn new_idle() -> Self {
+        let dur = Duration::from_millis(10000);
+        Self::Idle(Sleep2::new_dur(dur))
+    }
+
+    fn new_send(item: CaMsg) -> Self {
+        let dur = Duration::from_millis(4000);
+        Self::Send(Some(item), Sleep2::new_dur(dur))
+    }
+
+    fn new_wait() -> Self {
+        let dur = Duration::from_millis(10000);
+        Self::Wait(Sleep2::new_dur(dur))
+    }
+
+    fn status_info(&self) -> PingPongInfo {
+        match self {
+            PingPong::Idle(x) => PingPongInfo::Idle(x.until()),
+            PingPong::Send(_, x) => PingPongInfo::Send(x.until()),
+            PingPong::Wait(x) => PingPongInfo::Wait(x.until()),
+        }
+    }
+}
+
+use ca_proto::ca::proto::CaMsgTy;
+use serde_helper::serde_instant::serde_Instant_elapsed_ms::serialize as inser3;
+
+#[derive(Debug, Serialize)]
+enum PingPongInfo {
+    Idle(#[serde(serialize_with = "inser3")] Instant),
+    Send(#[serde(serialize_with = "inser3")] Instant),
+    Wait(#[serde(serialize_with = "inser3")] Instant),
+}
+
+#[derive(Debug)]
+struct Running {
+    pingpong: PingPong,
+}
+
+impl Running {
+    fn new() -> Self {
+        Self {
+            pingpong: PingPong::new_idle(),
+        }
+    }
+
+    fn status_info(&self) -> RunningInfo {
+        RunningInfo {
+            pingpong: self.pingpong.status_info(),
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct RunningInfo {
+    pingpong: PingPongInfo,
+}
+
 #[derive(Debug)]
 enum State {
-    Running,
+    Running(Running),
     Done,
 }
 
 impl State {
     fn new() -> Self {
-        Self::Running
+        Self::Running(Running::new())
     }
 }
 
@@ -115,13 +232,13 @@ pub struct ActiveCaItem {
     pub inner: ItemInner,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub enum StatusInfoState {
-    Running(channelheap::StatusInfo),
+    Running(RunningInfo, channelheap::StatusInfo),
     Done,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct StatusInfo {
     pub state: StatusInfoState,
 }
@@ -135,6 +252,7 @@ pub struct ActiveCa {
     addr: SocketAddrV4,
     state: State,
     chanheap: ChannelHeap,
+    proto_tx: asynchan::Sender<CaMsg>,
     proto_rx: asynchan::Receiver<CaMsg>,
     proto_rx_buf: VecDeque<CaMsg>,
     proto_rx_buf_done: bool,
@@ -156,7 +274,8 @@ impl ActiveCa {
         let (proto_2_tx, proto_2_rx) = asynchan::bounded(120, "ActiveCa-proto2");
         let (chanheap_cmd_tx, chanheap_cmd_rx) = asynchan::bounded(16, "ActiveCa-ChannelHeap-cmd");
         Self {
-            chanheap: ChannelHeap::new(backend.clone(), proto_tx, proto_2_rx),
+            chanheap: ChannelHeap::new(backend.clone(), proto_tx.clone(), proto_2_rx),
+            proto_tx,
             backend,
             tsbeg: tsnow,
             addr,
@@ -174,8 +293,8 @@ impl ActiveCa {
 
     pub fn status_info(&self) -> StatusInfo {
         match &self.state {
-            State::Running => StatusInfo {
-                state: StatusInfoState::Running(self.chanheap.status_info()),
+            State::Running(st) => StatusInfo {
+                state: StatusInfoState::Running(st.status_info(), self.chanheap.status_info()),
             },
             State::Done => StatusInfo {
                 state: StatusInfoState::Done,
@@ -191,7 +310,7 @@ impl ActiveCa {
         use futures::future::ready;
         use serde_json::json;
         match &mut self.state {
-            State::Running => self.chanheap.handle_dyn_cmd_v03(cmd).box2(),
+            State::Running(st) => self.chanheap.handle_dyn_cmd_v03(cmd).box2(),
             State::Done => ready(json!({
                 "error": "ActiveCa  State::Done",
             }))
@@ -258,7 +377,7 @@ impl ActiveCa {
         hpp: &mut HaveProgressPending,
     ) -> Option<Error> {
         use Poll::*;
-        let self2 = self.as_mut().get_mut();
+        let self2 = self.get_mut();
         if let Some(fut) = self2.cmd_fut.as_mut() {
             match fut.0.as_mut().poll(cx) {
                 Ready(Ok(())) => {
@@ -327,8 +446,26 @@ impl ActiveCa {
                         },
                     }
                 } else {
-                    error!("TODO handle incoming item internally: {item:?}");
-                    hpp.mark_progress();
+                    match item.ty {
+                        CaMsgTy::Echo => {
+                            hpp.mark_progress();
+                            if let State::Running(st1) = &mut self.state {
+                                match &mut st1.pingpong {
+                                    PingPong::Idle(..) => {}
+                                    PingPong::Send(..) => {}
+                                    PingPong::Wait(..) => {
+                                        st1.pingpong = PingPong::new_idle();
+                                    }
+                                }
+                            } else {
+                                // TODO metrics
+                            }
+                        }
+                        _ => {
+                            hpp.mark_progress();
+                            error!("TODO handle incoming item internally: {item:?}");
+                        }
+                    }
                 }
             } else if self.proto_rx_buf_done {
             } else {
@@ -357,7 +494,7 @@ impl ActiveCa {
         loop {
             let mut hpp = HaveProgressPending::new();
             match &mut self.state {
-                State::Running => {
+                State::Running(st1) => {
                     match self.as_mut().poll_command_input(cmd_rx, cx, &mut hpp) {
                         Some(e) => {
                             hpp.mark_progress();
@@ -371,13 +508,13 @@ impl ActiveCa {
                             Ready(x) => match x {
                                 Some(item) => {
                                     trace!("ActiveCa:ProtoRx:Some");
-                                    self.proto_rx_buf.push_back(item);
+                                    self2.proto_rx_buf.push_back(item);
                                     hpp.mark_progress();
                                 }
                                 None => {
                                     trace!("ActiveCa:ProtoRx:Error");
                                     error!("TODO clean shutdown, remote seems gone");
-                                    self.state = State::Done;
+                                    self2.state = State::Done;
                                     hpp.mark_progress();
                                 }
                             },
@@ -459,6 +596,67 @@ impl ActiveCa {
                             trace_pending!("ActiveCa:ChannelHeap");
                             hpp.mark_pending();
                         }
+                    }
+                    let self2 = self.as_mut().get_mut();
+                    if let State::Running(st1) = &mut self2.state {
+                        match &mut st1.pingpong {
+                            PingPong::Idle(to) => match to.poll_unpin(cx) {
+                                Ready(()) => {
+                                    hpp.mark_progress();
+                                    let tsnow = Instant::now();
+                                    let item = CaMsg::from_ty_ts(CaMsgTy::Echo, tsnow);
+                                    st1.pingpong = PingPong::new_send(item);
+                                }
+                                Pending => {
+                                    hpp.mark_pending();
+                                }
+                            },
+                            PingPong::Send(item, to) => match to.poll_unpin(cx) {
+                                Ready(()) => {
+                                    hpp.mark_progress();
+                                    let tsnow = Instant::now();
+                                    let item = CaMsg::from_ty_ts(CaMsgTy::Echo, tsnow);
+                                    st1.pingpong = PingPong::new_send(item);
+                                }
+                                Pending => {
+                                    hpp.mark_pending();
+                                    if let Some(item2) = item.take() {
+                                        match self2.proto_tx.poll_send_unpin(item2, cx) {
+                                            Ok(()) => {
+                                                hpp.mark_progress();
+                                                st1.pingpong = PingPong::new_wait();
+                                            }
+                                            Err(e) => match e {
+                                                asynchan::SendPollError::Full(x) => {
+                                                    hpp.mark_pending();
+                                                    *item = Some(x);
+                                                }
+                                                asynchan::SendPollError::Closed(_) => {
+                                                    self2.state = State::Done;
+                                                    break Ready(Some(Err(Error::ProtoTxClosed)));
+                                                }
+                                            },
+                                        }
+                                    } else {
+                                        self2.state = State::Done;
+                                        break Ready(Some(Err(Error::Logic)));
+                                    }
+                                }
+                            },
+                            PingPong::Wait(to) => match to.poll_unpin(cx) {
+                                Ready(()) => {
+                                    hpp.mark_progress();
+                                    self2.state = State::Done;
+                                    break Ready(Some(Err(Error::IocEchoTimeout)));
+                                }
+                                Pending => {
+                                    hpp.mark_pending();
+                                }
+                            },
+                        }
+                    } else {
+                        self2.state = State::Done;
+                        break Ready(Some(Err(Error::Logic)));
                     }
                 }
                 State::Done => {

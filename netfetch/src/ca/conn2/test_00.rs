@@ -319,7 +319,7 @@ pub async fn test_01() {
             if true {
                 for j in 10..20 {
                     let g = 1000 * j;
-                    let h = 10 + g;
+                    let h = 20 + g;
                     for i in g..h {
                         let chname = format!("TEST:FAST:SCALAR:F32:{i:06}");
                         // trace!("test_01 adding channel {chname}");
