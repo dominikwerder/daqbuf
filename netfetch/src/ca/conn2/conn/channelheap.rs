@@ -758,8 +758,10 @@ impl ChannelHeap {
                                 match Pin::new(&mut st2.handler).inp_push_try(u) {
                                     Some(item) => {
                                         hpp.mark_pending();
+                                        hpp.mark_progress();
                                         trace2!("{selfname}  ChannelHeap:Dispatch:Pending  {cid}  {sdbg}");
                                         self2.inp_buf.push_front(item);
+                                        self2.wakeup_cids.insert(cid, ());
                                     }
                                     None => {
                                         hpp.mark_progress();
