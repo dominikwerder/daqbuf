@@ -507,7 +507,7 @@ impl FindIocStream {
             for x in self.chn_reqs.iter_mut() {
                 if sid == x.sid {
                     let n = &x.chn;
-                    debug!("Found  {sid:?}  {n}  {addr}");
+                    trace!("Found  {sid:?}  {n}  {addr}");
                     if let Some(tx) = x.tx.take() {
                         let dt = tsnow.saturating_duration_since(x.beg);
                         let res = FindIocRes {

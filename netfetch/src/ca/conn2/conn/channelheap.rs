@@ -49,6 +49,7 @@ macro_rules! trace2 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; 
 macro_rules! trace3 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
 macro_rules! trace4 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
 macro_rules! trace_pending { ($($arg:tt)*) => { if false { trace!("{}  Pending", format_args!($($arg)*)); } }; }
+macro_rules! todo_shutdown { ($($arg:tt)*) => { if false { log::info!($($arg)*); } }; }
 
 autoerr::create_error_v1!(
     name(Error, "ChannelHeap"),
@@ -238,13 +239,6 @@ pub struct StatusInfo {
 #[derive(Debug)]
 pub enum Cmd {
     RemoveChannel(String, asynchan::Sender<u32>),
-}
-
-enum Poll2<T> {
-    Item(T),
-    Progress,
-    Pending,
-    Done,
 }
 
 type StreamItem = Result<ChannelHeapItem, Error>;
@@ -835,84 +829,85 @@ impl ChannelHeap {
         let loopres: Poll<Option<Result<PollHandlerItemB, Error>>> = loop {
             // TODO monitor the capacity of the wakeup lists
             trace4!("{selfname}  loop");
-            let cid = if let Some(x) = self2.wakeup_cids_tmp.pop() {
-                x
-            } else {
-                break Ready(None);
-            };
-            self2.wakeup_cids.remove(&cid);
-            hpp.mark_progress();
-            trace2!("{selfname}  loop  ChannelHeap  waking  {cid}");
-            if let Some(st1) = self2.by_cid.get_mut(&cid) {
-                match &mut st1.ch_handler {
-                    ChHandler::ChHandlerActive(st2) => {
-                        let cx2 = &mut Context::from_waker(&st2.waker);
-                        let handler = Pin::new(&mut st2.handler);
-                        match Self::poll_handler(
-                            handler,
-                            cx2,
-                            cid.clone(),
-                            &mut self2.ioid_reg,
-                            &mut self2.subid_reg,
-                            tsnow,
-                        ) {
-                            Ready(Some(x)) => {
-                                add_wakeup.push(cid);
-                                match x {
-                                    Ok(x) => match x {
-                                        PollHandlerItem::None => {}
-                                        PollHandlerItem::ChannelHeapItem(item) => {
-                                            todo!("TODO handle PollHandlerItem::ChannelHeapItem(item)  {item:?}");
+            if let Some(cid) = self2.wakeup_cids_tmp.pop() {
+                self2.wakeup_cids.remove(&cid);
+                hpp.mark_progress();
+                trace2!("{selfname}  loop  ChannelHeap  waking  {cid}");
+                if let Some(st1) = self2.by_cid.get_mut(&cid) {
+                    match &mut st1.ch_handler {
+                        ChHandler::ChHandlerActive(st2) => {
+                            if st2.waker.will_wake(cx.waker()) {
+                            } else {
+                                st2.waker = waker1::waker(cid.clone(), cx.waker().clone(), self2.wakeup_cids.clone());
+                            }
+                            let cx2 = &mut Context::from_waker(&st2.waker);
+                            let handler = Pin::new(&mut st2.handler);
+                            match Self::poll_handler(
+                                handler,
+                                cx2,
+                                cid.clone(),
+                                &mut self2.ioid_reg,
+                                &mut self2.subid_reg,
+                                tsnow,
+                            ) {
+                                Ready(Some(x)) => {
+                                    add_wakeup.push(cid);
+                                    match x {
+                                        Ok(x) => match x {
+                                            PollHandlerItem::None => {}
+                                            PollHandlerItem::ChannelHeapItem(item) => {
+                                                error!("TODO handle PollHandlerItem::ChannelHeapItem(item)  {item:?}");
+                                            }
+                                            PollHandlerItem::ChHandlerMod => {
+                                                error!("TODO handle PollHandlerItem::ChHandlerMod");
+                                            }
+                                            PollHandlerItem::ProtoOut(ca_msg) => {
+                                                break Ready(Some(Ok(PollHandlerItemB::ProtoOut(ca_msg))));
+                                            }
+                                            PollHandlerItem::ChannelInfoQuery(item) => {
+                                                break Ready(Some(Ok(PollHandlerItemB::ChannelInfoQuery(item))));
+                                            }
+                                            PollHandlerItem::TestValue(x) => {
+                                                break Ready(Some(Ok(PollHandlerItemB::TestValue(x))));
+                                            }
+                                            PollHandlerItem::LocalLog(x) => {
+                                                break Ready(Some(Ok(PollHandlerItemB::LocalLog(x))));
+                                            }
+                                            PollHandlerItem::ChannelEventValue(x) => {
+                                                break Ready(Some(Ok(PollHandlerItemB::ChannelEventValue(x))));
+                                            }
+                                        },
+                                        Err(e) => {
+                                            error!("TODO handle Self::poll_handler  error  {e}");
+                                            break Ready(Some(Err(e)));
                                         }
-                                        PollHandlerItem::ChHandlerMod => {
-                                            todo!("TODO handle PollHandlerItem::ChHandlerMod");
-                                        }
-                                        PollHandlerItem::ProtoOut(ca_msg) => {
-                                            break Ready(Some(Ok(PollHandlerItemB::ProtoOut(ca_msg))));
-                                        }
-                                        PollHandlerItem::ChannelInfoQuery(item) => {
-                                            break Ready(Some(Ok(PollHandlerItemB::ChannelInfoQuery(item))));
-                                        }
-                                        PollHandlerItem::TestValue(x) => {
-                                            break Ready(Some(Ok(PollHandlerItemB::TestValue(x))));
-                                        }
-                                        PollHandlerItem::LocalLog(x) => {
-                                            break Ready(Some(Ok(PollHandlerItemB::LocalLog(x))));
-                                        }
-                                        PollHandlerItem::ChannelEventValue(x) => {
-                                            break Ready(Some(Ok(PollHandlerItemB::ChannelEventValue(x))));
-                                        }
-                                    },
-                                    Err(e) => {
-                                        error!("TODO handle Self::poll_handler  error  {e}");
-                                        break Ready(Some(Err(e)));
                                     }
                                 }
-                            }
-                            Ready(None) => {
-                                // TODO remove it? No, then it would be less observable.
-                                // Instead, move it to Done, otherwise we continue polling all the time.
-                                // TODO after Ready(None), anything else to clean up or reuse?
-                                st1.ch_handler = ChHandler::Done;
-                                todo!(
-                                    "ChannelHeap:Handler:Finished  TODO handle finished channel handler gracefully {cid}"
-                                );
-                            }
-                            Pending => {
-                                trace_pending!("ChannelHeap:Handler  {cid}");
-                                hpp.mark_pending();
+                                Ready(None) => {
+                                    // TODO remove it? No, then it would be less observable.
+                                    // Instead, move it to Done, otherwise we continue polling all the time.
+                                    // TODO after Ready(None), anything else to clean up or reuse?
+                                    st1.ch_handler = ChHandler::Done;
+                                    todo_shutdown!(
+                                        "ChannelHeap:Handler:Finished  TODO handle finished channel handler gracefully {cid}"
+                                    );
+                                }
+                                Pending => {
+                                    trace_pending!("ChannelHeap:Handler  {cid}");
+                                    hpp.mark_pending();
+                                }
                             }
                         }
-                        // TODO handle result
-                        // TODO;
+                        ChHandler::Done => {
+                            // Wakeup marker for no longer served cid.
+                            // TODO count for metrics
+                        }
                     }
-                    ChHandler::Done => {
-                        // Wakeup marker for no longer served cid.
-                        // TODO count for metrics
-                    }
+                } else {
+                    warn!("ChannelHeap: no channel handler for wakeup cid {cid}");
                 }
             } else {
-                warn!("ChannelHeap: no channel handler for wakeup cid {cid}");
+                break Ready(None);
             }
         };
         for cid in add_wakeup {

@@ -1,9 +1,7 @@
-use crate::ca::conn2::asynchan2 as asynchan;
 use crate::ca::conn2::caids::CaDbrTy;
 use crate::ca::conn2::caids::Cid;
 use crate::ca::conn2::caids::Sid;
 use crate::ca::conn2::conn::channelheap::ProtoRxItem;
-use crate::ca::conn2::timeoutable;
 use crate::ca::progpend::HaveProgressPending;
 use crate::futwrap::FutDbg;
 use crate::futwrap::FutDbgBox;
@@ -39,24 +37,14 @@ autoerr::create_error_v1!(
         ProtoRxClosed,
         ChannelHandlerRxClosed,
         CreateMonitorUnexpectedMessage,
-        Recv,
-        Timeout,
+        RecvChannelInfoResult,
+        TimeoutCreateChanSend,
+        TimeoutCreateChanRecv,
+        TimeoutSeriesIdRecv,
         Logic,
         Register(#[from] dbpg::seriesbychannel::Error),
     },
 );
-
-impl From<asynchan::RecvError> for Error {
-    fn from(_value: asynchan::RecvError) -> Self {
-        Self::Recv
-    }
-}
-
-impl From<async_channel::RecvError> for Error {
-    fn from(_value: async_channel::RecvError) -> Self {
-        Self::Recv
-    }
-}
 
 #[derive(Debug)]
 pub enum CreatingItem {
@@ -167,7 +155,7 @@ impl Stream for Creating {
                     match to.poll_unpin(cx) {
                         Ready(()) => {
                             self2.state = State::Done;
-                            break Ready(Some(Err(Error::Timeout)));
+                            break Ready(Some(Err(Error::TimeoutCreateChanSend)));
                         }
                         Pending => {
                             hpp.mark_pending();
@@ -186,7 +174,7 @@ impl Stream for Creating {
                     match to.poll_unpin(cx) {
                         Ready(()) => {
                             self2.state = State::Done;
-                            break Ready(Some(Err(Error::Timeout)));
+                            break Ready(Some(Err(Error::TimeoutCreateChanRecv)));
                         }
                         Pending => {
                             hpp.mark_pending();
@@ -244,7 +232,7 @@ impl Stream for Creating {
                                 };
                                 hpp.mark_progress();
                                 let fut = async move {
-                                    let chi = rx.recv().map_err(|e| Error::Recv).await;
+                                    let chi = rx.recv().map_err(|_| Error::RecvChannelInfoResult).await;
                                     (chi, sid, scalar_type, shape, ca_dbr_type)
                                 };
                                 self.state = State::SeriesIdRecv(fut.box2(), to);
@@ -282,7 +270,7 @@ impl Stream for Creating {
                         Ready(()) => {
                             hpp.mark_progress();
                             self2.state = State::Done;
-                            break Ready(Some(Err(Error::Timeout)));
+                            break Ready(Some(Err(Error::TimeoutSeriesIdRecv)));
                         }
                         Pending => {
                             hpp.mark_pending();

@@ -58,6 +58,7 @@ macro_rules! trace3 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; 
 macro_rules! trace4 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
 macro_rules! trace_pending { ($($arg:tt)*) => { if false { log::trace!("{}  Pending", format_args!($($arg)*)); } }; }
 macro_rules! trace_hpp_flags { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
+macro_rules! todo_shutdown { ($($arg:tt)*) => { if false { log::info!($($arg)*); } }; }
 
 autoerr::create_error_v1!(
     name(Error, "ConnSet"),
@@ -70,6 +71,7 @@ autoerr::create_error_v1!(
         Command(String),
         ConnSetCmderBox(Box<dyn std::error::Error + Send>),
         Logic,
+        Json(#[from] serde_json::Error),
     },
 );
 
@@ -393,7 +395,7 @@ impl ConnSet {
                         }
                     }
                     Ready(None) => {
-                        error!("Channel is done  TODO status event");
+                        todo_shutdown!("channel is done  TODO status event");
                         remove_names.push(name.clone());
                     }
                     Pending => {
@@ -594,8 +596,7 @@ impl ConnSet {
                 for addr in signal_channels_on_address {
                     for (chn, cc) in self.channels.iter_mut() {
                         if cc.channel.addr().map_or(false, |x| x == addr) {
-                            warn!("signal_ca_conn_down  {addr}  {chn}");
-                            cc.channel.signal_ca_conn_down();
+                            cc.channel.signal_ca_conn_down(addr, chn);
                         }
                     }
                 }

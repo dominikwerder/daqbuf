@@ -131,13 +131,6 @@ impl Connected {
         let (inp_tx, inp_rx) = asynchan::bounded(16, "Connected-inp");
         let (out_tx, out_rx) = asynchan::bounded(16, "Connected-out");
         let protowrap = protowrap::ProtoPusher::new(proto, out_rx);
-
-        // TODO poll the protowrap input and distribute to sub state.
-        // Only poll the proto if I have space in the buffer.
-
-        // But then: when and how to deliver the input?
-        // There are N channels, one for each Cid (which can be General).
-
         Self {
             backend,
             tsbeg: tsnow,
@@ -231,6 +224,10 @@ impl Connected {
         }
     }
 
+    pub fn status_socket(&mut self) -> serde_json::Value {
+        self.protowrap.status_socket()
+    }
+
     pub fn handle_dyn_cmd_v03(&mut self, cmd: serde_json::Value) -> impl Future<Output = serde_json::Value> + use<> {
         use futures::future::ready;
         use serde_json::json;
@@ -243,7 +240,19 @@ impl Connected {
                 "error": "CaConn  Connected  State::Handshake",
             }))
             .box2(),
-            State::ActiveCa(st, ..) => st.handle_dyn_cmd_v03(cmd).box2(),
+            State::ActiveCa(st, ..) => {
+                let ss = self.protowrap.status_socket();
+                let aca = st.handle_dyn_cmd_v03(cmd);
+                async move {
+                    json!({
+                        "proto": {
+                            "ss": ss,
+                        },
+                        "ActiveCa": aca.await,
+                    })
+                }
+                .box2()
+            }
             State::Done => ready(json!({
                 "error": "CaConn  Connected  State::Done",
             }))

@@ -320,9 +320,9 @@ impl ActiveCa {
 
     fn handle_command(&mut self, cmd: CaCommand, cx: &mut Context) -> CommandFut {
         let selfname = "handle_command";
-        debug!("{selfname} called");
         match cmd.kind {
             CaCommandKind::ChannelAdd(conf, mut done_tx) => {
+                trace!("{selfname}  ChannelAdd");
                 self.chanheap.channel_add(conf, cx);
                 let fut = async move {
                     let _ = done_tx.send(0).await;
@@ -332,7 +332,7 @@ impl ActiveCa {
                 CommandFut(Box::pin(fut))
             }
             CaCommandKind::ChannelRemove(name, mut done_tx) => {
-                debug!("{selfname}  ChannelRemove");
+                trace!("{selfname}  ChannelRemove");
                 let mut chanheap_cmd_tx = self.chanheap_cmd_tx.clone();
                 let fut = async move {
                     let (done_2_tx, mut done_2_rx) = asynchan::bounded(2, "ChannelHeap-Done");
@@ -359,6 +359,7 @@ impl ActiveCa {
                 CommandFut(Box::pin(fut))
             }
             CaCommandKind::DisconnectOnIdle(mut done_tx) => {
+                trace!("{selfname}  DisconnectOnIdle");
                 self.chanheap.disconnect_on_idle();
                 let fut = async move {
                     let _ = done_tx.send(0).await;

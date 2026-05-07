@@ -437,7 +437,7 @@ async fn process_net_result(
                     match tx.send(e).await {
                         Ok(()) => {}
                         Err(_) => {
-                            debug!("{selfname}  send error");
+                            // Requester did not wait
                             // TODO count for metrics
                         }
                     }

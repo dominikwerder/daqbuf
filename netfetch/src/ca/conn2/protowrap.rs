@@ -9,8 +9,6 @@ use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
 
-macro_rules! trace { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
-
 autoerr::create_error_v1!(
     name(Error, "Connected"),
     enum variants {
@@ -99,6 +97,20 @@ impl ProtoPusher {
             }
         } else {
             None
+        }
+    }
+
+    pub fn status_socket(&mut self) -> serde_json::Value {
+        use serde_json::json;
+        match self.proto.get_read_stats_v1() {
+            Ok(x) => json!({
+                "socket_buffer_len": x.0,
+                "tcp_read_bytes": x.1,
+                "buf_rlen": x.2,
+            }),
+            Err(e) => json!({
+                "error": e.to_string(),
+            }),
         }
     }
 }

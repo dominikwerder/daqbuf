@@ -43,6 +43,8 @@ macro_rules! debug { ($($arg:tt)*) => { if true { log::debug!($($arg)*); } }; }
 macro_rules! trace { ($($arg:tt)*) => { if false { log::info!($($arg)*); } }; }
 macro_rules! trace2 { ($($arg:tt)*) => { if false { log::info!($($arg)*); } }; }
 
+macro_rules! todo_shutdown { ($($arg:tt)*) => { if false { log::info!($($arg)*); } }; }
+
 autoerr::create_error_v1!(
     name(Error, "ConnSetChannel"),
     enum variants {
@@ -269,22 +271,20 @@ impl Channel {
         }
     }
 
-    pub fn signal_ca_conn_down(&mut self) {
+    pub fn signal_ca_conn_down(&mut self, dbg_addr: SocketAddrV4, dbg_chn: &str) {
         let selfname = "signal_ca_conn_down";
-        // TODO must back off, later retry.
         self.state = State::Init;
         if let Some(waker) = self.waker.take() {
-            debug!("{selfname}  wake");
+            todo_shutdown!("{selfname}  wake  {dbg_addr}  {dbg_chn}");
             waker.wake();
         } else {
-            debug!("{selfname}  no waker");
+            todo_shutdown!("{selfname}  no waker  {dbg_addr}  {dbg_chn}");
         }
     }
 
     fn transition_to_removing(&mut self) {
         let selfname = "transition_to_removing";
-        debug!("{selfname} called");
-        warn!("{selfname} TODO impl");
+        todo_shutdown!("{selfname} called  TODO impl");
         // TODO
         // Correct? More to do?
         // Must be safe to be called in any state.
@@ -344,10 +344,9 @@ impl Channel {
 
     fn handle_command(&mut self, cmd: Cmd) -> Result<(), Error> {
         let selfname = "handle_command";
-        debug!("{selfname} called");
         match cmd {
             Cmd::Remove(cmd) => {
-                trace!("{lf}{selfname}  Remove  {}{lf}", self.name(), lf = "\n\n");
+                todo_shutdown!("{selfname}  Remove  {}", self.name());
                 self.transition_to_removing();
                 let mut tx = cmd.done_tx;
                 if tx.try_send(Ok(())).is_err() {
@@ -547,8 +546,7 @@ impl PollCstm for Channel {
                     match st1.to.poll_unpin(cx) {
                         Ready(()) => {
                             hpp.mark_progress();
-                            // TODO emtrics instead of log
-                            warn!("AddrSearch timeout");
+                            // TODO count for metrics
                             let (to, until) = self2.backoff_to_until();
                             if let State::AddrSearch(st1) = std::mem::replace(&mut self2.state, State::Done) {
                                 let chi = st1.chi;
@@ -563,7 +561,8 @@ impl PollCstm for Channel {
                                 llog!(self2, "transition {} -> {}", self2.state, stn);
                                 self2.state = stn;
                             } else {
-                                panic!("logic")
+                                self2.state = State::Done;
+                                break Ready(Some(Err(Error::Logic)));
                             }
                         }
                         Pending => {
@@ -593,7 +592,7 @@ impl PollCstm for Channel {
                                 let (removed_from_conn_tx, mut removed_from_conn_rx) =
                                     asynchan::bounded(1, "ConnSet-remove-from-caconn");
                                 let fut = async move {
-                                    warn!("TODO emit a channel status event write");
+                                    todo_shutdown!("TODO emit a channel status event write");
                                     // TODO we are letting ConnSet remove this channel from the actual CaConn.
                                     // This is an async operation and we have to wait here for it to finish.
                                     let _ = removed_from_conn_rx.next().await;
@@ -629,7 +628,7 @@ impl PollCstm for Channel {
                     match fut.poll_unpin(cx) {
                         Ready(x) => match x {
                             Ok(()) => {
-                                error!("channel removed from ca conn  TODO emit metrics, status event");
+                                todo_shutdown!("channel removed from ca conn  TODO emit metrics, status event");
                                 let fut = async move {
                                     // TODO emit another channel status event write?
                                     // Ok(())
@@ -665,7 +664,7 @@ impl PollCstm for Channel {
                 Pending
             } else {
                 let chn = self.conf.name();
-                debug!("HPP:Done  {chn}");
+                todo_shutdown!("HPP:Done  {chn}");
                 Ready(None)
             };
         }

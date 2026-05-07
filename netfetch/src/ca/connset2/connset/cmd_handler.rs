@@ -1,6 +1,8 @@
 use super::ConnSet;
 use super::Error;
 use crate::ca::conn2::asynchan;
+use futures::FutureExt;
+use futures::StreamExt;
 use netpod::futdbg::FutDbg;
 use netpod::futdbg::FutDbgBox;
 use serde::Deserialize;
@@ -126,6 +128,55 @@ fn connset_state_channel_all(
     }
 }
 
+fn ca_conn_state_proto(
+    self1: Pin<&mut ConnSet>,
+    cmd: String,
+    mut tx: asynchan::Sender<serde_json::Value>,
+    _cx: &mut Context,
+) -> Option<FutDbg<Result<(), Error>>> {
+    use serde_json::json;
+    #[derive(Debug, Deserialize)]
+    struct Cmd {
+        tmp: Option<String>,
+    }
+    if let Ok(cmd2) = serde_json::from_str::<Cmd>(&cmd) {
+        let _ = &cmd2.tmp;
+        info!("{cmd2:?}");
+        let comms = self1
+            .ca_conns
+            .iter()
+            .map(|(addr, reg)| (*addr, reg.comm.clone()))
+            .collect::<Vec<_>>();
+        let fut = async move {
+            let sss = futures::stream::iter(comms)
+                .map(|(addr, mut comm)| {
+                    let cmd4 = json!({
+                        "caconn_cmd": "ca_conn_state_proto",
+                    });
+                    let cmd4 = serde_json::to_value(cmd4).unwrap();
+                    async move { comm.dyn_cmd_v03(cmd4).map(|x| (addr, x)).await }
+                })
+                .buffer_unordered(16)
+                .collect::<Vec<_>>()
+                .await;
+            let x = sss.into_iter().collect::<BTreeMap<_, _>>();
+            let x = json!({
+                "connections": x,
+            });
+            let _ = tx.try_send(x);
+            Ok(())
+        };
+        Some(fut.box2())
+    } else {
+        let val = serde_json::json!({
+            "type": "error",
+            "msg": format!("command bad"),
+        });
+        let _ = tx.try_send(val);
+        None
+    }
+}
+
 impl ConnSet {
     pub(super) fn handle_dyn_cmd_v03(
         self: Pin<&mut Self>,
@@ -143,6 +194,8 @@ impl ConnSet {
                 handle_test01(self, cmd, tx, cx)
             } else if cmd2.connset_cmd == "connset_state_channel_all" {
                 connset_state_channel_all(self, cmd, tx, cx)
+            } else if cmd2.connset_cmd == "ca_conn_state_proto" {
+                ca_conn_state_proto(self, cmd, tx, cx)
             } else {
                 let val = serde_json::json!({
                     "type": "error",

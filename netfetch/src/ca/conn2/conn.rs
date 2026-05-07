@@ -13,20 +13,12 @@ use crate::ca::progpend::HaveProgressPending;
 use crate::conf::ChannelConfig;
 use crate::futwrap::FutDbg;
 use crate::futwrap::FutDbgBox;
-use crate::misc::todoval;
 use connected::Connected;
 use dbpg::seriesbychannel::ChannelInfoQuery;
 use futures::FutureExt;
 use futures::Stream;
 use futures::StreamExt;
 use futures::TryFutureExt;
-use handshake::Handshake;
-use hashbrown::HashMap;
-use scywr::insertqueues::InsertDeques;
-use scywr::insertqueues::InsertQueuesTx;
-use scywr::iteminsertqueue::QueryItem;
-use serde::Deserialize;
-use serde::Serialize;
 use stats::rand_xoshiro::Xoshiro128PlusPlus;
 use std::collections::VecDeque;
 use std::fmt;
@@ -44,7 +36,6 @@ macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
 macro_rules! warn { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
 macro_rules! info { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
 macro_rules! debug { ($($arg:tt)*) => { if true { log::debug!($($arg)*); } }; }
-macro_rules! conn_err { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
 macro_rules! trace { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
 macro_rules! trace2 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
 macro_rules! trace3 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
@@ -238,7 +229,6 @@ enum CaConnCmdKind {
     ChannelsForAddrInfoV1(asynchan::Sender<crate::metrics::ChannelsForAddrInfoV1>),
     ChannelsForAddrInfoV2(String, asynchan::Sender<crate::metrics::ChannelsForAddrInfoV2>),
     ChannelsByRegexV1(String, String, asynchan::Sender<Vec<serde_json::Value>>),
-    ChannelHandlerCmd(ChannelHandlerCmd),
     DynCmdV03(serde_json::Value, asynchan::Sender<serde_json::Value>),
 }
 
@@ -313,28 +303,6 @@ impl CaConnComm {
         self.cmd_tx.send(cmd).await?;
         let ret = rx.recv().await?;
         Ok(ret)
-    }
-
-    pub async fn channel_handler_cmd(&mut self, cmd: serde_json::Value) -> serde_json::Value {
-        let (tx, mut rx) = asynchan::bounded(1, "CaConnComm-ChannelHandlerCmd");
-        let cmd = ChannelHandlerCmd { cmd, tx };
-        let cmd = CaConnCmd {
-            kind: CaConnCmdKind::ChannelHandlerCmd(cmd),
-        };
-        if self.cmd_tx.send(cmd).await.is_err() {
-            serde_json::json!({
-                "error": "can not send command",
-            })
-        } else {
-            match rx.recv().await {
-                Ok(x) => x,
-                Err(_) => {
-                    serde_json::json!({
-                        "error": "can not receive result",
-                    })
-                }
-            }
-        }
     }
 
     pub async fn dyn_cmd_v03(&mut self, cmd: serde_json::Value) -> serde_json::Value {
@@ -440,11 +408,6 @@ impl CaConn {
         CaConnTask::new(self)
     }
 
-    // call this only from the main fn poll
-    fn shutdown_on_error(&mut self, e: Error) {
-        todo!()
-    }
-
     fn make_status_info(self: Pin<&mut Self>) -> StatusInfo {
         // We only consider state which is sync available here.
         // For other information, we take the last known values.
@@ -543,44 +506,74 @@ impl CaConn {
         }
     }
 
-    fn handle_channel_command(
-        &mut self,
-        cmd: serde_json::Value,
-        mut tx: asynchan::Sender<serde_json::Value>,
-    ) -> Result<(), Error> {
-        use serde_json::json;
-        let x = json!({
-            "error": "please use dyn_cmd_v03 instead",
-        });
-        if tx.try_send(x).is_err() {
-            // TODO metrics
-        }
-        Ok(())
-    }
-
     fn handle_dyn_cmd_v03(
         &mut self,
         cmd: serde_json::Value,
         mut tx: asynchan::Sender<serde_json::Value>,
     ) -> impl Future<Output = Result<(), Error>> + use<> {
         use futures::future::ready;
+        use serde::Deserialize;
         use serde_json::json;
-        let x = match &mut self.state {
-            State::Connecting(st1) => ready(json!({
-                "error": "CaConn  State::Connecting",
-            }))
-            .box2(),
-            State::Connected(st1) => st1.handle_dyn_cmd_v03(cmd).box2(),
-            State::Done => ready(json!({
-                "error": "CaConn  State::Done",
-            }))
-            .box2(),
-        };
-        async move {
-            if tx.send(x.await).await.is_err() {
-                // TODO metrics
+        #[derive(Debug, Deserialize)]
+        struct Cmd {
+            caconn_cmd: String,
+        }
+        if let Ok(cmd2) = serde_json::from_value::<Cmd>(cmd.clone()) {
+            info!("{cmd2:?}");
+            if cmd2.caconn_cmd == "ca_conn_state_proto" {
+                let x = match &mut self.state {
+                    State::Connecting(st1) => ready(json!({
+                        "error": "CaConn  State::Connecting",
+                    }))
+                    .box2(),
+                    State::Connected(st1) => {
+                        let ss = st1.status_socket();
+                        ready(json!({
+                            "proto": {
+                                "ss": ss,
+                            },
+                        }))
+                        .box2()
+                    }
+                    State::Done => ready(json!({
+                        "error": "CaConn  State::Done",
+                    }))
+                    .box2(),
+                };
+                async move {
+                    if tx.send(x.await).await.is_err() {
+                        // TODO metrics
+                    }
+                    Ok(())
+                }
+                .box2()
+            } else {
+                let x = match &mut self.state {
+                    State::Connecting(st1) => ready(json!({
+                        "error": "CaConn  State::Connecting",
+                    }))
+                    .box2(),
+                    State::Connected(st1) => st1.handle_dyn_cmd_v03(cmd).box2(),
+                    State::Done => ready(json!({
+                        "error": "CaConn  State::Done",
+                    }))
+                    .box2(),
+                };
+                async move {
+                    if tx.send(x.await).await.is_err() {
+                        // TODO metrics
+                    }
+                    Ok(())
+                }
+                .box2()
             }
-            Ok(())
+        } else {
+            let val = serde_json::json!({
+                "type": "error",
+                "msg": format!("command bad"),
+            });
+            let _ = tx.try_send(val);
+            ready(Ok(())).box2()
         }
     }
 }
@@ -679,16 +672,6 @@ impl Stream for CaConn {
                                         Ok(())
                                     };
                                     self2.ca_cmd_tx_fut = Some(fut.box2());
-                                }
-                                CaConnCmdKind::ChannelHandlerCmd(cmd) => {
-                                    trace!("{selfname}:Received:ChannelHandlerCmd  {cmd:?}");
-                                    let tx = cmd.tx;
-                                    match self2.handle_channel_command(cmd.cmd, tx) {
-                                        Ok(()) => {}
-                                        Err(e) => {
-                                            break Ready(Some(Err(e)));
-                                        }
-                                    }
                                 }
                                 CaConnCmdKind::DynCmdV03(cmd, tx) => {
                                     trace!("{selfname}:Received:DynCmd  {cmd:?}");
