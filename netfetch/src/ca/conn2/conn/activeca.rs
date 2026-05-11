@@ -1,7 +1,4 @@
-use crate::ca::conn2::asynchan;
-use crate::ca::conn2::asynchan::Receiver;
-use crate::ca::conn2::asynchan::SendPoll;
-use crate::ca::conn2::asynchan::Sender;
+use crate::asynchan;
 use crate::ca::conn2::channel_event_value::ChannelEventValue;
 use crate::ca::conn2::conn::channelheap;
 use crate::ca::conn2::conn::channelheap::ChannelHeap;
@@ -10,6 +7,9 @@ use crate::ca::conn2::conn::ctchan::CtChanRc;
 use crate::ca::conn2::locallog;
 use crate::ca::progpend::HaveProgressPending;
 use crate::conf::ChannelConfig;
+use asynchan::Receiver;
+use asynchan::SendPoll;
+use asynchan::Sender;
 use ca_proto::ca::proto::CaMsg;
 use futures::FutureExt;
 use futures::Stream;
@@ -190,6 +190,14 @@ impl Running {
             pingpong: self.pingpong.status_info(),
         }
     }
+
+    pub(super) fn dump_state_poll(&self) -> serde_json::Value {
+        use serde_json::json;
+        let js = json!({
+            "pingpong": "TODO",
+        });
+        js
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -314,6 +322,19 @@ impl ActiveCa {
             }
             State::Done => {}
         }
+    }
+
+    pub(super) fn dump_state_poll(&self) -> serde_json::Value {
+        use serde_json::json;
+        let st = match &self.state {
+            State::Running(st) => json!({"Running": st.dump_state_poll()}),
+            State::Done => json!({"Done": {}}),
+        };
+        let js = json!({
+            "state": st,
+            "chanheap": self.chanheap.dump_state_poll(),
+        });
+        js
     }
 
     pub fn handle_dyn_cmd_v03(&mut self, cmd: serde_json::Value) -> impl Future<Output = serde_json::Value> + use<> {

@@ -1,3 +1,6 @@
+pub mod asynbuf;
+pub mod asynchan1;
+pub mod asynchan2;
 pub mod ca;
 pub mod conf;
 pub mod daemon_common;
@@ -16,6 +19,8 @@ pub mod test;
 pub mod throttletrace;
 
 use log::*;
+
+pub use asynchan2 as asynchan;
 
 pub fn log_test() {
     info!("log-test");

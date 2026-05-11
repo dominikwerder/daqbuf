@@ -1,4 +1,4 @@
-use crate::ca::conn2::asynchan;
+use crate::asynchan;
 use crate::ca::progpend::HaveProgressPending;
 use ca_proto::ca::proto::CaItem;
 use ca_proto::ca::proto::CaMsg;

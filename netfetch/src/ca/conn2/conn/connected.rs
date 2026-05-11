@@ -1,5 +1,5 @@
 use super::handshake::Handshake;
-use crate::ca::conn2::asynchan;
+use crate::asynchan;
 use crate::ca::conn2::channel_event_value::ChannelEventValue;
 use crate::ca::conn2::conn::activeca;
 use crate::ca::conn2::conn::activeca::ActiveCa;
@@ -269,6 +269,23 @@ impl Connected {
             }
             State::Done => {}
         }
+    }
+
+    pub(super) fn dump_state_poll(&self) -> serde_json::Value {
+        use serde_json::json;
+        let st = match &self.state {
+            State::Init(_, _) => json!({"Init": {}}),
+            State::Handshake(_) => json!({"Handshake": {}}),
+            State::ActiveCa(st, rx) => json!({
+                "ActiveCa": st.dump_state_poll(),
+                "cmdrxlen": rx.len(),
+            }),
+            State::Done => json!({"Done": {}}),
+        };
+        let js = json!({
+            "state": st,
+        });
+        js
     }
 }
 

@@ -2,7 +2,7 @@ mod create;
 mod fetchmpx;
 mod running;
 
-use crate::ca::conn2::asynchan;
+use crate::asynchan;
 use crate::ca::conn2::caids::Cid;
 use crate::ca::conn2::caids::CidOwned;
 use crate::ca::conn2::caids::Sid;

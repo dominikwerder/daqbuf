@@ -1,6 +1,6 @@
 mod withcssid;
 
-use crate::ca::conn2::asynchan;
+use crate::asynchan;
 use crate::ca::conn2::locallog;
 use crate::ca::conn2::locallog::LocalLog;
 use crate::ca::connset2::connset::channels;

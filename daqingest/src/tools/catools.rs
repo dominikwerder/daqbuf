@@ -21,7 +21,7 @@ pub async fn find(cmd: CaFind, broadcast: String) -> Result<(), Error> {
     let blacklist = Vec::new();
     let search_timeout = Duration::from_millis(2400);
     let batch_len_max = 1;
-    let (res_tx, _res_rx) = netfetch::ca::conn2::asynchan::bounded(1, "channel-lookup-res");
+    let (res_tx, _res_rx) = netfetch::asynchan::bounded(1, "channel-lookup-res");
     channels_input_tx.send((cmd.channel, res_tx)).await.unwrap();
     let stream =
         netfetch::ca::findioc::FindIocStream::new(channels_input_rx, tgts, blacklist, search_timeout, batch_len_max);

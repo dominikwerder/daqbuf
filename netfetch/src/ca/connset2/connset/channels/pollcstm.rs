@@ -1,4 +1,4 @@
-use crate::ca::conn2::asynchan;
+use crate::asynchan;
 use crate::ca::finder::FinderHandleV02;
 use dbpg::seriesbychannel::ChannelInfoQuerySender;
 use std::pin::Pin;

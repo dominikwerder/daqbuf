@@ -1,14 +1,13 @@
-use crate::ca::futstack::ErasedFuture;
 use futures::FutureExt;
 use futures::Stream;
+use netpod::futdbg::FutDbg;
+use netpod::futdbg::FutDbgBox;
 use std::fmt;
 use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
 use taskrun::tokio;
 use tokio::sync::mpsc;
-
-macro_rules! trace { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
 
 pub struct Sender<T>(mpsc::Sender<T>, &'static str);
 
@@ -65,7 +64,7 @@ pub enum TrySendError<T> {
 
 #[must_use]
 pub struct Sending<'a, T> {
-    fut: ErasedFuture<Result<(), mpsc::error::SendError<T>>, 0x300>,
+    fut: FutDbg<Result<(), mpsc::error::SendError<T>>>,
     _p1: std::marker::PhantomData<&'a ()>,
 }
 
@@ -90,9 +89,10 @@ where
     T: Unpin + Send + 'static,
 {
     pub fn send<'a>(&'a mut self, item: T) -> Sending<'a, T> {
-        let fut = self.0.send(item);
+        let tx = self.0.clone();
+        let fut = async move { tx.send(item).await };
         Sending {
-            fut: ErasedFuture::new(fut),
+            fut: fut.box2(),
             _p1: std::marker::PhantomData,
         }
     }
@@ -240,6 +240,14 @@ where
 {
     pub fn recv(&mut self) -> Receiving<'_, T> {
         Receiving { rx: &mut self.0 }
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn cap(&self) -> usize {
+        self.0.capacity()
     }
 }
 

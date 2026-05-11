@@ -1,6 +1,6 @@
 use super::super::conn2;
 use crate as netfetch;
-use crate::ca::conn2::asynchan;
+use crate::asynchan;
 use crate::ca::connset2;
 use crate::ca::connset2::connset::ConnSet;
 use crate::conf::ChannelConfig;

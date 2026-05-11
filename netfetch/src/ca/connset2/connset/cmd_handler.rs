@@ -1,6 +1,6 @@
 use super::ConnSet;
 use super::Error;
-use crate::ca::conn2::asynchan;
+use crate::asynchan;
 use futures::FutureExt;
 use futures::StreamExt;
 use netpod::futdbg::FutDbg;

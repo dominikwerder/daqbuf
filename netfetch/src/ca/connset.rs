@@ -1,7 +1,7 @@
 use super::conn::EndOfStreamReason;
 use super::findioc::FindIocRes;
+use crate::asynchan;
 use crate::ca::conn;
-use crate::ca::conn2::asynchan;
 use crate::ca::finder::IocAddrQuery;
 use crate::ca::finder::start_finder_handle_v02;
 use crate::ca::statemap;

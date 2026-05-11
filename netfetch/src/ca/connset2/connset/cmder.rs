@@ -2,7 +2,7 @@ use super::ChannelAdd;
 use super::ChannelRemove;
 use super::ConnSetCmd;
 use super::ConnSetCmdKind;
-use crate::ca::conn2::asynchan;
+use crate::asynchan;
 use crate::conf::ChannelConfig;
 use std::net::SocketAddrV4;
 

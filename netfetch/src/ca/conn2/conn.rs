@@ -4,8 +4,7 @@ pub mod connected;
 pub mod ctchan;
 pub mod handshake;
 
-use crate::ca::conn2::asynchan;
-use crate::ca::conn2::asynchan::SendPoll;
+use crate::asynchan;
 use crate::ca::conn2::channel_event_value::ChannelEventValue;
 use crate::ca::conn2::locallog;
 use crate::ca::connset2::connset::TestValue;
@@ -13,6 +12,7 @@ use crate::ca::progpend::HaveProgressPending;
 use crate::conf::ChannelConfig;
 use crate::futwrap::FutDbg;
 use crate::futwrap::FutDbgBox;
+use asynchan::SendPoll;
 use connected::Connected;
 use dbpg::seriesbychannel::ChannelInfoQuery;
 use futures::FutureExt;
@@ -588,14 +588,22 @@ impl CaConn {
         }
     }
 
-    fn dump_state(&self) {
+    fn dump_state_poll(&self) {
+        use serde_json::json;
+        let st = match &self.state {
+            State::Connecting(st) => json!({"Connecting": {}}),
+            State::Connected(st) => json!({"Connected": st.dump_state_poll()}),
+            State::Done => json!({"Done": {}}),
+        };
+        let js = json!({
+            "state": st,
+        });
         if let Ok(mut fout) = std::fs::OpenOptions::new()
             .create(true)
             .write(true)
             .open("dump-conn.txt")
         {
-            let s = format!("{self:?}");
-            let _ = fout.write_all(s.as_bytes());
+            serde_json::to_writer(fout, &js).unwrap();
         } else {
             error!("can not create dump file");
         }
@@ -784,7 +792,7 @@ impl Stream for CaConn {
                                 },
                                 Err(e) => {
                                     error!("{selfname}:Connected:Err  TODO handle error more elegant?  {e}");
-                                    self.dump_state();
+                                    self.dump_state_poll();
                                     self.state = State::Done;
                                     break Ready(Some(Err(e.into())));
                                 }

@@ -1,4 +1,4 @@
-use crate::ca::conn2::asynchan;
+use crate::asynchan;
 use crate::ca::conn2::conn::activeca::CaCommand;
 use ca_proto::ca::proto::CaMsg;
 use ca_proto::ca::proto::CaMsgTy;

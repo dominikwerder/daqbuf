@@ -6,7 +6,7 @@ pub mod connset2;
 pub mod connset_input_merge;
 pub mod finder;
 pub mod findioc;
-mod futstack;
+pub mod futstack;
 pub mod progpend;
 pub mod search;
 pub mod statemap;

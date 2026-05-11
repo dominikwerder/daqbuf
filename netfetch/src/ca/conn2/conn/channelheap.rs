@@ -7,8 +7,7 @@ const INP_BUF_CAP: usize = 16;
 
 mod channelhandler;
 
-use crate::ca::conn2::asynchan;
-use crate::ca::conn2::asynchan2::SendPoll;
+use crate::asynchan;
 use crate::ca::conn2::caids::Cid;
 use crate::ca::conn2::caids::Ioid;
 use crate::ca::conn2::caids::Sid;
@@ -22,6 +21,7 @@ use crate::ca::progpend::HaveProgressPending;
 use crate::conf::ChannelConfig;
 use crate::futwrap::FutDbg;
 use crate::futwrap::FutDbgBox;
+use asynchan::SendPoll;
 use asynchan::SendPollError;
 use ca_proto::ca::proto;
 use ca_proto::ca::proto::CaMsg;
@@ -410,6 +410,31 @@ impl ChannelHeap {
             })
             .collect();
         StatusInfo { handlers }
+    }
+
+    pub(super) fn dump_state_poll(&self) -> serde_json::Value {
+        use serde_json::json;
+        let st = match &self.state {
+            State::Running => json!({"Running": {}}),
+            State::Done => json!({"Done": {}}),
+        };
+        let js = json!({
+            "state": st,
+            "inp_buf": {
+                "len": self.inp_buf.len(),
+                "cap": self.inp_buf.capacity(),
+            },
+            "proto_rx": {
+                "len": self.proto_rx.len(),
+                "cap": self.proto_rx.cap(),
+            },
+            "proto_tx_buf": {
+                "len": self.proto_tx_buf.len(),
+                "cap": self.proto_tx_buf.capacity(),
+            },
+            "wakeup_cids": self.wakeup_cids.iter().map(|x|x.key().clone()).collect::<Vec<_>>(),
+        });
+        js
     }
 
     pub fn handle_dyn_cmd_v03(&mut self, cmd: serde_json::Value) -> impl Future<Output = serde_json::Value> + use<> {

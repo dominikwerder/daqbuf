@@ -1,5 +1,5 @@
 use super::fetchmpx::Fetchmpx;
-use crate::ca::conn2::asynchan2 as asynchan;
+use crate::asynchan;
 use crate::ca::conn2::caids::CaDbrTy;
 use crate::ca::conn2::caids::Sid;
 use crate::ca::conn2::channel_event_value::ChannelEventValue;

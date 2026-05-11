@@ -1,4 +1,4 @@
-use super::conn2::asynchan2 as asynchan;
+use crate::asynchan;
 use crate::ca::findioc::FindIocStream;
 use crate::conf::CaIngestOpts;
 use async_channel::Receiver;

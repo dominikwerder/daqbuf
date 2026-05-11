@@ -1,7 +1,7 @@
 use super::connset::CURRENT_SEARCH_PENDING_MAX;
 use super::connset::SEARCH_BATCH_MAX;
 use super::search::ca_search_workers_start;
-use crate::ca::conn2::asynchan2 as asynchan;
+use crate::asynchan;
 use crate::ca::findioc::FindIocRes;
 use crate::conf::CaIngestOpts;
 use async_channel::Receiver;

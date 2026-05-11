@@ -1,4 +1,4 @@
-use crate::ca::conn2::asynchan;
+use crate::asynchan;
 use crate::ca::progpend::HaveProgressPending;
 use crate::throttletrace::ThrottleTrace;
 use async_channel::Receiver;
