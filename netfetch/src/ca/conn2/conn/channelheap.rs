@@ -7,6 +7,8 @@ const INP_BUF_CAP: usize = 16;
 
 mod channelhandler;
 
+use crate::asynbuf;
+use crate::asynbuf::AsynBuf;
 use crate::asynchan;
 use crate::ca::conn2::caids::Cid;
 use crate::ca::conn2::caids::Ioid;
@@ -198,6 +200,7 @@ pub enum ItemInner {
     TestValue(crate::ca::connset2::connset::TestValue),
     LocalLog(locallog::Entry),
     ChannelEventValue(ChannelEventValue),
+    ProtoOut(CaMsg),
 }
 
 #[derive(Debug)]
@@ -346,15 +349,20 @@ enum PollHandlerItemB {
 }
 
 #[derive(Debug)]
+pub enum InpItem {
+    Cmd(Cmd),
+    CaMsg(CaMsg),
+}
+
+#[derive(Debug)]
 pub struct ChannelHeap {
     backend: String,
     state: State,
+    out_buf: AsynBuf<CaMsg>,
+    inp_buf: AsynBuf<InpItem>,
     proto_tx: asynchan::Sender<CaMsg>,
-    proto_rx: asynchan::Receiver<CaMsg>,
-    proto_tx_buf: VecDeque<CaMsg>,
     by_cid: HashMap<Cid, ChannelEntry>,
     by_name: HashMap<String, Cid>,
-    inp_buf: VecDeque<CaMsg>,
     inp_done: bool,
     wakeup_cids: Arc<dashmap::DashMap<Cid, ()>>,
     wakeup_cids_tmp: Vec<Cid>,
@@ -367,16 +375,15 @@ pub struct ChannelHeap {
 }
 
 impl ChannelHeap {
-    pub fn new(backend: String, proto_tx: asynchan::Sender<CaMsg>, proto_rx: asynchan::Receiver<CaMsg>) -> Self {
+    pub fn new(backend: String, proto_tx: asynchan::Sender<CaMsg>) -> Self {
         Self {
             backend,
             state: State::Running,
+            out_buf: AsynBuf::new(INP_BUF_CAP),
+            inp_buf: AsynBuf::new(INP_BUF_CAP),
             proto_tx,
-            proto_rx,
-            proto_tx_buf: VecDeque::with_capacity(16),
             by_cid: HashMap::new(),
             by_name: HashMap::new(),
-            inp_buf: VecDeque::with_capacity(INP_BUF_CAP),
             inp_done: false,
             wakeup_cids: Arc::new(dashmap::DashMap::new()),
             wakeup_cids_tmp: Vec::new(),
@@ -422,15 +429,11 @@ impl ChannelHeap {
             "state": st,
             "inp_buf": {
                 "len": self.inp_buf.len(),
-                "cap": self.inp_buf.capacity(),
+                "cap": self.inp_buf.cap(),
             },
-            "proto_rx": {
-                "len": self.proto_rx.len(),
-                "cap": self.proto_rx.cap(),
-            },
-            "proto_tx_buf": {
-                "len": self.proto_tx_buf.len(),
-                "cap": self.proto_tx_buf.capacity(),
+            "out_buf": {
+                "len": self.out_buf.len(),
+                "cap": self.out_buf.cap(),
             },
             "wakeup_cids": self.wakeup_cids.iter().map(|x|x.key().clone()).collect::<Vec<_>>(),
         });
@@ -1137,6 +1140,36 @@ impl ChannelHeap {
         }
     }
 
+    pub fn inp_push_try(&mut self, item: InpItem, cx: &mut Context<'_>) -> asynbuf::PushRes<InpItem> {
+        let self2 = self;
+        let v = &mut self2.inp_buf;
+        // let w1 = &mut self2.waker_1;
+        // let w2 = &mut self2.waker_2;
+        let x = v.push_back(item);
+        match &x {
+            asynbuf::PushRes::First => {
+                // if let Some(w) = w1.take() {
+                //     w.wake();
+                // }
+            }
+            asynbuf::PushRes::Done => {}
+            asynbuf::PushRes::Full(_) => {
+                // *w2 = Some(cx.waker().clone());
+            }
+        }
+        x
+    }
+
+    pub(super) fn inp_done(&mut self) {
+        self.inp_done = true;
+        self.by_cid.iter_mut().for_each(|(_, ce)| match &mut ce.ch_handler {
+            ChHandler::ChHandlerActive(h1) => {
+                h1.handler.inp_done();
+            }
+            ChHandler::Done => {}
+        });
+    }
+
     fn poll_next(
         mut self: Pin<&mut Self>,
         cmd_rx: &mut asynchan::Receiver<Cmd>,
@@ -1148,7 +1181,7 @@ impl ChannelHeap {
         let mut i1 = 0;
         loop {
             i1 += 1;
-            if i1 > 2000 {
+            if i1 > 8000 {
                 panic!("i1 max");
             }
             let tsloop = Instant::now();
@@ -1163,34 +1196,6 @@ impl ChannelHeap {
                         Pending => {
                             hpp.mark_pending();
                         }
-                    }
-                    if self.inp_buf.len() < self.inp_buf.capacity() {
-                        match self.proto_rx.poll_next_unpin(cx) {
-                            Ready(Some(item)) => {
-                                hpp.mark_progress();
-                                trace2!("ChannelHeap:CaInp:Rx:Ok  {item:?}  ({n})", n = 1 + self.inp_buf.len());
-                                self.inp_buf.push_back(item);
-                            }
-                            Ready(None) => {
-                                hpp.mark_progress();
-                                debug!("ChannelHeap:CaInp:Rx:Err");
-                                self.inp_done = true;
-                                self.by_cid.iter_mut().for_each(|(_, ce)| match &mut ce.ch_handler {
-                                    ChHandler::ChHandlerActive(h1) => {
-                                        h1.handler.inp_done();
-                                    }
-                                    ChHandler::Done => {}
-                                });
-                                self.state = State::Done;
-                                break Ready(Some(Err(Error::ProtoRxClosed)));
-                            }
-                            Pending => {
-                                hpp.mark_pending();
-                                trace_pending!("ChannelHeap:CaInp:Rx");
-                            }
-                        }
-                    } else {
-                        warn!("{selfname}  SKIP proto_rx.poll_next_unpin  BLOCKED BY inp_buf");
                     }
                     match self.as_mut().dispatch_input_to_channels(cx) {
                         Ready(Some(x)) => {
@@ -1207,91 +1212,71 @@ impl ChannelHeap {
                             hpp.mark_pending();
                         }
                     }
-                    if self.proto_tx_buf.len() < self.proto_tx_buf.capacity() {
-                        match self.as_mut().poll_all_handler(cx) {
-                            Ready(Some(x)) => {
-                                hpp.mark_progress();
-                                match x {
-                                    Ok(x) => match x {
-                                        PollHandlerItem::None => {}
-                                        PollHandlerItem::ChannelHeapItem(item) => {
-                                            error!("TODO handle ChannelHeapItem  {item:?}");
-                                        }
-                                        PollHandlerItem::ChHandlerMod => {}
-                                        PollHandlerItem::ProtoOut(ca_msg) => {
-                                            self.proto_tx_buf.push_back(ca_msg);
-                                        }
-                                        PollHandlerItem::ChannelInfoQuery(item) => {
-                                            let inner = ItemInner::ChannelInfoQuery(item);
-                                            let item = ChannelHeapItem {
-                                                ts_create: tsloop,
-                                                inner,
-                                            };
-                                            break Ready(Some(Ok(item)));
-                                        }
-                                        PollHandlerItem::TestValue(x) => {
-                                            let inner = ItemInner::TestValue(x);
-                                            let item = ChannelHeapItem {
-                                                ts_create: tsloop,
-                                                inner,
-                                            };
-                                            break Ready(Some(Ok(item)));
-                                        }
-                                        PollHandlerItem::LocalLog(x) => {
-                                            let inner = ItemInner::LocalLog(x);
-                                            let item = ChannelHeapItem {
-                                                ts_create: tsloop,
-                                                inner,
-                                            };
-                                            break Ready(Some(Ok(item)));
-                                        }
-                                        PollHandlerItem::ChannelEventValue(x) => {
-                                            let inner = ItemInner::ChannelEventValue(x);
-                                            let item = ChannelHeapItem {
-                                                ts_create: tsloop,
-                                                inner,
-                                            };
-                                            break Ready(Some(Ok(item)));
-                                        }
-                                    },
-                                    Err(e) => {
-                                        self.state = State::Done;
-                                        break Ready(Some(Err(e)));
+                    match self.as_mut().poll_all_handler(cx) {
+                        Ready(Some(x)) => {
+                            hpp.mark_progress();
+                            match x {
+                                Ok(x) => match x {
+                                    PollHandlerItem::None => {}
+                                    PollHandlerItem::ChannelHeapItem(item) => {
+                                        error!("{selfname}  TODO handle ChannelHeapItem  {item:?}");
                                     }
+                                    PollHandlerItem::ChHandlerMod => {}
+                                    PollHandlerItem::ProtoOut(x) => {
+                                        let inner = ItemInner::ProtoOut(x);
+                                        let item = ChannelHeapItem {
+                                            ts_create: tsloop,
+                                            inner,
+                                        };
+                                        break Ready(Some(Ok(item)));
+                                    }
+                                    PollHandlerItem::ChannelInfoQuery(x) => {
+                                        let inner = ItemInner::ChannelInfoQuery(x);
+                                        let item = ChannelHeapItem {
+                                            ts_create: tsloop,
+                                            inner,
+                                        };
+                                        break Ready(Some(Ok(item)));
+                                    }
+                                    PollHandlerItem::TestValue(x) => {
+                                        let inner = ItemInner::TestValue(x);
+                                        let item = ChannelHeapItem {
+                                            ts_create: tsloop,
+                                            inner,
+                                        };
+                                        break Ready(Some(Ok(item)));
+                                    }
+                                    PollHandlerItem::LocalLog(x) => {
+                                        let inner = ItemInner::LocalLog(x);
+                                        let item = ChannelHeapItem {
+                                            ts_create: tsloop,
+                                            inner,
+                                        };
+                                        break Ready(Some(Ok(item)));
+                                    }
+                                    PollHandlerItem::ChannelEventValue(x) => {
+                                        let inner = ItemInner::ChannelEventValue(x);
+                                        let item = ChannelHeapItem {
+                                            ts_create: tsloop,
+                                            inner,
+                                        };
+                                        break Ready(Some(Ok(item)));
+                                    }
+                                },
+                                Err(e) => {
+                                    self.state = State::Done;
+                                    break Ready(Some(Err(e)));
                                 }
-                            }
-                            Ready(None) => {}
-                            Pending => {
-                                hpp.mark_pending();
                             }
                         }
-                    } else {
-                        error!("{selfname}  SKIP poll_all_handler  BLOCKED BY proto_tx_buf");
-                    }
-                    if let Some(item) = self.proto_tx_buf.pop_front() {
-                        trace!("self.proto_tx_buf.pop_front()");
-                        match self.proto_tx.poll_send_unpin(item, cx) {
-                            Ok(()) => {
-                                hpp.mark_progress();
-                                // TODO metrics
-                            }
-                            Err(x) => match x {
-                                SendPollError::Full(x) => {
-                                    hpp.mark_pending();
-                                    self.proto_tx_buf.push_front(x);
-                                }
-                                SendPollError::Closed(_) => {
-                                    error!("TODO connection closed, go into shutdown");
-                                    hpp.mark_progress();
-                                    // TODO check proper shutdown procedure
-                                    self.state = State::Done;
-                                }
-                            },
+                        Ready(None) => {}
+                        Pending => {
+                            hpp.mark_pending();
                         }
                     }
                     if self.disconnect_on_idle && hpp.have_progress() == false {
                         if self.by_cid.len() == 0 {
-                            debug!("disconnect_on_idle goto Done");
+                            debug!("{selfname}  disconnect_on_idle goto Done");
                             hpp.mark_progress();
                             self.state = State::Done;
                         }

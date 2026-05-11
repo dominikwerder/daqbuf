@@ -163,6 +163,8 @@ impl PingPong {
     }
 }
 
+use crate::asynbuf;
+use crate::asynbuf::TsMark;
 use ca_proto::ca::proto::CaMsgTy;
 use serde_helper::serde_instant::serde_Instant_elapsed_ms::serialize as inser3;
 
@@ -217,13 +219,8 @@ impl State {
     }
 }
 
-struct CommandFut(Pin<Box<dyn Future<Output = Result<(), Error>> + Send>>);
-
-impl fmt::Debug for CommandFut {
-    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt.debug_struct("CommandFut").finish()
-    }
-}
+#[derive(Debug)]
+struct CommandFut(FutDbg<Result<(), Error>>);
 
 #[derive(Debug)]
 pub enum ItemInner {
@@ -231,6 +228,7 @@ pub enum ItemInner {
     TestValue(crate::ca::connset2::connset::TestValue),
     LocalLog(locallog::Entry),
     ChannelEventValue(ChannelEventValue),
+    ProtoOut(CaMsg),
 }
 
 #[derive(Debug)]
@@ -254,47 +252,42 @@ pub struct StatusInfo {
 type StreamItem = Result<ActiveCaItem, Error>;
 
 #[derive(Debug)]
+pub enum InpItem {
+    CaMsg(CaMsg),
+    Cmd(CaCommand),
+}
+
+#[derive(Debug)]
 pub struct ActiveCa {
     backend: String,
     tsbeg: Instant,
     addr: SocketAddrV4,
     state: State,
     chanheap: ChannelHeap,
-    proto_tx: asynchan::Sender<CaMsg>,
-    proto_rx: asynchan::Receiver<CaMsg>,
-    proto_rx_buf: VecDeque<CaMsg>,
-    proto_rx_buf_done: bool,
-    proto_2_tx: asynchan::Sender<CaMsg>,
+    inp_buf: asynbuf::AsynBuf<InpItem>,
+    inp_buf_done: bool,
+    inp_cmd_buf: asynbuf::AsynBuf<CaCommand>,
+    inp_msg_buf: asynbuf::AsynBuf<CaMsg>,
+    buf_for_chanheap: asynbuf::AsynBuf<channelheap::InpItem>,
+    ts_mark_proto_rx: TsMark,
     cmd_fut: Option<CommandFut>,
-    chanheap_cmd_tx: asynchan::Sender<channelheap::Cmd>,
-    chanheap_cmd_rx: asynchan::Receiver<channelheap::Cmd>,
     mett: CaConnConnectedMetrics,
 }
 
 impl ActiveCa {
-    pub fn new(
-        backend: String,
-        proto_rx: asynchan::Receiver<CaMsg>,
-        proto_tx: asynchan::Sender<CaMsg>,
-        tsnow: Instant,
-        addr: SocketAddrV4,
-    ) -> Self {
-        let (proto_2_tx, proto_2_rx) = asynchan::bounded(120, "ActiveCa-proto2");
-        let (chanheap_cmd_tx, chanheap_cmd_rx) = asynchan::bounded(16, "ActiveCa-ChannelHeap-cmd");
+    pub fn new(backend: String, tsnow: Instant, addr: SocketAddrV4) -> Self {
         Self {
-            chanheap: ChannelHeap::new(backend.clone(), proto_tx.clone(), proto_2_rx),
-            proto_tx,
             backend,
             tsbeg: tsnow,
             addr,
             state: State::new(),
-            proto_rx,
-            proto_rx_buf: VecDeque::with_capacity(16),
-            proto_rx_buf_done: false,
-            proto_2_tx,
+            chanheap: ChannelHeap::new(backend.clone()),
+            inp_buf: asynbuf::AsynBuf::new(16),
+            inp_buf_done: false,
+            inp_cmd_buf: asynbuf::AsynBuf::new(1),
+            buf_for_chanheap: asynbuf::AsynBuf::new(16),
+            ts_mark_proto_rx: TsMark::new("proto_rx".into()),
             cmd_fut: None,
-            chanheap_cmd_tx,
-            chanheap_cmd_rx,
             mett: CaConnConnectedMetrics::new(),
         }
     }
@@ -333,6 +326,11 @@ impl ActiveCa {
         let js = json!({
             "state": st,
             "chanheap": self.chanheap.dump_state_poll(),
+            "inp_buf": {
+                "len": self.inp_buf.len(),
+                "cap": self.inp_buf.cap(),
+            },
+            "ts_mark_proto_rx": &self.ts_mark_proto_rx,
         });
         js
     }
@@ -351,176 +349,153 @@ impl ActiveCa {
 
     fn handle_command(&mut self, cmd: CaCommand, cx: &mut Context) -> CommandFut {
         let selfname = "handle_command";
+        let self2 = self;
+        assert_eq!(self2.buf_for_chanheap.has_space(), true);
         match cmd.kind {
             CaCommandKind::ChannelAdd(conf, mut done_tx) => {
                 trace!("{selfname}  ChannelAdd");
-                self.chanheap.channel_add(conf, cx);
+                self2.chanheap.channel_add(conf, cx);
                 let fut = async move {
                     let _ = done_tx.send(0).await;
                     Ok(())
-                }
-                .boxed();
-                CommandFut(Box::pin(fut))
+                };
+                CommandFut(fut.box2())
             }
             CaCommandKind::ChannelRemove(name, mut done_tx) => {
                 trace!("{selfname}  ChannelRemove");
-                let mut chanheap_cmd_tx = self.chanheap_cmd_tx.clone();
+                let (done_2_tx, mut done_2_rx) = asynchan::bounded(2, "ChannelHeap-Done");
+                let cmd = channelheap::Cmd::RemoveChannel(name, done_2_tx);
+                self2.buf_for_chanheap.push_back(channelheap::InpItem::Cmd(cmd));
                 let fut = async move {
-                    let (done_2_tx, mut done_2_rx) = asynchan::bounded(2, "ChannelHeap-Done");
-                    let cmd = channelheap::Cmd::RemoveChannel(name, done_2_tx);
-                    let ff = chanheap_cmd_tx.send(cmd);
-                    match ff.await {
-                        Ok(()) => {
-                            trace!("{selfname} ChannelRemove Future: sent RemoveChannel command");
-                            if done_2_rx.recv().await.is_err() {
-                                error!("{selfname}  done_2_rx  recv  fail")
-                            }
-                            if done_tx.send(0).await.is_err() {
-                                error!("{selfname}  done_tx  send  fail")
-                            }
-                            Ok(())
-                        }
-                        Err(e) => {
-                            error!("{selfname}  TODO  ChannelRemove Future: failed to send RemoveChannel command");
-                            Err(Error::Send)
-                        }
+                    if done_2_rx.recv().await.is_err() {
+                        error!("{selfname}  done_2_rx  recv  fail")
                     }
-                }
-                .boxed();
-                CommandFut(Box::pin(fut))
+                    if done_tx.send(0).await.is_err() {
+                        error!("{selfname}  done_tx  send  fail")
+                    }
+                    Ok(())
+                };
+                CommandFut(fut.box2())
             }
             CaCommandKind::DisconnectOnIdle(mut done_tx) => {
                 trace!("{selfname}  DisconnectOnIdle");
-                self.chanheap.disconnect_on_idle();
+                self2.chanheap.disconnect_on_idle();
                 let fut = async move {
                     let _ = done_tx.send(0).await;
                     Ok(())
-                }
-                .boxed();
-                CommandFut(Box::pin(fut))
+                };
+                CommandFut(fut.box2())
             }
         }
     }
 
-    fn poll_command_input(
-        mut self: Pin<&mut Self>,
-        cmd_rx: &mut CtChan<CaCommand>,
-        cx: &mut Context,
-        hpp: &mut HaveProgressPending,
-    ) -> Option<Error> {
+    // Has no EOS return.
+    fn poll_command_input(self: Pin<&mut Self>, cx: &mut Context) -> Option<Poll<Option<Error>>> {
         use Poll::*;
+        let selfname = "poll_command_input";
         let self2 = self.get_mut();
         if let Some(fut) = self2.cmd_fut.as_mut() {
-            match fut.0.as_mut().poll(cx) {
+            match fut.0.poll_unpin(cx) {
                 Ready(Ok(())) => {
                     trace!("CmdFut:Ready:Ok");
                     self2.cmd_fut = None;
-                    hpp.mark_progress();
-                    None
+                    Some(Ready(None))
                 }
                 Ready(Err(e)) => {
                     trace!("CmdFut:Ready:Err {e}");
-                    hpp.mark_progress();
-                    Some(e)
+                    Some(Ready(Some(e)))
                 }
                 Pending => {
                     trace_pending!("CmdFut");
-                    hpp.mark_pending();
-                    None
+                    Some(Pending)
                 }
+            }
+        } else if self2.buf_for_chanheap.has_space() {
+            if let Some(item) = self2.inp_cmd_buf.pop_front() {
+                debug!("\n\n{selfname}  CmdRx:Some \n\n");
+                let fut = self2.handle_command(item, cx);
+                self2.cmd_fut = Some(fut);
+                Some(Ready(None))
+            } else {
+                None
             }
         } else {
-            match cmd_rx.poll_next_unpin(cx) {
-                Ready(Some(cmd)) => {
-                    trace!("CmdRx:Some");
-                    trace!("---------------------------------------------------     CmdRx:Some");
-                    hpp.mark_progress();
-                    let fut = self2.handle_command(cmd, cx);
-                    self2.cmd_fut = Some(fut);
-                    None
-                }
-                Ready(None) => None,
-                Pending => {
-                    trace_pending!("CmdRx");
-                    hpp.mark_pending();
-                    None
-                }
-            }
+            None
         }
     }
 
-    fn poll_dispatch(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Result<(), Error>>> {
+    fn poll_dispatch(mut self: Pin<&mut Self>, cx: &mut Context) -> Option<Poll<Result<(), Error>>> {
         use Poll::*;
         let selfname = "poll_dispatch";
         trace4!("{selfname}");
         loop {
             let mut hpp = HaveProgressPending::new();
-            if let Some(item) = self.proto_rx_buf.pop_front() {
-                let dispatch = item.cid().is_some() || item.subid().is_some() || item.ioid().is_some();
-                if dispatch {
-                    use asynchan::SendPoll;
-                    use asynchan::SendPollError;
-                    match self.proto_2_tx.poll_send_unpin(item, cx) {
-                        Ok(()) => {
-                            trace!("{selfname}  Sent");
-                            hpp.mark_progress();
+            if self.buf_for_chanheap.has_space() {
+                if let Some(item) = self.inp_msg_buf.pop_front() {
+                    hpp.mark_progress();
+                    let dispatch = item.cid().is_some() || item.subid().is_some() || item.ioid().is_some();
+                    if dispatch {
+                        let item = channelheap::InpItem::CaMsg(item);
+                        self.buf_for_chanheap.push_back(item);
+                    } else {
+                        match item.ty {
+                            CaMsgTy::Echo => {
+                                if let State::Running(st1) = &mut self.state {
+                                    match &mut st1.pingpong {
+                                        PingPong::Idle(..) => {}
+                                        PingPong::Send(..) => {}
+                                        PingPong::Wait(..) => {
+                                            st1.pingpong = PingPong::new_idle();
+                                        }
+                                    }
+                                } else {
+                                    // TODO metrics
+                                }
+                            }
+                            _ => {
+                                error!("TODO handle incoming item internally: {item:?}");
+                            }
                         }
-                        Err(e) => match e {
-                            SendPollError::Full(item) => {
-                                trace_pending!("{selfname}  Pending");
-                                hpp.mark_pending();
-                                self.proto_rx_buf.push_front(item);
-                            }
-                            SendPollError::Closed(item) => {
-                                trace!("{selfname}  Closed");
-                                error!("{selfname}  TODO handle Closed better?");
-                            }
-                        },
                     }
                 } else {
-                    match item.ty {
-                        CaMsgTy::Echo => {
-                            hpp.mark_progress();
-                            if let State::Running(st1) = &mut self.state {
-                                match &mut st1.pingpong {
-                                    PingPong::Idle(..) => {}
-                                    PingPong::Send(..) => {}
-                                    PingPong::Wait(..) => {
-                                        st1.pingpong = PingPong::new_idle();
-                                    }
-                                }
-                            } else {
-                                // TODO metrics
-                            }
-                        }
-                        _ => {
-                            hpp.mark_progress();
-                            error!("TODO handle incoming item internally: {item:?}");
-                        }
-                    }
                 }
-            } else if self.proto_rx_buf_done {
             } else {
-                hpp.mark_pending();
+                warn!("{selfname}  SKIP  BLOCKED BY buf_for_chanheap");
             }
             break if hpp.have_progress() {
                 trace4!("{selfname}  HPP:Progress");
                 continue;
             } else if hpp.have_pending() {
                 trace_pending!("{selfname}  HPP");
-                Pending
+                Some(Pending)
             } else {
                 trace!("{selfname}  HPP:Done");
-                Ready(None)
+                None
             };
         }
     }
 
-    fn poll_next(
-        mut self: Pin<&mut Self>,
-        cmd_rx: &mut CtChan<CaCommand>,
-        cx: &mut Context,
-    ) -> Poll<Option<StreamItem>> {
+    pub(super) fn inp_push_try(self: Pin<&mut Self>, item: InpItem, cx: &mut Context<'_>) -> asynbuf::PushRes<CaMsg> {
+        let self2 = self.get_mut();
+        let v = &mut self2.inp_buf;
+        // let w1 = &mut self2.waker_1;
+        // let w2 = &mut self2.waker_2;
+        let x = v.push_back(item);
+        match &x {
+            asynbuf::PushRes::First => {
+                // if let Some(w) = w1.take() {
+                //     w.wake();
+                // }
+            }
+            asynbuf::PushRes::Done => {}
+            asynbuf::PushRes::Full(_) => {
+                // *w2 = Some(cx.waker().clone());
+            }
+        }
+        x
+    }
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<StreamItem>> {
         use Poll::*;
         let selfname = "ActiveCa::poll_next";
         trace4!("{selfname}");
@@ -528,53 +503,84 @@ impl ActiveCa {
             let mut hpp = HaveProgressPending::new();
             match &mut self.state {
                 State::Running(st1) => {
-                    match self.as_mut().poll_command_input(cmd_rx, cx, &mut hpp) {
-                        Some(e) => {
-                            hpp.mark_progress();
-                            break Ready(Some(Err(e)));
-                        }
+                    match self.as_mut().poll_command_input(cx) {
+                        Some(x) => match x {
+                            Ready(Some(e)) => {
+                                hpp.mark_progress();
+                                self.state = State::Done;
+                                break Ready(Some(Err(e.into())));
+                            }
+                            Ready(None) => {
+                                hpp.mark_progress();
+                            }
+                            Pending => {
+                                hpp.mark_pending();
+                            }
+                        },
                         None => {}
                     }
                     let self2 = self.as_mut().get_mut();
-                    if self2.proto_rx_buf.len() < self2.proto_rx_buf.capacity() {
-                        match self2.proto_rx.poll_next_unpin(cx) {
-                            Ready(x) => match x {
-                                Some(item) => {
-                                    trace!("ActiveCa:ProtoRx:Some");
-                                    self2.proto_rx_buf.push_back(item);
-                                    hpp.mark_progress();
+                    if self2.inp_cmd_buf.has_space() && self2.inp_msg_buf.has_space() {
+                        if let Some(item) = self2.inp_buf.pop_front() {
+                            match item {
+                                InpItem::CaMsg(x) => {
+                                    self2.inp_msg_buf.push_back(x);
                                 }
-                                None => {
-                                    trace!("ActiveCa:ProtoRx:Error");
-                                    error!("TODO clean shutdown, remote seems gone");
-                                    self2.state = State::Done;
-                                    hpp.mark_progress();
+                                InpItem::Cmd(x) => {
+                                    self2.inp_cmd_buf.push_back(x);
                                 }
-                            },
+                            }
+                        } else {
+                        }
+                    } else {
+                        warn!("{selfname}  SKIP inp_buf pop");
+                    }
+                    match self.as_mut().poll_dispatch(cx) {
+                        Some(x) => match x {
+                            Ready(x) => {
+                                hpp.mark_progress();
+                                match x {
+                                    Ok(()) => {}
+                                    Err(e) => {
+                                        self.state = State::Done;
+                                        break Ready(Some(Err(e)));
+                                    }
+                                }
+                            }
                             Pending => {
-                                trace_pending!("ActiveCa:ProtoRx");
                                 hpp.mark_pending();
+                            }
+                        },
+                        None => {}
+                    }
+
+                    let self2 = self.as_mut().get_mut();
+                    if let Some(x) = self2.buf_for_chanheap.pop_front() {
+                        match self2.chanheap.inp_push_try(x, cx) {
+                            asynbuf::PushRes::First => {
+                                hpp.mark_progress();
+                            }
+                            asynbuf::PushRes::Done => {
+                                hpp.mark_progress();
+                            }
+                            asynbuf::PushRes::Full(x) => {
+                                self2.buf_for_chanheap.push_front(x);
+                                //
+                                // TODO
+                                // Should we mark HPP?
+                                //
                             }
                         }
                     } else {
-                        warn!("{selfname}  SKIP proto_rx.poll_next_unpin  BLOCKED BY proto_rx_buf");
                     }
-                    match self.as_mut().poll_dispatch(cx) {
-                        Ready(Some(x)) => {
-                            hpp.mark_progress();
-                            match x {
-                                Ok(()) => {}
-                                Err(e) => {
-                                    break Ready(Some(Err(e)));
-                                }
-                            }
-                        }
-                        Ready(None) => {}
-                        Pending => {
-                            hpp.mark_pending();
-                        }
-                    }
-                    let self2 = self.as_mut().get_mut();
+                    //
+                    //
+
+                    //
+                    //
+                    // TODO refactor take away the chanheap_cmd_rx
+                    //
+                    //
                     match self2.chanheap.poll_next_unpin(&mut self2.chanheap_cmd_rx, cx) {
                         Ready(Some(x)) => {
                             hpp.mark_progress();
@@ -607,6 +613,13 @@ impl ActiveCa {
                                             let item = ActiveCaItem {
                                                 ts_create: item.ts_create,
                                                 inner: ItemInner::ChannelEventValue(x),
+                                            };
+                                            break Ready(Some(Ok(item)));
+                                        }
+                                        channelheap::ItemInner::ProtoOut(x) => {
+                                            let item = ActiveCaItem {
+                                                ts_create: item.ts_create,
+                                                inner: ItemInner::ProtoOut(x),
                                             };
                                             break Ready(Some(Ok(item)));
                                         }

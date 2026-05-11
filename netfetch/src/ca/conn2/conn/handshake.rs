@@ -1,8 +1,11 @@
+use crate::asynbuf;
 use crate::asynchan;
 use crate::ca::conn2::conn::activeca::CaCommand;
 use ca_proto::ca::proto::CaMsg;
 use ca_proto::ca::proto::CaMsgTy;
+use futures::Stream;
 use futures::StreamExt;
+use netpod::hpp::HaveProgressPending;
 use std::collections::VecDeque;
 use std::future::Future;
 use std::net::SocketAddrV4;
@@ -23,6 +26,12 @@ autoerr::create_error_v1!(
         EpicsVersion(u16),
     },
 );
+
+#[derive(Debug)]
+pub enum Item {
+    CaMsg(CaMsg),
+    HandshakeDone,
+}
 
 #[derive(Debug)]
 struct HelloSend {
@@ -62,31 +71,21 @@ pub struct Handshake {
     tsbeg: Instant,
     addr: SocketAddrV4,
     state: State,
-    tx: asynchan::Sender<CaMsg>,
-    rx: asynchan::Receiver<CaMsg>,
-    pub ca_cmd_rx: asynchan::Receiver<CaCommand>,
+    inp_buf: asynbuf::AsynBuf<CaMsg>,
 }
 
 impl Handshake {
-    pub fn new(
-        rx: asynchan::Receiver<CaMsg>,
-        tx: asynchan::Sender<CaMsg>,
-        tsnow: Instant,
-        addr: SocketAddrV4,
-        ca_cmd_rx: asynchan::Receiver<CaCommand>,
-    ) -> Self {
+    pub fn new(tsnow: Instant, addr: SocketAddrV4) -> Self {
         Self {
             tsbeg: tsnow,
             addr,
             state: State::new(),
-            tx,
-            rx,
-            ca_cmd_rx,
+            inp_buf: asynbuf::AsynBuf::new(16),
         }
     }
 
-    pub fn dismantle(self) -> (asynchan::Receiver<CaMsg>,) {
-        (self.rx,)
+    pub fn dismantle(self) -> (asynbuf::AsynBuf<CaMsg>,) {
+        (self.inp_buf,)
     }
 
     pub fn to_dummy(&self) -> Self {
@@ -94,99 +93,80 @@ impl Handshake {
             tsbeg: self.tsbeg.clone(),
             addr: self.addr.clone(),
             state: State::Done,
-            tx: asynchan::bounded(1, "handshake-dummy-A").0,
-            rx: asynchan::bounded(1, "handshake-dummy-B").1,
-            ca_cmd_rx: asynchan::bounded(1, "handshake-dummy-C").1,
+            inp_buf: asynbuf::AsynBuf::new(16),
         }
+    }
+
+    pub(super) fn inp_push_try(self: Pin<&mut Self>, item: CaMsg, cx: &mut Context<'_>) -> asynbuf::PushRes<CaMsg> {
+        let self2 = self.get_mut();
+        let v = &mut self2.inp_buf;
+        v.push_back(item)
     }
 }
 
-impl Future for Handshake {
-    type Output = Result<(), Error>;
+impl Stream for Handshake {
+    type Item = Result<Item, Error>;
 
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         use Poll::*;
         trace!("poll_next");
         loop {
+            let mut hpp = HaveProgressPending::new();
             let self2 = self.as_mut().get_mut();
-            break match &mut self2.state {
+            match &mut self2.state {
                 State::HelloSend(st1) => {
                     if let Some(msg) = st1.msgs.pop_front() {
-                        use asynchan::SendPoll;
-                        use asynchan::SendPollError;
-                        match self2.tx.poll_send_unpin(msg, cx) {
-                            Ok(()) => {
-                                trace!("Tx:Sent");
-                                continue;
-                            }
-                            Err(e) => match e {
-                                SendPollError::Full(e) => {
-                                    trace!("Tx:Pending");
-                                    st1.msgs.push_front(e);
-                                    Pending
-                                }
-                                SendPollError::Closed(_) => {
-                                    trace!("Tx:Closed");
-                                    self.state = State::Done;
-                                    Ready(Err(Error::ProtoTxClosed))
-                                }
-                            },
-                        }
+                        break Ready(Some(Ok(Item::CaMsg(msg))));
                     } else {
                         trace!("Tx:AllSent");
+                        hpp.mark_progress();
                         self.state = State::HelloRecv;
-                        continue;
                     }
                 }
                 State::HelloRecv => {
-                    break match self.rx.poll_next_unpin(cx) {
-                        Ready(x) => match x {
-                            Some(item) => {
-                                trace!("Rx:Ready:Item:{item:?}");
-                                match &item.ty {
-                                    CaMsgTy::VersionRes(n) => {
-                                        let n = *n;
-                                        if n < 12 || n > 13 {
-                                            error!("unexpected channel access version {} from {}", n, self.addr);
-                                            self.state = State::Done;
-                                            Ready(Err(Error::EpicsVersion(n)))
-                                        } else {
-                                            if n != 13 {
-                                                warn!("received peer channel access version {} from {}", n, self.addr);
-                                            }
-                                            self.state = State::Done;
-                                            Ready(Ok(()))
-                                        }
+                    if let Some(item) = self.inp_buf.pop_front() {
+                        trace!("Rx:Ready:Item:{item:?}");
+                        match &item.ty {
+                            CaMsgTy::VersionRes(n) => {
+                                let n = *n;
+                                if n < 12 || n > 13 {
+                                    error!("unexpected channel access version {} from {}", n, self.addr);
+                                    hpp.have_progress();
+                                    self.state = State::Done;
+                                    break Ready(Some(Err(Error::EpicsVersion(n))));
+                                } else {
+                                    hpp.have_progress();
+                                    if n != 13 {
+                                        warn!("received peer channel access version {} from {}", n, self.addr);
                                     }
-                                    CaMsgTy::CreateChanRes(k) => {
-                                        warn!("got unexpected {:?}", k);
-                                        Ready(Ok(()))
-                                    }
-                                    CaMsgTy::AccessRightsRes(k) => {
-                                        warn!("got unexpected {:?}", k);
-                                        Ready(Ok(()))
-                                    }
-                                    _ => {
-                                        warn!("got some other unhandled message: {item:?}");
-                                        Ready(Ok(()))
-                                    }
+                                    self.state = State::Done;
+                                    break Ready(Some(Ok(Item::HandshakeDone)));
                                 }
                             }
-                            None => {
-                                trace!("Rx:Done");
-                                Ready(Ok(()))
+                            CaMsgTy::CreateChanRes(k) => {
+                                hpp.have_progress();
+                                warn!("got unexpected {:?}", k);
                             }
-                        },
-                        Pending => {
-                            trace!("Rx:Pending");
-                            Pending
+                            CaMsgTy::AccessRightsRes(k) => {
+                                hpp.have_progress();
+                                warn!("got unexpected {:?}", k);
+                            }
+                            _ => {
+                                hpp.have_progress();
+                                warn!("got some other unhandled message: {item:?}");
+                            }
                         }
-                    };
+                    } else {
+                    }
                 }
-                State::Done => {
-                    trace!("Done");
-                    Ready(Ok(()))
-                }
+                State::Done => {}
+            };
+            break if hpp.have_progress() {
+                continue;
+            } else if hpp.have_pending() {
+                Pending
+            } else {
+                Ready(None)
             };
         }
     }

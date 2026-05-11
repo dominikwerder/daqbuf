@@ -30,6 +30,7 @@ use stats::mett::ChannelHandlerMetrics;
 use std::collections::VecDeque;
 use std::fmt;
 use std::pin::Pin;
+use std::sync::atomic;
 use std::task::Context;
 use std::task::Poll;
 use std::task::Waker;
@@ -503,7 +504,7 @@ impl Stream for ChannelHandler {
                                     // metrics?
                                 }
                                 Err(e) => {
-                                    debug!("ChannelHandler:Creating:Ready:Err {e}");
+                                    warn!("ChannelHandler:Creating:Proto:Ready:Err {e}");
                                     self2.state = State::Done1;
                                     break Ready(Some(Err(e.into())));
                                 }
@@ -545,9 +546,16 @@ impl Stream for ChannelHandler {
                                     }
                                 },
                                 Err(e) => {
-                                    info!("ChannelHandler:Creating:Ready:Err {e}");
-                                    self2.state = State::Done1;
-                                    break Ready(Some(Err(e.into())));
+                                    info!("ChannelHandler:Creating:state:Ready:Err {e}");
+                                    if true {
+                                        let ptr = crate::ca::conn2::conn::CONN_DBG_PTR.load(atomic::Ordering::Acquire);
+                                        let ptr = ptr as *const crate::ca::conn2::conn::CaConn;
+                                        let x = unsafe { &*ptr };
+                                        x.dump_state_poll();
+                                        std::process::exit(88);
+                                    }
+                                    // self2.state = State::Done1;
+                                    // break Ready(Some(Err(e.into())));
                                 }
                             }
                         }
@@ -629,7 +637,7 @@ impl Stream for ChannelHandler {
                                     }
                                 },
                                 Err(e) => {
-                                    info!("ChannelHandler:Creating:Ready:Err {e}");
+                                    info!("ChannelHandler:Running:Ready:Err {e}");
                                     self2.state = State::Done1;
                                     break Ready(Some(Err(e.into())));
                                 }

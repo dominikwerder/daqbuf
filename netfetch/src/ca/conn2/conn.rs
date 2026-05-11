@@ -25,11 +25,15 @@ use std::fmt;
 use std::io::Write;
 use std::net::SocketAddrV4;
 use std::pin::Pin;
+use std::sync::atomic;
+use std::sync::atomic::AtomicUsize;
 use std::task::Context;
 use std::task::Poll;
 use std::time::Duration;
 use std::time::Instant;
 use taskrun::tokio;
+
+pub static CONN_DBG_PTR: AtomicUsize = AtomicUsize::new(0);
 
 const OUT_QUEUE_LEN_MAX: usize = 64;
 
@@ -598,8 +602,9 @@ impl CaConn {
         let js = json!({
             "state": st,
         });
-        if let Ok(mut fout) = std::fs::OpenOptions::new()
+        if let Ok(fout) = std::fs::OpenOptions::new()
             .create(true)
+            .truncate(true)
             .write(true)
             .open("dump-conn.txt")
         {
@@ -640,6 +645,10 @@ impl Stream for CaConn {
         use Poll::*;
         let selfname = "CaConn::poll_next";
         trace4!("{selfname}");
+        CONN_DBG_PTR.store(
+            self.as_ref().get_ref() as *const Self as usize,
+            atomic::Ordering::Release,
+        );
         let mut durs = DurationMeasureSteps::new();
         let ret = loop {
             let self2 = self.as_mut().get_mut();

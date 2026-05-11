@@ -1,3 +1,6 @@
+use crate::asynbuf;
+use crate::asynbuf::AsynBuf;
+use crate::asynbuf::TsMark;
 use crate::asynchan;
 use crate::ca::progpend::HaveProgressPending;
 use ca_proto::ca::proto::CaItem;
@@ -29,77 +32,72 @@ enum State {
 pub struct ProtoPusher {
     state: State,
     proto: CaProto,
-    out_rx: Option<asynchan::Receiver<CaMsg>>,
-    alt: u16,
+    proto_out_buf: AsynBuf<CaMsg>,
+    ts_mark_try_01: TsMark,
+    ts_mark_try_02: TsMark,
 }
 
 impl ProtoPusher {
-    pub fn new(proto: CaProto, out_rx: asynchan::Receiver<CaMsg>) -> Self {
+    pub fn new(proto: CaProto) -> Self {
         Self {
             state: State::Running,
             proto,
-            out_rx: Some(out_rx),
-            alt: 0,
+            proto_out_buf: AsynBuf::new(16),
+            ts_mark_try_01: TsMark::new("try_01".into()),
+            ts_mark_try_02: TsMark::new("try_02".into()),
         }
     }
 
-    pub fn close(&mut self) {
-        self.out_rx = None;
+    pub fn inp_push_try(self: Pin<&mut Self>, item: CaMsg, cx: &mut Context<'_>) -> asynbuf::PushRes<CaMsg> {
+        let self2 = self.get_mut();
+        let v = &mut self2.proto_out_buf;
+        // let w1 = &mut self2.waker_1;
+        // let w2 = &mut self2.waker_2;
+        let x = v.push_back(item);
+        match &x {
+            asynbuf::PushRes::First => {
+                // if let Some(w) = w1.take() {
+                //     w.wake();
+                // }
+            }
+            asynbuf::PushRes::Done => {}
+            asynbuf::PushRes::Full(_) => {
+                // *w2 = Some(cx.waker().clone());
+            }
+        }
+        x
     }
 
-    fn try_01(
-        mut self: Pin<&mut Self>,
+    fn poll_proto(
+        self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         hpp: &mut HaveProgressPending,
     ) -> Option<<Self as Stream>::Item> {
         use Poll::*;
-        match self.as_mut().proto.poll_next_unpin(cx) {
+        let self2 = self.get_mut();
+        let ts_mark = &mut self2.ts_mark_try_01;
+        match self2.proto.poll_next_unpin(cx) {
             Ready(Some(Ok(x))) => {
                 hpp.mark_progress();
+                ts_mark.hit_some();
                 Some(Ok(x))
             }
             Ready(Some(Err(e))) => {
                 hpp.mark_progress();
+                ts_mark.hit_some();
                 Some(Err(e.into()))
             }
             Ready(None) => {
-                self.state = State::Done;
+                self2.state = State::Done;
+                ts_mark.hit_none();
                 hpp.mark_progress();
                 None
             }
             Pending => {
                 hpp.mark_pending();
+                ts_mark.hit_pending();
                 None
             }
-        }
-    }
-
-    fn try_02(mut self: Pin<&mut Self>, cx: &mut Context<'_>, hpp: &mut HaveProgressPending) -> Option<CaMsg> {
-        use Poll::*;
-        if self.proto.proto_out_space() {
-            if let Some(rx) = &mut self.out_rx {
-                match rx.poll_next_unpin(cx) {
-                    Ready(Some(x)) => {
-                        hpp.mark_progress();
-                        self.as_mut().proto.push_out(x);
-                        None
-                    }
-                    Ready(None) => {
-                        hpp.mark_progress();
-                        self.out_rx = None;
-                        None
-                    }
-                    Pending => {
-                        hpp.mark_pending();
-                        None
-                    }
-                }
-            } else {
-                None
-            }
-        } else {
-            warn!("SKIP rx.poll_next_unpin  BLOCKED BY proto.proto_out_len");
-            None
         }
     }
 
@@ -116,6 +114,20 @@ impl ProtoPusher {
             }),
         }
     }
+
+    pub(super) fn dump_state_poll(&self) -> serde_json::Value {
+        use serde_json::json;
+        let st = match &self.state {
+            State::Running => json!({"Running": {}}),
+            State::Done => json!({"Done": {}}),
+        };
+        let js = json!({
+            "state": st,
+            "ts_mark_try_01": &self.ts_mark_try_01,
+            "ts_mark_try_02": &self.ts_mark_try_02,
+        });
+        js
+    }
 }
 
 impl Stream for ProtoPusher {
@@ -125,32 +137,20 @@ impl Stream for ProtoPusher {
         use Poll::*;
         loop {
             let mut hpp = HaveProgressPending::new();
-            break match &self.state {
+            match &self.state {
                 State::Running => {
-                    if self.alt == 0 {
-                        self.alt = 1;
-                        if let Some(item) = self.as_mut().try_01(cx, &mut hpp) {
-                            break Ready(Some(item));
-                        }
-                        self.as_mut().try_02(cx, &mut hpp);
-                    } else {
-                        self.alt = 0;
-                        self.as_mut().try_02(cx, &mut hpp);
-                        if let Some(item) = self.as_mut().try_01(cx, &mut hpp) {
-                            break Ready(Some(item));
-                        }
+                    if let Some(item) = self.as_mut().poll_proto(cx, &mut hpp) {
+                        break Ready(Some(item));
                     }
-                    if hpp.have_progress() {
+                    break if hpp.have_progress() {
                         continue;
                     } else if hpp.have_pending() {
                         Pending
                     } else {
                         Ready(None)
-                    }
+                    };
                 }
-                State::Done => {
-                    break Ready(None);
-                }
+                State::Done => break Ready(None),
             };
         }
     }
