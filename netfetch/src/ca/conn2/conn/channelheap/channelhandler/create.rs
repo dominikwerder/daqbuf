@@ -16,6 +16,7 @@ use std::collections::VecDeque;
 use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
+use std::task::Waker;
 use std::time::Duration;
 use std::time::Instant;
 use taskrun::tokio;
@@ -87,6 +88,8 @@ pub struct Creating {
     removing: bool,
     inp_buf: VecDeque<ProtoRxItem>,
     inp_done: bool,
+    waker_inp_prd: Option<Waker>,
+    waker_inp_cns: Option<Waker>,
 }
 
 impl Creating {
@@ -109,6 +112,8 @@ impl Creating {
             removing: false,
             inp_buf: VecDeque::with_capacity(16),
             inp_done: false,
+            waker_inp_prd: None,
+            waker_inp_cns: None,
         }
     }
 
@@ -124,12 +129,21 @@ impl Creating {
         self.removing = true;
     }
 
-    pub fn poll_inp_push(&mut self, item: ProtoRxItem) -> Option<ProtoRxItem> {
-        let v = &mut self.inp_buf;
+    pub fn poll_inp_push(&mut self, item: ProtoRxItem, cx: &mut Context<'_>) -> Option<ProtoRxItem> {
+        let self2 = self;
+        let v = &mut self2.inp_buf;
+        let w1 = &mut self2.waker_inp_cns;
+        let w2 = &mut self2.waker_inp_prd;
         if v.len() < v.capacity() {
+            if v.len() == 0 {
+                if let Some(w) = w1.take() {
+                    w.wake();
+                }
+            }
             v.push_back(item);
             None
         } else {
+            *w2 = Some(cx.waker().clone());
             Some(item)
         }
     }

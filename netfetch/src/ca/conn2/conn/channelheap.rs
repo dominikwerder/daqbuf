@@ -629,13 +629,13 @@ impl ChannelHeap {
                         Ok(item) => {
                             let item = match item.inner {
                                 channelhandler::ItemInner::ProtoOut(item) => {
-                                    trace!("received channelhandler::ItemInner::ProtoOut {item:?}");
+                                    trace!("{selfname}  received channelhandler::ItemInner::ProtoOut {item:?}");
                                     PollHandlerItem::ProtoOut(item)
                                 }
                                 channelhandler::ItemInner::ProtoOutIoid(mut ca_msg, sid, tscmd) => {
                                     if let Some(sid2) = handler.sid() {
                                         if sid2 != sid {
-                                            warn!("ProtoOutIoid but handler sid differs");
+                                            warn!("{selfname}  ProtoOutIoid but handler sid differs");
                                             PollHandlerItem::None
                                         } else {
                                             let ioid = ioid_reg.current().inc();
@@ -644,7 +644,7 @@ impl ChannelHeap {
                                             PollHandlerItem::ProtoOut(ca_msg)
                                         }
                                     } else {
-                                        warn!("ProtoOutIoid but handler missing sid");
+                                        warn!("{selfname}  ProtoOutIoid but handler missing sid");
                                         PollHandlerItem::None
                                     }
                                 }
@@ -677,7 +677,9 @@ impl ChannelHeap {
                             // TODO if that does not work, remove the connection, invalidate
                             // all those channels, and try again all channels.
                             // self2.state = State::Done;
-                            warn!("ChannelHeap:Handler:Done  TODO handle closed channel handler gracefully {cid}");
+                            warn!(
+                                "{selfname}  ChannelHeap:Handler:Done  TODO handle closed channel handler gracefully {cid}"
+                            );
                             let msg = format!("ChannelHeap:Handler error {cid} {e}");
                             break Ready(Some(Err(Error::Msg(msg))));
                         }
@@ -755,10 +757,9 @@ impl ChannelHeap {
                                     tsreg,
                                     tsdisp: tsnow,
                                 };
-                                match Pin::new(&mut st2.handler).inp_push_try(u) {
+                                match Pin::new(&mut st2.handler).inp_push_try(u, cx) {
                                     Some(item) => {
                                         hpp.mark_pending();
-                                        hpp.mark_progress();
                                         trace2!("{selfname}  ChannelHeap:Dispatch:Pending  {cid}  {sdbg}");
                                         self2.inp_buf.push_front(item);
                                         self2.wakeup_cids.insert(cid, ());
@@ -1117,6 +1118,7 @@ impl ChannelHeap {
         cx: &mut Context<'_>,
     ) -> Poll<Option<StreamItem>> {
         use Poll::*;
+        let selfname = "poll_next";
         trace4!("ChannelHeap  poll_next");
         let mut i1 = 0;
         loop {
@@ -1163,7 +1165,7 @@ impl ChannelHeap {
                             }
                         }
                     } else {
-                        // Maybe nothing to do here?
+                        warn!("{selfname}  SKIP proto_rx.poll_next_unpin  BLOCKED BY inp_buf");
                     }
                     match self.as_mut().dispatch_input_to_channels(cx) {
                         Ready(Some(x)) => {
@@ -1239,7 +1241,7 @@ impl ChannelHeap {
                             }
                         }
                     } else {
-                        trace3!("-------     SKIP poll_all_handler");
+                        error!("{selfname}  SKIP poll_all_handler  BLOCKED BY proto_tx_buf");
                     }
                     if let Some(item) = self.proto_tx_buf.pop_front() {
                         trace!("self.proto_tx_buf.pop_front()");

@@ -32,6 +32,7 @@ use std::fmt;
 use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
+use std::task::Waker;
 use std::time::Duration;
 use std::time::Instant;
 use taskrun::tokio;
@@ -191,6 +192,8 @@ pub struct ChannelHandler {
     cmd_rx: asynchan::Receiver<Cmd>,
     outbuf: VecDeque<ChannelHandlerItem>,
     mett: ChannelHandlerMetrics,
+    waker_1: Option<Waker>,
+    waker_2: Option<Waker>,
 }
 
 impl ChannelHandler {
@@ -217,6 +220,8 @@ impl ChannelHandler {
             cmd_rx,
             outbuf: VecDeque::new(),
             mett: ChannelHandlerMetrics::new(),
+            waker_1: None,
+            waker_2: None,
         }
     }
 
@@ -361,6 +366,7 @@ impl ChannelHandler {
         mut st1: Pin<&mut Creating>,
         buf: &mut VecDeque<ProtoRxItem>,
         done: &mut bool,
+        waker_2: &mut Option<Waker>,
         cx: &mut Context<'_>,
     ) -> Poll<Option<Result<u32, Error>>> {
         let selfname = "poll_proto_rx_creating";
@@ -370,7 +376,7 @@ impl ChannelHandler {
         loop {
             let mut hpp = HaveProgressPending::new();
             if let Some(item) = buf.pop_front() {
-                match st1.as_mut().poll_inp_push(item) {
+                match st1.as_mut().poll_inp_push(item, cx) {
                     Some(item) => {
                         trace2!("{selfname}  item came back");
                         buf.push_front(item);
@@ -378,6 +384,11 @@ impl ChannelHandler {
                     }
                     None => {
                         trace2!("{selfname}  item delivered");
+                        if 1 + buf.len() >= buf.capacity() {
+                            if let Some(w) = waker_2.take() {
+                                w.wake();
+                            }
+                        }
                         idp += 1;
                         hpp.mark_progress();
                     }
@@ -385,6 +396,7 @@ impl ChannelHandler {
             } else if *done {
                 break Ready(Some(Err(Error::ProtoRxClosed)));
             } else {
+                *waker_2 = Some(cx.waker().clone());
                 hpp.mark_pending();
             }
             break if hpp.have_progress() {
@@ -400,12 +412,21 @@ impl ChannelHandler {
         }
     }
 
-    pub fn inp_push_try(mut self: Pin<&mut Self>, item: ProtoRxItem) -> Option<CaMsg> {
-        let v = &mut self.proto_inp_buf;
+    pub fn inp_push_try(self: Pin<&mut Self>, item: ProtoRxItem, cx: &mut Context<'_>) -> Option<CaMsg> {
+        let self2 = self.get_mut();
+        let v = &mut self2.proto_inp_buf;
+        let w1 = &mut self2.waker_1;
+        let w2 = &mut self2.waker_2;
         if v.len() < v.capacity() {
+            if v.len() == 0 {
+                if let Some(w) = w1.take() {
+                    w.wake();
+                }
+            }
             v.push_back(item);
             None
         } else {
+            *w2 = Some(cx.waker().clone());
             Some(item.msg)
         }
     }
@@ -472,6 +493,7 @@ impl Stream for ChannelHandler {
                         Pin::new(st1),
                         &mut self2.proto_inp_buf,
                         &mut self2.proto_inp_done,
+                        &mut self2.waker_2,
                         cx,
                     ) {
                         Ready(Some(x)) => {
@@ -537,13 +559,19 @@ impl Stream for ChannelHandler {
                     }
                 }
                 State::Running(st2) => {
-                    if let Some(item) = self2.proto_inp_buf.pop_front() {
+                    let vi = &mut self2.proto_inp_buf;
+                    if let Some(item) = vi.pop_front() {
                         match st2.inp_push_try(item) {
                             Some(x) => {
                                 hpp.mark_pending();
-                                self2.proto_inp_buf.push_front(x);
+                                vi.push_front(x);
                             }
                             None => {
+                                if 1 + vi.len() >= vi.capacity() {
+                                    if let Some(w) = self2.waker_2.take() {
+                                        w.wake();
+                                    }
+                                }
                                 hpp.mark_progress();
                             }
                         }
@@ -727,6 +755,7 @@ impl Stream for ChannelHandler {
                 continue;
             } else if hpp.have_pending() {
                 trace_pending!("HPP");
+                self.waker_1 = Some(cx.waker().clone());
                 Pending
             } else {
                 trace!("HPP:Done");

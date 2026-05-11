@@ -259,6 +259,17 @@ impl Connected {
             .box2(),
         }
     }
+
+    pub(super) fn check_flow_state(&self) {
+        match &self.state {
+            State::Init(_, _) => {}
+            State::Handshake(_) => {}
+            State::ActiveCa(st, rx) => {
+                st.check_flow_state();
+            }
+            State::Done => {}
+        }
+    }
 }
 
 impl Stream for Connected {
@@ -304,6 +315,8 @@ impl Stream for Connected {
                                 hpp.mark_pending();
                             }
                         }
+                    } else {
+                        warn!("SKIP  protowrap.poll_next_unpin  BLOCKED BY inp_buf");
                     }
                     if let Some(item) = self2.inp_buf.pop_front() {
                         use asynchan::SendPoll;

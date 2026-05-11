@@ -22,6 +22,7 @@ use futures::TryFutureExt;
 use stats::rand_xoshiro::Xoshiro128PlusPlus;
 use std::collections::VecDeque;
 use std::fmt;
+use std::io::Write;
 use std::net::SocketAddrV4;
 use std::pin::Pin;
 use std::task::Context;
@@ -576,6 +577,29 @@ impl CaConn {
             ready(Ok(())).box2()
         }
     }
+
+    fn check_flow_state(&self) {
+        match &self.state {
+            State::Connecting(st) => {}
+            State::Connected(st) => {
+                st.check_flow_state();
+            }
+            State::Done => {}
+        }
+    }
+
+    fn dump_state(&self) {
+        if let Ok(mut fout) = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .open("dump-conn.txt")
+        {
+            let s = format!("{self:?}");
+            let _ = fout.write_all(s.as_bytes());
+        } else {
+            error!("can not create dump file");
+        }
+    }
 }
 
 macro_rules! handle_poll_res {
@@ -760,6 +784,7 @@ impl Stream for CaConn {
                                 },
                                 Err(e) => {
                                     error!("{selfname}:Connected:Err  TODO handle error more elegant?  {e}");
+                                    self.dump_state();
                                     self.state = State::Done;
                                     break Ready(Some(Err(e.into())));
                                 }

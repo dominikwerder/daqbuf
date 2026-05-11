@@ -306,6 +306,16 @@ impl ActiveCa {
         self.chanheap.mett_take()
     }
 
+    pub(super) fn check_flow_state(&self) {
+        let selfname = "check_flow_state";
+        match &self.state {
+            State::Running(st) => {
+                warn!("{selfname}  State::Running");
+            }
+            State::Done => {}
+        }
+    }
+
     pub fn handle_dyn_cmd_v03(&mut self, cmd: serde_json::Value) -> impl Future<Output = serde_json::Value> + use<> {
         use futures::future::ready;
         use serde_json::json;
@@ -491,7 +501,8 @@ impl ActiveCa {
         cx: &mut Context,
     ) -> Poll<Option<StreamItem>> {
         use Poll::*;
-        trace4!("ActiveCa:poll_next");
+        let selfname = "ActiveCa::poll_next";
+        trace4!("{selfname}");
         loop {
             let mut hpp = HaveProgressPending::new();
             match &mut self.state {
@@ -525,7 +536,7 @@ impl ActiveCa {
                             }
                         }
                     } else {
-                        // TODO maybe count for metrics?
+                        warn!("{selfname}  SKIP proto_rx.poll_next_unpin  BLOCKED BY proto_rx_buf");
                     }
                     match self.as_mut().poll_dispatch(cx) {
                         Ready(Some(x)) => {
@@ -661,7 +672,11 @@ impl ActiveCa {
                     }
                 }
                 State::Done => {
-                    error!("State::Done  {}  {}", hpp.have_progress(), hpp.have_pending());
+                    error!(
+                        "{selfname}  State::Done  {}  {}",
+                        hpp.have_progress(),
+                        hpp.have_pending()
+                    );
                     // TODO when in Done, we should no longer be stuck with Pending on something.
                 }
             }

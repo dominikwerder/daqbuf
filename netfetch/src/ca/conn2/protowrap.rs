@@ -9,6 +9,8 @@ use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
 
+macro_rules! warn { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
+
 autoerr::create_error_v1!(
     name(Error, "Connected"),
     enum variants {
@@ -74,7 +76,7 @@ impl ProtoPusher {
 
     fn try_02(mut self: Pin<&mut Self>, cx: &mut Context<'_>, hpp: &mut HaveProgressPending) -> Option<CaMsg> {
         use Poll::*;
-        if self.proto.proto_out_len() < 20 {
+        if self.proto.proto_out_space() {
             if let Some(rx) = &mut self.out_rx {
                 match rx.poll_next_unpin(cx) {
                     Ready(Some(x)) => {
@@ -96,6 +98,7 @@ impl ProtoPusher {
                 None
             }
         } else {
+            warn!("SKIP rx.poll_next_unpin  BLOCKED BY proto.proto_out_len");
             None
         }
     }
