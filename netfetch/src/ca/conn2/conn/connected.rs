@@ -1,4 +1,8 @@
-const INP_BUF_CAP: usize = 3;
+const INP_BUF_CAP: usize = 128;
+
+pub const LOOP_MAX_PROTOWRAP_POLL: usize = 130;
+pub const LOOP_MAX_PASS_INP: usize = 128;
+pub const LOOP_MAX_PASS_CMD: usize = 16;
 
 //
 
@@ -43,7 +47,8 @@ macro_rules! trace2 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; 
 macro_rules! trace3 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
 macro_rules! trace4 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
 macro_rules! trace_pending { ($($arg:tt)*) => { if false { trace!("{}  Pending", format_args!($($arg)*)); } }; }
-macro_rules! trace_transition { ($($arg:tt)*) => { if true { log::debug!($($arg)*); } }; }
+macro_rules! trace_transition { ($($arg:tt)*) => { if false { log::debug!($($arg)*); } }; }
+macro_rules! trace_blocked { ($($arg:tt)*) => { if super::TRACE_BLOCK { log::trace!($($arg)*); } }; }
 
 autoerr::create_error_v1!(
     name(Error, "Connected"),
@@ -287,7 +292,7 @@ impl Stream for Connected {
         use Poll::*;
         let selfname = "Connected::poll_next";
         trace4!("Connected:poll_next");
-        loop {
+        'outer: loop {
             trace4!("{selfname}  loop");
             let tsnow = Instant::now();
             let mut self2 = self.as_mut().get_mut();
@@ -299,43 +304,53 @@ impl Stream for Connected {
                         "{selfname}  PROTOWRAP  self2.inp_buf.len() {n}",
                         n = self2.inp_buf.len()
                     );
-
-                    // TODO drive the out direction independend
-
-                    if self2.inp_buf.is_space() {
-                        debug!(
-                            "{selfname}  protowrap.poll_next_unpin  len {n}",
-                            n = self2.protowrap.out_len()
-                        );
-                        match Pin::new(&mut self2).protowrap.poll_next_unpin(cx) {
-                            Ready(Some(Ok(x))) => {
+                    match Pin::new(&mut self2.protowrap).poll_outbound(cx) {
+                        Ready(Some(x)) => match x {
+                            Ok(()) => {
                                 hpp.mark_progress();
-                                match x {
-                                    CaItem::Msg(x) => {
-                                        trace3!("{selfname}  PROTOWRAP  Msg");
-                                        self2.inp_buf.push_back(x);
-                                    }
-                                    CaItem::Empty => {
-                                        trace3!("{selfname}  PROTOWRAP  Empty");
+                            }
+                            Err(e) => break Ready(Some(Err(e.into()))),
+                        },
+                        Ready(None) => {}
+                        Pending => {
+                            hpp.mark_pending();
+                        }
+                    }
+                    let mut i = 0;
+                    loop {
+                        i += 1;
+                        break if i > LOOP_MAX_PROTOWRAP_POLL {
+                        } else if self2.inp_buf.is_space() {
+                            match Pin::new(&mut self2).protowrap.poll_next_unpin(cx) {
+                                Ready(Some(Ok(x))) => {
+                                    hpp.mark_progress();
+                                    match x {
+                                        CaItem::Msg(x) => {
+                                            trace3!("{selfname}  PROTOWRAP  Msg");
+                                            self2.inp_buf.push_back(x);
+                                        }
+                                        CaItem::Empty => {
+                                            trace3!("{selfname}  PROTOWRAP  Empty");
+                                        }
                                     }
                                 }
+                                Ready(Some(Err(e))) => {
+                                    hpp.mark_progress();
+                                    trace3!("{selfname}  PROTOWRAP  error  {e}");
+                                    self2.goto_state_done();
+                                    break 'outer Ready(Some(Err(e.into())));
+                                }
+                                Ready(None) => {
+                                    trace3!("{selfname}  PROTOWRAP  Done");
+                                }
+                                Pending => {
+                                    trace4!("{selfname}  PROTOWRAP  Pending");
+                                    hpp.mark_pending();
+                                }
                             }
-                            Ready(Some(Err(e))) => {
-                                hpp.mark_progress();
-                                trace3!("{selfname}  PROTOWRAP  error  {e}");
-                                self2.goto_state_done();
-                                break Ready(Some(Err(e.into())));
-                            }
-                            Ready(None) => {
-                                trace3!("{selfname}  PROTOWRAP  Done");
-                            }
-                            Pending => {
-                                trace4!("{selfname}  PROTOWRAP  Pending");
-                                hpp.mark_pending();
-                            }
-                        }
-                    } else {
-                        warn!("{selfname}  SKIP  protowrap.poll_next_unpin  BLOCKED BY inp_buf");
+                        } else {
+                            trace_blocked!("{selfname}  SKIP  protowrap.poll_next_unpin  BLOCKED BY inp_buf");
+                        };
                     }
                 }
             }
@@ -370,14 +385,12 @@ impl Stream for Connected {
                                         self2.protowrap.push_back_or_drop(x);
                                     }
                                     crate::ca::conn2::conn::handshake::Item::HandshakeDone => {
-                                        warn!("{selfname}  HandshakeDone");
                                         hpp.mark_progress();
                                         let st1 = std::mem::replace(st1, st1.to_dummy());
-
-                                        warn!("{selfname}  TODO recover any leftover CaMsg items");
-                                        // TODO recover any leftover CaMsg items
                                         let (buf,) = st1.dismantle();
-
+                                        if buf.len() != 0 {
+                                            warn!("{selfname}  TODO recover any leftover CaMsg items {}", buf.len());
+                                        }
                                         trace_transition!("ActiveCa::new");
                                         let stn = ActiveCa::new(self2.backend.clone(), tsnow, self2.addr);
                                         self.state = State::ActiveCa(stn);
@@ -397,40 +410,54 @@ impl Stream for Connected {
                             }
                         }
                     } else {
-                        warn!("{selfname}  SKIP Handshake::poll_next_unpin  BLOCKED BY proto out full");
+                        trace_blocked!("{selfname}  SKIP Handshake::poll_next_unpin  BLOCKED BY proto out full");
                     }
                 }
                 State::ActiveCa(st1) => {
-                    if self2.inp_cmd_buf.len() != 0 {
-                        if st1.inp_is_space() {
-                            if let Some(x) = self2.inp_cmd_buf.pop_front() {
-                                if st1.inp_push_try(activeca::InpItem::Cmd(x), cx).is_fail() {
-                                    self2.state = State::Done;
-                                    break Ready(Some(Err(Error::Logic)));
+                    let mut i = 0;
+                    loop {
+                        i += 1;
+                        break if i > LOOP_MAX_PASS_CMD {
+                        } else if self2.inp_cmd_buf.len() != 0 {
+                            if st1.inp_is_space() {
+                                if let Some(x) = self2.inp_cmd_buf.pop_front() {
+                                    if st1.inp_push_try(activeca::InpItem::Cmd(x), cx).is_fail() {
+                                        self2.state = State::Done;
+                                        break 'outer Ready(Some(Err(Error::Logic)));
+                                    } else {
+                                        hpp.mark_progress();
+                                    }
+                                } else {
+                                    break;
+                                }
+                            } else {
+                                trace_blocked!("{selfname}  SKIP ActiveCa cmd push  BLOCKED BY inp full");
+                            }
+                        };
+                    }
+                    let mut i = 0;
+                    loop {
+                        i += 1;
+                        break if i > LOOP_MAX_PASS_INP {
+                        } else if let Some(x) = self2.inp_buf.pop_front() {
+                            match st1.inp_push_try(activeca::InpItem::CaMsg(x), cx) {
+                                asynbuf::PushRes::First => {
+                                    hpp.mark_progress();
+                                }
+                                asynbuf::PushRes::Done => {
+                                    hpp.mark_progress();
+                                }
+                                asynbuf::PushRes::Full(x) => {
+                                    if let activeca::InpItem::CaMsg(x) = x {
+                                        self2.inp_buf.push_front(x);
+                                    } else {
+                                        break 'outer Ready(Some(Err(Error::Logic)));
+                                    }
                                 }
                             }
                         } else {
-                            warn!("{selfname}  SKIP ActiveCa cmd push  BLOCKED BY inp full");
-                        }
-                    }
-                    if let Some(x) = self2.inp_buf.pop_front() {
-                        match st1.inp_push_try(activeca::InpItem::CaMsg(x), cx) {
-                            asynbuf::PushRes::First => {
-                                hpp.mark_progress();
-                            }
-                            asynbuf::PushRes::Done => {
-                                hpp.mark_progress();
-                            }
-                            asynbuf::PushRes::Full(x) => {
-                                if let activeca::InpItem::CaMsg(x) = x {
-                                    self2.inp_buf.push_front(x);
-                                } else {
-                                    break Ready(Some(Err(Error::Logic)));
-                                }
-                            }
-                        }
-                    } else {
-                        // TODO metrics
+                            break;
+                        };
                     }
                     if self2.protowrap.is_space() {
                         match st1.poll_next_unpin(cx) {

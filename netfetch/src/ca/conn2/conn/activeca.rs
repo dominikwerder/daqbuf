@@ -1,5 +1,6 @@
 const INP_BUF_CAP: usize = 3;
 const FWD_BUF_CAP: usize = 1;
+const LOOP_MAX_PUSH_TO_CHANHEAP: usize = 200;
 
 //
 
@@ -48,6 +49,8 @@ macro_rules! trace2 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; 
 macro_rules! trace3 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
 macro_rules! trace4 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
 macro_rules! trace_pending { ($($arg:tt)*) => { if false { trace!("{}  Pending", format_args!($($arg)*)); } }; }
+macro_rules! trace_blocked { ($($arg:tt)*) => { if super::TRACE_BLOCK { log::trace!($($arg)*); } }; }
+macro_rules! trace_command { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
 
 autoerr::create_error_v1!(
     name(Error, "ActiveCa"),
@@ -55,7 +58,9 @@ autoerr::create_error_v1!(
         IO(#[from] std::io::Error),
         ProtoTxClosed,
         ChannelHeap(#[from] channelheap::Error),
+        BufPushGuardIssue,
         Send,
+        PingNoItem,
         Logic,
         IocEchoTimeout,
     },
@@ -359,18 +364,22 @@ impl ActiveCa {
         assert_eq!(self2.buf_for_chanheap.is_space(), true);
         match cmd.kind {
             CaCommandKind::ChannelAdd(conf, mut done_tx) => {
-                trace!("{selfname}  ChannelAdd");
+                trace_command!("{selfname}  ChannelAdd");
+                let s2 = format!("ChannelAdd {conf:?}");
                 self2.chanheap.channel_add(conf, cx);
                 let fut = async move {
                     let _ = done_tx.send(0).await;
+                    trace_command!("COMMAND DONE {s2}");
                     Ok(())
                 };
                 CommandFut(fut.box2())
             }
             CaCommandKind::ChannelRemove(name, mut done_tx) => {
-                trace!("{selfname}  ChannelRemove");
+                trace_command!("{selfname}  ChannelRemove");
+                let s2 = format!("ChannelRemove {name}");
                 let (done_2_tx, mut done_2_rx) = asynchan::bounded(2, "ChannelHeap-Done");
                 let cmd = channelheap::Cmd::RemoveChannel(name, done_2_tx);
+                // guarded
                 self2.buf_for_chanheap.push_back(channelheap::InpItem::Cmd(cmd));
                 let fut = async move {
                     if done_2_rx.recv().await.is_err() {
@@ -379,15 +388,18 @@ impl ActiveCa {
                     if done_tx.send(0).await.is_err() {
                         error!("{selfname}  done_tx  send  fail")
                     }
+                    trace_command!("COMMAND DONE {s2}");
                     Ok(())
                 };
                 CommandFut(fut.box2())
             }
             CaCommandKind::DisconnectOnIdle(mut done_tx) => {
-                trace!("{selfname}  DisconnectOnIdle");
+                trace_command!("{selfname}  DisconnectOnIdle");
+                let s2 = format!("DisconnectOnIdle");
                 self2.chanheap.disconnect_on_idle();
                 let fut = async move {
                     let _ = done_tx.send(0).await;
+                    trace_command!("COMMAND DONE {s2}");
                     Ok(())
                 };
                 CommandFut(fut.box2())
@@ -418,7 +430,6 @@ impl ActiveCa {
             }
         } else if self2.buf_for_chanheap.is_space() {
             if let Some(item) = self2.inp_cmd_buf.pop_front() {
-                debug!("\n\n{selfname}  CmdRx:Some \n\n");
                 let fut = self2.handle_command(item, cx);
                 self2.cmd_fut = Some(fut);
                 Some(Ready(None))
@@ -466,7 +477,7 @@ impl ActiveCa {
                 } else {
                 }
             } else {
-                warn!("{selfname}  SKIP  BLOCKED BY buf_for_chanheap");
+                trace_blocked!("{selfname}  SKIP  BLOCKED BY buf_for_chanheap");
             }
             break if hpp.have_progress() {
                 trace4!("{selfname}  HPP:Progress");
@@ -505,6 +516,47 @@ impl ActiveCa {
         self.inp_buf.is_space()
     }
 
+    fn poll_inp_push_to_chanheap(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Result<(), Error>>> {
+        use Poll::*;
+        let selfname = "ActiveCa::poll_inp_push_to_chanheap";
+        let self2 = self.as_mut().get_mut();
+        let mut i = 0;
+        loop {
+            let mut hpp = HaveProgressPending::new();
+            if i > LOOP_MAX_PUSH_TO_CHANHEAP {
+            } else if self2.chanheap.inp_is_space()
+                && let Some(x) = self2.buf_for_chanheap.pop_front()
+            {
+                // guarded
+                match self2.chanheap.inp_push_try(x, cx) {
+                    asynbuf::PushRes::First => {
+                        hpp.mark_progress();
+                    }
+                    asynbuf::PushRes::Done => {
+                        hpp.mark_progress();
+                    }
+                    asynbuf::PushRes::Full(x) => {
+                        self2.buf_for_chanheap.push_front(x);
+                        // TODO metrics should not happen
+                        //
+                        // TODO
+                        // Should we mark HPP?
+                        //
+                    }
+                }
+            } else {
+                trace_blocked!("SKIP self2.chanheap.inp_push_try  BLOCKED YB self2.chanheap.inp_is_space");
+            }
+            break if hpp.have_progress() {
+                continue;
+            } else if hpp.have_pending() {
+                Pending
+            } else {
+                Ready(None)
+            };
+        }
+    }
+
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<StreamItem>> {
         use Poll::*;
         let selfname = "ActiveCa::poll_next";
@@ -521,13 +573,13 @@ impl ActiveCa {
                                 InpItem::CaMsg(x) => {
                                     if self2.inp_msg_buf.push_back(x).is_fail() {
                                         self2.state = State::Done;
-                                        break Ready(Some(Err(Error::Logic)));
+                                        break Ready(Some(Err(Error::BufPushGuardIssue)));
                                     }
                                 }
                                 InpItem::Cmd(x) => {
                                     if self2.inp_cmd_buf.push_back(x).is_fail() {
                                         self2.state = State::Done;
-                                        break Ready(Some(Err(Error::Logic)));
+                                        break Ready(Some(Err(Error::BufPushGuardIssue)));
                                     }
                                 }
                             }
@@ -570,34 +622,23 @@ impl ActiveCa {
                         },
                         None => {}
                     }
-
-                    let self2 = self.as_mut().get_mut();
-                    if let Some(x) = self2.buf_for_chanheap.pop_front() {
-                        match self2.chanheap.inp_push_try(x, cx) {
-                            asynbuf::PushRes::First => {
-                                hpp.mark_progress();
-                            }
-                            asynbuf::PushRes::Done => {
-                                hpp.mark_progress();
-                            }
-                            asynbuf::PushRes::Full(x) => {
-                                self2.buf_for_chanheap.push_front(x);
-                                //
-                                // TODO
-                                // Should we mark HPP?
-                                //
+                    match self.as_mut().poll_inp_push_to_chanheap(cx) {
+                        Ready(Some(x)) => {
+                            hpp.mark_progress();
+                            match x {
+                                Ok(()) => {}
+                                Err(e) => {
+                                    self.state = State::Done;
+                                    break Ready(Some(Err(e)));
+                                }
                             }
                         }
-                    } else {
+                        Ready(None) => {}
+                        Pending => {
+                            hpp.mark_pending();
+                        }
                     }
-                    //
-                    //
-
-                    //
-                    //
-                    // TODO refactor take away the chanheap_cmd_rx
-                    //
-                    //
+                    let self2 = self.as_mut().get_mut();
                     match self2.chanheap.poll_next_unpin(cx) {
                         Ready(Some(x)) => {
                             hpp.mark_progress();
@@ -692,7 +733,7 @@ impl ActiveCa {
                                         break Ready(Some(Ok(t2)));
                                     } else {
                                         self2.state = State::Done;
-                                        break Ready(Some(Err(Error::Logic)));
+                                        break Ready(Some(Err(Error::PingNoItem)));
                                     }
                                 }
                             },
@@ -708,8 +749,7 @@ impl ActiveCa {
                             },
                         }
                     } else {
-                        self2.state = State::Done;
-                        break Ready(Some(Err(Error::Logic)));
+                        // nothing to do
                     }
                 }
                 State::Done => {

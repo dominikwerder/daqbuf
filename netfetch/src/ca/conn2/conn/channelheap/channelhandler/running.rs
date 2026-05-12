@@ -1,3 +1,5 @@
+pub(super) const INP_BUF_CAP: usize = 64;
+
 use super::fetchmpx::Fetchmpx;
 use crate::asynchan;
 use crate::ca::conn2::caids::CaDbrTy;
@@ -127,7 +129,7 @@ impl Running {
             removing: false,
             chan_close_ack: false,
             outbuf: VecDeque::new(),
-            inp_buf: VecDeque::with_capacity(16),
+            inp_buf: VecDeque::with_capacity(INP_BUF_CAP),
             inp_done: false,
             mett: ChannelHandlerMetrics::new(),
         }
@@ -270,14 +272,16 @@ impl Stream for Running {
             match &self.state {
                 State::Done => {}
                 _ => match self.as_mut().poll_inp_dispatch(cx) {
-                    Ready(Some(x)) => match x {
-                        Ok(()) => {}
-                        Err(e) => {
-                            error!("TODO handle error {e}");
-                            self.state = State::Done;
-                            hpp.mark_progress();
+                    Ready(Some(x)) => {
+                        hpp.mark_progress();
+                        match x {
+                            Ok(()) => {}
+                            Err(e) => {
+                                error!("TODO handle error {e}");
+                                self.state = State::Done;
+                            }
                         }
-                    },
+                    }
                     Ready(None) => {
                         error!("TODO even on input abort, continue with clean shutdown");
                         hpp.mark_progress();

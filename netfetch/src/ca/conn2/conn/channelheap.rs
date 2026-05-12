@@ -1,4 +1,4 @@
-const INP_BUF_CAP: usize = 3;
+const INP_BUF_CAP: usize = 128;
 
 //
 
@@ -1079,7 +1079,7 @@ impl ChannelHeap {
                         // TODO handle
                     }
                     let donecb = |cheap: &mut ChannelHeap| {
-                        let selfname = "{selfname}  RemoveChannel  fut  donecb";
+                        let selfname = "ChannelHeap  handle_command  RemoveChannel  fut  donecb";
                         error!("{selfname}  TODO impl donecb");
                         for cid in cids {
                             cheap.remove_cid(cid);
@@ -1146,6 +1146,10 @@ impl ChannelHeap {
         x
     }
 
+    pub fn inp_is_space(&self) -> bool {
+        self.inp_buf.is_space()
+    }
+
     pub(super) fn inp_done(&mut self) {
         self.inp_done = true;
         self.by_cid.iter_mut().for_each(|(_, ce)| match &mut ce.ch_handler {
@@ -1170,10 +1174,6 @@ impl ChannelHeap {
             let mut hpp = HaveProgressPending::new();
             match &self.state {
                 State::Running => {
-                    //
-                    //
-                    // TODO separate incoming by type.
-                    // TODO must make sure that I always poll `poll_outer_cmd` because it polls cmd fut.
                     match self.as_mut().poll_outer_cmd(cx) {
                         Ready(Some(())) => {
                             hpp.mark_progress();
@@ -1183,10 +1183,20 @@ impl ChannelHeap {
                             hpp.mark_pending();
                         }
                     }
-                    //
-                    //
-                    //
-
+                    let self2 = self.as_mut().get_mut();
+                    while self2.inp_cmd_buf.is_space()
+                        && self2.inp_proto_buf.is_space()
+                        && let Some(x) = self2.inp_buf.pop_front()
+                    {
+                        match x {
+                            InpItem::Cmd(x) => {
+                                self2.inp_cmd_buf.push_back(x);
+                            }
+                            InpItem::CaMsg(x) => {
+                                self2.inp_proto_buf.push_back(x);
+                            }
+                        }
+                    }
                     match self.as_mut().dispatch_input_to_channels(cx) {
                         Ready(Some(x)) => {
                             hpp.mark_progress();

@@ -1,3 +1,9 @@
+pub const TRACE_BLOCK: bool = false;
+
+pub const LOOP_MAX_PASS_CMD: usize = 1;
+
+//
+
 pub mod activeca;
 pub mod channelheap;
 pub mod connected;
@@ -46,6 +52,7 @@ macro_rules! trace2 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; 
 macro_rules! trace3 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
 macro_rules! trace4 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
 macro_rules! trace_pending { ($($arg:tt)*) => { if false { trace!("{}  Pending", format_args!($($arg)*)); } }; }
+macro_rules! trace_blocked { ($($arg:tt)*) => { if true { log::trace!($($arg)*); } }; }
 
 autoerr::create_error_v1!(
     name(Error, "Conn"),
@@ -369,6 +376,7 @@ pub struct CaConn {
     ca_cmd_tx_fut: Option<FutDbg<Result<(), Error>>>,
     ca_cmd_rx: asynchan::Receiver<activeca::CaCommand>,
     out_qu: VecDeque<Result<CaConnItem, Error>>,
+    cmd_rx_pending: bool,
 }
 
 impl CaConn {
@@ -398,6 +406,7 @@ impl CaConn {
             ca_cmd_tx_fut: None,
             ca_cmd_rx,
             out_qu: VecDeque::new(),
+            cmd_rx_pending: false,
         };
         ret
     }
@@ -681,81 +690,89 @@ impl Stream for CaConn {
                 // Some want to use a channel to async send the command to ActiveCa.
                 //
                 match self2.cmd_rx.poll_next_unpin(cx) {
-                    Ready(x) => match x {
-                        Some(cmd) => {
-                            hpp.mark_progress();
-                            match cmd.kind {
-                                CaConnCmdKind::ChannelAdd(conf, done_tx) => {
-                                    trace!("{selfname}:Received:ChannelAdd  {conf:?}");
-                                    let cmd = activeca::CaCommand::channel_add(conf, done_tx);
-                                    let mut tx = self2.ca_cmd_tx.clone();
-                                    let fut = async move {
-                                        tx.send(cmd).await?;
-                                        // The is-done-sender is already passed to inner handler.
-                                        Ok(())
-                                    };
-                                    self2.ca_cmd_tx_fut = Some(fut.box2());
-                                }
-                                CaConnCmdKind::ChannelRemove(conf, done_tx) => {
-                                    trace!("{selfname}:Received:ChannelRemove  {conf:?}");
-                                    let cmd = activeca::CaCommand::channel_remove(conf.name(), done_tx);
-                                    let mut tx = self2.ca_cmd_tx.clone();
-                                    let fut = async move {
-                                        tx.send(cmd).await?;
-                                        // The is-done-sender is already passed to inner handler.
-                                        Ok(())
-                                    };
-                                    self2.ca_cmd_tx_fut = Some(fut.box2());
-                                }
-                                CaConnCmdKind::DisconnectOnIdle(done_tx) => {
-                                    trace!("{selfname}:Received:DisconnectOnIdle");
-                                    let cmd = activeca::CaCommand::disconnect_on_idle(done_tx);
-                                    let mut tx = self2.ca_cmd_tx.clone();
-                                    let fut = async move {
-                                        tx.send(cmd).await?;
-                                        // The is-done-sender is already passed to inner handler.
-                                        Ok(())
-                                    };
-                                    self2.ca_cmd_tx_fut = Some(fut.box2());
-                                }
-                                CaConnCmdKind::DynCmdV03(cmd, tx) => {
-                                    trace!("{selfname}:Received:DynCmd  {cmd:?}");
-                                    let fut = self2.handle_dyn_cmd_v03(cmd, tx);
-                                    self2.ca_cmd_tx_fut = Some(fut.box2());
-                                }
-                                CaConnCmdKind::ChannelsForAddrInfoV1(mut tx) => {
-                                    trace!("{selfname}:Received:ChannelsForAddrInfoV1");
-                                    let ret = self2.channel_info_v1();
-                                    let fut = async move {
-                                        tx.send(ret).await?;
-                                        Ok(())
-                                    };
-                                    self2.ca_cmd_tx_fut = Some(fut.box2());
-                                }
-                                CaConnCmdKind::ChannelsForAddrInfoV2(name, mut tx) => {
-                                    trace!("{selfname}:Received:ChannelsForAddrInfoV2");
-                                    let ret = self2.channel_info_v2(name);
-                                    let fut = async move {
-                                        tx.send(ret).await?;
-                                        Ok(())
-                                    };
-                                    self2.ca_cmd_tx_fut = Some(fut.box2());
-                                }
-                                CaConnCmdKind::ChannelsByRegexV1(kind, reg, mut tx) => {
-                                    trace!("{selfname}:Received:ChannelsByRegexV1");
-                                    let ret = self2.channels_by_regex_v1(kind, reg);
-                                    let fut = async move {
-                                        tx.send(ret).await?;
-                                        Ok(())
-                                    };
-                                    self2.ca_cmd_tx_fut = Some(fut.box2());
-                                }
+                    Ready(Some(cmd)) => {
+                        let n = self2.cmd_rx.len();
+                        debug!("cmd_rx.poll_next_unpin  ITEM  {n}");
+                        self2.cmd_rx_pending = true;
+                        hpp.mark_progress();
+                        match cmd.kind {
+                            CaConnCmdKind::ChannelAdd(conf, done_tx) => {
+                                trace!("{selfname}:Received:ChannelAdd  {conf:?}");
+                                let cmd = activeca::CaCommand::channel_add(conf, done_tx);
+                                let mut tx = self2.ca_cmd_tx.clone();
+                                let fut = async move {
+                                    tx.send(cmd).await?;
+                                    // The is-done-sender is already passed to inner handler.
+                                    Ok(())
+                                };
+                                self2.ca_cmd_tx_fut = Some(fut.box2());
+                            }
+                            CaConnCmdKind::ChannelRemove(conf, done_tx) => {
+                                trace!("{selfname}:Received:ChannelRemove  {conf:?}");
+                                let cmd = activeca::CaCommand::channel_remove(conf.name(), done_tx);
+                                let mut tx = self2.ca_cmd_tx.clone();
+                                let fut = async move {
+                                    tx.send(cmd).await?;
+                                    // The is-done-sender is already passed to inner handler.
+                                    Ok(())
+                                };
+                                self2.ca_cmd_tx_fut = Some(fut.box2());
+                            }
+                            CaConnCmdKind::DisconnectOnIdle(done_tx) => {
+                                trace!("{selfname}:Received:DisconnectOnIdle");
+                                let cmd = activeca::CaCommand::disconnect_on_idle(done_tx);
+                                let mut tx = self2.ca_cmd_tx.clone();
+                                let fut = async move {
+                                    tx.send(cmd).await?;
+                                    // The is-done-sender is already passed to inner handler.
+                                    Ok(())
+                                };
+                                self2.ca_cmd_tx_fut = Some(fut.box2());
+                            }
+                            CaConnCmdKind::DynCmdV03(cmd, tx) => {
+                                trace!("{selfname}:Received:DynCmd  {cmd:?}");
+                                let fut = self2.handle_dyn_cmd_v03(cmd, tx);
+                                self2.ca_cmd_tx_fut = Some(fut.box2());
+                            }
+                            CaConnCmdKind::ChannelsForAddrInfoV1(mut tx) => {
+                                trace!("{selfname}:Received:ChannelsForAddrInfoV1");
+                                let ret = self2.channel_info_v1();
+                                let fut = async move {
+                                    tx.send(ret).await?;
+                                    Ok(())
+                                };
+                                self2.ca_cmd_tx_fut = Some(fut.box2());
+                            }
+                            CaConnCmdKind::ChannelsForAddrInfoV2(name, mut tx) => {
+                                trace!("{selfname}:Received:ChannelsForAddrInfoV2");
+                                let ret = self2.channel_info_v2(name);
+                                let fut = async move {
+                                    tx.send(ret).await?;
+                                    Ok(())
+                                };
+                                self2.ca_cmd_tx_fut = Some(fut.box2());
+                            }
+                            CaConnCmdKind::ChannelsByRegexV1(kind, reg, mut tx) => {
+                                trace!("{selfname}:Received:ChannelsByRegexV1");
+                                let ret = self2.channels_by_regex_v1(kind, reg);
+                                let fut = async move {
+                                    tx.send(ret).await?;
+                                    Ok(())
+                                };
+                                self2.ca_cmd_tx_fut = Some(fut.box2());
                             }
                         }
-                        None => {}
-                    },
+                    }
+                    Ready(None) => {
+                        self2.cmd_rx_pending = true;
+                    }
                     Pending => {
                         hpp.mark_pending();
+                        if self2.cmd_rx_pending {
+                        } else {
+                            self2.cmd_rx_pending = true;
+                            debug!("cmd_rx.poll_next_unpin  PENDING");
+                        }
                     }
                 }
             }
@@ -780,21 +797,30 @@ impl Stream for CaConn {
                         }
                     },
                     State::Connected(st1) => {
-                        if st1.inp_cmd_buf().is_space() {
-                            match self2.ca_cmd_rx.poll_next_unpin(cx) {
-                                Ready(Some(x)) => {
-                                    hpp.mark_progress();
-                                    // guarded
-                                    debug!("place cmd into Connected {x:?}");
-                                    st1.inp_cmd_buf().push_back(x);
+                        let mut i = 0;
+                        loop {
+                            i += 1;
+                            break if i > LOOP_MAX_PASS_CMD {
+                            } else if st1.inp_cmd_buf().is_space() {
+                                match self2.ca_cmd_rx.poll_next_unpin(cx) {
+                                    Ready(Some(x)) => {
+                                        hpp.mark_progress();
+                                        // guarded
+                                        let n = self2.ca_cmd_rx.len();
+                                        debug!("place cmd into Connected {x:?} ({n})");
+                                        st1.inp_cmd_buf().push_back(x);
+                                        continue;
+                                    }
+                                    Ready(None) => {}
+                                    Pending => {
+                                        hpp.mark_pending();
+                                    }
                                 }
-                                Ready(None) => {}
-                                Pending => {
-                                    hpp.mark_pending();
-                                }
-                            }
-                        } else {
-                            warn!("{selfname}  SKIP Self::ca_cmd_rx poll  BLOCKED BY Connected inp_cmd_buf has_space")
+                            } else {
+                                trace_blocked!(
+                                    "{selfname}  SKIP Self::ca_cmd_rx poll  BLOCKED BY Connected inp_cmd_buf has_space"
+                                );
+                            };
                         }
                         match st1.poll_next_unpin(cx) {
                             Ready(Some(x)) => {

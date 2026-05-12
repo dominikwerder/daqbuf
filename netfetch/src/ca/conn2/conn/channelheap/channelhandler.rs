@@ -1,4 +1,4 @@
-const INP_BUF_CAP: usize = 3;
+const INP_BUF_CAP: usize = 64;
 
 mod create;
 mod fetchmpx;
@@ -563,11 +563,12 @@ impl Stream for ChannelHandler {
                 }
                 State::Running(st2) => {
                     let vi = &mut self2.proto_inp_buf;
-                    if let Some(item) = vi.pop_front() {
+                    while let Some(item) = vi.pop_front() {
                         match st2.inp_push_try(item) {
                             Some(x) => {
                                 hpp.mark_pending();
                                 vi.push_front(x);
+                                break;
                             }
                             None => {
                                 if 1 + vi.len() >= vi.capacity() {
@@ -578,9 +579,6 @@ impl Stream for ChannelHandler {
                                 hpp.mark_progress();
                             }
                         }
-                    } else if self2.proto_inp_done {
-                    } else {
-                        hpp.mark_pending();
                     }
                     match st2.poll_next_unpin(cx) {
                         Ready(Some(x)) => {
@@ -641,9 +639,8 @@ impl Stream for ChannelHandler {
                         Ready(None) => {
                             hpp.mark_progress();
                             debug!(" =-= =-= =-= =-= =-= =-= =-= =-= =-=  move to Closing1");
-                            debug!(" =-= =-= =-= =-= =-= =-= =-= =-= =-=  move to Closing1");
                             if self2.removing.is_none() {
-                                warn!("closing, but apparently not on user command");
+                                warn!("move to Closing1, but apparently not on user command");
                             }
                             let item = if let Some(sid) = self2.sid() {
                                 let msg = CaMsg::from_ty_ts(
@@ -684,15 +681,15 @@ impl Stream for ChannelHandler {
                     if let Some(item) = self2.proto_inp_buf.pop_front() {
                         hpp.mark_progress();
                         match item.msg.ty {
-                            CaMsgTy::ChannelClose(x) => {
-                                warn!("TODO  maybe  ChannelClose");
-                            }
                             CaMsgTy::ChannelCloseRes(x) => {
-                                debug!("{lf}GREAT SUCCESS ChannelCloseRes{lf}", lf = "\n\n");
+                                debug!("ChannelCloseRes");
                                 st2.chan_close_ack = true;
                             }
+                            CaMsgTy::ChannelClose(x) => {
+                                warn!("unexpected  ChannelClose");
+                            }
                             CaMsgTy::ChannelDisconnect(x) => {
-                                warn!("TODO  maybe  ChannelDisconnect");
+                                warn!("unexpected  ChannelDisconnect");
                             }
                             _ => {}
                         }

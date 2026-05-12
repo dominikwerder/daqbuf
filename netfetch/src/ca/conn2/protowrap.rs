@@ -115,6 +115,21 @@ impl ProtoPusher {
         });
         js
     }
+
+    pub fn poll_outbound(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Result<(), Error>>> {
+        use Poll::*;
+        match Pin::new(&mut self.proto).poll_outbound(cx) {
+            Some(x) => match x {
+                Ready(Some(x)) => match x {
+                    Ok(()) => Ready(Some(Ok(()))),
+                    Err(e) => Ready(Some(Err(e.into()))),
+                },
+                Ready(None) => Ready(None),
+                Pending => Pending,
+            },
+            None => Ready(None),
+        }
+    }
 }
 
 impl Stream for ProtoPusher {

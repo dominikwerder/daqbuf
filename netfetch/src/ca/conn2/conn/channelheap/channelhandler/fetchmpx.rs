@@ -1,3 +1,5 @@
+const INP_BUF_CAP: usize = super::running::INP_BUF_CAP;
+
 mod fetchmonitoring;
 mod fetchpolling;
 
@@ -162,7 +164,7 @@ impl Fetchmpx {
             sid,
             polling,
             monitoring,
-            inp_buf: VecDeque::with_capacity(8),
+            inp_buf: VecDeque::with_capacity(INP_BUF_CAP),
             inp_done: false,
             mett: ChannelHandlerMetrics::new(),
             llog: locallog::LocalLog::new(),

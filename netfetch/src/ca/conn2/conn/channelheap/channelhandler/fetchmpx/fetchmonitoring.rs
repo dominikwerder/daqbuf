@@ -42,6 +42,7 @@ macro_rules! trace2 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; 
 macro_rules! trace3 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
 macro_rules! trace4 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
 macro_rules! trace_pending { ($($arg:tt)*) => { if false { trace!("{}  Pending", format_args!($($arg)*)); } }; }
+macro_rules! trace_shutdown { ($($arg:tt)*) => { if true { log::debug!($($arg)*); } }; }
 
 autoerr::create_error_v1!(
     name(Error, "FetchMonitoring"),
@@ -160,7 +161,9 @@ impl FetchMonitoring {
     }
 
     pub fn transition_to_disable(&mut self) -> () {
-        self.llog.push(format!("transition_to_disable  {}", self.state));
+        let selfname = "transition_to_disable";
+        trace_shutdown!("{selfname}");
+        self.llog.push(format!("{selfname}  {}", self.state));
         match &mut self.state {
             State::DoNothing() => {}
             State::CreateMonitorSend(stdir) => {
