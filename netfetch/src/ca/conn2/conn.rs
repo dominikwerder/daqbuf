@@ -155,7 +155,7 @@ enum State {
 }
 
 impl State {
-    fn new(remote_addr: SocketAddrV4, ca_cmd_rx: asynchan::Receiver<activeca::CaCommand>) -> Self {
+    fn new(remote_addr: SocketAddrV4) -> Self {
         let fut = tokio::net::TcpStream::connect(remote_addr).map_err(Error::from);
         let fut = Box::pin(fut);
         let fut = ConnectFut(fut);
@@ -163,7 +163,6 @@ impl State {
             remote_addr,
             // ress_a,
             fut,
-            ca_cmd_rx,
         })
     }
 
@@ -197,9 +196,7 @@ impl fmt::Debug for ConnectFut {
 #[derive(Debug)]
 struct Connecting {
     remote_addr: SocketAddrV4,
-    // ress_a: StateRessShr1,
     fut: ConnectFut,
-    ca_cmd_rx: asynchan::Receiver<activeca::CaCommand>,
 }
 
 impl Connecting {
@@ -370,6 +367,7 @@ pub struct CaConn {
     cmd_rx: asynchan::Receiver<CaConnCmd>,
     ca_cmd_tx: asynchan::Sender<activeca::CaCommand>,
     ca_cmd_tx_fut: Option<FutDbg<Result<(), Error>>>,
+    ca_cmd_rx: asynchan::Receiver<activeca::CaCommand>,
     out_qu: VecDeque<Result<CaConnItem, Error>>,
 }
 
@@ -388,7 +386,7 @@ impl CaConn {
             backend,
             remote_addr,
             local_epics_hostname,
-            state: State::new(remote_addr, ca_cmd_rx),
+            state: State::new(remote_addr),
             // iqdqs: InsertDeques::new(),
             // ca_conn_event_out_queue: VecDeque::new(),
             // ca_conn_event_out_queue_max: 2000,
@@ -398,6 +396,7 @@ impl CaConn {
             cmd_rx,
             ca_cmd_tx,
             ca_cmd_tx_fut: None,
+            ca_cmd_rx,
             out_qu: VecDeque::new(),
         };
         ret
@@ -659,16 +658,17 @@ impl Stream for CaConn {
                 break Ready(Some(item));
             } else if let Some(fut) = self2.ca_cmd_tx_fut.as_mut() {
                 match fut.poll_unpin(cx) {
-                    Ready(Ok(())) => {
+                    Ready(x) => {
                         self2.ca_cmd_tx_fut = None;
                         hpp.mark_progress();
-                    }
-                    Ready(Err(e)) => {
-                        self2.ca_cmd_tx_fut = None;
-                        error!("{selfname}  ca_cmd_tx_fut error: {e}");
-                        self2.state = State::Done;
-                        hpp.mark_progress();
-                        break Ready(Some(Err(e)));
+                        match x {
+                            Ok(()) => {}
+                            Err(e) => {
+                                error!("{selfname}  ca_cmd_tx_fut error: {e}");
+                                self2.state = State::Done;
+                                break Ready(Some(Err(e)));
+                            }
+                        }
                     }
                     Pending => {
                         hpp.mark_pending();
@@ -676,6 +676,10 @@ impl Stream for CaConn {
                 }
             } else if let State::Done = &self2.state {
             } else {
+                //
+                // TODO these commands run in a future.
+                // Some want to use a channel to async send the command to ActiveCa.
+                //
                 match self2.cmd_rx.poll_next_unpin(cx) {
                     Ready(x) => match x {
                         Some(cmd) => {
@@ -761,8 +765,7 @@ impl Stream for CaConn {
                         Ready(Ok(x)) => {
                             trace!("{selfname}:Connecting:Ready");
                             // ok, we replace the full state
-                            let ca_cmd_rx = std::mem::replace(&mut st1.ca_cmd_rx, asynchan::bounded(1, "dummy").1);
-                            let stn = Connected::new(self2.backend.clone(), x, self.remote_addr, tsloop, ca_cmd_rx);
+                            let stn = Connected::new(self2.backend.clone(), x, self.remote_addr, tsloop);
                             self.state = State::Connected(stn);
                             hpp.mark_progress();
                         }
@@ -776,46 +779,64 @@ impl Stream for CaConn {
                             hpp.mark_pending();
                         }
                     },
-                    State::Connected(st1) => match st1.poll_next_unpin(cx) {
-                        Ready(Some(x)) => {
-                            hpp.mark_progress();
-                            match x {
-                                Ok(x) => match x.inner {
-                                    connected::ItemInner::ChannelInfoQuery(item) => {
-                                        let item = CaConnItem::ChannelInfoQuery(item);
-                                        break Ready(Some(Ok(item)));
-                                    }
-                                    connected::ItemInner::TestValue(x) => {
-                                        info!("{selfname}  sees  connected::ItemInner::TestValue  {x:?}");
-                                        let item = CaConnItem::TestValue(x);
-                                        break Ready(Some(Ok(item)));
-                                    }
-                                    connected::ItemInner::LocalLog(x) => {
-                                        let item = CaConnItem::LocalLog(x);
-                                        break Ready(Some(Ok(item)));
-                                    }
-                                    connected::ItemInner::ChannelEventValue(x) => {
-                                        let item = CaConnItem::ChannelEventValue(x);
-                                        break Ready(Some(Ok(item)));
-                                    }
-                                },
-                                Err(e) => {
-                                    error!("{selfname}:Connected:Err  TODO handle error more elegant?  {e}");
-                                    self.dump_state_poll();
-                                    self.state = State::Done;
-                                    break Ready(Some(Err(e.into())));
+                    State::Connected(st1) => {
+                        if st1.inp_cmd_buf().is_space() {
+                            match self2.ca_cmd_rx.poll_next_unpin(cx) {
+                                Ready(Some(x)) => {
+                                    hpp.mark_progress();
+                                    // guarded
+                                    debug!("place cmd into Connected {x:?}");
+                                    st1.inp_cmd_buf().push_back(x);
+                                }
+                                Ready(None) => {}
+                                Pending => {
+                                    hpp.mark_pending();
                                 }
                             }
+                        } else {
+                            warn!("{selfname}  SKIP Self::ca_cmd_rx poll  BLOCKED BY Connected inp_cmd_buf has_space")
                         }
-                        Ready(None) => {
-                            error!("{selfname}:Connected:Done  TODO handle shutdown");
-                            self.state = State::Done;
-                            hpp.mark_progress();
+                        match st1.poll_next_unpin(cx) {
+                            Ready(Some(x)) => {
+                                hpp.mark_progress();
+                                match x {
+                                    Ok(x) => match x.inner {
+                                        connected::ItemInner::ChannelInfoQuery(item) => {
+                                            let item = CaConnItem::ChannelInfoQuery(item);
+                                            break Ready(Some(Ok(item)));
+                                        }
+                                        connected::ItemInner::TestValue(x) => {
+                                            info!("{selfname}  sees  connected::ItemInner::TestValue  {x:?}");
+                                            let item = CaConnItem::TestValue(x);
+                                            break Ready(Some(Ok(item)));
+                                        }
+                                        connected::ItemInner::LocalLog(x) => {
+                                            let item = CaConnItem::LocalLog(x);
+                                            break Ready(Some(Ok(item)));
+                                        }
+                                        connected::ItemInner::ChannelEventValue(x) => {
+                                            let item = CaConnItem::ChannelEventValue(x);
+                                            break Ready(Some(Ok(item)));
+                                        }
+                                    },
+                                    Err(e) => {
+                                        error!("{selfname}:Connected:Err  TODO handle error more elegant?  {e}");
+                                        self.dump_state_poll();
+                                        self.state = State::Done;
+                                        break Ready(Some(Err(e.into())));
+                                    }
+                                }
+                            }
+                            Ready(None) => {
+                                error!("{selfname}:Connected:Done  TODO handle shutdown");
+                                self.state = State::Done;
+                                hpp.mark_progress();
+                            }
+                            Pending => {
+                                hpp.mark_pending();
+                            }
                         }
-                        Pending => {
-                            hpp.mark_pending();
-                        }
-                    },
+                    }
                     State::Done => {
                         error!(
                             "{selfname}  State::Done  {}  {}",

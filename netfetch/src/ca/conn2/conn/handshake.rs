@@ -97,8 +97,8 @@ impl Handshake {
         }
     }
 
-    pub(super) fn inp_push_try(self: Pin<&mut Self>, item: CaMsg, cx: &mut Context<'_>) -> asynbuf::PushRes<CaMsg> {
-        let self2 = self.get_mut();
+    pub fn inp_push_try(&mut self, item: CaMsg, cx: &mut Context<'_>) -> asynbuf::PushRes<CaMsg> {
+        let self2 = self;
         let v = &mut self2.inp_buf;
         v.push_back(item)
     }

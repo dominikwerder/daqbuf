@@ -317,11 +317,11 @@ pub async fn test_01() {
         }
         let fut = async move {
             if true {
-                for j in 10..20 {
+                for j in 10..11 {
                     let g = 1000 * j;
-                    let h = 40 + g;
+                    let h = 1 + g;
                     for i in g..h {
-                        let chname = format!("TEST:FAST:SCALAR:F32:{i:06}");
+                        let chname = format!("TEST:SLOW:SCALAR:F32:{i:06}");
                         // trace!("test_01 adding channel {chname}");
                         let conf = crate::conf::ChannelConfig::st_monitor(chname, "TEST");
                         cmder.channel_add(conf).await.unwrap();

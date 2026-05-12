@@ -1,3 +1,8 @@
+const INP_BUF_CAP: usize = 3;
+const FWD_BUF_CAP: usize = 1;
+
+//
+
 use crate::asynchan;
 use crate::ca::conn2::channel_event_value::ChannelEventValue;
 use crate::ca::conn2::conn::channelheap;
@@ -259,11 +264,11 @@ pub enum InpItem {
 
 #[derive(Debug)]
 pub struct ActiveCa {
-    backend: String,
     tsbeg: Instant,
     addr: SocketAddrV4,
     state: State,
     chanheap: ChannelHeap,
+    backend: String,
     inp_buf: asynbuf::AsynBuf<InpItem>,
     inp_buf_done: bool,
     inp_cmd_buf: asynbuf::AsynBuf<CaCommand>,
@@ -277,15 +282,16 @@ pub struct ActiveCa {
 impl ActiveCa {
     pub fn new(backend: String, tsnow: Instant, addr: SocketAddrV4) -> Self {
         Self {
-            backend,
             tsbeg: tsnow,
             addr,
             state: State::new(),
             chanheap: ChannelHeap::new(backend.clone()),
-            inp_buf: asynbuf::AsynBuf::new(16),
+            backend,
+            inp_buf: asynbuf::AsynBuf::new(INP_BUF_CAP),
             inp_buf_done: false,
-            inp_cmd_buf: asynbuf::AsynBuf::new(1),
-            buf_for_chanheap: asynbuf::AsynBuf::new(16),
+            inp_cmd_buf: asynbuf::AsynBuf::new(FWD_BUF_CAP),
+            inp_msg_buf: asynbuf::AsynBuf::new(FWD_BUF_CAP),
+            buf_for_chanheap: asynbuf::AsynBuf::new(FWD_BUF_CAP),
             ts_mark_proto_rx: TsMark::new("proto_rx".into()),
             cmd_fut: None,
             mett: CaConnConnectedMetrics::new(),
@@ -350,7 +356,7 @@ impl ActiveCa {
     fn handle_command(&mut self, cmd: CaCommand, cx: &mut Context) -> CommandFut {
         let selfname = "handle_command";
         let self2 = self;
-        assert_eq!(self2.buf_for_chanheap.has_space(), true);
+        assert_eq!(self2.buf_for_chanheap.is_space(), true);
         match cmd.kind {
             CaCommandKind::ChannelAdd(conf, mut done_tx) => {
                 trace!("{selfname}  ChannelAdd");
@@ -410,7 +416,7 @@ impl ActiveCa {
                     Some(Pending)
                 }
             }
-        } else if self2.buf_for_chanheap.has_space() {
+        } else if self2.buf_for_chanheap.is_space() {
             if let Some(item) = self2.inp_cmd_buf.pop_front() {
                 debug!("\n\n{selfname}  CmdRx:Some \n\n");
                 let fut = self2.handle_command(item, cx);
@@ -430,7 +436,7 @@ impl ActiveCa {
         trace4!("{selfname}");
         loop {
             let mut hpp = HaveProgressPending::new();
-            if self.buf_for_chanheap.has_space() {
+            if self.buf_for_chanheap.is_space() {
                 if let Some(item) = self.inp_msg_buf.pop_front() {
                     hpp.mark_progress();
                     let dispatch = item.cid().is_some() || item.subid().is_some() || item.ioid().is_some();
@@ -475,8 +481,8 @@ impl ActiveCa {
         }
     }
 
-    pub(super) fn inp_push_try(self: Pin<&mut Self>, item: InpItem, cx: &mut Context<'_>) -> asynbuf::PushRes<CaMsg> {
-        let self2 = self.get_mut();
+    pub fn inp_push_try(&mut self, item: InpItem, cx: &mut Context<'_>) -> asynbuf::PushRes<InpItem> {
+        let self2 = self;
         let v = &mut self2.inp_buf;
         // let w1 = &mut self2.waker_1;
         // let w2 = &mut self2.waker_2;
@@ -495,14 +501,41 @@ impl ActiveCa {
         x
     }
 
+    pub fn inp_is_space(&self) -> bool {
+        self.inp_buf.is_space()
+    }
+
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<StreamItem>> {
         use Poll::*;
         let selfname = "ActiveCa::poll_next";
         trace4!("{selfname}");
         loop {
+            let tsnow = Instant::now();
             let mut hpp = HaveProgressPending::new();
             match &mut self.state {
                 State::Running(st1) => {
+                    let self2 = self.as_mut().get_mut();
+                    if self2.inp_cmd_buf.is_space() && self2.inp_msg_buf.is_space() {
+                        if let Some(item) = self2.inp_buf.pop_front() {
+                            match item {
+                                InpItem::CaMsg(x) => {
+                                    if self2.inp_msg_buf.push_back(x).is_fail() {
+                                        self2.state = State::Done;
+                                        break Ready(Some(Err(Error::Logic)));
+                                    }
+                                }
+                                InpItem::Cmd(x) => {
+                                    if self2.inp_cmd_buf.push_back(x).is_fail() {
+                                        self2.state = State::Done;
+                                        break Ready(Some(Err(Error::Logic)));
+                                    }
+                                }
+                            }
+                        } else {
+                        }
+                    } else {
+                        warn!("{selfname}  SKIP inp_buf pop");
+                    }
                     match self.as_mut().poll_command_input(cx) {
                         Some(x) => match x {
                             Ready(Some(e)) => {
@@ -518,22 +551,6 @@ impl ActiveCa {
                             }
                         },
                         None => {}
-                    }
-                    let self2 = self.as_mut().get_mut();
-                    if self2.inp_cmd_buf.has_space() && self2.inp_msg_buf.has_space() {
-                        if let Some(item) = self2.inp_buf.pop_front() {
-                            match item {
-                                InpItem::CaMsg(x) => {
-                                    self2.inp_msg_buf.push_back(x);
-                                }
-                                InpItem::Cmd(x) => {
-                                    self2.inp_cmd_buf.push_back(x);
-                                }
-                            }
-                        } else {
-                        }
-                    } else {
-                        warn!("{selfname}  SKIP inp_buf pop");
                     }
                     match self.as_mut().poll_dispatch(cx) {
                         Some(x) => match x {
@@ -581,7 +598,7 @@ impl ActiveCa {
                     // TODO refactor take away the chanheap_cmd_rx
                     //
                     //
-                    match self2.chanheap.poll_next_unpin(&mut self2.chanheap_cmd_rx, cx) {
+                    match self2.chanheap.poll_next_unpin(cx) {
                         Ready(Some(x)) => {
                             hpp.mark_progress();
                             match x {
@@ -660,29 +677,19 @@ impl ActiveCa {
                             PingPong::Send(item, to) => match to.poll_unpin(cx) {
                                 Ready(()) => {
                                     hpp.mark_progress();
-                                    let tsnow = Instant::now();
-                                    let item = CaMsg::from_ty_ts(CaMsgTy::Echo, tsnow);
-                                    st1.pingpong = PingPong::new_send(item);
+                                    error!("error emit ping item");
+                                    st1.pingpong = PingPong::new_idle();
                                 }
                                 Pending => {
                                     hpp.mark_pending();
                                     if let Some(item2) = item.take() {
-                                        match self2.proto_tx.poll_send_unpin(item2, cx) {
-                                            Ok(()) => {
-                                                hpp.mark_progress();
-                                                st1.pingpong = PingPong::new_wait();
-                                            }
-                                            Err(e) => match e {
-                                                asynchan::SendPollError::Full(x) => {
-                                                    hpp.mark_pending();
-                                                    *item = Some(x);
-                                                }
-                                                asynchan::SendPollError::Closed(_) => {
-                                                    self2.state = State::Done;
-                                                    break Ready(Some(Err(Error::ProtoTxClosed)));
-                                                }
-                                            },
-                                        }
+                                        let t2 = ActiveCaItem {
+                                            ts_create: tsnow,
+                                            inner: ItemInner::ProtoOut(item2),
+                                        };
+                                        hpp.mark_progress();
+                                        st1.pingpong = PingPong::new_wait();
+                                        break Ready(Some(Ok(t2)));
                                     } else {
                                         self2.state = State::Done;
                                         break Ready(Some(Err(Error::Logic)));
@@ -727,8 +734,8 @@ impl ActiveCa {
         }
     }
 
-    pub fn poll_next_unpin(&mut self, cmd_rx: &mut CtChan<CaCommand>, cx: &mut Context) -> Poll<Option<StreamItem>> {
-        Pin::new(self).poll_next(cmd_rx, cx)
+    pub fn poll_next_unpin(&mut self, cx: &mut Context) -> Poll<Option<StreamItem>> {
+        Pin::new(self).poll_next(cx)
     }
 
     pub fn channel_info_v1(&mut self) -> crate::metrics::ChannelsForAddrInfoV1 {

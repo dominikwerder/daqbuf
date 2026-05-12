@@ -1,7 +1,4 @@
-//
-//
-
-const INP_BUF_CAP: usize = 16;
+const INP_BUF_CAP: usize = 3;
 
 //
 
@@ -23,8 +20,6 @@ use crate::ca::progpend::HaveProgressPending;
 use crate::conf::ChannelConfig;
 use crate::futwrap::FutDbg;
 use crate::futwrap::FutDbgBox;
-use asynchan::SendPoll;
-use asynchan::SendPollError;
 use ca_proto::ca::proto;
 use ca_proto::ca::proto::CaMsg;
 use futures::FutureExt;
@@ -33,7 +28,6 @@ use futures::future::ready;
 use hashbrown::HashMap;
 use serde::Serialize;
 use stats::mett::CaConnConnectedMetrics;
-use std::collections::VecDeque;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task;
@@ -360,7 +354,8 @@ pub struct ChannelHeap {
     state: State,
     out_buf: AsynBuf<CaMsg>,
     inp_buf: AsynBuf<InpItem>,
-    proto_tx: asynchan::Sender<CaMsg>,
+    inp_cmd_buf: AsynBuf<Cmd>,
+    inp_proto_buf: AsynBuf<CaMsg>,
     by_cid: HashMap<Cid, ChannelEntry>,
     by_name: HashMap<String, Cid>,
     inp_done: bool,
@@ -375,13 +370,14 @@ pub struct ChannelHeap {
 }
 
 impl ChannelHeap {
-    pub fn new(backend: String, proto_tx: asynchan::Sender<CaMsg>) -> Self {
+    pub fn new(backend: String) -> Self {
         Self {
             backend,
             state: State::Running,
             out_buf: AsynBuf::new(INP_BUF_CAP),
             inp_buf: AsynBuf::new(INP_BUF_CAP),
-            proto_tx,
+            inp_cmd_buf: AsynBuf::new(INP_BUF_CAP),
+            inp_proto_buf: AsynBuf::new(INP_BUF_CAP),
             by_cid: HashMap::new(),
             by_name: HashMap::new(),
             inp_done: false,
@@ -599,7 +595,7 @@ impl ChannelHeap {
             warn!("TODO channel already present, return error");
         } else {
             self.mett.channel_handler_new().inc();
-            let handler = ChannelHandler::new(self.backend.clone(), conf, self.proto_tx.clone());
+            let handler = ChannelHandler::new(self.backend.clone(), conf);
             let cid = handler.cid();
             if self.by_cid.contains_key(&cid) {
                 error!("ChannelHeap::channel_add: channel with cid {cid:?} already in map");
@@ -740,7 +736,7 @@ impl ChannelHeap {
             let mut hpp = HaveProgressPending::new();
             let self2 = self.as_mut().get_mut();
             let mut idp = 0;
-            if let Some(item) = self2.inp_buf.pop_front() {
+            if let Some(item) = self2.inp_proto_buf.pop_front() {
                 let disp = if let Some(cid) = item.cid() {
                     trace!("{selfname}  resolved via cid");
                     Some((Cid::new(cid), tsnow, tsnow))
@@ -789,7 +785,7 @@ impl ChannelHeap {
                                     Some(item) => {
                                         hpp.mark_pending();
                                         trace2!("{selfname}  ChannelHeap:Dispatch:Pending  {cid}  {sdbg}");
-                                        self2.inp_buf.push_front(item);
+                                        self2.inp_proto_buf.push_front(item);
                                         self2.wakeup_cids.insert(cid, ());
                                     }
                                     None => {
@@ -1064,7 +1060,7 @@ impl ChannelHeap {
                     .filter_map(|x| x)
                     .collect();
                 let fut = async move {
-                    let selfname = "{selfname}  RemoveChannel  fut";
+                    let selfname = "handle_command  RemoveChannel  fut";
                     for mut tx in handler_txs {
                         let (inner_done_tx, mut inner_done_rx) =
                             asynchan::bounded(4, "ChannelHeap-ChannelHandler-done-tx");
@@ -1100,11 +1096,8 @@ impl ChannelHeap {
         }
     }
 
-    fn poll_outer_cmd(
-        mut self: Pin<&mut Self>,
-        cmd_rx: &mut asynchan::Receiver<Cmd>,
-        cx: &mut Context,
-    ) -> Poll<Option<()>> {
+    // Ready(None) means temporary EOS.
+    fn poll_outer_cmd(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<()>> {
         let selfname = "poll_outer_cmd";
         use Poll::*;
         if let Some(fut) = &mut self.cmd_exec_fut {
@@ -1125,18 +1118,11 @@ impl ChannelHeap {
                 }
                 Pending => Pending,
             }
+        } else if let Some(x) = self.inp_cmd_buf.pop_front() {
+            self.handle_command(x);
+            Ready(Some(()))
         } else {
-            match cmd_rx.poll_next_unpin(cx) {
-                Ready(Some(x)) => {
-                    self.handle_command(x);
-                    Ready(Some(()))
-                }
-                Ready(None) => {
-                    // TODO make sure polling on closed is cheap enough.
-                    Ready(None)
-                }
-                Pending => Pending,
-            }
+            Ready(None)
         }
     }
 
@@ -1170,11 +1156,7 @@ impl ChannelHeap {
         });
     }
 
-    fn poll_next(
-        mut self: Pin<&mut Self>,
-        cmd_rx: &mut asynchan::Receiver<Cmd>,
-        cx: &mut Context<'_>,
-    ) -> Poll<Option<StreamItem>> {
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<StreamItem>> {
         use Poll::*;
         let selfname = "poll_next";
         trace4!("ChannelHeap  poll_next");
@@ -1188,7 +1170,11 @@ impl ChannelHeap {
             let mut hpp = HaveProgressPending::new();
             match &self.state {
                 State::Running => {
-                    match self.as_mut().poll_outer_cmd(cmd_rx, cx) {
+                    //
+                    //
+                    // TODO separate incoming by type.
+                    // TODO must make sure that I always poll `poll_outer_cmd` because it polls cmd fut.
+                    match self.as_mut().poll_outer_cmd(cx) {
                         Ready(Some(())) => {
                             hpp.mark_progress();
                         }
@@ -1197,6 +1183,10 @@ impl ChannelHeap {
                             hpp.mark_pending();
                         }
                     }
+                    //
+                    //
+                    //
+
                     match self.as_mut().dispatch_input_to_channels(cx) {
                         Ready(Some(x)) => {
                             hpp.mark_progress();
@@ -1297,11 +1287,7 @@ impl ChannelHeap {
         }
     }
 
-    pub fn poll_next_unpin(
-        &mut self,
-        cmd_rx: &mut asynchan::Receiver<Cmd>,
-        cx: &mut Context,
-    ) -> Poll<Option<StreamItem>> {
-        Pin::new(self).poll_next(cmd_rx, cx)
+    pub fn poll_next_unpin(&mut self, cx: &mut Context) -> Poll<Option<StreamItem>> {
+        Pin::new(self).poll_next(cx)
     }
 }

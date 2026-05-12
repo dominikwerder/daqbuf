@@ -1,4 +1,9 @@
+const INP_BUF_CAP: usize = 3;
+
+//
+
 use super::handshake::Handshake;
+use crate::asynbuf;
 use crate::asynchan;
 use crate::ca::conn2::channel_event_value::ChannelEventValue;
 use crate::ca::conn2::conn::activeca;
@@ -38,6 +43,7 @@ macro_rules! trace2 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; 
 macro_rules! trace3 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
 macro_rules! trace4 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
 macro_rules! trace_pending { ($($arg:tt)*) => { if false { trace!("{}  Pending", format_args!($($arg)*)); } }; }
+macro_rules! trace_transition { ($($arg:tt)*) => { if true { log::debug!($($arg)*); } }; }
 
 autoerr::create_error_v1!(
     name(Error, "Connected"),
@@ -48,6 +54,7 @@ autoerr::create_error_v1!(
         ActiveCa(#[from] super::activeca::Error),
         NoProgressNoPending,
         ProtoOutputClosed,
+        Logic,
     },
 );
 
@@ -105,19 +112,13 @@ pub struct Connected {
     addr: SocketAddrV4,
     protowrap: protowrap::ProtoPusher,
     state: State,
-    inp_buf: VecDeque<CaMsg>,
-    msg_a_chan: CtChan<activeca::CaCommand>,
+    inp_buf: asynbuf::AsynBuf<CaMsg>,
+    inp_cmd_buf: asynbuf::AsynBuf<activeca::CaCommand>,
     mett: CaConnConnectedMetrics,
 }
 
 impl Connected {
-    pub fn new(
-        backend: String,
-        tcp: TcpStream,
-        addr: SocketAddrV4,
-        tsnow: Instant,
-        ca_cmd_rx: asynchan::Receiver<activeca::CaCommand>,
-    ) -> Self {
+    pub fn new(backend: String, tcp: TcpStream, addr: SocketAddrV4, tsnow: Instant) -> Self {
         let raw_socket_fd = tcp.as_raw_fd();
         // TODO take from options
         let array_truncate = 1024 * 1024 * 10;
@@ -134,10 +135,14 @@ impl Connected {
             addr,
             protowrap,
             state: State::Init(),
-            inp_buf: VecDeque::with_capacity(32),
-            msg_a_chan: CtChan::new(),
+            inp_buf: asynbuf::AsynBuf::new(INP_BUF_CAP),
+            inp_cmd_buf: asynbuf::AsynBuf::new(INP_BUF_CAP),
             mett: CaConnConnectedMetrics::new(),
         }
+    }
+
+    pub fn inp_cmd_buf(&mut self) -> &mut asynbuf::AsynBuf<activeca::CaCommand> {
+        &mut self.inp_cmd_buf
     }
 
     pub fn status_info(&self) -> StatusInfo {
@@ -294,7 +299,14 @@ impl Stream for Connected {
                         "{selfname}  PROTOWRAP  self2.inp_buf.len() {n}",
                         n = self2.inp_buf.len()
                     );
-                    if self2.inp_buf.len() < self2.inp_buf.capacity() {
+
+                    // TODO drive the out direction independend
+
+                    if self2.inp_buf.is_space() {
+                        debug!(
+                            "{selfname}  protowrap.poll_next_unpin  len {n}",
+                            n = self2.protowrap.out_len()
+                        );
                         match Pin::new(&mut self2).protowrap.poll_next_unpin(cx) {
                             Ready(Some(Ok(x))) => {
                                 hpp.mark_progress();
@@ -333,114 +345,150 @@ impl Stream for Connected {
                     self.state = State::Handshake(stn);
                     hpp.mark_progress();
                 }
-                State::Handshake(st1) => match st1.poll_next_unpin(cx) {
-                    Ready(Some(x)) => match x {
-                        Ok(x) => match x {
-                            crate::ca::conn2::conn::handshake::Item::CaMsg(ca_msg) => todo!(),
-                            crate::ca::conn2::conn::handshake::Item::HandshakeDone => {
-                                warn!("{selfname}  HandshakeDone");
-                                let st1 = std::mem::replace(st1, st1.to_dummy());
-                                let (buf,) = st1.dismantle();
-
-                                warn!("{selfname}  TODO recover any leftover CaMsg items");
-                                // TODO recover any leftover CaMsg items
-                                // TODO Rewrite ActiveCa such that it also takes messages by push.
-
-                                let stn = ActiveCa::new(self2.backend.clone(), tsnow, self2.addr);
-                                self.state = State::ActiveCa(stn);
+                State::Handshake(st1) => {
+                    if let Some(x) = self2.inp_buf.pop_front() {
+                        match st1.inp_push_try(x, cx) {
+                            asynbuf::PushRes::First => {
                                 hpp.mark_progress();
                             }
-                        },
-                        Err(e) => {
-                            trace!("Handshake:Error");
-                            self2.goto_state_done();
-                            hpp.mark_progress();
-                            break Ready(Some(Err(e.into())));
+                            asynbuf::PushRes::Done => {
+                                hpp.mark_progress();
+                            }
+                            asynbuf::PushRes::Full(x) => {
+                                self2.inp_buf.push_front(x);
+                            }
                         }
-                    },
-                    Ready(None) => {}
-                    Pending => {
-                        trace_pending!("Handshake");
-                        hpp.mark_pending();
+                    } else {
+                        // TODO metrics
                     }
-                },
-                State::ActiveCa(st1) => {
-                    let ctchan = &mut self2.msg_a_chan;
-                    if ctchan.has_space() {
-                        match rx.poll_next_unpin(cx) {
-                            Ready(Some(item)) => {
-                                hpp.mark_progress();
-                                // We checked for space before.
-                                // TODO add api for reserved slot.
-                                #[allow(unused)]
-                                ctchan.poll_send_unpin(item, cx);
-                            }
+                    if self2.protowrap.is_space() {
+                        match st1.poll_next_unpin(cx) {
+                            Ready(Some(x)) => match x {
+                                Ok(x) => match x {
+                                    crate::ca::conn2::conn::handshake::Item::CaMsg(x) => {
+                                        hpp.mark_progress();
+                                        self2.protowrap.push_back_or_drop(x);
+                                    }
+                                    crate::ca::conn2::conn::handshake::Item::HandshakeDone => {
+                                        warn!("{selfname}  HandshakeDone");
+                                        hpp.mark_progress();
+                                        let st1 = std::mem::replace(st1, st1.to_dummy());
+
+                                        warn!("{selfname}  TODO recover any leftover CaMsg items");
+                                        // TODO recover any leftover CaMsg items
+                                        let (buf,) = st1.dismantle();
+
+                                        trace_transition!("ActiveCa::new");
+                                        let stn = ActiveCa::new(self2.backend.clone(), tsnow, self2.addr);
+                                        self.state = State::ActiveCa(stn);
+                                    }
+                                },
+                                Err(e) => {
+                                    trace!("Handshake:Error");
+                                    self2.goto_state_done();
+                                    hpp.mark_progress();
+                                    break Ready(Some(Err(e.into())));
+                                }
+                            },
                             Ready(None) => {}
                             Pending => {
+                                trace_pending!("Handshake");
                                 hpp.mark_pending();
                             }
                         }
                     } else {
-                        warn!("{selfname}  SKIP  CtChan no space");
+                        warn!("{selfname}  SKIP Handshake::poll_next_unpin  BLOCKED BY proto out full");
                     }
-
-                    error!("TODO  poll only when we have buffer");
-                    netpod::todoval();
-
-                    match st1.poll_next_unpin(&mut self2.msg_a_chan, cx) {
-                        Ready(Some(x)) => {
-                            hpp.mark_progress();
-                            match x {
-                                Ok(item) => match item.inner {
-                                    activeca::ItemInner::ChannelInfoQuery(item2) => {
-                                        let item = ConnectedItem {
-                                            ts_create: item.ts_create,
-                                            inner: ItemInner::ChannelInfoQuery(item2),
-                                        };
-                                        break Ready(Some(Ok(item)));
-                                    }
-                                    activeca::ItemInner::TestValue(x) => {
-                                        let item = ConnectedItem {
-                                            ts_create: item.ts_create,
-                                            inner: ItemInner::TestValue(x),
-                                        };
-                                        break Ready(Some(Ok(item)));
-                                    }
-                                    activeca::ItemInner::LocalLog(x) => {
-                                        let item = ConnectedItem {
-                                            ts_create: item.ts_create,
-                                            inner: ItemInner::LocalLog(x),
-                                        };
-                                        break Ready(Some(Ok(item)));
-                                    }
-                                    activeca::ItemInner::ChannelEventValue(x) => {
-                                        let item = ConnectedItem {
-                                            ts_create: item.ts_create,
-                                            inner: ItemInner::ChannelEventValue(x),
-                                        };
-                                        break Ready(Some(Ok(item)));
-                                    }
-                                    activeca::ItemInner::ProtoOut(x) => {
-                                        error!("TODO  put proto item in buffer");
-                                        netpod::todoval();
-                                    }
-                                },
-                                Err(e) => {
-                                    trace!("ActiveCa:Error");
-                                    self2.goto_state_done();
-                                    break Ready(Some(Err(e.into())));
+                }
+                State::ActiveCa(st1) => {
+                    if self2.inp_cmd_buf.len() != 0 {
+                        if st1.inp_is_space() {
+                            if let Some(x) = self2.inp_cmd_buf.pop_front() {
+                                if st1.inp_push_try(activeca::InpItem::Cmd(x), cx).is_fail() {
+                                    self2.state = State::Done;
+                                    break Ready(Some(Err(Error::Logic)));
+                                }
+                            }
+                        } else {
+                            warn!("{selfname}  SKIP ActiveCa cmd push  BLOCKED BY inp full");
+                        }
+                    }
+                    if let Some(x) = self2.inp_buf.pop_front() {
+                        match st1.inp_push_try(activeca::InpItem::CaMsg(x), cx) {
+                            asynbuf::PushRes::First => {
+                                hpp.mark_progress();
+                            }
+                            asynbuf::PushRes::Done => {
+                                hpp.mark_progress();
+                            }
+                            asynbuf::PushRes::Full(x) => {
+                                if let activeca::InpItem::CaMsg(x) = x {
+                                    self2.inp_buf.push_front(x);
+                                } else {
+                                    break Ready(Some(Err(Error::Logic)));
                                 }
                             }
                         }
-                        Ready(None) => {
-                            trace!("ActiveCa:Done");
-                            hpp.mark_progress();
-                            self2.goto_state_done();
+                    } else {
+                        // TODO metrics
+                    }
+                    if self2.protowrap.is_space() {
+                        match st1.poll_next_unpin(cx) {
+                            Ready(Some(x)) => {
+                                hpp.mark_progress();
+                                match x {
+                                    Ok(item) => match item.inner {
+                                        activeca::ItemInner::ChannelInfoQuery(item2) => {
+                                            let item = ConnectedItem {
+                                                ts_create: item.ts_create,
+                                                inner: ItemInner::ChannelInfoQuery(item2),
+                                            };
+                                            break Ready(Some(Ok(item)));
+                                        }
+                                        activeca::ItemInner::TestValue(x) => {
+                                            let item = ConnectedItem {
+                                                ts_create: item.ts_create,
+                                                inner: ItemInner::TestValue(x),
+                                            };
+                                            break Ready(Some(Ok(item)));
+                                        }
+                                        activeca::ItemInner::LocalLog(x) => {
+                                            let item = ConnectedItem {
+                                                ts_create: item.ts_create,
+                                                inner: ItemInner::LocalLog(x),
+                                            };
+                                            break Ready(Some(Ok(item)));
+                                        }
+                                        activeca::ItemInner::ChannelEventValue(x) => {
+                                            let item = ConnectedItem {
+                                                ts_create: item.ts_create,
+                                                inner: ItemInner::ChannelEventValue(x),
+                                            };
+                                            break Ready(Some(Ok(item)));
+                                        }
+                                        activeca::ItemInner::ProtoOut(x) => {
+                                            self2.protowrap.push_back_or_drop(x);
+                                        }
+                                    },
+                                    Err(e) => {
+                                        trace!("ActiveCa:Error");
+                                        self2.goto_state_done();
+                                        break Ready(Some(Err(e.into())));
+                                    }
+                                }
+                            }
+                            Ready(None) => {
+                                trace!("ActiveCa:Done");
+                                hpp.mark_progress();
+                                self2.goto_state_done();
+                            }
+                            Pending => {
+                                trace_pending!("ActiveCa");
+                                hpp.mark_pending();
+                            }
                         }
-                        Pending => {
-                            trace_pending!("ActiveCa");
-                            hpp.mark_pending();
-                        }
+                    } else {
+                        warn!("{selfname}  SKIP ActiveCa::poll_next_unpin  BLOCKED BY proto out no space");
                     }
                 }
                 State::Done => {

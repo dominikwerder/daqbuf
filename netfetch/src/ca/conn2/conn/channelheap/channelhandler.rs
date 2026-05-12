@@ -1,3 +1,5 @@
+const INP_BUF_CAP: usize = 3;
+
 mod create;
 mod fetchmpx;
 mod running;
@@ -185,7 +187,6 @@ pub struct ChannelHandler {
     cid: CidOwned,
     backend: String,
     conf: ChannelConfig,
-    proto_tx: asynchan::Sender<CaMsg>,
     proto_inp_buf: VecDeque<ProtoRxItem>,
     proto_inp_done: bool,
     counters: Counters,
@@ -198,12 +199,7 @@ pub struct ChannelHandler {
 }
 
 impl ChannelHandler {
-    pub fn new(
-        backend: String,
-        conf: ChannelConfig,
-        // TODO remove the asyc proto channels.
-        proto_tx: asynchan::Sender<CaMsg>,
-    ) -> Self {
+    pub fn new(backend: String, conf: ChannelConfig) -> Self {
         let cid = CidOwned::new();
         trace!("ChannelHandler::new  {cid:?}  {conf:?}");
         let (cmd_tx, cmd_rx) = asynchan::bounded(16, "ChannelHandler-cmd");
@@ -213,8 +209,7 @@ impl ChannelHandler {
             cid,
             backend,
             conf,
-            proto_tx,
-            proto_inp_buf: VecDeque::with_capacity(16),
+            proto_inp_buf: VecDeque::with_capacity(INP_BUF_CAP),
             proto_inp_done: false,
             counters: Counters::new(),
             cmd_tx,

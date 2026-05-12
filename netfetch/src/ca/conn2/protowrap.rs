@@ -1,8 +1,10 @@
+const INP_BUF_CAP: usize = 3;
+
 use crate::asynbuf;
-use crate::asynbuf::AsynBuf;
-use crate::asynbuf::TsMark;
 use crate::asynchan;
 use crate::ca::progpend::HaveProgressPending;
+use asynbuf::AsynBuf;
+use asynbuf::TsMark;
 use ca_proto::ca::proto::CaItem;
 use ca_proto::ca::proto::CaMsg;
 use ca_proto::ca::proto::CaProto;
@@ -13,6 +15,7 @@ use std::task::Context;
 use std::task::Poll;
 
 macro_rules! warn { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
+macro_rules! debug { ($($arg:tt)*) => { if true { log::debug!($($arg)*); } }; }
 
 autoerr::create_error_v1!(
     name(Error, "Connected"),
@@ -42,61 +45,45 @@ impl ProtoPusher {
         Self {
             state: State::Running,
             proto,
-            proto_out_buf: AsynBuf::new(16),
+            proto_out_buf: AsynBuf::new(INP_BUF_CAP),
             ts_mark_try_01: TsMark::new("try_01".into()),
             ts_mark_try_02: TsMark::new("try_02".into()),
         }
     }
 
-    pub fn inp_push_try(self: Pin<&mut Self>, item: CaMsg, cx: &mut Context<'_>) -> asynbuf::PushRes<CaMsg> {
-        let self2 = self.get_mut();
-        let v = &mut self2.proto_out_buf;
-        // let w1 = &mut self2.waker_1;
-        // let w2 = &mut self2.waker_2;
-        let x = v.push_back(item);
-        match &x {
-            asynbuf::PushRes::First => {
-                // if let Some(w) = w1.take() {
-                //     w.wake();
-                // }
-            }
-            asynbuf::PushRes::Done => {}
-            asynbuf::PushRes::Full(_) => {
-                // *w2 = Some(cx.waker().clone());
-            }
-        }
-        x
+    pub fn is_space(&self) -> bool {
+        self.proto_out_buf.is_space()
     }
 
-    fn poll_proto(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        hpp: &mut HaveProgressPending,
-    ) -> Option<<Self as Stream>::Item> {
+    pub fn out_len(&self) -> usize {
+        self.proto_out_buf.len()
+    }
+
+    pub fn push_back_or_drop(&mut self, item: CaMsg) {
+        self.proto_out_buf.push_back(item);
+    }
+
+    fn poll_proto(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<<Self as Stream>::Item>> {
         use Poll::*;
         let self2 = self.get_mut();
         let ts_mark = &mut self2.ts_mark_try_01;
         match self2.proto.poll_next_unpin(cx) {
             Ready(Some(Ok(x))) => {
-                hpp.mark_progress();
                 ts_mark.hit_some();
-                Some(Ok(x))
+                Ready(Some(Ok(x)))
             }
             Ready(Some(Err(e))) => {
-                hpp.mark_progress();
                 ts_mark.hit_some();
-                Some(Err(e.into()))
+                Ready(Some(Err(e.into())))
             }
             Ready(None) => {
                 self2.state = State::Done;
                 ts_mark.hit_none();
-                hpp.mark_progress();
-                None
+                Ready(None)
             }
             Pending => {
-                hpp.mark_pending();
                 ts_mark.hit_pending();
-                None
+                Pending
             }
         }
     }
@@ -139,8 +126,23 @@ impl Stream for ProtoPusher {
             let mut hpp = HaveProgressPending::new();
             match &self.state {
                 State::Running => {
-                    if let Some(item) = self.as_mut().poll_proto(cx, &mut hpp) {
-                        break Ready(Some(item));
+                    while self.proto.proto_out_space()
+                        && let Some(x) = self.proto_out_buf.pop_front()
+                    {
+                        self.proto.push_out(x);
+                    }
+                    match self.as_mut().poll_proto(cx) {
+                        Ready(Some(x)) => {
+                            hpp.mark_progress();
+                            match x {
+                                Ok(x) => break Ready(Some(Ok(x))),
+                                Err(e) => break Ready(Some(Err(e))),
+                            }
+                        }
+                        Ready(None) => {}
+                        Pending => {
+                            hpp.mark_pending();
+                        }
                     }
                     break if hpp.have_progress() {
                         continue;

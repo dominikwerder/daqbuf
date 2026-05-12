@@ -109,6 +109,16 @@ pub enum PushRes<T> {
     Full(T),
 }
 
+impl<T> PushRes<T> {
+    pub fn is_fail(&self) -> bool {
+        match self {
+            PushRes::First => false,
+            PushRes::Done => false,
+            PushRes::Full(_) => true,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct AsynBuf<T> {
     buf: VecDeque<T>,
@@ -129,7 +139,7 @@ impl<T> AsynBuf<T> {
         self.buf.capacity()
     }
 
-    pub fn has_space(&self) -> bool {
+    pub fn is_space(&self) -> bool {
         self.len() < self.cap()
     }
 
