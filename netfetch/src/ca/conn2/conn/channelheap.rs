@@ -142,7 +142,6 @@ mod waker1 {
             data.wakeup_cids.insert(data.cid(), ());
         }
         data.wk1.wake_by_ref();
-        let _ = Arc::into_raw(data);
     }
 
     fn wake_by_ref(d: *const ()) {

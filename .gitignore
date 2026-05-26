@@ -4,3 +4,4 @@
 /.vscode
 /tmp
 /.backup-.git
+/.claude/settings.local.json

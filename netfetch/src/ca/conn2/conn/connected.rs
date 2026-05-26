@@ -284,6 +284,30 @@ impl Connected {
         });
         js
     }
+
+    pub fn health_check(&self) -> bool {
+        let mut healthy = true;
+        if self.protowrap.out_len() > 1000 {
+            warn!("protowrap len");
+            healthy = false;
+        }
+        if self.inp_buf.len() > 10 * INP_BUF_CAP {
+            warn!("inp_buf len");
+            healthy = false;
+        }
+        if self.inp_cmd_buf.len() > 10 * INP_BUF_CAP {
+            warn!("inp_cmd_buf len");
+            healthy = false;
+        }
+        // TODO
+        match &self.state {
+            State::Init() => {}
+            State::Handshake(st) => {}
+            State::ActiveCa(st) => {}
+            State::Done => {}
+        };
+        healthy
+    }
 }
 
 impl Stream for Connected {
@@ -498,7 +522,7 @@ impl Stream for Connected {
                                                     Some(item)
                                                 }
                                                 activeca::ItemInner::ProtoOut(x) => {
-                                                    self2.protowrap.push_back_or_drop(x);
+                                                    self2.protowrap.push_back_force(x);
                                                     None
                                                 }
                                             })

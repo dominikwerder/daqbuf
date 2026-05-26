@@ -216,6 +216,10 @@ impl Connecting {
         });
         Ok(ret)
     }
+
+    fn health_check(&self) -> bool {
+        true
+    }
 }
 
 impl Future for Connecting {
@@ -377,7 +381,7 @@ pub struct CaConn {
     ca_cmd_tx: asynchan::Sender<activeca::CaCommand>,
     ca_cmd_tx_fut: Option<FutDbg<Result<(), Error>>>,
     ca_cmd_rx: asynchan::Receiver<activeca::CaCommand>,
-    out_qu: AsynBuf<CaConnItem>,
+    out_buf: AsynBuf<CaConnItem>,
     cmd_rx_pending: bool,
 }
 
@@ -407,7 +411,7 @@ impl CaConn {
             ca_cmd_tx,
             ca_cmd_tx_fut: None,
             ca_cmd_rx,
-            out_qu: AsynBuf::new(INP_BUF_CAP),
+            out_buf: AsynBuf::new(INP_BUF_CAP),
             cmd_rx_pending: false,
         };
         ret
@@ -447,6 +451,7 @@ impl CaConn {
 
     fn on_ticker_fired(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<()>> {
         use Poll::*;
+        self.health_check();
         if true {
             match &mut self.state {
                 State::Connecting(st) => {
@@ -461,11 +466,11 @@ impl CaConn {
                 }
             }
         }
-        if self.out_qu.len() < OUT_QUEUE_LEN_MAX {
+        if self.out_buf.len() < OUT_QUEUE_LEN_MAX {
             trace!("TODO  poll_own_ticker  emit status info");
             let v = self.as_mut().make_status_info();
             let item = CaConnItem::StatusInfo(v);
-            self.out_qu.push_back_force(item);
+            self.out_buf.push_back_force(item);
             Ready(Some(()))
         } else {
             // TODO count in stats
@@ -623,6 +628,20 @@ impl CaConn {
             error!("can not create dump file");
         }
     }
+
+    fn health_check(&self) -> bool {
+        let mut healthy = true;
+        if self.out_buf.len() > 5 * INP_BUF_CAP {
+            warn!("out_buf len");
+            healthy = false;
+        }
+        healthy |= match &self.state {
+            State::Connecting(st) => st.health_check(),
+            State::Connected(st) => st.health_check(),
+            State::Done => true,
+        };
+        healthy
+    }
 }
 
 macro_rules! handle_poll_res {
@@ -665,8 +684,8 @@ impl Stream for CaConn {
             trace4!("{selfname}  loop  state {}", self2.state.display_short());
             let tsloop = Instant::now();
             let hpp = &mut HaveProgressPending::new();
-            if self2.out_qu.len() != 0 {
-                break Ready(Some(Ok(self2.out_qu.take())));
+            if self2.out_buf.len() != 0 {
+                break Ready(Some(Ok(self2.out_buf.take())));
             } else if let Some(fut) = self2.ca_cmd_tx_fut.as_mut() {
                 match fut.poll_unpin(cx) {
                     Ready(x) => {
@@ -834,20 +853,20 @@ impl Stream for CaConn {
                                             match item.inner {
                                                 connected::ItemInner::ChannelInfoQuery(item) => {
                                                     let item = CaConnItem::ChannelInfoQuery(item);
-                                                    self2.out_qu.push_back_force(item);
+                                                    self2.out_buf.push_back_force(item);
                                                 }
                                                 connected::ItemInner::TestValue(x) => {
                                                     info!("{selfname}  sees  connected::ItemInner::TestValue  {x:?}");
                                                     let item = CaConnItem::TestValue(x);
-                                                    self2.out_qu.push_back_force(item);
+                                                    self2.out_buf.push_back_force(item);
                                                 }
                                                 connected::ItemInner::LocalLog(x) => {
                                                     let item = CaConnItem::LocalLog(x);
-                                                    self2.out_qu.push_back_force(item);
+                                                    self2.out_buf.push_back_force(item);
                                                 }
                                                 connected::ItemInner::ChannelEventValue(x) => {
                                                     let item = CaConnItem::ChannelEventValue(x);
-                                                    self2.out_qu.push_back_force(item);
+                                                    self2.out_buf.push_back_force(item);
                                                 }
                                             }
                                         }

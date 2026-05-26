@@ -60,6 +60,10 @@ impl ProtoPusher {
     }
 
     pub fn push_back_or_drop(&mut self, item: CaMsg) {
+        let _ = self.proto_out_buf.push_back(item);
+    }
+
+    pub fn push_back_force(&mut self, item: CaMsg) {
         self.proto_out_buf.push_back_force(item);
     }
 
