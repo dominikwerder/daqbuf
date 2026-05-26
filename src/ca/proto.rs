@@ -15,8 +15,9 @@ use std::time::Instant;
 
 macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
 macro_rules! warn { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
-macro_rules! debug { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
-macro_rules! trace_in_out { ($($arg:tt)*) => { if false { log::info!($($arg)*); } }; }
+macro_rules! info { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
+macro_rules! debug { ($($arg:tt)*) => { if true { log::debug!($($arg)*); } }; }
+macro_rules! trace_in_out { ($($arg:tt)*) => { if false { log::debug!($($arg)*); } }; }
 
 autoerr::create_error_v1!(
     name(Error, "CaProto"),
@@ -1460,8 +1461,8 @@ impl CaProto {
         &mut self.mett
     }
 
-    pub fn proto_out_len(&self) -> usize {
-        self.out.len()
+    pub fn proto_out_space(&self) -> bool {
+        self.out.len() < 20
     }
 
     pub fn push_out(&mut self, item: CaMsg) {
@@ -1490,16 +1491,19 @@ impl CaProto {
         let w = Pin::new(w);
         match w.poll_write(cx, b) {
             Ready(k) => match k {
-                Ok(k) => match self.outbuf.adv(k) {
-                    Ok(()) => {
-                        self.mett.out_bytes().add(k as u32);
-                        Ready(Ok(k))
+                Ok(k) => {
+                    trace_in_out!("written to tcp  {k}");
+                    match self.outbuf.adv(k) {
+                        Ok(()) => {
+                            self.mett.out_bytes().add(k as u32);
+                            Ready(Ok(k))
+                        }
+                        Err(e) => {
+                            error!("advance error {:?}", e);
+                            Ready(Err(e.into()))
+                        }
                     }
-                    Err(e) => {
-                        error!("advance error {:?}", e);
-                        Ready(Err(e.into()))
-                    }
-                },
+                }
                 Err(e) => {
                     error!("output write error {:?}", e);
                     Ready(Err(e.into()))
@@ -1514,34 +1518,18 @@ impl CaProto {
         let mut have_pending = false;
         let mut have_progress = false;
         let tsnow = Instant::now();
-        {
-            let g = self.outbuf.len();
-            self.mett.outbuf_len().push_val(g as u32);
-        }
-        while let Some((msg, buf)) = self.out_msg_buf() {
-            let msglen = msg.len();
-            if msglen > buf.len() {
-                break;
-            }
-            msg.place_into(&mut buf[..msglen]);
-            self.outbuf.wadv(msglen)?;
-            self.out.pop_front();
-            self.mett.out_msg_placed().inc();
-        }
-        while self.outbuf.len() != 0 {
-            match Self::attempt_output(self.as_mut(), cx)? {
-                Ready(n) => {
-                    if n == 0 {
-                        let e = Error::LogicError;
-                        return Err(e);
-                    }
+        match self.as_mut().poll_outbound(cx) {
+            Some(Ready(Some(x))) => match x {
+                Ok(()) => {
                     have_progress = true;
                 }
-                Pending => {
-                    have_pending = true;
-                    break;
-                }
+                Err(e) => return Err(e),
+            },
+            Some(Ready(None)) => {}
+            Some(Pending) => {
+                have_pending = true;
             }
+            None => {}
         }
         let need_min = self.state.need_min();
         {
@@ -1570,8 +1558,8 @@ impl CaProto {
                             debug!("peer done  {:?}  {:?}", self.remote_name, self.state);
                             self.tcp_eof = true;
                         } else {
+                            trace_in_out!("received bytes {nf}");
                             // if false {
-                            //     debug!("received {} bytes", nf);
                             //     let t = nf.min(32);
                             //     debug!("received data  {:?}", &rbuf.filled()[0..t]);
                             // }
@@ -1743,6 +1731,61 @@ impl CaProto {
 
     pub fn dbg_buf_rlen(&self) -> u64 {
         self.buf.len() as u64
+    }
+
+    pub fn poll_outbound(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context,
+    ) -> Option<Poll<Option<Result<(), Error>>>> {
+        use Poll::*;
+        let mut have_pending = false;
+        let mut have_progress = false;
+        {
+            let g = self.outbuf.len();
+            self.mett.outbuf_len().push_val(g as u32);
+        }
+        while let Some((msg, buf)) = self.out_msg_buf() {
+            let msglen = msg.len();
+            if msglen > buf.len() {
+                break;
+            }
+            msg.place_into(&mut buf[..msglen]);
+            if let Err(e) = self.outbuf.wadv(msglen) {
+                return Some(Ready(Some(Err(e.into()))));
+            }
+            self.out.pop_front();
+            self.mett.out_msg_placed().inc();
+        }
+        while self.outbuf.len() != 0 {
+            match Self::attempt_output(self.as_mut(), cx) {
+                Ready(x) => match x {
+                    Ok(n) => {
+                        if n == 0 {
+                            let e = Error::LogicError;
+                            return Some(Ready(Some(Err(e))));
+                        }
+                        have_progress = true;
+                    }
+                    Err(e) => {
+                        return Some(Ready(Some(Err(e))));
+                    }
+                },
+                Pending => {
+                    have_pending = true;
+                    break;
+                }
+            }
+        }
+        if have_progress {
+            Some(Ready(Some(Ok(()))))
+        } else if have_pending {
+            Some(Pending)
+        } else {
+            if self.tcp_eof {
+                self.state = CaState::Done;
+            }
+            None
+        }
     }
 }
 
