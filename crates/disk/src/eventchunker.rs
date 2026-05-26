@@ -146,8 +146,8 @@ impl EventChunker {
     ) -> Self {
         debug!("{}::{}  node {}", Self::self_name(), "from_start", node_ix);
         let need_min_max = match fetch_info.shape() {
-            Shape::Scalar => 1024 * 8,
-            Shape::Wave(_) => 1024 * 32,
+            Shape::Scalar => 1024 * 16,
+            Shape::Wave(_) => 1024 * 6000,
             Shape::Image(_, _) => 1024 * 1024 * 80,
         };
         let mut inp = NeedMinBuffer::new(inp);
