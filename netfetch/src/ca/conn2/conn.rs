@@ -382,7 +382,6 @@ pub struct CaConn {
     ca_cmd_tx_fut: Option<FutDbg<Result<(), Error>>>,
     ca_cmd_rx: asynchan::Receiver<activeca::CaCommand>,
     out_buf: AsynBuf<CaConnItem>,
-    cmd_rx_pending: bool,
 }
 
 impl CaConn {
@@ -412,7 +411,6 @@ impl CaConn {
             ca_cmd_tx_fut: None,
             ca_cmd_rx,
             out_buf: AsynBuf::new(INP_BUF_CAP),
-            cmd_rx_pending: false,
         };
         ret
     }
@@ -712,9 +710,6 @@ impl Stream for CaConn {
                 //
                 match self2.cmd_rx.poll_next_unpin(cx) {
                     Ready(Some(cmd)) => {
-                        let n = self2.cmd_rx.len();
-                        debug!("cmd_rx.poll_next_unpin  ITEM  {n}");
-                        self2.cmd_rx_pending = true;
                         hpp.mark_progress();
                         match cmd.kind {
                             CaConnCmdKind::ChannelAdd(conf, done_tx) => {
@@ -784,16 +779,9 @@ impl Stream for CaConn {
                             }
                         }
                     }
-                    Ready(None) => {
-                        self2.cmd_rx_pending = true;
-                    }
+                    Ready(None) => {}
                     Pending => {
                         hpp.mark_pending();
-                        if self2.cmd_rx_pending {
-                        } else {
-                            self2.cmd_rx_pending = true;
-                            debug!("cmd_rx.poll_next_unpin  PENDING");
-                        }
                     }
                 }
             }
@@ -827,8 +815,6 @@ impl Stream for CaConn {
                                     Ready(Some(x)) => {
                                         hpp.mark_progress();
                                         // guarded
-                                        let n = self2.ca_cmd_rx.len();
-                                        debug!("place cmd into Connected {x:?} ({n})");
                                         st1.inp_cmd_buf().push_back_force(x);
                                         continue;
                                     }
