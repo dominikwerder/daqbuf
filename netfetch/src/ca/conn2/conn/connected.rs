@@ -8,6 +8,7 @@ pub const LOOP_MAX_PASS_CMD: usize = 16;
 
 use super::handshake::Handshake;
 use crate::asynbuf;
+use crate::asynbuf::AsynBuf;
 use crate::asynchan;
 use crate::ca::conn2::channel_event_value::ChannelEventValue;
 use crate::ca::conn2::conn::activeca;
@@ -286,7 +287,7 @@ impl Connected {
 }
 
 impl Stream for Connected {
-    type Item = Result<ConnectedItem, Error>;
+    type Item = Result<AsynBuf<ConnectedItem>, Error>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         use Poll::*;
@@ -327,7 +328,7 @@ impl Stream for Connected {
                                     match x {
                                         CaItem::Msg(x) => {
                                             trace3!("{selfname}  PROTOWRAP  Msg");
-                                            self2.inp_buf.push_back(x);
+                                            self2.inp_buf.push_back_force(x);
                                         }
                                         CaItem::Empty => {
                                             trace3!("{selfname}  PROTOWRAP  Empty");
@@ -464,39 +465,46 @@ impl Stream for Connected {
                             Ready(Some(x)) => {
                                 hpp.mark_progress();
                                 match x {
-                                    Ok(item) => match item.inner {
-                                        activeca::ItemInner::ChannelInfoQuery(item2) => {
-                                            let item = ConnectedItem {
-                                                ts_create: item.ts_create,
-                                                inner: ItemInner::ChannelInfoQuery(item2),
-                                            };
-                                            break Ready(Some(Ok(item)));
-                                        }
-                                        activeca::ItemInner::TestValue(x) => {
-                                            let item = ConnectedItem {
-                                                ts_create: item.ts_create,
-                                                inner: ItemInner::TestValue(x),
-                                            };
-                                            break Ready(Some(Ok(item)));
-                                        }
-                                        activeca::ItemInner::LocalLog(x) => {
-                                            let item = ConnectedItem {
-                                                ts_create: item.ts_create,
-                                                inner: ItemInner::LocalLog(x),
-                                            };
-                                            break Ready(Some(Ok(item)));
-                                        }
-                                        activeca::ItemInner::ChannelEventValue(x) => {
-                                            let item = ConnectedItem {
-                                                ts_create: item.ts_create,
-                                                inner: ItemInner::ChannelEventValue(x),
-                                            };
-                                            break Ready(Some(Ok(item)));
-                                        }
-                                        activeca::ItemInner::ProtoOut(x) => {
-                                            self2.protowrap.push_back_or_drop(x);
-                                        }
-                                    },
+                                    Ok(items) => {
+                                        let items = items
+                                            .into_iter()
+                                            .filter_map(|item| match item.inner {
+                                                activeca::ItemInner::ChannelInfoQuery(item2) => {
+                                                    let item = ConnectedItem {
+                                                        ts_create: item.ts_create,
+                                                        inner: ItemInner::ChannelInfoQuery(item2),
+                                                    };
+                                                    Some(item)
+                                                }
+                                                activeca::ItemInner::TestValue(x) => {
+                                                    let item = ConnectedItem {
+                                                        ts_create: item.ts_create,
+                                                        inner: ItemInner::TestValue(x),
+                                                    };
+                                                    Some(item)
+                                                }
+                                                activeca::ItemInner::LocalLog(x) => {
+                                                    let item = ConnectedItem {
+                                                        ts_create: item.ts_create,
+                                                        inner: ItemInner::LocalLog(x),
+                                                    };
+                                                    Some(item)
+                                                }
+                                                activeca::ItemInner::ChannelEventValue(x) => {
+                                                    let item = ConnectedItem {
+                                                        ts_create: item.ts_create,
+                                                        inner: ItemInner::ChannelEventValue(x),
+                                                    };
+                                                    Some(item)
+                                                }
+                                                activeca::ItemInner::ProtoOut(x) => {
+                                                    self2.protowrap.push_back_or_drop(x);
+                                                    None
+                                                }
+                                            })
+                                            .collect::<VecDeque<_>>();
+                                        break Ready(Some(Ok(AsynBuf::from_deque(items))));
+                                    }
                                     Err(e) => {
                                         trace!("ActiveCa:Error");
                                         self2.goto_state_done();

@@ -60,7 +60,7 @@ impl ProtoPusher {
     }
 
     pub fn push_back_or_drop(&mut self, item: CaMsg) {
-        self.proto_out_buf.push_back(item);
+        self.proto_out_buf.push_back_force(item);
     }
 
     fn poll_proto(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<<Self as Stream>::Item>> {

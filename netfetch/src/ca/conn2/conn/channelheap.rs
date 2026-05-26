@@ -1,4 +1,5 @@
 const INP_BUF_CAP: usize = 128;
+const OUT_BUF_MAX_LEN: usize = 128;
 
 //
 
@@ -28,6 +29,7 @@ use futures::future::ready;
 use hashbrown::HashMap;
 use serde::Serialize;
 use stats::mett::CaConnConnectedMetrics;
+use std::collections::VecDeque;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task;
@@ -238,7 +240,7 @@ pub enum Cmd {
     RemoveChannel(String, asynchan::Sender<u32>),
 }
 
-type StreamItem = Result<ChannelHeapItem, Error>;
+type StreamItem = Result<AsynBuf<ChannelHeapItem>, Error>;
 
 type Cb1Box = Box<dyn FnOnce(&mut ChannelHeap) -> () + Send>;
 
@@ -352,7 +354,7 @@ pub enum InpItem {
 pub struct ChannelHeap {
     backend: String,
     state: State,
-    out_buf: AsynBuf<CaMsg>,
+    out_buf: AsynBuf<ChannelHeapItem>,
     inp_buf: AsynBuf<InpItem>,
     inp_cmd_buf: AsynBuf<Cmd>,
     inp_proto_buf: AsynBuf<CaMsg>,
@@ -856,6 +858,9 @@ impl ChannelHeap {
         let loopres: Poll<Option<Result<PollHandlerItemB, Error>>> = loop {
             // TODO monitor the capacity of the wakeup lists
             trace4!("{selfname}  loop");
+            if self2.out_buf.len() > OUT_BUF_MAX_LEN {
+                break Ready(Some(Ok(PollHandlerItemB::None)));
+            }
             if let Some(cid) = self2.wakeup_cids_tmp.pop() {
                 self2.wakeup_cids.remove(&cid);
                 hpp.mark_progress();
@@ -888,20 +893,40 @@ impl ChannelHeap {
                                             PollHandlerItem::ChHandlerMod => {
                                                 error!("TODO handle PollHandlerItem::ChHandlerMod");
                                             }
-                                            PollHandlerItem::ProtoOut(ca_msg) => {
-                                                break Ready(Some(Ok(PollHandlerItemB::ProtoOut(ca_msg))));
+                                            PollHandlerItem::ProtoOut(x) => {
+                                                let x = ChannelHeapItem {
+                                                    ts_create: tsnow,
+                                                    inner: ItemInner::ProtoOut(x),
+                                                };
+                                                self2.out_buf.push_back_force(x);
                                             }
-                                            PollHandlerItem::ChannelInfoQuery(item) => {
-                                                break Ready(Some(Ok(PollHandlerItemB::ChannelInfoQuery(item))));
+                                            PollHandlerItem::ChannelInfoQuery(x) => {
+                                                let x = ChannelHeapItem {
+                                                    ts_create: tsnow,
+                                                    inner: ItemInner::ChannelInfoQuery(x),
+                                                };
+                                                self2.out_buf.push_back_force(x);
                                             }
                                             PollHandlerItem::TestValue(x) => {
-                                                break Ready(Some(Ok(PollHandlerItemB::TestValue(x))));
+                                                let x = ChannelHeapItem {
+                                                    ts_create: tsnow,
+                                                    inner: ItemInner::TestValue(x),
+                                                };
+                                                self2.out_buf.push_back_force(x);
                                             }
                                             PollHandlerItem::LocalLog(x) => {
-                                                break Ready(Some(Ok(PollHandlerItemB::LocalLog(x))));
+                                                let x = ChannelHeapItem {
+                                                    ts_create: tsnow,
+                                                    inner: ItemInner::LocalLog(x),
+                                                };
+                                                self2.out_buf.push_back_force(x);
                                             }
                                             PollHandlerItem::ChannelEventValue(x) => {
-                                                break Ready(Some(Ok(PollHandlerItemB::ChannelEventValue(x))));
+                                                let x = ChannelHeapItem {
+                                                    ts_create: tsnow,
+                                                    inner: ItemInner::ChannelEventValue(x),
+                                                };
+                                                self2.out_buf.push_back_force(x);
                                             }
                                         },
                                         Err(e) => {
@@ -964,6 +989,9 @@ impl ChannelHeap {
         trace4!("{selfname}");
         loop {
             trace4!("{selfname}  loop");
+            if self.out_buf.len() >= OUT_BUF_MAX_LEN {
+                break Ready(Some(Ok(PollHandlerItem::None)));
+            }
             let mut hpp = HaveProgressPending::new();
             if let Some(mut fut) = self.poll_handler_fut.as_mut().map(Pin::new) {
                 match fut.poll_unpin(cx) {
@@ -1172,6 +1200,9 @@ impl ChannelHeap {
             }
             let tsloop = Instant::now();
             let mut hpp = HaveProgressPending::new();
+            if self.out_buf.len() != 0 {
+                break Ready(Some(Ok(self.out_buf.take())));
+            }
             match &self.state {
                 State::Running => {
                     match self.as_mut().poll_outer_cmd(cx) {
@@ -1190,10 +1221,10 @@ impl ChannelHeap {
                     {
                         match x {
                             InpItem::Cmd(x) => {
-                                self2.inp_cmd_buf.push_back(x);
+                                self2.inp_cmd_buf.push_back_force(x);
                             }
                             InpItem::CaMsg(x) => {
-                                self2.inp_proto_buf.push_back(x);
+                                self2.inp_proto_buf.push_back_force(x);
                             }
                         }
                     }
@@ -1228,7 +1259,7 @@ impl ChannelHeap {
                                             ts_create: tsloop,
                                             inner,
                                         };
-                                        break Ready(Some(Ok(item)));
+                                        self.out_buf.push_back_force(item);
                                     }
                                     PollHandlerItem::ChannelInfoQuery(x) => {
                                         let inner = ItemInner::ChannelInfoQuery(x);
@@ -1236,7 +1267,7 @@ impl ChannelHeap {
                                             ts_create: tsloop,
                                             inner,
                                         };
-                                        break Ready(Some(Ok(item)));
+                                        self.out_buf.push_back_force(item);
                                     }
                                     PollHandlerItem::TestValue(x) => {
                                         let inner = ItemInner::TestValue(x);
@@ -1244,7 +1275,7 @@ impl ChannelHeap {
                                             ts_create: tsloop,
                                             inner,
                                         };
-                                        break Ready(Some(Ok(item)));
+                                        self.out_buf.push_back_force(item);
                                     }
                                     PollHandlerItem::LocalLog(x) => {
                                         let inner = ItemInner::LocalLog(x);
@@ -1252,7 +1283,7 @@ impl ChannelHeap {
                                             ts_create: tsloop,
                                             inner,
                                         };
-                                        break Ready(Some(Ok(item)));
+                                        self.out_buf.push_back_force(item);
                                     }
                                     PollHandlerItem::ChannelEventValue(x) => {
                                         let inner = ItemInner::ChannelEventValue(x);
@@ -1260,7 +1291,7 @@ impl ChannelHeap {
                                             ts_create: tsloop,
                                             inner,
                                         };
-                                        break Ready(Some(Ok(item)));
+                                        self.out_buf.push_back_force(item);
                                     }
                                 },
                                 Err(e) => {

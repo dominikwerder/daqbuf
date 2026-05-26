@@ -174,6 +174,7 @@ impl PingPong {
 }
 
 use crate::asynbuf;
+use crate::asynbuf::AsynBuf;
 use crate::asynbuf::TsMark;
 use ca_proto::ca::proto::CaMsgTy;
 use serde_helper::serde_instant::serde_Instant_elapsed_ms::serialize as inser3;
@@ -259,7 +260,7 @@ pub struct StatusInfo {
     pub state: StatusInfoState,
 }
 
-type StreamItem = Result<ActiveCaItem, Error>;
+type StreamItem = Result<AsynBuf<ActiveCaItem>, Error>;
 
 #[derive(Debug)]
 pub enum InpItem {
@@ -380,7 +381,7 @@ impl ActiveCa {
                 let (done_2_tx, mut done_2_rx) = asynchan::bounded(2, "ChannelHeap-Done");
                 let cmd = channelheap::Cmd::RemoveChannel(name, done_2_tx);
                 // guarded
-                self2.buf_for_chanheap.push_back(channelheap::InpItem::Cmd(cmd));
+                self2.buf_for_chanheap.push_back_force(channelheap::InpItem::Cmd(cmd));
                 let fut = async move {
                     if done_2_rx.recv().await.is_err() {
                         error!("{selfname}  done_2_rx  recv  fail")
@@ -453,7 +454,7 @@ impl ActiveCa {
                     let dispatch = item.cid().is_some() || item.subid().is_some() || item.ioid().is_some();
                     if dispatch {
                         let item = channelheap::InpItem::CaMsg(item);
-                        self.buf_for_chanheap.push_back(item);
+                        self.buf_for_chanheap.push_back_force(item);
                     } else {
                         match item.ty {
                             CaMsgTy::Echo => {
@@ -643,45 +644,49 @@ impl ActiveCa {
                         Ready(Some(x)) => {
                             hpp.mark_progress();
                             match x {
-                                Ok(item) => {
+                                Ok(items) => {
                                     trace!("ActiveCa:ChannelHeap:Some");
-                                    match item.inner {
-                                        channelheap::ItemInner::ChannelInfoQuery(item2) => {
-                                            let item = ActiveCaItem {
-                                                ts_create: item.ts_create,
-                                                inner: ItemInner::ChannelInfoQuery(item2),
-                                            };
-                                            break Ready(Some(Ok(item)));
-                                        }
-                                        channelheap::ItemInner::TestValue(x) => {
-                                            let item = ActiveCaItem {
-                                                ts_create: item.ts_create,
-                                                inner: ItemInner::TestValue(x),
-                                            };
-                                            break Ready(Some(Ok(item)));
-                                        }
-                                        channelheap::ItemInner::LocalLog(x) => {
-                                            let item = ActiveCaItem {
-                                                ts_create: item.ts_create,
-                                                inner: ItemInner::LocalLog(x),
-                                            };
-                                            break Ready(Some(Ok(item)));
-                                        }
-                                        channelheap::ItemInner::ChannelEventValue(x) => {
-                                            let item = ActiveCaItem {
-                                                ts_create: item.ts_create,
-                                                inner: ItemInner::ChannelEventValue(x),
-                                            };
-                                            break Ready(Some(Ok(item)));
-                                        }
-                                        channelheap::ItemInner::ProtoOut(x) => {
-                                            let item = ActiveCaItem {
-                                                ts_create: item.ts_create,
-                                                inner: ItemInner::ProtoOut(x),
-                                            };
-                                            break Ready(Some(Ok(item)));
-                                        }
-                                    }
+                                    let items = items
+                                        .into_iter()
+                                        .map(|item| match item.inner {
+                                            channelheap::ItemInner::ChannelInfoQuery(item2) => {
+                                                let item = ActiveCaItem {
+                                                    ts_create: item.ts_create,
+                                                    inner: ItemInner::ChannelInfoQuery(item2),
+                                                };
+                                                item
+                                            }
+                                            channelheap::ItemInner::TestValue(x) => {
+                                                let item = ActiveCaItem {
+                                                    ts_create: item.ts_create,
+                                                    inner: ItemInner::TestValue(x),
+                                                };
+                                                item
+                                            }
+                                            channelheap::ItemInner::LocalLog(x) => {
+                                                let item = ActiveCaItem {
+                                                    ts_create: item.ts_create,
+                                                    inner: ItemInner::LocalLog(x),
+                                                };
+                                                item
+                                            }
+                                            channelheap::ItemInner::ChannelEventValue(x) => {
+                                                let item = ActiveCaItem {
+                                                    ts_create: item.ts_create,
+                                                    inner: ItemInner::ChannelEventValue(x),
+                                                };
+                                                item
+                                            }
+                                            channelheap::ItemInner::ProtoOut(x) => {
+                                                let item = ActiveCaItem {
+                                                    ts_create: item.ts_create,
+                                                    inner: ItemInner::ProtoOut(x),
+                                                };
+                                                item
+                                            }
+                                        })
+                                        .collect::<VecDeque<_>>();
+                                    break Ready(Some(Ok(AsynBuf::from_deque(items))));
                                 }
                                 Err(e) => {
                                     error!("ActiveCa:ChannelHeap:Error {e}");
@@ -730,7 +735,8 @@ impl ActiveCa {
                                         };
                                         hpp.mark_progress();
                                         st1.pingpong = PingPong::new_wait();
-                                        break Ready(Some(Ok(t2)));
+                                        let x = AsynBuf::from_deque([t2].into());
+                                        break Ready(Some(Ok(x)));
                                     } else {
                                         self2.state = State::Done;
                                         break Ready(Some(Err(Error::PingNoItem)));

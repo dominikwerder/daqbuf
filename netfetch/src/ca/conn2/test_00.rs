@@ -361,14 +361,18 @@ pub async fn test_01() {
                 info!("{}", prep.oneline());
             }
             match e {
-                Ok(x) => match x {
-                    crate::ca::connset2::connset::ConnSetItem::TestValue(x) => {
-                        info!("{x}");
+                Ok(x) => {
+                    for x in x {
+                        match x {
+                            crate::ca::connset2::connset::ConnSetItem::TestValue(x) => {
+                                info!("{x}");
+                            }
+                            crate::ca::connset2::connset::ConnSetItem::ChannelEventValue(x) => {
+                                prep.ingest(x);
+                            }
+                        }
                     }
-                    crate::ca::connset2::connset::ConnSetItem::ChannelEventValue(x) => {
-                        prep.ingest(x);
-                    }
-                },
+                }
                 _ => {
                     trace!("test_01 connset item {e:?}");
                 }

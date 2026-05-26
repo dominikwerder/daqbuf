@@ -1,9 +1,12 @@
+const INP_BUF_CAP: usize = 128;
+
 mod channels;
 mod cmd_handler;
 mod cmder;
 mod futs;
 mod streamtask;
 
+use crate::asynbuf::AsynBuf;
 use crate::asynchan;
 use crate::ca::conn2;
 use crate::ca::connset2::connset::channels::pollcstm;
@@ -147,7 +150,7 @@ pub struct ChannelCat {
 #[derive(Debug)]
 struct CaConnReg {
     comm: CaConnComm,
-    rx: asynchan::Receiver<Result<conn2::conn::CaConnItem, conn2::conn::Error>>,
+    rx: asynchan::Receiver<Result<AsynBuf<conn2::conn::CaConnItem>, conn2::conn::Error>>,
     jh: JoinHandle<Result<(), Error>>,
     shutting_down: bool,
 }
@@ -217,6 +220,7 @@ pub struct ConnSet {
     ca_conns: BTreeMap<SocketAddrV4, CaConnReg>,
     shutdown_fut: Option<FutDbg<Result<(), Error>>>,
     conn_idle_disconnect_futs: VecDeque<FutDbg<Result<(), Error>>>,
+    out_buf: AsynBuf<ConnSetItem>,
     llog: LocalLog,
 }
 
@@ -258,6 +262,7 @@ impl ConnSet {
             ca_conns: BTreeMap::new(),
             shutdown_fut: None,
             conn_idle_disconnect_futs: VecDeque::new(),
+            out_buf: AsynBuf::new(INP_BUF_CAP),
             llog: LocalLog::new(),
         };
         Ok(ret)
@@ -466,7 +471,7 @@ impl ConnSet {
         Ok(None)
     }
 
-    fn poll_conn_comm(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Result<ConnSetItem, Error>>> {
+    fn poll_conn_comm(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Result<(), Error>>> {
         let selfname = "poll_conn_comm";
         use Poll::*;
         'outer: loop {
@@ -498,45 +503,49 @@ impl ConnSet {
                         Ready(Some(x)) => {
                             hpp.mark_progress();
                             match x {
-                                Ok(x) => match x {
-                                    conn2::conn::CaConnItem::StatusInfo(e1) => {
-                                        match Self::handle_conn_comm_status_info(e1, &self2.cmder, cx) {
-                                            Ok(x) => match x {
-                                                Some(fut) => {
-                                                    self2.cmd_fut_comm = Some(fut);
+                                Ok(items) => {
+                                    //
+                                    for item in items {
+                                        match item {
+                                            conn2::conn::CaConnItem::StatusInfo(e1) => {
+                                                match Self::handle_conn_comm_status_info(e1, &self2.cmder, cx) {
+                                                    Ok(x) => match x {
+                                                        Some(fut) => {
+                                                            self2.cmd_fut_comm = Some(fut);
+                                                        }
+                                                        None => {}
+                                                    },
+                                                    Err(e) => {
+                                                        break 'outer Ready(Some(Err(e)));
+                                                    }
                                                 }
-                                                None => {}
-                                            },
-                                            Err(e) => {
-                                                break 'outer Ready(Some(Err(e)));
+                                            }
+                                            conn2::conn::CaConnItem::ChannelInfoQuery(item) => {
+                                                let mut tx = self2.ch_info_tx.clone();
+                                                let fut = async move {
+                                                    match tx.send(item).await {
+                                                        Ok(()) => {}
+                                                        Err(e) => {
+                                                            // TODO metrics
+                                                            error!("ChannelInfoQuery channel send error");
+                                                        }
+                                                    }
+                                                    Ok(())
+                                                };
+                                                self2.cmd_fut_comm = Some(fut.box2());
+                                            }
+                                            conn2::conn::CaConnItem::TestValue(x) => {
+                                                self2.out_buf.push_back_force(ConnSetItem::TestValue(x));
+                                            }
+                                            conn2::conn::CaConnItem::LocalLog(x) => {
+                                                self2.llog.push_entry(x);
+                                            }
+                                            conn2::conn::CaConnItem::ChannelEventValue(x) => {
+                                                self2.out_buf.push_back_force(ConnSetItem::ChannelEventValue(x));
                                             }
                                         }
                                     }
-                                    conn2::conn::CaConnItem::ChannelInfoQuery(item) => {
-                                        let mut tx = self2.ch_info_tx.clone();
-                                        let fut = async move {
-                                            match tx.send(item).await {
-                                                Ok(()) => {}
-                                                Err(e) => {
-                                                    // TODO metrics
-                                                    error!("ChannelInfoQuery channel send error");
-                                                }
-                                            }
-                                            Ok(())
-                                        };
-                                        self2.cmd_fut_comm = Some(fut.box2());
-                                    }
-                                    conn2::conn::CaConnItem::TestValue(x) => {
-                                        break 'outer Ready(Some(Ok(ConnSetItem::TestValue(x))));
-                                    }
-                                    conn2::conn::CaConnItem::LocalLog(x) => {
-                                        self2.llog.push_entry(x);
-                                    }
-                                    conn2::conn::CaConnItem::ChannelEventValue(x) => {
-                                        let item = ConnSetItem::ChannelEventValue(x);
-                                        break 'outer Ready(Some(Ok(item)));
-                                    }
-                                },
+                                }
                                 Err(e) => {
                                     error!("{selfname}  recv error  {e}");
                                     use conn2::conn::Error as E2;
@@ -1134,7 +1143,7 @@ impl ConnSet {
         }
     }
 
-    fn poll_common(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Option<Result<ConnSetItem, Error>>>> {
+    fn poll_common(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Option<Result<(), Error>>>> {
         let selfname = "poll_common";
         use Poll::*;
         let mut hpp = HaveProgressPending::new();
@@ -1293,11 +1302,12 @@ macro_rules! poll_a {
             Ready(Some(x)) => {
                 $hpp.mark_progress();
                 match x {
-                    Ok(()) => {}
-                    Err(e) => {
+                    Some(Ok(())) => {}
+                    Some(Err(e)) => {
                         //
                         break Ready(Some(Err(e)));
                     }
+                    None => {}
                 }
             }
             Ready(None) => {}
@@ -1392,16 +1402,19 @@ macro_rules! poll_opt_fut_map {
 }
 
 impl Stream for ConnSet {
-    type Item = Result<ConnSetItem, Error>;
+    type Item = Result<AsynBuf<ConnSetItem>, Error>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         use Poll::*;
         loop {
             trace4!("ConnSet  poll_next  loop begin  {}", self.state.name());
             let mut hpp = HaveProgressPending::new();
+            if self.out_buf.len() != 0 {
+                break Ready(Some(Ok(self.out_buf.take())));
+            }
             match &mut self.state {
                 State::Running => {
-                    poll_break!(self.as_mut().poll_common(cx), hpp);
+                    poll_a!(self.as_mut().poll_common(cx), hpp);
                 }
                 State::Shutdown(st2) => {
                     match st2.timeout.poll_unpin(cx) {
@@ -1413,7 +1426,7 @@ impl Stream for ConnSet {
                             hpp.mark_pending();
                         }
                     }
-                    poll_break!(self.as_mut().poll_common(cx), hpp);
+                    poll_a!(self.as_mut().poll_common(cx), hpp);
                     if false {
                         poll_opt_fut_map!(self.shutdown_fut, cx, hpp, self, break, |x| { Ok(None) }, {});
                     }
@@ -1434,7 +1447,7 @@ impl Stream for ConnSet {
                     // How do we wait for that?
                     // In state Shutdown1, we should have achieved already that all ConnSet channels started
                     // to remove themselves.
-                    poll_break!(self.as_mut().poll_common(cx), hpp);
+                    poll_a!(self.as_mut().poll_common(cx), hpp);
                     // trace2!("Shutdown2 --> Done");
                     // hpp.mark_progress();
                     // self.state = State::Done;

@@ -131,6 +131,10 @@ impl<T> AsynBuf<T> {
         }
     }
 
+    pub fn from_deque(v: VecDeque<T>) -> Self {
+        Self { buf: v }
+    }
+
     pub fn len(&self) -> usize {
         self.buf.len()
     }
@@ -155,11 +159,29 @@ impl<T> AsynBuf<T> {
         }
     }
 
+    pub fn push_back_force(&mut self, x: T) {
+        self.buf.push_back(x);
+    }
+
     pub fn push_front(&mut self, x: T) {
         self.buf.push_front(x)
     }
 
     pub fn pop_front(&mut self) -> Option<T> {
         self.buf.pop_front()
+    }
+
+    pub fn take(&mut self) -> Self {
+        let v = std::mem::replace(&mut self.buf, VecDeque::new());
+        Self::from_deque(v)
+    }
+}
+
+impl<T> IntoIterator for AsynBuf<T> {
+    type Item = T;
+    type IntoIter = std::collections::vec_deque::IntoIter<T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.buf.into_iter()
     }
 }
