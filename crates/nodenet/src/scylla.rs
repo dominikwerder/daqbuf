@@ -6,6 +6,7 @@ use items_0::streamitem::StreamItem;
 use items_2::channelevents::ChannelEvents;
 use netpod::log;
 use netpod::ChConf;
+use netpod::OneBeforeFlag;
 use query::api4::events::EventsSubQuery;
 use scyllaconn::events3::ks::clksmerge::cl_ks_merged;
 use scyllaconn::events3::SeriesInfo;
@@ -32,7 +33,8 @@ pub async fn scylla_channel_event_stream(
 ) -> Result<Pin<Box<dyn Stream<Item = Sitemty<ChannelEvents>> + Send>>, Error> {
     trace!("scylla_channel_event_stream");
     let series_info = SeriesInfo::from(&chconf);
-    let stream = cl_ks_merged(series_info, evq.range().clone(), scyqueue.clone(), scyopts).await?;
+    let one_before = OneBeforeFlag::from_bool(evq.need_one_before_range());
+    let stream = cl_ks_merged(series_info, evq.range().clone(), one_before, scyqueue.clone(), scyopts).await?;
     Ok(Box::pin(stream))
 }
 
@@ -58,7 +60,8 @@ impl EventsReadProvider for ScyllaEventReadProvider {
                     ch_conf.shape().clone(),
                 );
                 let range = evq.range().clone();
-                let stream = cl_ks_merged(series_info, range, scyqu, self.scyopts.clone());
+                let one_before = OneBeforeFlag::from_bool(evq.need_one_before_range());
+                let stream = cl_ks_merged(series_info, range, one_before, scyqu, self.scyopts.clone());
                 type StreamTy = Pin<Box<dyn Stream<Item = Sitemty<ChannelEvents>> + Send>>;
                 let stream = stream
                     .map(|x| match x {

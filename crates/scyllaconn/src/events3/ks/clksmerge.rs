@@ -9,6 +9,7 @@ use items_0::streamitem::RangeCompletableItem;
 use items_0::streamitem::Sitemty;
 use items_0::streamitem::StreamItem;
 use items_2::channelevents::ChannelEvents;
+use netpod::OneBeforeFlag;
 use netpod::range::evrange::SeriesRange;
 
 macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
@@ -32,6 +33,7 @@ const LSP_SINGLE_BUF_MAX: usize = 5;
 pub async fn cl_ks_merged(
     series_info: SeriesInfo,
     range: SeriesRange,
+    one_before: OneBeforeFlag,
     scyqu: ScyllaQueue,
     scyopts: ScyllaOptsSubmit,
 ) -> Result<impl Stream<Item = Sitemty<ChannelEvents>> + Send, Error> {

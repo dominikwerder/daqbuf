@@ -2,6 +2,7 @@ use items_2::channelevents::ChannelEvents;
 use items_2::merger::Merger;
 use netpod::range::evrange::NanoRange;
 use netpod::ChannelTypeConfigGen;
+use netpod::OneBeforeFlag;
 use netpod::ReqCtx;
 use query::api4::events::PlainEventsQuery;
 use scyllaconn::events3::ks::clksmerge::cl_ks_merged;
@@ -50,7 +51,8 @@ pub async fn dyn_events_stream(
             chconf.shape().clone(),
         );
         let range = evq.range().clone();
-        let stream = cl_ks_merged(series_info, range, scyqu, ScyllaOptsSubmit::no_choice()).await?;
+        let one_before = OneBeforeFlag::from_bool(evq.one_before_range());
+        let stream = cl_ks_merged(series_info, range, one_before, scyqu, ScyllaOptsSubmit::no_choice()).await?;
         Box::pin(stream) as ChannelEventsStream
     } else {
         let subq = make_sub_query(
