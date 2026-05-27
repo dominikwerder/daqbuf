@@ -176,6 +176,7 @@ use std::collections::VecDeque;
 use std::fmt;
 use std::iter::FromIterator;
 use std::net::SocketAddr;
+use std::ops::Deref;
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::str::FromStr;
@@ -4873,5 +4874,18 @@ impl From<CacheBypass> for bool {
             CacheBypass::Cache => false,
             CacheBypass::Bypass => true,
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct OneBeforeFlag(bool);
+
+impl OneBeforeFlag {
+    pub fn from_bool(x: bool) -> Self {
+        Self(x)
+    }
+
+    pub fn as_bool(&self) -> bool {
+        self.0
     }
 }
