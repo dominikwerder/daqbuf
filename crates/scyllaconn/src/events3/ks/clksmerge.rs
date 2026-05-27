@@ -1,4 +1,5 @@
 use crate::events3::SeriesInfo;
+use crate::events3::ks::eventsks::bck_events_lst::BckLspLst;
 use crate::events3::msplsp::MspEv;
 use crate::range::ScyllaSeriesRange;
 use crate::worker::ScyllaOptsSubmit;
@@ -11,9 +12,11 @@ use items_0::streamitem::StreamItem;
 use items_2::channelevents::ChannelEvents;
 use netpod::OneBeforeFlag;
 use netpod::range::evrange::SeriesRange;
+use std::collections::VecDeque;
 
 macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
 macro_rules! info { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
+macro_rules! debug { ($($arg:tt)*) => { if true { log::debug!($($arg)*); } }; }
 
 autoerr::create_error_v1!(
     name(Error, "ClKsMerged"),
@@ -21,6 +24,7 @@ autoerr::create_error_v1!(
         Msg(#[from] String),
         ExpectTimeRange,
         Read03MspBck(#[from] crate::events3::mspbck::Error),
+        BckLspLst(#[from] crate::events3::ks::eventsks::bck_events_lst::Error),
     },
 );
 
@@ -49,7 +53,7 @@ pub async fn cl_ks_merged(
                 MSP_PREOPEN_MIN,
                 LSP_SINGLE_BUF_MAX,
             );
-            let msps = crate::events3::mspbck::msp_bck(
+            let msps: VecDeque<_> = crate::events3::mspbck::msp_bck(
                 ks.clone(),
                 series_info.clone(),
                 range.beg(),
@@ -60,10 +64,35 @@ pub async fn cl_ks_merged(
             .into_iter()
             .map(MspEv::from)
             .collect();
+            let scan_range = if one_before.as_bool() {
+                let res = BckLspLst::new(
+                    series_info.clone(),
+                    ks.clone(),
+                    msps.clone(),
+                    Some(range.beg()),
+                    scyopts.clone(),
+                    cl.as_ref().clone(),
+                )
+                .await?;
+                let range_beg_before = res
+                    .lsps()
+                    .iter()
+                    .filter_map(|(msp, lsp)| lsp.as_ref().map(|lsp| msp.to_ts(*lsp)))
+                    .filter(|ts| *ts < range.beg())
+                    .max()
+                    .unwrap_or(range.beg());
+                debug!(
+                    "cl_ks_merged  one_before  range_beg_before {range_beg_before}  range.beg {}",
+                    range.beg()
+                );
+                ScyllaSeriesRange::new(range_beg_before, range.end())
+            } else {
+                range.clone()
+            };
             let stream = crate::events3::ks::lsp_fwd_msp_multi::LspFwdMspMulti::new(
                 ks.clone(),
                 series_info.clone(),
-                range.clone(),
+                scan_range,
                 opts,
                 scyopts.clone(),
                 cl.as_ref().clone(),

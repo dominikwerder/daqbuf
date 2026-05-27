@@ -52,7 +52,16 @@ pub async fn dyn_events_stream(
         );
         let range = evq.range().clone();
         let one_before = OneBeforeFlag::from_bool(evq.one_before_range());
-        let stream = cl_ks_merged(series_info, range, one_before, scyqu, ScyllaOptsSubmit::no_choice()).await?;
+        let stream = cl_ks_merged(
+            series_info,
+            range.clone(),
+            one_before,
+            scyqu,
+            ScyllaOptsSubmit::no_choice(),
+        )
+        .await?;
+        let range_ty2 = NanoRange::try_from(&range).map_err(|_| Error::NanoRangeFromSeriesRange)?;
+        let stream = RangeFilter2::new(stream, range_ty2, evq.one_before_range());
         Box::pin(stream) as ChannelEventsStream
     } else {
         let subq = make_sub_query(

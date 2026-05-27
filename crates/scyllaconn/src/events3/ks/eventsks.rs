@@ -1,4 +1,4 @@
-mod bck_events_lst;
+pub mod bck_events_lst;
 
 use crate::events3::SeriesInfo;
 use crate::events3::ks::lsp_fwd_msp_multi;
