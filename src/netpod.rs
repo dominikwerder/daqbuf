@@ -1020,7 +1020,7 @@ pub struct ScyllaConfig {
     pub cache_bypass_asc: bool,
     #[serde(default = "bool_false")]
     pub cache_bypass_desc: bool,
-    #[serde(default = "bool_false")]
+    #[serde(default = "bool_true")]
     pub avoid_order_desc: bool,
 }
 
