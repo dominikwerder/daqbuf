@@ -205,7 +205,6 @@ impl Read03LspOnly {
     ) -> ItemLspOnly {
         let scyopts = self.scyopts.resolve(scyopts);
         let cby = scyopts.lsp_desc_cache_bypass.to_bool();
-        debug!("Read03LspOnly  cache_bypass {cby}  E1");
         // TODO actually pass Shape to the query selector
         let is_array = match self.series_info.shape() {
             netpod::Shape::Scalar => false,

@@ -19,6 +19,7 @@ use netpod::range::evrange::NanoRange;
 use netpod::timeunits::SEC;
 use netpod::DiskIoTune;
 use netpod::Node;
+use netpod::OneBeforeFlag;
 use netpod::ReqCtxArc;
 use netpod::SfChFetchInfo;
 use std::collections::VecDeque;
@@ -40,7 +41,7 @@ pub struct EventChunkerMultifile {
     range: NanoRange,
     files_count: u32,
     node_ix: usize,
-    one_before: bool,
+    one_before: OneBeforeFlag,
     max_ts: u64,
     out_max_len: usize,
     emit_count: usize,
@@ -84,7 +85,7 @@ impl EventChunkerMultifile {
             range,
             files_count: 0,
             node_ix,
-            one_before,
+            one_before: OneBeforeFlag::from_bool(one_before),
             max_ts: 0,
             out_max_len,
             emit_count: 0,

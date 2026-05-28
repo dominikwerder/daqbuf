@@ -5,6 +5,7 @@ use items_0::streamitem::Sitemty;
 use items_0::streamitem::StreamItem;
 use items_2::channelevents::ChannelEvents;
 use netpod::log;
+use netpod::range::evrange::NanoRange;
 use netpod::ChConf;
 use netpod::OneBeforeFlag;
 use query::api4::events::EventsSubQuery;
@@ -14,6 +15,7 @@ use scyllaconn::worker::ScyllaOptsSubmit;
 use scyllaconn::worker::ScyllaQueue;
 use scyllaconn::SeriesId;
 use std::pin::Pin;
+use streams::rangefilter2::RangeFilter2;
 use streams::timebin::cached::reader::EventsReadProvider;
 
 macro_rules! trace { ($($arg:tt)*) => ( if true { log::trace!($($arg)*); } ) }
@@ -22,6 +24,7 @@ autoerr::create_error_v1!(
     name(Error, "ScyllaChannelEventStream"),
     enum variants {
         ClKsMerge(#[from] scyllaconn::events3::ks::clksmerge::Error),
+        NanoRangeFromSeriesRange,
     },
 );
 
@@ -69,13 +72,20 @@ impl EventsReadProvider for ScyllaEventReadProvider {
                     ch_conf.shape().clone(),
                 );
                 let range = evq.range().clone();
+                // TODO handle unwrap
+                let range_ty2 = NanoRange::try_from(&range)
+                    .map_err(|_| Error::NanoRangeFromSeriesRange)
+                    .unwrap();
                 let one_before = OneBeforeFlag::from_bool(evq.need_one_before_range());
                 let filter_rts = evq.use_rt().map(|x| vec![x]);
                 let stream = cl_ks_merged(series_info, range, one_before, filter_rts, scyqu, self.scyopts.clone());
                 type StreamTy = Pin<Box<dyn Stream<Item = Sitemty<ChannelEvents>> + Send>>;
                 let stream = stream
-                    .map(|x| match x {
-                        Ok(stream) => Box::pin(stream) as StreamTy,
+                    .map(move |x| match x {
+                        Ok(stream) => {
+                            let stream = RangeFilter2::new(stream, range_ty2.clone(), one_before);
+                            Box::pin(stream) as StreamTy
+                        }
                         Err(e) => {
                             let item = Err(daqbuf_err::Error::from_string(e.to_string()));
                             let stream = futures_util::stream::iter([item]);

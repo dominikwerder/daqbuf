@@ -19,6 +19,7 @@ use streams::print_first_ts::PrintFirstTs;
 macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
 macro_rules! info { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
 macro_rules! debug { ($($arg:tt)*) => { if true { log::debug!($($arg)*); } }; }
+macro_rules! trace { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
 
 autoerr::create_error_v1!(
     name(Error, "ClKsMerged"),
@@ -85,16 +86,13 @@ pub async fn cl_ks_merged(
                         .filter(|ts| *ts < range.beg())
                         .max()
                         .unwrap_or(range.beg());
-
-                    // TODO check log what timestamp we find for each RT
-                    info!(
+                    trace!(
                         "cl_ks_merged  build  one_before  {:6}  {:6}  range_beg_before {}  range.beg {}",
                         cl.tag(),
                         ks.rt(),
                         range_beg_before,
                         range.beg()
                     );
-
                     ScyllaSeriesRange::new(range_beg_before, range.end())
                 } else {
                     range.clone()
@@ -117,7 +115,7 @@ pub async fn cl_ks_merged(
                         ks.rt().debug_tag()
                     ),
                 );
-                let stream = PrintFirstTs::new(stream, format!("{}-{}", cl.tag(), ks.name()));
+                // let stream = PrintFirstTs::new(stream, format!("{}-{}", cl.tag(), ks.name()));
                 inps.push(stream);
             }
         }

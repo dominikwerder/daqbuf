@@ -134,14 +134,14 @@ impl BckLspLst {
                             let lsps = scyqu
                                 .read_03_lsp_only(ks.clone(), series_info.clone(), msp.clone(), scyopts.clone())
                                 .await?;
-                            debug!("{selfname}  {clt}  {kst}  lsps len {}", lsps.len());
+                            debug!("{selfname}  CONC  {clt}  {kst}  lsps len {}", lsps.len());
                             let i = if let Some(end) = end {
                                 lsps.partition_point(|x| *x < end)
                             } else {
                                 lsps.len()
                             };
                             if i > lsps.len() {
-                                warn!("{selfname}  {clt}  {kst}  bad partition point");
+                                warn!("{selfname}  CONC  {clt}  {kst}  bad partition point");
                             }
                             Ok((msp, lsps.get(i - 1).cloned()))
                         } else {
@@ -179,14 +179,14 @@ impl BckLspLst {
                     let lsps = scyqu
                         .read_03_lsp_only(ks.clone(), series_info.clone(), msp.clone(), scyopts.clone())
                         .await?;
-                    debug!("{selfname}  {clt}  {kst}  lsps len {}", lsps.len());
+                    debug!("{selfname}  SING  {clt}  {kst}  lsps len {}", lsps.len());
                     let i = if let Some(end) = end {
                         lsps.partition_point(|x| *x < end)
                     } else {
                         lsps.len()
                     };
                     if i > lsps.len() {
-                        warn!("{selfname}  {clt}  {kst}  bad partition point");
+                        warn!("{selfname}  SING  {clt}  {kst}  bad partition point");
                     }
                     lsps_a.push_back((msp, lsps.get(i - 1).cloned()));
                 } else {

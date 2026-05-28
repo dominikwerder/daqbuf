@@ -10,6 +10,7 @@ use scyllaconn::events3::SeriesInfo;
 use scyllaconn::worker::ScyllaOptsSubmit;
 use scyllaconn::worker::ScyllaQueue;
 use series::SeriesId;
+use streams::assert_max_one_before::AssertMaxOneBefore;
 use streams::rangefilter2::RangeFilter2;
 use streams::tcprawclient::container_stream_from_bytes_stream;
 use streams::tcprawclient::make_sub_query;
@@ -63,13 +64,15 @@ pub async fn dyn_events_stream(
         )
         .await?;
         let range_ty2 = NanoRange::try_from(&range).map_err(|_| Error::NanoRangeFromSeriesRange)?;
-        let stream = RangeFilter2::new(stream, range_ty2, evq.one_before_range());
+        let stream = RangeFilter2::new(stream, range_ty2.clone(), one_before);
+        let stream = AssertMaxOneBefore::new(stream, range_ty2, format!("dyn_events_stream"));
         Box::pin(stream) as ChannelEventsStream
     } else {
+        let one_before = OneBeforeFlag::from_bool(evq.one_before_range());
         let subq = make_sub_query(
             ch_conf,
             evq.range().clone(),
-            evq.one_before_range(),
+            one_before.as_bool(),
             evq.transform().clone(),
             EventsSubQuerySettings::from(evq),
             evq.log_level().into(),
@@ -92,7 +95,7 @@ pub async fn dyn_events_stream(
             Ok(x) => x,
             Err(_e) => return Err(Error::NanoRangeFromSeriesRange),
         };
-        let stream = RangeFilter2::new(stream, range_ty2, evq.one_before_range());
+        let stream = RangeFilter2::new(stream, range_ty2, one_before);
         Box::pin(stream) as ChannelEventsStream
     };
     if let Some(wasmname) = evq.test_do_wasm() {
