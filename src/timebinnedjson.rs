@@ -31,6 +31,7 @@ use netpod::range::evrange::NanoRange;
 use netpod::BinnedRangeEnum;
 use netpod::ChannelTypeConfigGen;
 use netpod::DtMs;
+use netpod::OneBeforeFlag;
 use netpod::ReqCtx;
 use query::api4::binned::BinnedQuery;
 use query::api4::events::EventsSubQuerySettings;
@@ -108,7 +109,8 @@ pub async fn timebinnable_stream_sf_databuffer_channelevents(
     // TODO propagate also the max-buf-len for the first stage event reader.
     // TODO use a mixture of count and byte-size as threshold.
     let stream = Merger::new(inps, sub.merger_out_len_max());
-    let stream = RangeFilter2::new(stream, range, one_before_range);
+    let one_before = OneBeforeFlag::from_bool(one_before_range);
+    let stream = RangeFilter2::new(stream, range, one_before);
     let stream = stream.map(move |k: Sitemty<ChannelEvents>| {
         use ChannelEvents;
         use RangeCompletableItem::*;

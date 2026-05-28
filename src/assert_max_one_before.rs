@@ -1,10 +1,12 @@
 use futures_util::Stream;
 use futures_util::StreamExt;
 use items_0::merge::MergeableTy;
+use items_0::streamitem::sitem2_log;
+use items_0::streamitem::LogItem;
 use items_0::streamitem::RangeCompletableItem;
 use items_0::streamitem::Sitemty2;
 use items_0::streamitem::StreamItem;
-use netpod::TsNanoVecFmt;
+use netpod::range::evrange::NanoRange;
 use std::fmt;
 use std::pin::Pin;
 use std::task::Context;
@@ -12,17 +14,18 @@ use std::task::Poll;
 
 macro_rules! debug { ($($arg:tt)*) => { if true { log::debug!($($arg)*); } }; }
 
-pub struct PrintFirstTs<INP>
+pub struct AssertMaxOneBefore<INP>
 where
     INP: Stream + Unpin,
 {
     inp: INP,
+    range: NanoRange,
     tag: String,
-    printed: bool,
+    before_cnt: u32,
     done: bool,
 }
 
-impl<INP> PrintFirstTs<INP>
+impl<INP> AssertMaxOneBefore<INP>
 where
     INP: Stream + Unpin,
 {
@@ -30,17 +33,18 @@ where
         std::any::type_name::<Self>()
     }
 
-    pub fn new(inp: INP, tag: String) -> Self {
+    pub fn new(inp: INP, range: NanoRange, tag: String) -> Self {
         Self {
             inp,
+            range,
             tag,
-            printed: false,
+            before_cnt: 0,
             done: false,
         }
     }
 }
 
-impl<INP, ITY, E> Stream for PrintFirstTs<INP>
+impl<INP, ITY, E> Stream for AssertMaxOneBefore<INP>
 where
     INP: Stream<Item = Sitemty2<ITY, E>> + Unpin,
     ITY: MergeableTy,
@@ -56,12 +60,18 @@ where
                 match self.inp.poll_next_unpin(cx) {
                     Ready(Some(item)) => match item {
                         Ok(StreamItem::DataItem(RangeCompletableItem::Data(ref item2))) => {
-                            if !self.printed {
-                                if let Some(ts) = MergeableTy::tss_for_testing(item2).iter().next()
-                                {
-                                    TsNanoVecFmt(MergeableTy::tss_for_testing(item2).iter());
-                                    self.printed = true;
-                                    debug!("{}  {}", self.tag, ts);
+                            if let Some(ilge) =
+                                MergeableTy::find_lowest_index_ge(item2, self.range.beg_ts())
+                            {
+                                self.before_cnt += ilge as u32;
+                                if self.before_cnt > 1 {
+                                    self.done = true;
+                                    debug!("before_cnt {}  tag {}", self.before_cnt, self.tag);
+                                    let msg =
+                                        format!("before_cnt {}  tag {}", self.before_cnt, self.tag);
+                                    let x = LogItem::info(msg);
+                                    let item = sitem2_log(x);
+                                    return Ready(Some(item));
                                 }
                             }
                             Ready(Some(item))
@@ -82,11 +92,11 @@ where
     }
 }
 
-impl<INP> fmt::Debug for PrintFirstTs<INP>
+impl<INP> fmt::Debug for AssertMaxOneBefore<INP>
 where
     INP: Stream + Unpin,
 {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        fmt.debug_struct("PrintFirstTs").finish()
+        fmt.debug_struct("AssertMaxOneBefore").finish()
     }
 }
