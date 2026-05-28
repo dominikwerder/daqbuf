@@ -15,8 +15,8 @@ use serde::Serialize;
 use std::fmt;
 use std::mem;
 
+macro_rules! warn { ($($arg:tt)*) => ( if true { log::warn!($($arg)*); } ) }
 macro_rules! info { ($($arg:tt)*) => ( if true { log::info!($($arg)*); } ) }
-
 macro_rules! debug { ($($arg:tt)*) => ( if true { log::debug!($($arg)*); } ) }
 
 macro_rules! trace_ { ($($arg:tt)*) => ( if false { log::trace!($($arg)*); } ) }
@@ -242,10 +242,16 @@ where
         if let Some(ts0) = evs.ts_first() {
             trace_ingest_event!("{selfname}  EVENT TIMESTAMP FRONT  {:?}", ts0);
             if ts0 < self.active_beg {
-                Err(Error::EventActiveRangeBefore(selfname.into()))
+                Err(Error::EventActiveRangeBefore(format!(
+                    "{selfname}  ts0 < self.active_beg  {}  {}",
+                    ts0, self.active_beg
+                )))
             } else if ts0 >= self.active_end {
                 info!("ts0 >= self.active_end  {}  {}", ts0, self.active_end);
-                Err(Error::EventActiveRangeAfter(selfname.into()))
+                Err(Error::EventActiveRangeAfter(format!(
+                    "{selfname}  ts0 >= self.active_end  {}  {}",
+                    ts0, self.active_end
+                )))
             } else {
                 self.ingest_with_lst_ge_range_beg(evs, lst, minmax)
             }
@@ -333,9 +339,15 @@ where
                 let beg = b.active_beg;
                 let end = b.active_end;
                 if ev.ts < beg {
-                    return Err(Error::EventActiveRangeBefore(selfname.into()));
+                    return Err(Error::EventActiveRangeBefore(format!(
+                        "{selfname}  ev.ts < beg  {}  {}",
+                        ev.ts, beg
+                    )));
                 } else if ev.ts >= end {
-                    return Err(Error::EventActiveRangeAfter(selfname.into()));
+                    return Err(Error::EventActiveRangeAfter(format!(
+                        "{selfname}  ev.ts >= end  {}  {}",
+                        ev.ts, end
+                    )));
                 } else {
                     if ev.ts == beg {
                         self.init_minmax(&ev);
@@ -446,6 +458,7 @@ where
     #[serde(skip)]
     out: ContainerBins<EVT, EVT::AggTimeWeightOutputAvg>,
     input_done_range_final_continue_output: bool,
+    dbg_tsl: Option<TsNano>,
 }
 
 impl<EVT> fmt::Debug for BinnedEventsTimeweight<EVT>
@@ -500,6 +513,7 @@ where
             },
             out: ContainerBins::new(),
             input_done_range_final_continue_output: false,
+            dbg_tsl: None,
         }
     }
 
@@ -512,7 +526,10 @@ where
         let b = &self.inner_a.inner_b;
         if ev.ts < b.active_beg {
             if false {
-                return Err(Error::EventActiveRangeBefore(selfname.into()));
+                return Err(Error::EventActiveRangeBefore(format!(
+                    "{selfname}  ev.ts < b.active_beg  {}  {}",
+                    ev.ts, b.active_beg
+                )));
             }
             trace_ingest_init_lst!("{selfname}  set lst  {:?}", ev);
             self.lst = Some((&ev).into());
@@ -674,6 +691,21 @@ where
 
     pub fn ingest(&mut self, evs: &ContainerEvents<EVT>) -> Result<IngestReport, Error> {
         // TODO should rely on external stream adapter for verification to not duplicate things.
+        if VERIFY_INPUT_EVENTS {
+            for (i, (ts, _)) in evs.iter_zip().enumerate() {
+                debug!("INPUT EVENT  {i:6}  {ts}");
+                if let Some(tsl) = self.dbg_tsl {
+                    if ts < tsl {
+                        warn!("UNORDERED  {tsl}  {ts}");
+                        return Err(Error::Unordered);
+                    } else if ts == tsl {
+                        warn!("DUPLICATE TS  {tsl}  {ts}");
+                        return Err(Error::Unordered);
+                    }
+                }
+                self.dbg_tsl = Some(ts);
+            }
+        }
         if VERIFY_INPUT_EVENTS {
             evs.verify()?;
         }
