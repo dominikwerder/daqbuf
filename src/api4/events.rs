@@ -246,6 +246,7 @@ impl PlainEventsQuery {
         self.create_errors.contains(&String::from(x))
     }
 
+    // TODO for scylla, we tend to use only series id, so the channel name prints empty
     pub fn summary_short(&self) -> String {
         format!(
             "PlainEventsQuery {{ chn: {}, range: {:?} }}",
