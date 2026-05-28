@@ -106,8 +106,11 @@ impl Read03MspFwd {
         let limit = self.limit;
         let params = (self.series.to_i64(), beg, end, limit as i32);
         debug!(
-            "Read03MspFwd  {clt}  {kst}  msp_cache_bypass  {}",
-            scyopts.msp_cache_bypass.to_bool()
+            "Read03MspFwd  exec_inner  {clt}  {kst}  msp_cache_bypass  {}  {}  {}  limit {}",
+            scyopts.msp_cache_bypass.to_bool(),
+            beg,
+            end,
+            limit
         );
         let stmt = stmts
             .cache_bypass(scyopts.msp_cache_bypass.to_bool())

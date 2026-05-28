@@ -12,6 +12,7 @@ use items_0::streamitem::StreamItem;
 use items_2::channelevents::ChannelEvents;
 use netpod::OneBeforeFlag;
 use netpod::range::evrange::SeriesRange;
+use netpod::ttl::RetentionTime;
 use std::collections::VecDeque;
 
 macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
@@ -38,6 +39,7 @@ pub async fn cl_ks_merged(
     series_info: SeriesInfo,
     range: SeriesRange,
     one_before: OneBeforeFlag,
+    filter_rts: Option<Vec<RetentionTime>>,
     scyqu: ScyllaQueue,
     scyopts: ScyllaOptsSubmit,
 ) -> Result<impl Stream<Item = Sitemty<ChannelEvents>> + Send, Error> {
@@ -46,68 +48,76 @@ pub async fn cl_ks_merged(
     let mut inps = Vec::new();
     for cl in scyqu.clusters() {
         for ks in cl.keyspaces() {
-            let opts = crate::events3::ks::lsp_fwd_msp_multi::Opts::new(
-                MSP_LIMIT_DEF,
-                LSP_LIMIT_DEF,
-                MSP_RESERVE_MIN,
-                MSP_PREOPEN_MIN,
-                LSP_SINGLE_BUF_MAX,
-            );
-            let msps: VecDeque<_> = crate::events3::mspbck::msp_bck(
-                ks.clone(),
-                series_info.clone(),
-                range.beg(),
-                cl.as_ref().clone(),
-                scyopts.clone(),
-            )
-            .await?
-            .into_iter()
-            .map(MspEv::from)
-            .collect();
-            let scan_range = if one_before.as_bool() {
-                let res = BckLspLst::new(
-                    series_info.clone(),
+            if filter_rts.as_ref().map_or(true, |fs| fs.contains(&ks.rt())) {
+                let opts = crate::events3::ks::lsp_fwd_msp_multi::Opts::new(
+                    MSP_LIMIT_DEF,
+                    LSP_LIMIT_DEF,
+                    MSP_RESERVE_MIN,
+                    MSP_PREOPEN_MIN,
+                    LSP_SINGLE_BUF_MAX,
+                );
+                let msps: VecDeque<_> = crate::events3::mspbck::msp_bck(
                     ks.clone(),
-                    msps.clone(),
-                    Some(range.beg()),
+                    series_info.clone(),
+                    range.beg(),
+                    cl.as_ref().clone(),
+                    scyopts.clone(),
+                )
+                .await?
+                .into_iter()
+                .map(MspEv::from)
+                .collect();
+                let scan_range = if one_before.as_bool() {
+                    let res = BckLspLst::new(
+                        series_info.clone(),
+                        ks.clone(),
+                        msps.clone(),
+                        Some(range.beg()),
+                        scyopts.clone(),
+                        cl.as_ref().clone(),
+                    )
+                    .await?;
+                    let range_beg_before = res
+                        .lsps()
+                        .iter()
+                        .filter_map(|(msp, lsp)| lsp.as_ref().map(|lsp| msp.to_ts(*lsp)))
+                        .filter(|ts| *ts < range.beg())
+                        .max()
+                        .unwrap_or(range.beg());
+
+                    // TODO check log what timestamp we find for each RT
+                    info!(
+                        "cl_ks_merged  build  one_before  {:6}  {:6}  range_beg_before {}  range.beg {}",
+                        cl.tag(),
+                        ks.rt(),
+                        range_beg_before,
+                        range.beg()
+                    );
+
+                    ScyllaSeriesRange::new(range_beg_before, range.end())
+                } else {
+                    range.clone()
+                };
+                let stream = crate::events3::ks::lsp_fwd_msp_multi::LspFwdMspMulti::new(
+                    ks.clone(),
+                    series_info.clone(),
+                    scan_range,
+                    opts,
                     scyopts.clone(),
                     cl.as_ref().clone(),
-                )
-                .await?;
-                let range_beg_before = res
-                    .lsps()
-                    .iter()
-                    .filter_map(|(msp, lsp)| lsp.as_ref().map(|lsp| msp.to_ts(*lsp)))
-                    .filter(|ts| *ts < range.beg())
-                    .max()
-                    .unwrap_or(range.beg());
-                debug!(
-                    "cl_ks_merged  one_before  range_beg_before {range_beg_before}  range.beg {}",
-                    range.beg()
+                    msps,
                 );
-                ScyllaSeriesRange::new(range_beg_before, range.end())
-            } else {
-                range.clone()
-            };
-            let stream = crate::events3::ks::lsp_fwd_msp_multi::LspFwdMspMulti::new(
-                ks.clone(),
-                series_info.clone(),
-                scan_range,
-                opts,
-                scyopts.clone(),
-                cl.as_ref().clone(),
-                msps,
-            );
-            let stream = streams::withlenhisto::WithLenHisto::new(
-                stream,
-                format!(
-                    "after-LspFwdMspMulti-{}-{}-{}",
-                    cl.tag(),
-                    ks.name(),
-                    ks.rt().debug_tag()
-                ),
-            );
-            inps.push(stream);
+                let stream = streams::withlenhisto::WithLenHisto::new(
+                    stream,
+                    format!(
+                        "after-LspFwdMspMulti-{}-{}-{}",
+                        cl.tag(),
+                        ks.name(),
+                        ks.rt().debug_tag()
+                    ),
+                );
+                inps.push(stream);
+            }
         }
     }
     let stream = crate::events3::ks::lspmerge::LspMerge::new(inps, LSP_LIMIT_DEF);

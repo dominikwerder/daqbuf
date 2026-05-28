@@ -34,7 +34,16 @@ pub async fn scylla_channel_event_stream(
     trace!("scylla_channel_event_stream");
     let series_info = SeriesInfo::from(&chconf);
     let one_before = OneBeforeFlag::from_bool(evq.need_one_before_range());
-    let stream = cl_ks_merged(series_info, evq.range().clone(), one_before, scyqueue.clone(), scyopts).await?;
+    let filter_rts = evq.use_rt().map(|x| vec![x]);
+    let stream = cl_ks_merged(
+        series_info,
+        evq.range().clone(),
+        one_before,
+        filter_rts,
+        scyqueue.clone(),
+        scyopts,
+    )
+    .await?;
     Ok(Box::pin(stream))
 }
 
@@ -61,7 +70,8 @@ impl EventsReadProvider for ScyllaEventReadProvider {
                 );
                 let range = evq.range().clone();
                 let one_before = OneBeforeFlag::from_bool(evq.need_one_before_range());
-                let stream = cl_ks_merged(series_info, range, one_before, scyqu, self.scyopts.clone());
+                let filter_rts = evq.use_rt().map(|x| vec![x]);
+                let stream = cl_ks_merged(series_info, range, one_before, filter_rts, scyqu, self.scyopts.clone());
                 type StreamTy = Pin<Box<dyn Stream<Item = Sitemty<ChannelEvents>> + Send>>;
                 let stream = stream
                     .map(|x| match x {

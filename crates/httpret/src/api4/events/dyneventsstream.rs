@@ -52,10 +52,12 @@ pub async fn dyn_events_stream(
         );
         let range = evq.range().clone();
         let one_before = OneBeforeFlag::from_bool(evq.one_before_range());
+        let filter_rts = evq.use_rt().map(|x| vec![x]);
         let stream = cl_ks_merged(
             series_info,
             range.clone(),
             one_before,
+            filter_rts,
             scyqu,
             ScyllaOptsSubmit::no_choice(),
         )
