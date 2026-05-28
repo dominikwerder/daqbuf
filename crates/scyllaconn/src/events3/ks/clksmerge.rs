@@ -14,6 +14,7 @@ use netpod::OneBeforeFlag;
 use netpod::range::evrange::SeriesRange;
 use netpod::ttl::RetentionTime;
 use std::collections::VecDeque;
+use streams::print_first_ts::PrintFirstTs;
 
 macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
 macro_rules! info { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
@@ -116,6 +117,7 @@ pub async fn cl_ks_merged(
                         ks.rt().debug_tag()
                     ),
                 );
+                let stream = PrintFirstTs::new(stream, format!("{}-{}", cl.tag(), ks.name()));
                 inps.push(stream);
             }
         }

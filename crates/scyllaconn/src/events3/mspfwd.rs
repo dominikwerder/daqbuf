@@ -203,6 +203,9 @@ impl ReadMspFwdStream {
         scyopts: ScyllaOptsSubmit,
         scyqu: ScyllaQueueCluster,
     ) -> Self {
+        if limit < 10 {
+            warn!("potentially low limit {limit}");
+        }
         let limit = limit.max(1).min(40);
         Self {
             ks,

@@ -46,10 +46,14 @@ pub async fn msp_bck(
     let ks = ks.clone();
     let series = series_info.id();
     let win = DtNano::from_sec(ks.rt().msp_rollover_ivl_on_read().as_secs());
-    debug!("{clt}  {kst}  win {win} h", win = win.sec_u64() / 60 / 60);
+    let limit = 10;
+    debug!(
+        "{clt}  {kst}  win {win} h  limit {limit}",
+        win = win.sec_u64() / 60 / 60
+    );
     let range = ScyllaSeriesRange::new(beg.sub(win), beg);
     // TODO change the limit to larger for non-test-data
-    let mut stream = ReadMspFwdStream::new(ks, series, range, RangeExcl::None, 1, scyopts, scyqu);
+    let mut stream = ReadMspFwdStream::new(ks, series, range, RangeExcl::None, limit, scyopts, scyqu);
     let mut msps = VecDeque::new();
     while let Some(x) = stream.next().await {
         msps.extend(x?);
