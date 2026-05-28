@@ -42,6 +42,7 @@ where
     range: NanoRange,
     range_str: String,
     one_before: bool,
+    one_before_done: bool,
     stats: RangeFilterStats,
     slot1: Option<ITY>,
     have_range_complete: bool,
@@ -75,6 +76,7 @@ where
             range_str: format!("{:?}", range),
             range,
             one_before,
+            one_before_done: false,
             stats: RangeFilterStats::new(),
             slot1: None,
             have_range_complete: false,
@@ -285,8 +287,14 @@ where
     type Item = Sitemty<ITY>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
-        let span1 = span!(Level::INFO, "RangeFilter2", range = tracing::field::Empty);
+        let span1 = span!(
+            Level::INFO,
+            "RangeFilter2",
+            range = tracing::field::Empty,
+            one_before = tracing::field::Empty
+        );
         span1.record("range", &self.range_str.as_str());
+        span1.record("one_before", &self.one_before);
         let _spg = span1.enter();
         RangeFilter2::poll_next(self, cx)
     }
@@ -297,9 +305,10 @@ where
     INP: Stream<Item = Sitemty<ITY>> + Unpin,
     ITY: MergeableTy,
 {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.debug_struct("RangeFilter2")
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        fmt.debug_struct("RangeFilter2")
             .field("stats", &self.stats)
+            .field("one_before", &self.one_before)
             .finish()
     }
 }
