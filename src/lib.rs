@@ -25,6 +25,7 @@ pub mod logfilter;
 pub mod logqueue;
 pub mod monotonic;
 pub mod needminbuffer;
+pub mod print_first_ts;
 pub mod print_on_done;
 pub mod rangefilter2;
 #[cfg(test)]
