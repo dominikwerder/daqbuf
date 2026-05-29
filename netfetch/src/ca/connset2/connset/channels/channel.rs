@@ -235,6 +235,10 @@ impl Channel {
         self.conf.name()
     }
 
+    pub fn config(&self) -> &ChannelConfig {
+        &self.conf
+    }
+
     pub fn channel_info(&self) -> ChannelInfo {
         ChannelInfo {
             state: match &self.state {

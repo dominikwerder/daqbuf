@@ -27,6 +27,7 @@ use futures::FutureExt;
 use futures::Stream;
 use futures::StreamExt;
 use futures::TryFutureExt;
+use serde::Serialize;
 use stats::rand_xoshiro::Xoshiro128PlusPlus;
 use std::collections::VecDeque;
 use std::fmt;
@@ -342,14 +343,14 @@ impl CaConnComm {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub enum StatusState {
     Connecting,
     Connected(connected::StatusInfo),
     Done,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct StatusInfo {
     pub ts: time::UtcDateTime,
     pub addr: SocketAddrV4,
@@ -425,10 +426,10 @@ impl CaConn {
         CaConnTask::new(self)
     }
 
-    fn make_status_info(self: Pin<&mut Self>) -> StatusInfo {
+    fn status_info(&mut self) -> StatusInfo {
         // We only consider state which is sync available here.
         // For other information, we take the last known values.
-        match &self.state {
+        match &mut self.state {
             State::Connecting(st) => StatusInfo {
                 ts: time::UtcDateTime::now(),
                 addr: self.remote_addr,
@@ -466,7 +467,7 @@ impl CaConn {
         }
         if self.out_buf.len() < OUT_QUEUE_LEN_MAX {
             trace!("TODO  poll_own_ticker  emit status info");
-            let v = self.as_mut().make_status_info();
+            let v = self.as_mut().status_info();
             let item = CaConnItem::StatusInfo(v);
             self.out_buf.push_back_force(item);
             Ready(Some(()))
@@ -538,7 +539,17 @@ impl CaConn {
         }
         if let Ok(cmd2) = serde_json::from_value::<Cmd>(cmd.clone()) {
             info!("{cmd2:?}");
-            if cmd2.caconn_cmd == "ca_conn_state_proto" {
+            if cmd2.caconn_cmd == "conn_state_channel_full" {
+                let status_info = self.status_info();
+                async move {
+                    let val = serde_json::to_value(&status_info).unwrap();
+                    if tx.send(val).await.is_err() {
+                        // TODO metrics
+                    }
+                    Ok(())
+                }
+                .box2()
+            } else if cmd2.caconn_cmd == "ca_conn_state_proto" {
                 let x = match &mut self.state {
                     State::Connecting(st1) => ready(json!({
                         "error": "CaConn  State::Connecting",

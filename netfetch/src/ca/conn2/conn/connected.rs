@@ -25,6 +25,7 @@ use futures::FutureExt;
 use futures::Stream;
 use futures::StreamExt;
 use netpod::futdbg::FutDbgBox;
+use serde::Serialize;
 use stats::mett::CaConnConnectedMetrics;
 use std::collections::VecDeque;
 use std::fmt;
@@ -87,18 +88,7 @@ pub struct ConnectedItem {
     pub inner: ItemInner,
 }
 
-#[derive(Debug)]
-pub struct StatusChannel {
-    pub name: String,
-    pub test_monitor_recv_cnt: u64,
-}
-
-#[derive(Debug)]
-pub struct StatusChannels {
-    pub status_channels: Vec<StatusChannel>,
-}
-
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub enum StatusInfoState {
     Init,
     Handshake,
@@ -106,9 +96,10 @@ pub enum StatusInfoState {
     Done,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct StatusInfo {
-    pub status: StatusInfoState,
+    pub state: StatusInfoState,
+    pub socket_state: serde_json::Value,
 }
 
 #[derive(Debug)]
@@ -151,19 +142,24 @@ impl Connected {
         &mut self.inp_cmd_buf
     }
 
-    pub fn status_info(&self) -> StatusInfo {
+    pub fn status_info(&mut self) -> StatusInfo {
+        let ss = self.status_socket();
         match &self.state {
             State::Init(..) => StatusInfo {
-                status: StatusInfoState::Init,
+                state: StatusInfoState::Init,
+                socket_state: ss,
             },
             State::Handshake(..) => StatusInfo {
-                status: StatusInfoState::Handshake,
+                state: StatusInfoState::Handshake,
+                socket_state: ss,
             },
             State::ActiveCa(st) => StatusInfo {
-                status: StatusInfoState::ActiveCa(st.status_info()),
+                state: StatusInfoState::ActiveCa(st.status_info()),
+                socket_state: ss,
             },
             State::Done => StatusInfo {
-                status: StatusInfoState::Done,
+                state: StatusInfoState::Done,
+                socket_state: ss,
             },
         }
     }

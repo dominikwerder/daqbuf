@@ -99,6 +99,57 @@ fn handle_test01(
     }
 }
 
+fn connset_state_channel_full(
+    self1: Pin<&mut ConnSet>,
+    cmd: String,
+    mut tx: asynchan::Sender<serde_json::Value>,
+    _cx: &mut Context,
+) -> Option<FutDbg<Result<(), Error>>> {
+    use serde_json::json;
+    #[derive(Debug, Deserialize)]
+    struct Cmd {
+        tmp: Option<String>,
+    }
+    if let Ok(cmd2) = serde_json::from_str::<Cmd>(&cmd) {
+        let _ = &cmd2.tmp;
+        info!("{cmd2:?}");
+        let chsas = self1
+            .ca_conns
+            .iter()
+            .map(|(&addr, connreg)| (addr, connreg.shutting_down, connreg.comm.clone()))
+            .collect::<Vec<_>>();
+        let chs = self1
+            .channels
+            .iter()
+            .map(|(chn, cc)| (chn.clone(), (cc.channel.channel_info())))
+            .collect::<BTreeMap<_, _>>();
+        let fut = async move {
+            let mut conns = Vec::new();
+            for (addr, shtdwn, mut comm) in chsas {
+                let cmd = json!({
+                   "caconn_cmd": "conn_state_channel_full",
+                });
+                let res = comm.dyn_cmd_v03(cmd).await;
+                conns.push((addr, shtdwn, res));
+            }
+            let x = json!({
+                "chs": chs,
+                "conns": conns,
+            });
+            let _ = tx.try_send(x);
+            Ok(())
+        };
+        Some(fut.box2())
+    } else {
+        let val = serde_json::json!({
+            "type": "error",
+            "msg": format!("command bad"),
+        });
+        let _ = tx.try_send(val);
+        None
+    }
+}
+
 fn connset_state_channel_all(
     self1: Pin<&mut ConnSet>,
     cmd: String,
@@ -192,6 +243,8 @@ impl ConnSet {
             info!("{cmd2:?}");
             if cmd2.connset_cmd == "test01" {
                 handle_test01(self, cmd, tx, cx)
+            } else if cmd2.connset_cmd == "connset_state_channel_full" {
+                connset_state_channel_full(self, cmd, tx, cx)
             } else if cmd2.connset_cmd == "connset_state_channel_all" {
                 connset_state_channel_all(self, cmd, tx, cx)
             } else if cmd2.connset_cmd == "ca_conn_state_proto" {

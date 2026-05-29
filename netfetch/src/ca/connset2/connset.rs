@@ -434,13 +434,13 @@ impl ConnSet {
         // TODO process periodic status info
         match e1.state {
             conn2::conn::StatusState::Connecting => {}
-            conn2::conn::StatusState::Connected(e2) => match e2.status {
+            conn2::conn::StatusState::Connected(e2) => match e2.state {
                 conn2::conn::connected::StatusInfoState::Init => {}
                 conn2::conn::connected::StatusInfoState::Handshake => {}
                 conn2::conn::connected::StatusInfoState::ActiveCa(e3) => match e3.state {
                     conn2::conn::activeca::StatusInfoState::Running(st1, e4) => {
                         for e5 in e4.handlers {
-                            match e5.status {
+                            match e5.state {
                                 conn2::conn::channelheap::StatusChannelHandlerState::Active(e6) => {
                                     if false {
                                         if e6.counters.event_add_res_cnt > 6 {
@@ -617,7 +617,7 @@ impl ConnSet {
     }
 
     fn handle_cmd_dyn_v1(
-        mut self: Pin<&mut Self>,
+        self: Pin<&mut Self>,
         cmd: String,
         mut tx: asynchan::Sender<serde_json::Value>,
         cx: &mut Context,

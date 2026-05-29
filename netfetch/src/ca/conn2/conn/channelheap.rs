@@ -226,7 +226,7 @@ pub enum StatusChannelHandlerState {
 pub struct StatusChannelHandler {
     pub name: String,
     pub cid: Cid,
-    pub status: StatusChannelHandlerState,
+    pub state: StatusChannelHandlerState,
 }
 
 #[derive(Debug, Serialize)]
@@ -403,13 +403,13 @@ impl ChannelHeap {
                     StatusChannelHandler {
                         name: e.name.clone(),
                         cid: cid.clone(),
-                        status: StatusChannelHandlerState::Active(ha.handler.status_info()),
+                        state: StatusChannelHandlerState::Active(ha.handler.status_info()),
                     }
                 }
                 ChHandler::Done => StatusChannelHandler {
                     name: e.name.clone(),
                     cid: cid.clone(),
-                    status: StatusChannelHandlerState::Done,
+                    state: StatusChannelHandlerState::Done,
                 },
             })
             .collect();
