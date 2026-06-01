@@ -29,7 +29,6 @@ use futures::future::ready;
 use hashbrown::HashMap;
 use serde::Serialize;
 use stats::mett::CaConnConnectedMetrics;
-use std::collections::VecDeque;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task;
@@ -47,7 +46,9 @@ macro_rules! trace2 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; 
 macro_rules! trace3 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
 macro_rules! trace4 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
 macro_rules! trace_pending { ($($arg:tt)*) => { if false { trace!("{}  Pending", format_args!($($arg)*)); } }; }
-macro_rules! todo_shutdown { ($($arg:tt)*) => { if false { log::info!($($arg)*); } }; }
+
+macro_rules! todo_shutdown { ($($arg:tt)*) => { if true { log::debug!($($arg)*); } }; }
+macro_rules! debug_shutdown { ($($arg:tt)*) => { if true { log::debug!($($arg)*); } }; }
 
 autoerr::create_error_v1!(
     name(Error, "ChannelHeap"),
@@ -616,7 +617,7 @@ impl ChannelHeap {
 
     pub fn disconnect_on_idle(&mut self) {
         let selfname = "disconnect_on_idle";
-        info!("{selfname}");
+        debug_shutdown!("{selfname}");
         self.disconnect_on_idle = true;
     }
 

@@ -36,6 +36,8 @@ macro_rules! trace3 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; 
 macro_rules! trace4 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
 macro_rules! trace_pending { ($($arg:tt)*) => { if false { trace!("{}  Pending", format_args!($($arg)*)); } }; }
 
+macro_rules! debug_shutdown { ($($arg:tt)*) => { if true { log::debug!($($arg)*); } }; }
+
 fn _keep() {
     info!("");
     trace2!("");
@@ -339,7 +341,7 @@ impl Stream for Running {
                     },
                     Ready(None) => {
                         hpp.mark_progress();
-                        warn!("------------------------------- ========  TODO introduce another cleanup state?");
+                        debug_shutdown!("Done");
                         self.state = State::Done;
                     }
                     Pending => {

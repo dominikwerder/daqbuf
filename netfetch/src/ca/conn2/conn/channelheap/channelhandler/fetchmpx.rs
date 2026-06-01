@@ -441,7 +441,6 @@ impl Stream for Fetchmpx {
                     }
                 }
                 State::Closing1 => {
-                    debug!("{selfname}  TODO  nothing to do yet, go directly to Done");
                     hpp.mark_progress();
                     self.state = State::Done;
                 }
@@ -449,7 +448,7 @@ impl Stream for Fetchmpx {
                     self.state = State::Done2;
                 }
                 State::Done2 => {
-                    error!("{lf}{selfname}  polled after done{lf}", lf = "\n\n");
+                    error!("{selfname}  polled after done");
                 }
             }
             break if hpp.have_progress() {

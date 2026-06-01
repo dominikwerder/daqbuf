@@ -638,9 +638,9 @@ impl Stream for ChannelHandler {
                         }
                         Ready(None) => {
                             hpp.mark_progress();
-                            debug!(" =-= =-= =-= =-= =-= =-= =-= =-= =-=  move to Closing1");
+                            let chn = self2.conf.name();
                             if self2.removing.is_none() {
-                                warn!("move to Closing1, but apparently not on user command");
+                                warn!("move to Closing1, but apparently not on user command  {chn}");
                             }
                             let item = if let Some(sid) = self2.sid() {
                                 let msg = CaMsg::from_ty_ts(
@@ -655,7 +655,7 @@ impl Stream for ChannelHandler {
                                     inner: ItemInner::ProtoOut(msg),
                                 })
                             } else {
-                                warn!("can not close channel, maybe never fully created");
+                                warn!("can not close channel, maybe never fully created  {chn}");
                                 // seems like the channel got never created.
                                 // TODO except in the case when we send create but did not receive response.
                                 None

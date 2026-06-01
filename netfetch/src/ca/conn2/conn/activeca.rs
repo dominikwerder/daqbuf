@@ -759,12 +759,13 @@ impl ActiveCa {
                     }
                 }
                 State::Done => {
-                    error!(
-                        "{selfname}  State::Done  {}  {}",
-                        hpp.have_progress(),
-                        hpp.have_pending()
-                    );
-                    // TODO when in Done, we should no longer be stuck with Pending on something.
+                    if hpp.have_pending() || hpp.have_progress() {
+                        error!(
+                            "{selfname}  State::Done  {}  {}",
+                            hpp.have_progress(),
+                            hpp.have_pending()
+                        );
+                    }
                 }
             }
             break if hpp.have_progress() {
