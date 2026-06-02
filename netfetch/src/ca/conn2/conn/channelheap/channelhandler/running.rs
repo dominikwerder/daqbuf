@@ -3,6 +3,7 @@ pub(super) const INP_BUF_CAP: usize = 64;
 use super::fetchmpx::Fetchmpx;
 use crate::asynchan;
 use crate::ca::conn2::caids::CaDbrTy;
+use crate::ca::conn2::caids::Cid;
 use crate::ca::conn2::caids::Sid;
 use crate::ca::conn2::channel_event_value::ChannelEventValue;
 use crate::ca::conn2::conn::channelheap::ProtoRxItem;
@@ -36,6 +37,7 @@ macro_rules! trace3 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; 
 macro_rules! trace4 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
 macro_rules! trace_pending { ($($arg:tt)*) => { if false { trace!("{}  Pending", format_args!($($arg)*)); } }; }
 
+macro_rules! todo_shutdown { ($($arg:tt)*) => { if true { log::debug!($($arg)*); } }; }
 macro_rules! debug_shutdown { ($($arg:tt)*) => { if true { log::debug!($($arg)*); } }; }
 
 fn _keep() {
@@ -74,6 +76,7 @@ pub enum RunningItem {
     CaMsgOut(CaMsg),
     CaMsgOutIoid(CaMsg, Sid, Instant),
     CaMsgOutSubid(CaMsg, Instant),
+    SubidRemove(Cid),
     TestValue(crate::ca::connset2::connset::TestValue),
     LocalLog(locallog::Entry),
     ChannelStatus(ChannelStatus),
@@ -98,6 +101,7 @@ impl State {
 #[derive(Debug)]
 pub struct Running {
     state: State,
+    cid: Cid,
     sid: Sid,
     chi: ChannelInfoResult,
     removing: bool,
@@ -110,6 +114,7 @@ pub struct Running {
 
 impl Running {
     pub fn new(
+        cid: Cid,
         sid: Sid,
         scalar_type: ScalarType,
         shape: Shape,
@@ -120,12 +125,14 @@ impl Running {
         Self {
             state: State::Normal(Fetchmpx::new(
                 chi.series.to_series(),
+                cid.clone(),
                 sid.clone(),
                 scalar_type.clone(),
                 shape.clone(),
                 ca_dbr_ty.clone(),
                 chconf,
             )),
+            cid,
             sid,
             chi,
             removing: false,
@@ -142,7 +149,7 @@ impl Running {
     }
 
     pub fn trigger_remove(&mut self) {
-        error!("TODO set up teardown");
+        todo_shutdown!("TODO set up teardown");
         self.removing = true;
         match &mut self.state {
             State::Normal(x) => {
@@ -310,6 +317,10 @@ impl Stream for Running {
                                 }
                                 fetchmpx::FetchmpxItem::CaMsgOutSubid(msg, tscmd) => {
                                     let g = RunningItem::CaMsgOutSubid(msg, tscmd);
+                                    break Ready(Some(Ok(g)));
+                                }
+                                fetchmpx::FetchmpxItem::SubidRemove(cid) => {
+                                    let g = RunningItem::SubidRemove(cid);
                                     break Ready(Some(Ok(g)));
                                 }
                                 fetchmpx::FetchmpxItem::TestValue(x) => {

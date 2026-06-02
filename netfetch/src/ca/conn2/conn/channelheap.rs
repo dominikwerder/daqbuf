@@ -327,9 +327,17 @@ impl SubidRegistry {
     fn remove(&mut self, cid: Cid) -> usize {
         if let Some(subid) = self.rev.remove(&cid) {
             self.subids.remove(&subid);
+            self.rev.remove(&cid);
             1
         } else {
             0
+        }
+    }
+
+    fn remove_subid(&mut self, subid: Subid) {
+        if let Some((cid, _)) = self.subids.get(&subid) {
+            self.rev.remove(cid);
+            self.subids.remove(&subid);
         }
     }
 }
@@ -629,7 +637,7 @@ impl ChannelHeap {
         }
         let nrem = self.subid_reg.remove(cid.clone());
         if nrem != 0 {
-            error!("{selfname}  {nrem} subids still removed");
+            warn!("{selfname}  {nrem} subids still removed");
         }
         self.wakeup_cids.remove(&cid);
     }
@@ -678,6 +686,10 @@ impl ChannelHeap {
                                     let subid = subid_reg.register(cid, tsnow);
                                     ca_msg.overwrite_subid(subid.to_u32());
                                     PollHandlerItem::ProtoOut(ca_msg)
+                                }
+                                channelhandler::ItemInner::SubidRemove(cid) => {
+                                    subid_reg.remove(cid);
+                                    PollHandlerItem::None
                                 }
                                 channelhandler::ItemInner::ChannelInfoQuery(item) => {
                                     //
@@ -1108,7 +1120,7 @@ impl ChannelHeap {
                     }
                     let donecb = |cheap: &mut ChannelHeap| {
                         let selfname = "ChannelHeap  handle_command  RemoveChannel  fut  donecb";
-                        error!("{selfname}  TODO impl donecb");
+                        todo_shutdown!("{selfname}  TODO impl donecb");
                         for cid in cids {
                             cheap.remove_cid(cid);
                         }

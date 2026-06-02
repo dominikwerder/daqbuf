@@ -6,6 +6,7 @@ const CREATE_SEND_TIMEOUT: Duration = Duration::from_millis(20000);
 //
 
 use crate::ca::conn2;
+use crate::ca::conn2::caids::Cid;
 use crate::ca::conn2::channel_event_value::ChannelEventValue;
 use crate::ca::conn2::locallog;
 use crate::ca::progpend::HaveProgressPending;
@@ -42,7 +43,10 @@ macro_rules! trace2 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; 
 macro_rules! trace3 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
 macro_rules! trace4 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
 macro_rules! trace_pending { ($($arg:tt)*) => { if false { trace!("{}  Pending", format_args!($($arg)*)); } }; }
-macro_rules! trace_shutdown { ($($arg:tt)*) => { if true { log::debug!($($arg)*); } }; }
+
+macro_rules! debug_transition_state { ($($arg:tt)*) => { if false { log::debug!($($arg)*); } }; }
+macro_rules! debug_shutdown { ($($arg:tt)*) => { if false { log::debug!($($arg)*); } }; }
+macro_rules! todo_shutdown { ($($arg:tt)*) => { if false { log::debug!($($arg)*); } }; }
 
 autoerr::create_error_v1!(
     name(Error, "FetchMonitoring"),
@@ -54,19 +58,22 @@ autoerr::create_error_v1!(
 #[derive(Debug, Clone)]
 enum StateDirection {
     None,
-    RemoveMonitorSend,
+    Disable,
     Enable,
+    Closing,
 }
 
 #[derive(Debug)]
 pub enum MonitoringItem {
     ProtoOutSubid(CaMsg, Instant),
+    SubidRemove(Cid),
     ChannelEventValue(ChannelEventValue),
     TestValue(crate::ca::connset2::connset::TestValue),
     LocalLog(locallog::Entry),
 }
 
 fn transition_state(old: &mut State, new: State, llog: &mut locallog::LocalLog) {
+    debug_transition_state!("{}", format!("transition  {} -> {}", old, new));
     llog.push(format!("transition  {} -> {}", old, new));
     *old = new;
 }
@@ -79,6 +86,9 @@ enum State {
     Monitoring(FutDbg<()>, StateDirection),
     RemoveMonitorSend(StateDirection),
     RemoveMonitorRecv(FutDbg<()>, StateDirection),
+    RemoveSubidSend(StateDirection),
+    Closing1,
+    Done,
 }
 
 impl fmt::Display for State {
@@ -90,6 +100,9 @@ impl fmt::Display for State {
             State::Monitoring(..) => write!(fmt, "Monitoring"),
             State::RemoveMonitorSend(..) => write!(fmt, "RemoveMonitorSend"),
             State::RemoveMonitorRecv(..) => write!(fmt, "RemoveMonitorRecv"),
+            State::RemoveSubidSend(..) => write!(fmt, "RemoveSubidSend"),
+            State::Closing1 => write!(fmt, "Closing1"),
+            State::Done => write!(fmt, "Done"),
         }
     }
 }
@@ -98,6 +111,7 @@ impl fmt::Display for State {
 pub struct FetchMonitoring {
     state: State,
     series: SeriesId,
+    cid: Cid,
     sid: Sid,
     scalar_type: ScalarType,
     shape: Shape,
@@ -110,10 +124,18 @@ pub struct FetchMonitoring {
 }
 
 impl FetchMonitoring {
-    pub fn new(series: SeriesId, sid: Sid, scalar_type: ScalarType, shape: Shape, ca_dbr_ty: CaDbrTy) -> Self {
+    pub fn new(
+        series: SeriesId,
+        cid: Cid,
+        sid: Sid,
+        scalar_type: ScalarType,
+        shape: Shape,
+        ca_dbr_ty: CaDbrTy,
+    ) -> Self {
         Self {
             state: State::DoNothing(),
             series,
+            cid,
             sid,
             scalar_type,
             shape,
@@ -139,12 +161,13 @@ impl FetchMonitoring {
     }
 
     pub fn transition_to_enable(&mut self) -> () {
-        self.llog.push(format!("transition_to_enable  {}", self.state));
+        let selfname = "transition_to_enable";
+        self.llog.push(format!("{selfname}  {}", self.state));
         match &mut self.state {
             State::DoNothing(..) => {
                 transition_state(
                     &mut self.state,
-                    State::CreateMonitorSend(StateDirection::None),
+                    State::CreateMonitorSend(StateDirection::Enable),
                     &mut self.llog,
                 );
             }
@@ -157,26 +180,70 @@ impl FetchMonitoring {
             State::RemoveMonitorRecv(_, stdir) => {
                 *stdir = StateDirection::Enable;
             }
+            State::RemoveSubidSend(stdir) => {
+                *stdir = StateDirection::Enable;
+            }
+            State::Closing1 => {
+                debug_shutdown!("{selfname}  in Closing1");
+            }
+            State::Done => {
+                debug_shutdown!("{selfname}  in Done");
+            }
         }
     }
 
+    #[allow(unused)]
     pub fn transition_to_disable(&mut self) -> () {
         let selfname = "transition_to_disable";
-        trace_shutdown!("{selfname}");
+        debug_shutdown!("{selfname}");
         self.llog.push(format!("{selfname}  {}", self.state));
         match &mut self.state {
             State::DoNothing() => {}
             State::CreateMonitorSend(stdir) => {
-                *stdir = StateDirection::RemoveMonitorSend;
+                *stdir = StateDirection::Disable;
             }
             State::CreateMonitorRecv(_, stdir) => {
-                *stdir = StateDirection::RemoveMonitorSend;
+                *stdir = StateDirection::Disable;
             }
             State::Monitoring(_, stdir) => {
-                *stdir = StateDirection::RemoveMonitorSend;
+                *stdir = StateDirection::Disable;
             }
             State::RemoveMonitorSend(..) => {}
             State::RemoveMonitorRecv(..) => {}
+            State::RemoveSubidSend(..) => {}
+            State::Closing1 => {
+                debug_shutdown!("{selfname}  in Closing1");
+            }
+            State::Done => {
+                debug_shutdown!("{selfname}  in Done");
+            }
+        }
+    }
+
+    fn transition_to_closing(&mut self) -> () {
+        let selfname = "transition_to_closing";
+        debug_shutdown!("{selfname}");
+        self.llog.push(format!("{selfname}  {}", self.state));
+        match &mut self.state {
+            State::DoNothing() => {}
+            State::CreateMonitorSend(stdir) => {
+                *stdir = StateDirection::Closing;
+            }
+            State::CreateMonitorRecv(_, stdir) => {
+                *stdir = StateDirection::Closing;
+            }
+            State::Monitoring(_, stdir) => {
+                *stdir = StateDirection::Closing;
+            }
+            State::RemoveMonitorSend(..) => {}
+            State::RemoveMonitorRecv(..) => {}
+            State::RemoveSubidSend(..) => {}
+            State::Closing1 => {
+                debug_shutdown!("{selfname}  in Closing1");
+            }
+            State::Done => {
+                debug_shutdown!("{selfname}  in Done");
+            }
         }
     }
 
@@ -192,8 +259,15 @@ impl FetchMonitoring {
     }
 
     pub fn inp_done(&mut self) {
-        trace3!("FetchPolling  inp_done");
+        let selfname = "inp_done";
+        debug_shutdown!("{selfname}");
         self.inp_done = true;
+    }
+
+    pub fn trigger_closing(&mut self, reason: conn2::conn::channelheap::channelhandler::ClosingReason) {
+        let selfname = "trigger_closing";
+        todo_shutdown!("{selfname}  {}  {:?}", self.sid, reason);
+        self.transition_to_closing();
     }
 
     fn handle_received_item(&mut self, item: ProtoRxItem) -> Poll<Option<Option<Result<MonitoringItem, Error>>>> {
@@ -260,23 +334,31 @@ impl FetchMonitoring {
                     ret
                 }
                 State::RemoveMonitorRecv(_, stdir) => {
+                    debug_shutdown!("{selfname}  State::RemoveMonitorRecv  {}", item.msg.ty.cmd_title());
                     match item.msg.ty {
                         CaMsgTy::EventAddResEmpty(..) | CaMsgTy::EventCancelRes(..) => {
-                            if let StateDirection::Enable = stdir {
-                                transition_state(
-                                    &mut self2.state,
-                                    State::CreateMonitorSend(StateDirection::None),
-                                    &mut self2.llog,
-                                );
-                            } else {
-                                transition_state(&mut self2.state, State::DoNothing(), &mut self2.llog);
-                            }
+                            let stdir = stdir.clone();
+                            let stn = State::RemoveSubidSend(stdir);
+                            transition_state(&mut self2.state, stn, &mut self2.llog);
                         }
                         CaMsgTy::EventAddRes(..) => {}
                         _ => {
                             info!("{selfname}  item while in RemoveMonitorRecv  {item:?}");
                         }
                     }
+                    Ready(Some(None))
+                }
+                State::RemoveSubidSend(..) => {
+                    self2.inp_buf.clear();
+                    Ready(Some(None))
+                }
+                State::Closing1 => {
+                    debug_shutdown!("{selfname}  item in Closing1");
+                    todo_shutdown!("{selfname}  TODO  ignore input to avoid wait?");
+                    Ready(Some(None))
+                }
+                State::Done => {
+                    debug_shutdown!("{selfname}  item in Done");
                     Ready(Some(None))
                 }
             }
@@ -351,30 +433,29 @@ impl FetchMonitoring {
                         hpp.mark_pending();
                     }
                 },
-                State::Monitoring(to, stdir) => {
-                    if let StateDirection::RemoveMonitorSend = stdir {
+                State::Monitoring(to, stdir) => match stdir {
+                    StateDirection::Disable | StateDirection::Closing => {
                         hpp.mark_progress();
-                        transition_state(
-                            &mut self2.state,
-                            State::RemoveMonitorSend(StateDirection::None),
-                            &mut self2.llog,
-                        );
-                    } else {
-                        match to.poll_unpin(cx) {
-                            Ready(()) => {
-                                hpp.mark_progress();
-                                self2.llog.push(format!("{selfname}  Monitoring  Timeout  7d956c9"));
-                                let stdir = stdir.clone();
-                                let dur = self2.duration_jitter(SILENCE_MONITOR_WAKEUP);
-                                let fut = tokio::time::sleep(dur).box2();
-                                transition_state(&mut self2.state, State::Monitoring(fut, stdir), &mut self2.llog);
-                            }
-                            Pending => {
-                                hpp.mark_pending();
-                            }
-                        }
+                        let stdir = stdir.clone();
+                        let stn = State::RemoveMonitorSend(stdir);
+                        debug_shutdown!("State::Monitoring  go to {stn:?}");
+                        transition_state(&mut self2.state, stn, &mut self2.llog);
                     }
-                }
+                    StateDirection::Enable => match to.poll_unpin(cx) {
+                        Ready(()) => {
+                            hpp.mark_progress();
+                            self2.llog.push(format!("{selfname}  Monitoring  Timeout  7d956c9"));
+                            let stdir = stdir.clone();
+                            let dur = self2.duration_jitter(SILENCE_MONITOR_WAKEUP);
+                            let fut = tokio::time::sleep(dur).box2();
+                            transition_state(&mut self2.state, State::Monitoring(fut, stdir), &mut self2.llog);
+                        }
+                        Pending => {
+                            hpp.mark_pending();
+                        }
+                    },
+                    StateDirection::None => {}
+                },
                 State::RemoveMonitorSend(stdir) => {
                     hpp.mark_progress();
                     let tsnow = Instant::now();
@@ -393,14 +474,13 @@ impl FetchMonitoring {
                     let stdir = stdir.clone();
                     transition_state(&mut self2.state, State::RemoveMonitorRecv(fut, stdir), &mut self2.llog);
                     let ret = MonitoringItem::ProtoOutSubid(msg, tsnow);
-                    return Ready(Some(Ok(ret)));
+                    break Ready(Some(Ok(ret)));
                 }
                 State::RemoveMonitorRecv(to, stdir) => {
-                    info!("{selfname}  {}", "RemoveMonitorRecv");
                     match to.poll_unpin(cx) {
                         Ready(()) => {
                             hpp.mark_progress();
-                            info!("{selfname}  RemoveMonitorRecv  Timeout  7d956c9");
+                            debug_shutdown!("{selfname}  RemoveMonitorRecv  Timeout  7d956c9");
                             // TODO return some error
                             // TODO check state direction
                             transition_state(&mut self2.state, State::DoNothing(), &mut self2.llog);
@@ -410,6 +490,41 @@ impl FetchMonitoring {
                         }
                     }
                 }
+                State::RemoveSubidSend(stdir) => {
+                    hpp.mark_progress();
+                    match stdir {
+                        StateDirection::None => {
+                            // TODO RemoveMonitorRecv should actually not accommodate StateDirection::None
+                            debug_shutdown!("{selfname}  State::RemoveMonitorRecv  dir None");
+                            let stn = State::DoNothing();
+                            transition_state(&mut self2.state, stn, &mut self2.llog);
+                        }
+                        StateDirection::Disable => {
+                            debug_shutdown!("{selfname}  State::RemoveMonitorRecv  dir Disable");
+                            let stn = State::DoNothing();
+                            transition_state(&mut self2.state, stn, &mut self2.llog);
+                        }
+                        StateDirection::Enable => {
+                            debug_shutdown!("{selfname}  State::RemoveMonitorRecv  dir Enable");
+                            let stdir = stdir.clone();
+                            let stn = State::CreateMonitorSend(stdir);
+                            transition_state(&mut self2.state, stn, &mut self2.llog);
+                        }
+                        StateDirection::Closing => {
+                            let stn = State::Closing1;
+                            transition_state(&mut self2.state, stn, &mut self2.llog);
+                        }
+                    }
+                    let ret = MonitoringItem::SubidRemove(self2.cid.clone());
+                    break Ready(Some(Ok(ret)));
+                }
+                State::Closing1 => {
+                    todo_shutdown!("TODO  emit all writes for shutdown");
+                    hpp.mark_progress();
+                    self.inp_done();
+                    self.state = State::Done;
+                }
+                State::Done => {}
             }
             break if hpp.have_progress() {
                 trace!("{selfname}  HPP:Progress");

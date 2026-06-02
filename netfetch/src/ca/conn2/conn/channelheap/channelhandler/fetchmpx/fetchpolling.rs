@@ -1,3 +1,4 @@
+use crate::ca::conn2;
 use crate::ca::conn2::ChannelEventValue;
 use crate::ca::conn2::caids::CaDbrTy;
 use crate::ca::conn2::caids::Sid;
@@ -34,13 +35,12 @@ macro_rules! trace3 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; 
 macro_rules! trace4 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
 macro_rules! trace_pending { ($($arg:tt)*) => { if false { trace!("{}  Pending", format_args!($($arg)*)); } }; }
 
+macro_rules! debug_transition_state { ($($arg:tt)*) => { if false { log::debug!($($arg)*); } }; }
+macro_rules! todo_shutdown { ($($arg:tt)*) => { if false { log::debug!($($arg)*); } }; }
+
 autoerr::create_error_v1!(
     name(Error, "FetchPolling"),
     enum variants {
-        // Register(#[from] dbpg::seriesbychannel::Error),
-        // CreateMonitorUnexpectedMessage,
-        // Recv,
-        // Timeout,
         Logic,
     },
 );
@@ -63,6 +63,7 @@ pub enum Item {
 }
 
 fn transition_state(old: &mut State, new: State, llog: &mut locallog::LocalLog) {
+    debug_transition_state!("{}", format!("transition  {} -> {}", old, new));
     llog.push(format!("transition  {} -> {}", old, new));
     *old = new;
 }
@@ -73,6 +74,8 @@ enum State {
     Idle(FutDbg<()>),
     SendReq(StateDirection),
     WaitRes(FutDbg<()>, StateDirection),
+    Closing1,
+    Done,
 }
 
 impl fmt::Display for State {
@@ -82,6 +85,8 @@ impl fmt::Display for State {
             State::Idle(..) => write!(fmt, "Idle"),
             State::SendReq(..) => write!(fmt, "SendReq"),
             State::WaitRes(..) => write!(fmt, "WaitRes"),
+            State::Closing1 => write!(fmt, "Closing1"),
+            State::Done => write!(fmt, "Done"),
         }
     }
 }
@@ -151,10 +156,11 @@ impl FetchPolling {
     }
 
     pub fn transition_to_enable(&mut self) {
+        let selfname = "transition_to_enable";
         match &mut self.state {
             State::DoNothing => {
                 self.llog
-                    .push(format!("transition_to_disable  State::DoNothing  enable immediately"));
+                    .push(format!("{selfname}  State::DoNothing  enable immediately"));
                 let ts = self.next_poll_instant_jitter();
                 let fut = async move {
                     tokio::time::sleep_until(ts.into()).await;
@@ -162,39 +168,82 @@ impl FetchPolling {
                 transition_state(&mut self.state, State::Idle(fut.box2()), &mut self.llog);
             }
             State::Idle(..) => {
-                self.llog.push(format!("transition_to_disable  State::Idle  no change"));
+                self.llog.push(format!("{selfname}  State::Idle  no change"));
             }
             State::SendReq(..) => {
-                self.llog
-                    .push(format!("transition_to_disable  State::SendReq  no change"));
+                self.llog.push(format!("{selfname}  State::SendReq  no change"));
             }
             State::WaitRes(..) => {
-                self.llog
-                    .push(format!("transition_to_disable  State::WaitRes  no change"));
+                self.llog.push(format!("{selfname}  State::WaitRes  no change"));
+            }
+            State::Closing1 => {
+                self.llog.push(format!("{selfname}  State::Closing1  no change"));
+            }
+            State::Done => {
+                self.llog.push(format!("{selfname}  State::Done  no change"));
             }
         }
     }
 
     pub fn transition_to_disable(&mut self) {
+        let selfname = "transition_to_disable";
         match &mut self.state {
             State::DoNothing => {
-                self.llog
-                    .push(format!("transition_to_disable  State::DoNothing  no change"));
+                self.llog.push(format!("{selfname}  State::DoNothing  no change"));
             }
             State::Idle(..) => {
-                self.llog
-                    .push(format!("transition_to_disable  State::Idle  goto immediate"));
+                self.llog.push(format!("{selfname}  State::Idle  goto immediate"));
                 transition_state(&mut self.state, State::DoNothing, &mut self.llog);
             }
             State::SendReq(stdir) => {
-                self.llog.push(format!("transition_to_disable  State::Idle  set stdir"));
+                self.llog.push(format!("{selfname}  State::Idle  set stdir"));
                 *stdir = StateDirection::DoNothing;
             }
             State::WaitRes(_, stdir) => {
-                self.llog.push(format!("transition_to_disable  State::Idle  set stdir"));
+                self.llog.push(format!("{selfname}  State::Idle  set stdir"));
                 *stdir = StateDirection::DoNothing;
             }
+            State::Closing1 => {
+                self.llog.push(format!("{selfname}  State::Closing1  no change"));
+            }
+            State::Done => {
+                self.llog.push(format!("{selfname}  State::Done  no change"));
+            }
         }
+    }
+
+    fn transition_to_closing(&mut self) {
+        let selfname = "transition_to_closing";
+        match &mut self.state {
+            State::DoNothing => {
+                self.llog.push(format!("{selfname}  State::DoNothing  goto Closing1"));
+                transition_state(&mut self.state, State::Closing1, &mut self.llog);
+            }
+            State::Idle(..) => {
+                self.llog.push(format!("{selfname}  State::Idle  goto Closing1"));
+                transition_state(&mut self.state, State::Closing1, &mut self.llog);
+            }
+            State::SendReq(stdir) => {
+                self.llog.push(format!("{selfname}  State::SendReq  goto Closing1"));
+                transition_state(&mut self.state, State::Closing1, &mut self.llog);
+            }
+            State::WaitRes(_, stdir) => {
+                self.llog.push(format!("{selfname}  State::Idle  goto Closing1"));
+                transition_state(&mut self.state, State::Closing1, &mut self.llog);
+            }
+            State::Closing1 => {
+                self.llog.push(format!("{selfname}  State::Idle  no change"));
+            }
+            State::Done => {
+                self.llog.push(format!("{selfname}  State::Done  no change"));
+            }
+        }
+    }
+
+    pub fn trigger_closing(&mut self, reason: conn2::conn::channelheap::channelhandler::ClosingReason) {
+        let selfname = "trigger_closing";
+        todo_shutdown!("{selfname}  {}  {:?}", self.sid, reason);
+        self.transition_to_closing();
     }
 
     pub fn inp_push_try(&mut self, item: ProtoRxItem) -> Option<ProtoRxItem> {
@@ -281,6 +330,12 @@ impl FetchPolling {
                         }
                     }
                 }
+                State::Closing1 => {
+                    hpp.mark_progress();
+                }
+                State::Done => {
+                    hpp.mark_progress();
+                }
             }
         } else if self2.inp_done {
         } else {
@@ -340,6 +395,13 @@ impl FetchPolling {
                     hpp.mark_pending();
                 }
             },
+            State::Closing1 => {
+                hpp.mark_progress();
+                todo_shutdown!("TODO  State::Closing1  emit all writes");
+                self2.inp_done();
+                transition_state(&mut self2.state, State::Done, &mut self2.llog);
+            }
+            State::Done => {}
         }
         if hpp.have_progress() {
             trace!("{selfname}  HPP:Progress");

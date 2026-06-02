@@ -8,6 +8,7 @@ use crate::asynchan;
 use crate::ca::conn2::caids::Cid;
 use crate::ca::conn2::caids::CidOwned;
 use crate::ca::conn2::caids::Sid;
+use crate::ca::conn2::caids::Subid;
 use crate::ca::conn2::channel_event_value::ChannelEventValue;
 use crate::ca::conn2::conn::channelheap::ProtoRxItem;
 use crate::ca::conn2::conn::channelheap::channelhandler::create::Creating;
@@ -78,7 +79,7 @@ impl From<async_channel::RecvError> for Error {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ClosingReason {
     ErrorMsg(String),
     InputDone,
@@ -137,6 +138,7 @@ pub enum ItemInner {
     ProtoOut(CaMsg),
     ProtoOutIoid(CaMsg, Sid, Instant),
     ProtoOutSubid(CaMsg, Instant),
+    SubidRemove(Cid),
     TestValue(crate::ca::connset2::connset::TestValue),
     LocalLog(locallog::Entry),
     ChannelStatus(ChannelStatus),
@@ -531,6 +533,7 @@ impl Stream for ChannelHandler {
                                     }
                                     create::CreatingItem::Done((sid, scalar_type, shape, ca_dbr_ty, chi)) => {
                                         self2.state = State::Running(Running::new(
+                                            self2.cid(),
                                             sid,
                                             scalar_type,
                                             shape,
@@ -602,6 +605,12 @@ impl Stream for ChannelHandler {
                                         break Ready(Some(Ok(ChannelHandlerItem {
                                             ts_create: tsloop,
                                             inner: ItemInner::ProtoOutSubid(msg, tscmd),
+                                        })));
+                                    }
+                                    running::RunningItem::SubidRemove(cid) => {
+                                        break Ready(Some(Ok(ChannelHandlerItem {
+                                            ts_create: tsloop,
+                                            inner: ItemInner::SubidRemove(cid),
                                         })));
                                     }
                                     running::RunningItem::TestValue(x) => {
