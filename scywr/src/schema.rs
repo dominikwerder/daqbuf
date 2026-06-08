@@ -341,9 +341,17 @@ impl GenTwcsTab {
                 set_opts.push(format!("compaction = {{ {} }}", params));
             }
             if set_opts.len() != 0 {
-                let cql = format!(concat!("alter table {} with {}"), self.name(), set_opts.join(" and "));
-                info!("do not modify compaction, would execute: {cql}");
-                // chs.add_todo(cql);
+                let cql = format!(
+                    concat!("alter table {}.{} with {}"),
+                    self.keyspace(),
+                    self.name(),
+                    set_opts.join(" and ")
+                );
+                if false || self.name().contains("lt_events_array_i16") {
+                    chs.add_todo(cql);
+                } else {
+                    info!("do not modify compaction, would execute: {cql}");
+                }
             }
         } else {
             chs.add_todo(self.cql());
