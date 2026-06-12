@@ -1146,6 +1146,13 @@ impl NodeConfig {
         }
         None
     }
+
+    pub fn is_backend_scylla(&self) -> bool {
+        self.cluster.scylla_st.is_some()
+            || self.cluster.scylla_mt.is_some()
+            || self.cluster.scylla_lt.is_some()
+            || self.cluster.scylla_clusters.len() != 0
+    }
 }
 
 #[derive(Clone, Debug)]
