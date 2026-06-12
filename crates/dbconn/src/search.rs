@@ -295,7 +295,7 @@ pub async fn search_channel(
     let pgconf = &ncc.node_config.cluster.database;
     let mut query = query;
     query.backend = Some(backend.into());
-    if let Some(_scyconf) = ncc.node_config.cluster.scylla_st() {
+    if ncc.node_config.is_backend_scylla() {
         pgqueue.search_channel_scylla(query).await?
         // search_channel_scylla(query, backend, pgconf).await
     } else if let Some(conf) = ncc.node.channel_archiver.as_ref() {

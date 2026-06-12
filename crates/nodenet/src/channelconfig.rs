@@ -156,7 +156,7 @@ pub async fn channel_config(
 ) -> Result<Option<ChannelTypeConfigGen>, Error> {
     if channel.backend() == TEST_BACKEND {
         Ok(Some(channel_config_test_backend(channel)?))
-    } else if ncc.node_config.cluster.scylla_st().is_some() {
+    } else if ncc.node_config.is_backend_scylla() {
         debug!("try to get ChConf for scylla type backend");
         let ret = scylla_chconf_from_sf_db_channel(range, channel, pgqueue).await?;
         Ok(Some(ChannelTypeConfigGen::Scylla(ret)))
@@ -193,7 +193,7 @@ pub async fn series_config(
 ) -> Result<Option<ChannelTypeConfigGen>, Error> {
     if channel.backend() == TEST_BACKEND {
         Ok(Some(channel_config_test_backend(channel)?))
-    } else if ncc.node_config.cluster.scylla_st().is_some() {
+    } else if ncc.node_config.is_backend_scylla() {
         debug!("try to get ChConf for scylla type backend");
         let ret = scylla_chconf_from_sf_db_channel(range, channel, pgqueue).await?;
         Ok(Some(ChannelTypeConfigGen::Scylla(ret)))
@@ -222,7 +222,7 @@ pub async fn channel_configs(channel: SfDbChannel, ncc: &NodeConfigCached) -> Re
             }
         };
         Ok(ret)
-    } else if ncc.node_config.cluster.scylla_st().is_some() {
+    } else if ncc.node_config.is_backend_scylla() {
         debug!("try to get ChConf for scylla type backend");
         let ret = scylla_all_chconf_from_sf_db_channel(&channel, ncc)
             .await
@@ -233,7 +233,7 @@ pub async fn channel_configs(channel: SfDbChannel, ncc: &NodeConfigCached) -> Re
         let configs = disk::channelconfig::channel_configs(channel.clone(), ncc).await?;
         Ok(ChannelConfigsGen::SfDatabuffer(configs))
     } else {
-        return Err(Error::BackendConfigError);
+        Err(Error::BackendConfigError)
     }
 }
 

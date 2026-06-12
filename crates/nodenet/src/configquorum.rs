@@ -131,7 +131,7 @@ pub async fn find_config_basics_quorum(
             Some(x) => Ok(Some(ChannelTypeConfigGen::SfDatabuffer(x))),
             None => Ok(None),
         }
-    } else if let Some(_) = &ncc.node_config.cluster.scylla_st() {
+    } else if ncc.node_config.is_backend_scylla() {
         let range = netpod::range::evrange::NanoRange::try_from(&range).map_err(|_| Error::BadTimeRange)?;
         let ret = crate::channelconfig::channel_config(range, channel, pgqueue, ncc).await?;
         Ok(ret)

@@ -77,27 +77,29 @@ impl ConnectionStatusEvents {
         shared_res: &ServiceSharedResources,
         ncc: &NodeConfigCached,
     ) -> Result<Vec<ConnStatusEvent>, Error> {
-        let scyco = ncc
-            .node_config
-            .cluster
-            .scylla_st()
-            .ok_or_else(|| Error::with_public_msg_no_trace(format!("no scylla configured")))?;
-        let _scy = scyllaconn::conn::create_scy_session(scyco).await?;
-        let _chconf =
-            nodenet::channelconfig::channel_config(q.range().clone(), q.channel().clone(), &shared_res.pgqueue, ncc)
-                .await?;
-        let _do_one_before_range = true;
-        let ret = Vec::new();
-        if true {
-            return Err(Error::with_msg_no_trace("TODO dedicated connection status?"));
+        if ncc.node_config.is_backend_scylla() {
+            let _chconf = nodenet::channelconfig::channel_config(
+                q.range().clone(),
+                q.channel().clone(),
+                &shared_res.pgqueue,
+                ncc,
+            )
+            .await?;
+            let _do_one_before_range = true;
+            let ret = Vec::new();
+            if true {
+                return Err(Error::with_msg_no_trace("TODO dedicated connection status?"));
+            }
+            // let mut stream =
+            //     scyllaconn::status::StatusStreamScylla::new(series, q.range().clone(), do_one_before_range, scy);
+            // while let Some(item) = stream.next().await {
+            //     let item = item?;
+            //     ret.push(item);
+            // }
+            Ok(ret)
+        } else {
+            Err(Error::with_public_msg_no_trace(format!("not a supported backend")))
         }
-        // let mut stream =
-        //     scyllaconn::status::StatusStreamScylla::new(series, q.range().clone(), do_one_before_range, scy);
-        // while let Some(item) = stream.next().await {
-        //     let item = item?;
-        //     ret.push(item);
-        // }
-        Ok(ret)
     }
 }
 
