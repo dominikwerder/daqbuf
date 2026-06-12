@@ -717,21 +717,21 @@ impl<const N: usize> StringFix<N> {
     }
 }
 
-impl<const N: usize, T> From<T> for StringFix<N>
-where
-    T: AsRef<str>,
-{
-    fn from(x: T) -> Self {
-        let sl = x.as_ref();
-        let sl = &sl[0..sl.len().min(N)];
-        let mut ret = Self::new();
-        for (i, ch) in sl.chars().enumerate() {
-            ret.data[i] = ch;
-        }
-        ret.len = sl.len() as u8;
-        ret
-    }
-}
+// impl<const N: usize, T> From<T> for StringFix<N>
+// where
+//     T: AsRef<str>,
+// {
+//     fn from(x: T) -> Self {
+//         let sl = x.as_ref();
+//         let sl = &sl[0..sl.len().min(N)];
+//         let mut ret = Self::new();
+//         for (i, ch) in sl.chars().enumerate() {
+//             ret.data[i] = ch;
+//         }
+//         ret.len = sl.len() as u8;
+//         ret
+//     }
+// }
 
 impl<const N: usize> From<StringFix<N>> for String {
     fn from(x: StringFix<N>) -> Self {
