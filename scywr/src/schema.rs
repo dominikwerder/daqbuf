@@ -326,19 +326,30 @@ impl GenTwcsTab {
             if row.1 != self.gc_grace.as_secs() {
                 set_opts.push(format!("gc_grace_seconds = {}", self.gc_grace.as_secs()));
             }
-            if row.2 != self.compaction_options() {
-                info!(
-                    "compaction options differ  {:?}  vs  {:?}",
-                    row.2,
-                    self.compaction_options()
-                );
-                let params: Vec<_> = self
-                    .compaction_options()
-                    .iter()
-                    .map(|(k, v)| format!("'{k}': '{v}'"))
-                    .collect();
-                let params = params.join(", ");
-                set_opts.push(format!("compaction = {{ {} }}", params));
+            {
+                let mut row2 = row.2.clone();
+                if let Some(t) = row2.get_mut("class") {
+                    if t == "org.apache.cassandra.db.compaction.SizeTieredCompactionStrategy" {
+                        *t = "SizeTieredCompactionStrategy".into();
+                    }
+                    if t == "org.apache.cassandra.db.compaction.TimeWindowCompactionStrategy" {
+                        *t = "TimeWindowCompactionStrategy".into();
+                    }
+                }
+                if row2 != self.compaction_options() {
+                    info!(
+                        "compaction options differ  {:?}  vs  {:?}",
+                        row2,
+                        self.compaction_options()
+                    );
+                    let params: Vec<_> = self
+                        .compaction_options()
+                        .iter()
+                        .map(|(k, v)| format!("'{k}': '{v}'"))
+                        .collect();
+                    let params = params.join(", ");
+                    set_opts.push(format!("compaction = {{ {} }}", params));
+                }
             }
             if set_opts.len() != 0 {
                 let cql = format!(
@@ -347,7 +358,7 @@ impl GenTwcsTab {
                     self.name(),
                     set_opts.join(" and ")
                 );
-                if false || self.name().contains("lt_events_array_i16") {
+                if false && self.name().contains("lt_events_array_i16") {
                     chs.add_todo(cql);
                 } else {
                     info!("do not modify compaction, would execute: {cql}");
@@ -770,6 +781,7 @@ pub async fn migrate_scylla_data_schema_all_rt(
 ) -> Result<(), Error> {
     let mut chsa = [Changeset::new(), Changeset::new(), Changeset::new(), Changeset::new()];
     let rfs = [3, 3, 3, 1];
+    // let rfs = [1, 1, 1, 1];
     for (((rt, scyconf), chs), rf) in rts
         .clone()
         .into_iter()
