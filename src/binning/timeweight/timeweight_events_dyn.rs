@@ -76,7 +76,10 @@ where
 
     fn ingest(&mut self, evs: &EventsBoxed) -> Result<IngestReport, BinningggError> {
         match evs.as_any_ref().downcast_ref::<ContainerEvents<EVT>>() {
-            Some(evs) => Ok(self.binner.ingest(evs)?),
+            Some(evs) => Ok(self
+                .binner
+                .ingest(evs)
+                .map_err(|e| BinningggError::Dyn(Box::new(e)))?),
             None => {
                 let e = BinningggError::TypeMismatch {
                     have: evs.type_name().into(),
@@ -88,11 +91,17 @@ where
     }
 
     fn input_done_range_final(&mut self) -> Result<(), BinningggError> {
-        Ok(self.binner.input_done_range_final()?)
+        Ok(self
+            .binner
+            .input_done_range_final()
+            .map_err(|e| BinningggError::Dyn(Box::new(e)))?)
     }
 
     fn input_done_range_open(&mut self) -> Result<(), BinningggError> {
-        Ok(self.binner.input_done_range_open()?)
+        Ok(self
+            .binner
+            .input_done_range_open()
+            .map_err(|e| BinningggError::Dyn(Box::new(e)))?)
     }
 
     fn output(&mut self) -> Result<Option<BinsBoxed>, BinningggError> {
