@@ -60,14 +60,14 @@ impl fmt::Display for BinningggError {
     }
 }
 
-impl<E> From<E> for BinningggError
-where
-    E: std::error::Error + Send + 'static,
-{
-    fn from(value: E) -> Self {
-        Self::Dyn(Box::new(value))
-    }
-}
+// impl<E> From<E> for BinningggError
+// where
+//     E: std::error::Error + Send + 'static,
+// {
+//     fn from(value: E) -> Self {
+//         Self::Dyn(Box::new(value))
+//     }
+// }
 
 pub trait BinningggContainerEventsDyn:
     fmt::Debug
