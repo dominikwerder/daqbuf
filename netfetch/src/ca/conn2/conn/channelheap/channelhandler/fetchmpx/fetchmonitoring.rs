@@ -149,7 +149,7 @@ impl FetchMonitoring {
     }
 
     fn rng_next(&mut self) -> u32 {
-        stats::rand_xoshiro::rand_core::RngCore::next_u32(&mut self.rng)
+        stats::rand_xoshiro::rand_core::Rng::next_u32(&mut self.rng)
     }
 
     fn duration_jitter(&mut self, dur: Duration) -> Duration {

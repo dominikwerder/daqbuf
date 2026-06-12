@@ -15,12 +15,12 @@ use std::task::Waker;
 macro_rules! trace { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
 
 static ID_REG: LazyLock<Mutex<(HashMap<u32, u32>, Xoshiro128PlusPlus, u32)>> =
-    LazyLock::new(|| Mutex::new((HashMap::new(), Xoshiro128PlusPlus::from_os_rng(), 0)));
+    LazyLock::new(|| Mutex::new((HashMap::new(), stats::xoshiro_from_os_rng(), 0)));
 
 fn gen_next(reg: &LazyLock<Mutex<(HashMap<u32, u32>, Xoshiro128PlusPlus, u32)>>) -> (u32, u32) {
     let mut g = reg.lock().unwrap();
     loop {
-        use stats::rand_xoshiro::rand_core::RngCore;
+        use stats::rand_xoshiro::rand_core::Rng;
         let k = g.1.next_u32() & 0x7fffffff;
         break if g.0.try_insert(k, k).is_err() {
             continue;

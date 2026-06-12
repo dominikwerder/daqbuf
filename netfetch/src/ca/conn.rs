@@ -61,6 +61,7 @@ use serieswriter::writer::EmittableType;
 use stats::IntervalEma;
 use stats::mett::CaConnMetrics;
 use stats::rand_xoshiro::Xoshiro128PlusPlus;
+use stats::rand_xoshiro::rand_core::Rng;
 use stats::rand_xoshiro::rand_core::RngCore;
 use stats::rand_xoshiro::rand_core::SeedableRng;
 use std::collections::BTreeMap;

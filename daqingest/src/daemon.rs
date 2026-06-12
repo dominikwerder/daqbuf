@@ -21,7 +21,7 @@ use netpod::ttl::RetentionTime;
 use scywr::insertqueues::InsertQueuesRx;
 use scywr::insertqueues::InsertQueuesTx;
 use scywr::insertworker::InsertWorkerOpts;
-use stats::rand_xoshiro::rand_core::RngCore;
+use stats::rand_xoshiro::rand_core::Rng;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::RwLock;

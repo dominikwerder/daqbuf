@@ -103,7 +103,7 @@ impl JitterTicker {
     }
 
     fn make_ticker(&mut self) -> tokio::time::Sleep {
-        use stats::rand_xoshiro::rand_core::RngCore;
+        use stats::rand_xoshiro::rand_core::Rng;
         let b = self.ivl;
         let t = b + b * (self.rng.next_u32() & 0x1f) / 0xff;
         trace3!("make_ticker  {:.0} ms", 1e3 * t.as_secs_f32());

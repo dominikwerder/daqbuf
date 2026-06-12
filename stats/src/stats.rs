@@ -3,6 +3,7 @@ pub mod mett;
 pub use mettrics;
 pub use rand_xoshiro;
 
+use rand_xoshiro::rand_core::SeedableRng;
 use std::time::Duration;
 use std::time::Instant;
 
@@ -293,6 +294,11 @@ pub fn xoshiro_from_time() -> rand_xoshiro::Xoshiro128PlusPlus {
 }
 
 pub fn xoshiro_from_os_rng() -> rand_xoshiro::Xoshiro128PlusPlus {
-    use rand_xoshiro::rand_core::SeedableRng;
-    rand_xoshiro::Xoshiro128PlusPlus::from_os_rng()
+    // TODO xoshiro no longer provides the from OS rng api.
+    // Therefore, derive from timestamp for now.
+    let ts = Instant::now();
+    let dt = ts.elapsed();
+    let x = dt.subsec_nanos() as u64;
+    let s = (x << 32) | x;
+    rand_xoshiro::Xoshiro128PlusPlus::seed_from_u64(s)
 }

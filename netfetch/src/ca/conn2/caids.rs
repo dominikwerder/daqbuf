@@ -1,13 +1,12 @@
 use hashbrown::HashMap;
 use serde::Serialize;
 use stats::rand_xoshiro::Xoshiro128PlusPlus;
-use stats::rand_xoshiro::rand_core::SeedableRng;
 use std::fmt;
 use std::sync::LazyLock;
 use std::sync::Mutex;
 
 static CID_REG: LazyLock<Mutex<(HashMap<u32, u32>, Xoshiro128PlusPlus)>> =
-    LazyLock::new(|| Mutex::new((HashMap::new(), Xoshiro128PlusPlus::from_os_rng())));
+    LazyLock::new(|| Mutex::new((HashMap::new(), stats::xoshiro_from_os_rng())));
 
 fn _maybe() {
     stats::xoshiro_from_time();
@@ -16,7 +15,7 @@ fn _maybe() {
 fn gen_next(reg: &LazyLock<Mutex<(HashMap<u32, u32>, Xoshiro128PlusPlus)>>) -> u32 {
     let mut g = reg.lock().unwrap();
     loop {
-        use stats::rand_xoshiro::rand_core::RngCore;
+        use stats::rand_xoshiro::rand_core::Rng;
         let k = g.1.next_u32() & 0x7fffffff;
         break if g.0.try_insert(k, k).is_err() {
             continue;
@@ -51,7 +50,7 @@ impl Drop for CidOwned {
 }
 
 static SUBID_REG: LazyLock<Mutex<(HashMap<u32, u32>, Xoshiro128PlusPlus)>> =
-    LazyLock::new(|| Mutex::new((HashMap::new(), Xoshiro128PlusPlus::from_os_rng())));
+    LazyLock::new(|| Mutex::new((HashMap::new(), stats::xoshiro_from_os_rng())));
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 pub struct SubidOwned(u32);
