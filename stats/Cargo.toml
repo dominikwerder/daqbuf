@@ -1,6 +1,6 @@
 [package]
 name = "stats"
-version = "0.0.1-a.0"
+version = "0.0.2"
 authors = ["Dominik Werder <dominik.werder@gmail.com>"]
 edition = "2021"
 
@@ -9,7 +9,7 @@ path = "src/stats.rs"
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
-rand_xoshiro = "0.7.0"
+rand_xoshiro = "0.8.1"
 stats_types = { path = "../stats_types" }
 stats_proc = { path = "../stats_proc" }
 log = { path = "../../daqbuf-log", package = "daqbuf-log" }
