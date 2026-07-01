@@ -1,0 +1,14 @@
+[package]
+name = "daqbuf-bitshuffle"
+version = "0.0.3"
+authors = ["Dominik Werder <dominik.werder@gmail.com>"]
+edition = "2021"
+
+[lib]
+path = "src/bitshuffle.rs"
+
+[dependencies]
+libc = "0.2.92"
+
+[build-dependencies]
+cc = "1.0.67"
