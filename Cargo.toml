@@ -15,4 +15,7 @@ members = [
     "daqbuf-streams",
     "mettrics-macros",
     "mettrics",
+    "daqbuf-ca-proto-tokio",
+    "daqbuf-ca-proto",
+    "daqbuf-taskrun",
 ]
