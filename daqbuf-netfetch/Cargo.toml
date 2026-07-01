@@ -47,10 +47,10 @@ autoerr = "0.0"
 log = { path = "../daqbuf-log", package = "daqbuf-log" }
 series = { path = "../daqbuf-series", package = "daqbuf-series" }
 serieswriter = { path = "../daqbuf-serieswriter", package = "daqbuf-serieswriter" }
-stats = { path = "../daqbuf-stats" }
-scywr = { path = "../daqbuf-scywr" }
-dbpg = { path = "../daqbuf-dbpg" }
-ingest-linux = { path = "../daqbuf-ingest-linux" }
+stats = { path = "../daqbuf-stats", package = "daqbuf-stats" }
+scywr = { path = "../daqbuf-scywr", package = "daqbuf-scywr" }
+dbpg = { path = "../daqbuf-dbpg", package = "daqbuf-dbpg" }
+ingest-linux = { path = "../daqbuf-ingest-linux", package = "daqbuf-ingest-linux" }
 err = { path = "../daqbuf-err", package = "daqbuf-err" }
 netpod = { path = "../daqbuf-netpod", package = "daqbuf-netpod" }
 items_0 = { path = "../daqbuf-items-0", package = "daqbuf-items-0" }
@@ -59,10 +59,9 @@ streams = { path = "../daqbuf-streams", package = "daqbuf-streams" }
 ca_proto = { path = "../daqbuf-ca-proto", package = "daqbuf-ca-proto" }
 ca-proto-tokio = { path = "../daqbuf-ca-proto-tokio", package = "daqbuf-ca-proto-tokio" }
 serde-helper = { path = "../daqbuf-serde-helper", package = "daqbuf-serde-helper" }
-daqbuf_dbpg = { path = "../daqbuf-dbpg", package = "daqbuf-dbpg" }
-taskrun = { path = "../daqbuf-taskrun" }
-mrucache = { path = "../daqbuf-mrucache" }
-batchtools = { path = "../daqbuf-batchtools" }
+taskrun = { path = "../daqbuf-taskrun", package = "daqbuf-taskrun" }
+mrucache = { path = "../daqbuf-mrucache", package = "daqbuf-mrucache" }
+batchtools = { path = "../daqbuf-batchtools", package = "daqbuf-batchtools" }
 daqingest-ui = { path = "../daqbuf-ingest-ui", package = "daqbuf-ingest-ui" }
 
 [features]

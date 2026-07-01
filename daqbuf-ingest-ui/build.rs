@@ -106,16 +106,19 @@ fn write_generated(assets: &[(String, PathBuf)]) -> Result<(), Box<dyn std::erro
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let manifest_dir = env::var("CARGO_MANIFEST_DIR")?;
     let files_dir = PathBuf::from(&manifest_dir).join("files");
-    if !files_dir.exists() {
-        println!(
-            "cargo:warning=No 'files' directory found at {}. Skipping embedding.",
-            files_dir.display()
-        );
-        return Ok(());
-    }
-    mark_rerun_for_tree(&files_dir)?;
     let mut assets = Vec::new();
-    collect_files(&files_dir, &files_dir, &mut assets)?;
+    if !files_dir.exists() {
+        if false {
+            println!(
+                "cargo:warning=No 'files' directory found at {}. Skipping embedding.",
+                files_dir.display()
+            );
+            return Ok(());
+        }
+    } else {
+        mark_rerun_for_tree(&files_dir)?;
+        collect_files(&files_dir, &files_dir, &mut assets)?;
+    }
     write_generated(&assets)?;
     Ok(())
 }
