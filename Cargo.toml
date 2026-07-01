@@ -13,4 +13,5 @@ members = [
     "daqbuf-query",
     "daqbuf-serde-helper",
     "daqbuf-streams",
+    "mettrics-macros",
 ]
