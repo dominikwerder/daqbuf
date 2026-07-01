@@ -3,5 +3,6 @@ resolver = "3"
 members = [
     "daqbuf-netpod",
     "daqbuf-err",
+    "daqbuf-bitshuffle",
     "daqbuf-items-0",
 ]
