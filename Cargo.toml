@@ -18,4 +18,5 @@ members = [
     "daqbuf-ca-proto-tokio",
     "daqbuf-ca-proto",
     "daqbuf-taskrun",
+    "daqbuf-mrucache",
 ]
