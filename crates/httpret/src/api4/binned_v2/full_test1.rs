@@ -232,7 +232,7 @@ async fn deliver_json_framed(
                 },
                 Ok(StreamItem::Log(x)) => Some(Ok(StreamItem::Log(x))),
                 Ok(StreamItem::Stats(x)) => Some(Ok(StreamItem::Stats(x))),
-                Err(e) => Some(Err(e.into())),
+                Err(e) => Some(Err(items_0::timebin::BinningggError::Dyn(Box::new(e)))),
             };
             futures_util::future::ready(ret)
         });
