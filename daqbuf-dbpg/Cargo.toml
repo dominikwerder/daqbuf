@@ -1,0 +1,25 @@
+[package]
+name = "daqbuf-dbpg"
+version = "0.0.1"
+authors = ["Dominik Werder <dominik.werder@gmail.com>"]
+edition = "2024"
+
+[lib]
+doctest = false
+
+[dependencies]
+log = { path = "../daqbuf-log", package = "daqbuf-log" }
+err = { path = "../daqbuf-err", package = "daqbuf-err" }
+netpod = { path = "../daqbuf-netpod", package = "daqbuf-netpod" }
+taskrun = { path = "../daqbuf-taskrun" }
+batchtools = { path = "../daqbuf-batchtools", package = "daqbuf-batchtools" }
+stats = { path = "../daqbuf-stats", package = "daqbuf-stats" }
+series = { path = "../daqbuf-series", package = "daqbuf-series" }
+chrono = "0.4.33"
+tokio-postgres = { version = "0.7.13", features = ["with-chrono-0_4", "with-serde_json-1"] }
+futures-util = "0.3.29"
+async-channel = "2.1.1"
+md-5 = "0.10.6"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1"
+autoerr = "0.0"
