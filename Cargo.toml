@@ -11,4 +11,6 @@ members = [
     "daqbuf-log",
     "daqbuf-series",
     "daqbuf-query",
+    "daqbuf-serde-helper",
+    "daqbuf-streams",
 ]
