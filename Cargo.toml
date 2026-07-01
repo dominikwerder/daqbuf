@@ -5,4 +5,5 @@ members = [
     "daqbuf-err",
     "daqbuf-bitshuffle",
     "daqbuf-items-0",
+    "daqbuf-items-proc",
 ]
