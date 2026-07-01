@@ -1,0 +1,11 @@
+[package]
+name = "daqbuf-ingest-linux"
+version = "0.0.1"
+authors = ["Dominik Werder <dominik.werder@gmail.com>"]
+edition = "2024"
+
+[dependencies]
+libc = "0.2"
+autoerr = "0.0"
+log = { path = "../daqbuf-log", package = "daqbuf-log" }
+taskrun = { path = "../daqbuf-taskrun", package = "daqbuf-taskrun" }

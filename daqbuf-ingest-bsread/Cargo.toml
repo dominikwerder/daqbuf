@@ -1,0 +1,31 @@
+[package]
+name = "daqbuf-ingest-bsread"
+version = "0.0.1"
+authors = ["Dominik Werder <dominik.werder@gmail.com>"]
+edition = "2021"
+
+[dependencies]
+futures-util = "0.3"
+async-channel = "2.3.1"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+bytes = "1.10"
+md-5 = "0.10.5"
+hex = "0.4.3"
+pin-project = "1"
+slidebuf = "0.0.1"
+autoerr = "0.0"
+log = { path = "../daqbuf-log", package = "daqbuf-log" }
+series = { path = "../daqbuf-series", package = "daqbuf-series" }
+stats = { path = "../daqbuf-stats", package = "daqbuf-stats" }
+scywr = { path = "../daqbuf-scywr", package = "daqbuf-scywr" }
+dbpg = { path = "../daqbuf-dbpg", package = "daqbuf-dbpg" }
+ingest-linux = { path = "../daqbuf-ingest-linux", package = "daqbuf-ingest-linux" }
+err = { path = "../daqbuf-err", package = "daqbuf-err" }
+netpod = { path = "../daqbuf-netpod", package = "daqbuf-netpod" }
+taskrun = { path = "../daqbuf-taskrun", package = "daqbuf-taskrun" }
+batchtools = { path = "../daqbuf-batchtools", package = "daqbuf-batchtools" }
+items_0 = { path = "../daqbuf-items-0", package = "daqbuf-items-0" }
+items_2 = { path = "../daqbuf-items-2", package = "daqbuf-items-2" }
+streams = { path = "../daqbuf-streams", package = "daqbuf-streams" }
+bitshuffle = { path = "../daqbuf-bitshuffle", package = "daqbuf-bitshuffle" }
