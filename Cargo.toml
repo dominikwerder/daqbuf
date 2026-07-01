@@ -28,4 +28,5 @@ members = [
     "daqbuf-ingest-linux",
     # "daqbuf-ingest-bsread",
     "daqbuf-netfetch",
+    "daqbuf-daqingest",
 ]
