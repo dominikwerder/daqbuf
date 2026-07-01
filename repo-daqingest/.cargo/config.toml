@@ -1,0 +1,16 @@
+[build]
+rustflags = [
+    #"-C", "target-cpu=target-cpu=x86-64-v4",
+    #"-C", "force-frame-pointers=yes",
+    #"-C", "force-unwind-tables=yes",
+    #"-C", "relocation-model=static",
+    #"-C", "embed-bitcode=no",
+    #"-C", "inline-threshold=1000",
+    #"-Z", "time-passes=yes",
+    #"-Z", "time-llvm-passes=yes",
+    #"--cfg", "tokio_unstable",
+]
+
+rustdocflags = [
+    #"--cfg", "tokio_unstable"
+]

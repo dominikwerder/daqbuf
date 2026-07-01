@@ -1,0 +1,306 @@
+use crate::ca::conn::ChannelStateInfo;
+use crate::conf::ChannelConfig;
+use crate::daemon_common::ChannelName;
+use dashmap::DashMap;
+use serde::Serialize;
+use serde_helper::serde_instant::serde_Instant_elapsed_ms;
+use series::ChannelStatusSeriesId;
+use serieswriter::fixgridwriter::ChannelStatusSeriesWriter;
+use std::collections::BTreeMap;
+use std::collections::HashMap;
+use std::collections::btree_map::RangeMut;
+use std::net::SocketAddr;
+use std::net::SocketAddrV4;
+use std::ops::RangeBounds;
+use std::time::Duration;
+use std::time::Instant;
+use std::time::SystemTime;
+
+#[derive(Debug)]
+pub enum CaConnStateValue {
+    Fresh,
+    HadFeedback,
+    Shutdown { since: Instant },
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub enum ConnectionStateValue {
+    Unknown,
+    ChannelStateInfo(ChannelStateInfo),
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ConnectionState {
+    #[serde(with = "humantime_serde")]
+    pub updated: SystemTime,
+    pub health_update_count: usize,
+    pub value: ConnectionStateValue,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub enum WithAddressState {
+    Unassigned {
+        #[serde(with = "humantime_serde")]
+        since: SystemTime,
+    },
+    Assigned(ConnectionState),
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct UnassignedState {
+    #[serde(with = "humantime_serde")]
+    since: SystemTime,
+    #[serde(with = "serde_Instant_elapsed_ms")]
+    unused_since_ts: Instant,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct UnassigningForConfigChangeState {
+    pub config_new: ChannelConfig,
+    pub addr: SocketAddr,
+    #[serde(with = "serde_Instant_elapsed_ms")]
+    pub since: Instant,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct UnknownAddressState {
+    #[serde(with = "humantime_serde")]
+    pub since: SystemTime,
+    pub backoff_dt: Duration,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct MaybeWrongAddressState {
+    #[serde(with = "humantime_serde")]
+    pub since: SystemTime,
+    pub backoff_dt: Duration,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub enum WithStatusSeriesIdStateInner {
+    AddrSearchPending {
+        #[serde(with = "humantime_serde")]
+        since: SystemTime,
+    },
+    WithAddress {
+        addr: SocketAddrV4,
+        state: WithAddressState,
+    },
+    UnknownAddress(UnknownAddressState),
+    NoAddress {
+        #[serde(with = "humantime_serde")]
+        since: SystemTime,
+    },
+    MaybeWrongAddress(MaybeWrongAddressState),
+    UnassigningForConfigChange(UnassigningForConfigChangeState),
+    AddrSearchPlanned {
+        #[serde(with = "humantime_serde")]
+        since: SystemTime,
+    },
+}
+
+impl WithStatusSeriesIdStateInner {
+    pub fn name(&self) -> &'static str {
+        match self {
+            WithStatusSeriesIdStateInner::AddrSearchPending { .. } => "AddrSearchPending",
+            WithStatusSeriesIdStateInner::WithAddress { .. } => "WithAddress",
+            WithStatusSeriesIdStateInner::UnknownAddress(..) => "UnknownAddress",
+            WithStatusSeriesIdStateInner::NoAddress { .. } => "NoAddress",
+            WithStatusSeriesIdStateInner::MaybeWrongAddress(..) => "MaybeWrongAddress",
+            WithStatusSeriesIdStateInner::UnassigningForConfigChange(..) => "UnassigningForConfigChange",
+            WithStatusSeriesIdStateInner::AddrSearchPlanned { .. } => "AddrSearchPlanned",
+        }
+    }
+}
+
+impl MaybeWrongAddressState {
+    pub fn new(since: SystemTime, backoff_cnt: u32) -> Self {
+        Self {
+            since,
+            backoff_dt: Self::produce_backoff_dt(backoff_cnt),
+        }
+    }
+
+    pub fn produce_backoff_dt(backoff_cnt: u32) -> Duration {
+        // from math import tanh; print(", ".join(["{:.5f}".format(tanh(i/10)) for i in range(24)]));
+        const TANH: [f32; 24] = [
+            0.00000, 0.09967, 0.19738, 0.29131, 0.37995, 0.46212, 0.53705, 0.60437, 0.66404, 0.71630, 0.76159, 0.80050,
+            0.83365, 0.86172, 0.88535, 0.90515, 0.92167, 0.93541, 0.94681, 0.95624, 0.96403, 0.97045, 0.97574, 0.98010,
+        ];
+        const Y1: f32 = 1.;
+        const Y2: f32 = 300.;
+        const B: f32 = (Y2 - Y1) / (TANH[23] - TANH[0]);
+        const A: f32 = Y1 - B * TANH[0];
+        let backoff_cnt = backoff_cnt.min(23);
+        let f = A + B * TANH[backoff_cnt as usize];
+        let dtms = (1e3 * f) as u64;
+        if dtms < 1000 || dtms > 1000 * 60 * 12 {
+            log::warn!("bad channel search backoff wait time {dtms}");
+        }
+        Duration::from_millis(dtms)
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct WithStatusSeriesIdState {
+    pub cssid: ChannelStatusSeriesId,
+    pub addr_find_backoff: u32,
+    pub inner: WithStatusSeriesIdStateInner,
+    #[serde(serialize_with = "serde_ser_channel_status_writer")]
+    pub writer_status: Option<ChannelStatusSeriesWriter>,
+}
+
+impl Clone for WithStatusSeriesIdState {
+    fn clone(&self) -> Self {
+        Self {
+            cssid: self.cssid.clone(),
+            addr_find_backoff: self.addr_find_backoff.clone(),
+            inner: self.inner.clone(),
+            writer_status: None,
+        }
+    }
+}
+
+fn serde_ser_channel_status_writer<S>(_: &Option<ChannelStatusSeriesWriter>, ser: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    ser.serialize_none()
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub enum ActiveChannelState {
+    Init {
+        #[serde(with = "humantime_serde")]
+        since: SystemTime,
+    },
+    WaitForStatusSeriesId {
+        #[serde(with = "humantime_serde")]
+        since: SystemTime,
+    },
+    WithStatusSeriesId(WithStatusSeriesIdState),
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub enum ChannelStateValue {
+    Active(ActiveChannelState),
+    ToRemove { addr: Option<SocketAddrV4> },
+    InitDummy,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ChannelState {
+    pub value: ChannelStateValue,
+    pub config: ChannelConfig,
+    touched: u8,
+}
+
+impl ChannelState {
+    // TODO remove when no longer needed
+    pub fn is_dummy(&self) -> bool {
+        if let ChannelStateValue::InitDummy = self.value {
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn new_dummy() -> Self {
+        Self {
+            value: ChannelStateValue::InitDummy,
+            config: ChannelConfig::dummy(),
+            touched: 0,
+        }
+    }
+
+    pub fn new_wait_for_cssid(ch_cfg: &crate::conf::ChannelConfig) -> Self {
+        Self {
+            value: ChannelStateValue::Active(ActiveChannelState::WaitForStatusSeriesId {
+                since: SystemTime::now(),
+            }),
+            config: ch_cfg.clone(),
+            touched: 1,
+        }
+    }
+
+    pub fn config_file_basename(&self) -> &str {
+        self.config.config_file_basename()
+    }
+
+    pub fn set_touched(&mut self) {
+        self.touched = self.touched.saturating_add(1);
+    }
+
+    pub fn clear_touched(&mut self) {
+        self.touched = 0;
+    }
+
+    pub fn is_touched(&self) -> bool {
+        self.touched != 0
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct ChannelStateMap {
+    map: BTreeMap<ChannelName, ChannelState>,
+    #[serde(skip)]
+    map2: HashMap<ChannelName, ChannelState>,
+    // TODO implement same interface via dashmap and compare
+    #[serde(skip)]
+    map3: DashMap<ChannelName, ChannelState>,
+}
+
+impl ChannelStateMap {
+    pub fn new() -> Self {
+        Self {
+            map: BTreeMap::new(),
+            map2: HashMap::new(),
+            map3: DashMap::new(),
+        }
+    }
+
+    pub fn insert(&mut self, k: ChannelName, v: ChannelState) -> Option<ChannelState> {
+        let _ = &self.map2;
+        let _ = &self.map3;
+        self.map.insert(k, v)
+    }
+
+    pub fn get_mut(&mut self, k: &ChannelName) -> Option<&mut ChannelState> {
+        self.map.get_mut(k)
+    }
+
+    pub fn get_mut_or_dummy_init(&mut self, k: &ChannelName) -> &mut ChannelState {
+        if !self.map.contains_key(k) {
+            let dummy = ChannelState::new_dummy();
+            self.map.insert(k.clone(), dummy);
+        }
+        self.map.get_mut(k).unwrap()
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&ChannelName, &ChannelState)> {
+        self.map.iter()
+    }
+
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = (&ChannelName, &mut ChannelState)> {
+        self.map.iter_mut()
+    }
+
+    pub fn iter_mut_dash(&mut self) -> ChannelStateIter<'_> {
+        todo!()
+    }
+
+    pub fn range_mut<R>(&mut self, range: R) -> RangeMut<'_, ChannelName, ChannelState>
+    where
+        R: RangeBounds<ChannelName>,
+    {
+        self.map.range_mut(range)
+    }
+
+    pub fn remove(&mut self, k: &ChannelName) -> Option<ChannelState> {
+        self.map.remove(k)
+    }
+}
+
+pub struct ChannelStateIter<'a> {
+    _m1: &'a u32,
+}

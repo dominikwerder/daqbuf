@@ -1,0 +1,435 @@
+#![allow(mismatched_lifetime_syntaxes)]
+use crate::iteminsertqueue::Accounting;
+use crate::iteminsertqueue::AccountingRecv;
+use crate::iteminsertqueue::QueryItem;
+use crate::senderpolling::SenderPolling;
+use async_channel::Receiver;
+use async_channel::Sender;
+use netpod::ttl::RetentionTime;
+use pin_project::pin_project;
+use std::collections::VecDeque;
+use std::fmt;
+use std::pin::Pin;
+
+autoerr::create_error_v1!(
+    name(Error, "ScyllaInsertQueue"),
+    enum variants {
+        QueuePush,
+        ChannelSend(RetentionTime, u8),
+    },
+);
+
+pub fn make_pair() -> (InsertQueuesTx, InsertQueuesRx) {
+    let (st_rf1_tx, st_rf1_rx) = async_channel::bounded(128);
+    let (st_rf3_tx, st_rf3_rx) = async_channel::bounded(128);
+    let (mt_rf3_tx, mt_rf3_rx) = async_channel::bounded(128);
+    let (lt_rf3_tx, lt_rf3_rx) = async_channel::bounded(128);
+    let (lt_rf3_lat5_tx, lt_rf3_lat5_rx) = async_channel::bounded(128);
+    let iqtx = InsertQueuesTx {
+        st_rf1_tx,
+        st_rf3_tx,
+        mt_rf3_tx,
+        lt_rf3_tx,
+        lt_rf3_lat5_tx,
+    };
+    let iqrx = InsertQueuesRx {
+        st_rf1_rx,
+        st_rf3_rx,
+        mt_rf3_rx,
+        lt_rf3_rx,
+        lt_rf3_lat5_rx,
+    };
+    (iqtx, iqrx)
+}
+
+#[derive(Clone)]
+pub struct InsertQueuesTx {
+    pub st_rf1_tx: Sender<VecDeque<QueryItem>>,
+    pub st_rf3_tx: Sender<VecDeque<QueryItem>>,
+    pub mt_rf3_tx: Sender<VecDeque<QueryItem>>,
+    pub lt_rf3_tx: Sender<VecDeque<QueryItem>>,
+    pub lt_rf3_lat5_tx: Sender<VecDeque<QueryItem>>,
+}
+
+async fn send_nonempty(qu: &mut VecDeque<QueryItem>, tx: &Sender<VecDeque<QueryItem>>) -> Result<(), Error> {
+    let item = core::mem::replace(qu, VecDeque::new());
+    if item.len() != 0 {
+        tx.send(item)
+            .await
+            .map_err(|_| Error::ChannelSend(RetentionTime::Short, 1))?;
+    }
+    Ok(())
+}
+
+impl InsertQueuesTx {
+    /// Send all accumulated batches
+    pub async fn send_all(&mut self, iqdqs: &mut InsertDeques) -> Result<(), Error> {
+        if true {
+            send_nonempty(&mut iqdqs.st_rf1_qu, &self.st_rf1_tx).await?;
+            send_nonempty(&mut iqdqs.st_rf3_qu, &self.st_rf3_tx).await?;
+            send_nonempty(&mut iqdqs.mt_rf3_qu, &self.mt_rf3_tx).await?;
+            send_nonempty(&mut iqdqs.lt_rf3_qu, &self.lt_rf3_tx).await?;
+            send_nonempty(&mut iqdqs.lt_rf3_lat5_qu, &self.lt_rf3_tx).await?;
+        } else {
+            {
+                let item = core::mem::replace(&mut iqdqs.st_rf1_qu, VecDeque::new());
+                if item.len() != 0 {
+                    self.st_rf1_tx
+                        .send(item)
+                        .await
+                        .map_err(|_| Error::ChannelSend(RetentionTime::Short, 1))?;
+                }
+            }
+            {
+                let item = core::mem::replace(&mut iqdqs.st_rf3_qu, VecDeque::new());
+                if item.len() != 0 {
+                    self.st_rf3_tx
+                        .send(item)
+                        .await
+                        .map_err(|_| Error::ChannelSend(RetentionTime::Short, 3))?;
+                }
+            }
+            {
+                let item = core::mem::replace(&mut iqdqs.mt_rf3_qu, VecDeque::new());
+                if item.len() != 0 {
+                    self.mt_rf3_tx
+                        .send(item)
+                        .await
+                        .map_err(|_| Error::ChannelSend(RetentionTime::Medium, 3))?;
+                }
+            }
+            {
+                let item = core::mem::replace(&mut iqdqs.lt_rf3_qu, VecDeque::new());
+                if item.len() != 0 {
+                    self.lt_rf3_tx
+                        .send(item)
+                        .await
+                        .map_err(|_| Error::ChannelSend(RetentionTime::Long, 3))?;
+                }
+            }
+            {
+                let item = core::mem::replace(&mut iqdqs.lt_rf3_lat5_qu, VecDeque::new());
+                if item.len() != 0 {
+                    self.lt_rf3_tx
+                        .send(item)
+                        .await
+                        .map_err(|_| Error::ChannelSend(RetentionTime::Long, 3))?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn close_all(&self) {
+        self.st_rf1_tx.close();
+        self.st_rf3_tx.close();
+        self.mt_rf3_tx.close();
+        self.lt_rf3_tx.close();
+        self.lt_rf3_lat5_tx.close();
+    }
+
+    pub fn clone2(&self) -> Self {
+        self.clone()
+    }
+
+    pub fn summary(&self) -> InsertQueuesTxSummary {
+        InsertQueuesTxSummary { obj: self }
+    }
+}
+
+pub struct InsertQueuesTxSummary<'a> {
+    obj: &'a InsertQueuesTx,
+}
+
+impl<'a> fmt::Display for InsertQueuesTxSummary<'a> {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        let obj = self.obj;
+        write!(
+            fmt,
+            "InsertQueuesTx {{ st_rf1_tx: {} {} {}, st_rf3_tx: {} {} {}, mt_rf3_tx: {} {} {}, lt_rf3_tx: {} {} {}, lt_rf3_lat5_tx: {} {} {} }}",
+            obj.st_rf1_tx.is_closed(),
+            obj.st_rf1_tx.is_full(),
+            obj.st_rf1_tx.len(),
+            obj.st_rf3_tx.is_closed(),
+            obj.st_rf3_tx.is_full(),
+            obj.st_rf3_tx.len(),
+            obj.mt_rf3_tx.is_closed(),
+            obj.mt_rf3_tx.is_full(),
+            obj.mt_rf3_tx.len(),
+            obj.lt_rf3_tx.is_closed(),
+            obj.lt_rf3_tx.is_full(),
+            obj.lt_rf3_tx.len(),
+            obj.lt_rf3_lat5_tx.is_closed(),
+            obj.lt_rf3_lat5_tx.is_full(),
+            obj.lt_rf3_lat5_tx.len(),
+        )
+    }
+}
+
+#[derive(Clone)]
+pub struct InsertQueuesRx {
+    pub st_rf1_rx: Receiver<VecDeque<QueryItem>>,
+    pub st_rf3_rx: Receiver<VecDeque<QueryItem>>,
+    pub mt_rf3_rx: Receiver<VecDeque<QueryItem>>,
+    pub lt_rf3_rx: Receiver<VecDeque<QueryItem>>,
+    pub lt_rf3_lat5_rx: Receiver<VecDeque<QueryItem>>,
+}
+
+impl InsertQueuesRx {
+    pub fn clone_2(self) -> (Self, Self) {
+        async fn feed(
+            rx: Receiver<VecDeque<QueryItem>>,
+            tx1: Sender<VecDeque<QueryItem>>,
+            tx2: Sender<VecDeque<QueryItem>>,
+        ) {
+            loop {
+                match rx.recv().await {
+                    Ok(item1) => {
+                        let item2 = item1.clone();
+                        match tx1.send(item1).await {
+                            Ok(()) => {}
+                            Err(_) => {
+                                break;
+                            }
+                        }
+                        match tx2.send(item2).await {
+                            Ok(()) => {}
+                            Err(_) => {
+                                break;
+                            }
+                        }
+                    }
+                    Err(_) => {
+                        break;
+                    }
+                }
+            }
+        }
+        fn dupl(rx: Receiver<VecDeque<QueryItem>>) -> (Receiver<VecDeque<QueryItem>>, Receiver<VecDeque<QueryItem>>) {
+            let (tx1, rx1) = async_channel::bounded(128);
+            let (tx2, rx2) = async_channel::bounded(128);
+            taskrun::tokio::spawn(feed(rx, tx1, tx2));
+            (rx1, rx2)
+        }
+        let st_rf1_rx = dupl(self.st_rf1_rx);
+        let st_rf3_rx = dupl(self.st_rf3_rx);
+        let mt_rf3_rx = dupl(self.mt_rf3_rx);
+        let lt_rf3_rx = dupl(self.lt_rf3_rx);
+        let lt_rf3_lat5_rx = dupl(self.lt_rf3_lat5_rx);
+        let ret1 = InsertQueuesRx {
+            st_rf1_rx: st_rf1_rx.0,
+            st_rf3_rx: st_rf3_rx.0,
+            mt_rf3_rx: mt_rf3_rx.0,
+            lt_rf3_rx: lt_rf3_rx.0,
+            lt_rf3_lat5_rx: lt_rf3_lat5_rx.0,
+        };
+        let ret2 = InsertQueuesRx {
+            st_rf1_rx: st_rf1_rx.1,
+            st_rf3_rx: st_rf3_rx.1,
+            mt_rf3_rx: mt_rf3_rx.1,
+            lt_rf3_rx: lt_rf3_rx.1,
+            lt_rf3_lat5_rx: lt_rf3_lat5_rx.1,
+        };
+        (ret1, ret2)
+    }
+}
+
+pub struct InsertDeques {
+    pub st_rf1_qu: VecDeque<QueryItem>,
+    pub st_rf3_qu: VecDeque<QueryItem>,
+    pub mt_rf3_qu: VecDeque<QueryItem>,
+    pub lt_rf3_qu: VecDeque<QueryItem>,
+    pub lt_rf3_lat5_qu: VecDeque<QueryItem>,
+}
+
+impl InsertDeques {
+    pub fn new() -> Self {
+        Self {
+            st_rf1_qu: VecDeque::new(),
+            st_rf3_qu: VecDeque::new(),
+            mt_rf3_qu: VecDeque::new(),
+            lt_rf3_qu: VecDeque::new(),
+            lt_rf3_lat5_qu: VecDeque::new(),
+        }
+    }
+
+    /// Total number of items cumulated over all queues.
+    pub fn len(&self) -> usize {
+        self.st_rf1_qu.len()
+            + self.st_rf3_qu.len()
+            + self.mt_rf3_qu.len()
+            + self.lt_rf3_qu.len()
+            + self.lt_rf3_lat5_qu.len()
+    }
+
+    pub fn clear(&mut self) {
+        self.st_rf1_qu.clear();
+        self.st_rf3_qu.clear();
+        self.mt_rf3_qu.clear();
+        self.lt_rf3_qu.clear();
+        self.lt_rf3_lat5_qu.clear();
+    }
+
+    pub fn summary(&self) -> InsertDequesSummary {
+        InsertDequesSummary { obj: self }
+    }
+
+    // Should be used only for connection and channel status items.
+    // It encapsulates the decision to which queue(s) we want to send these kind of items.
+    pub fn emit_accounting_item(&mut self, rt: RetentionTime, item: Accounting) -> Result<(), Error> {
+        self.deque(rt).push_back(QueryItem::Accounting(item));
+        Ok(())
+    }
+
+    // Should be used only for connection and channel status items.
+    // It encapsulates the decision to which queue(s) we want to send these kind of items.
+    pub fn emit_accounting_recv(&mut self, item: AccountingRecv) -> Result<(), Error> {
+        self.deque(RetentionTime::Short)
+            .push_back(QueryItem::AccountingRecv(item));
+        Ok(())
+    }
+
+    pub fn deque(&mut self, rt: RetentionTime) -> &mut VecDeque<QueryItem> {
+        match rt {
+            RetentionTime::Short => &mut self.st_rf3_qu,
+            RetentionTime::Medium => &mut self.mt_rf3_qu,
+            RetentionTime::Long => &mut self.lt_rf3_qu,
+        }
+    }
+
+    pub fn housekeeping(&mut self) {
+        let qus = [
+            &mut self.st_rf1_qu,
+            &mut self.st_rf3_qu,
+            &mut self.mt_rf3_qu,
+            &mut self.lt_rf3_qu,
+            &mut self.lt_rf3_lat5_qu,
+        ];
+        for qu in qus {
+            if qu.len() * 2 < qu.capacity() {
+                qu.truncate(qu.capacity() * 3 / 4);
+            }
+        }
+    }
+}
+
+pub struct InsertDequesSummary<'a> {
+    obj: &'a InsertDeques,
+}
+
+impl<'a> fmt::Display for InsertDequesSummary<'a> {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        let obj = self.obj;
+        write!(
+            fmt,
+            "InsertDeques {{ st_rf1_len: {}, st_rf3_len: {}, mt_rf3_len: {}, lt_rf3_len: {}, lt_rf3_lat5_len: {} }}",
+            obj.st_rf1_qu.len(),
+            obj.st_rf3_qu.len(),
+            obj.mt_rf3_qu.len(),
+            obj.lt_rf3_qu.len(),
+            obj.lt_rf3_lat5_qu.len()
+        )
+    }
+}
+
+#[pin_project]
+pub struct InsertSenderPolling {
+    #[pin]
+    pub st_rf1_sp: SenderPolling<VecDeque<QueryItem>>,
+    #[pin]
+    pub st_rf3_sp: SenderPolling<VecDeque<QueryItem>>,
+    #[pin]
+    pub mt_rf3_sp: SenderPolling<VecDeque<QueryItem>>,
+    #[pin]
+    pub lt_rf3_sp: SenderPolling<VecDeque<QueryItem>>,
+    #[pin]
+    pub lt_rf3_lat5_sp: SenderPolling<VecDeque<QueryItem>>,
+}
+
+impl InsertSenderPolling {
+    pub fn new(iqtx: InsertQueuesTx) -> Self {
+        Self {
+            st_rf1_sp: SenderPolling::new(iqtx.st_rf1_tx),
+            st_rf3_sp: SenderPolling::new(iqtx.st_rf3_tx),
+            mt_rf3_sp: SenderPolling::new(iqtx.mt_rf3_tx),
+            lt_rf3_sp: SenderPolling::new(iqtx.lt_rf3_tx),
+            lt_rf3_lat5_sp: SenderPolling::new(iqtx.lt_rf3_lat5_tx),
+        }
+    }
+
+    pub fn is_idle(&self) -> bool {
+        self.st_rf1_sp.is_idle()
+            && self.st_rf3_sp.is_idle()
+            && self.mt_rf3_sp.is_idle()
+            && self.lt_rf3_sp.is_idle()
+            && self.lt_rf3_lat5_sp.is_idle()
+    }
+
+    pub fn st_rf1_sp_pin(self: Pin<&mut Self>) -> Pin<&mut SenderPolling<VecDeque<QueryItem>>> {
+        self.project().st_rf1_sp
+    }
+
+    pub fn st_rf3_sp_pin(self: Pin<&mut Self>) -> Pin<&mut SenderPolling<VecDeque<QueryItem>>> {
+        self.project().st_rf3_sp
+    }
+
+    pub fn mt_rf3_sp_pin(self: Pin<&mut Self>) -> Pin<&mut SenderPolling<VecDeque<QueryItem>>> {
+        self.project().mt_rf3_sp
+    }
+
+    pub fn lt_rf3_sp_pin(self: Pin<&mut Self>) -> Pin<&mut SenderPolling<VecDeque<QueryItem>>> {
+        self.project().lt_rf3_sp
+    }
+
+    pub fn lt_rf3_lat5_sp_pin(self: Pin<&mut Self>) -> Pin<&mut SenderPolling<VecDeque<QueryItem>>> {
+        self.project().lt_rf3_lat5_sp
+    }
+
+    pub fn summary(&self) -> InsertSenderPollingSummary {
+        InsertSenderPollingSummary { obj: self }
+    }
+}
+
+pub struct InsertSenderPollingSummary<'a> {
+    obj: &'a InsertSenderPolling,
+}
+
+impl<'a> fmt::Display for InsertSenderPollingSummary<'a> {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        let obj = self.obj;
+        write!(
+            fmt,
+            "InsertSenderPolling {{ st_rf1_idle_len: {:?} {:?}, st_rf3_idle_len: {:?} {:?}, mt_rf3_idle_len: {:?} {:?}, lt_rf3_idle_len: {:?} {:?}, lt_rf3_lat5_idle_len: {:?} {:?} }}",
+            obj.st_rf1_sp.is_idle(),
+            obj.st_rf1_sp.len(),
+            obj.st_rf3_sp.is_idle(),
+            obj.st_rf3_sp.len(),
+            obj.mt_rf3_sp.is_idle(),
+            obj.mt_rf3_sp.len(),
+            obj.lt_rf3_sp.is_idle(),
+            obj.lt_rf3_sp.len(),
+            obj.lt_rf3_lat5_sp.is_idle(),
+            obj.lt_rf3_lat5_sp.len(),
+        )
+    }
+}
+
+pub struct InsertQueuesTxMetrics {
+    pub st_rf1_len: usize,
+    pub st_rf3_len: usize,
+    pub mt_rf3_len: usize,
+    pub lt_rf3_len: usize,
+    pub lt_rf3_lat5_len: usize,
+}
+
+impl From<&InsertQueuesTx> for InsertQueuesTxMetrics {
+    fn from(value: &InsertQueuesTx) -> Self {
+        Self {
+            st_rf1_len: value.st_rf1_tx.len(),
+            st_rf3_len: value.st_rf3_tx.len(),
+            mt_rf3_len: value.mt_rf3_tx.len(),
+            lt_rf3_len: value.lt_rf3_tx.len(),
+            lt_rf3_lat5_len: value.lt_rf3_lat5_tx.len(),
+        }
+    }
+}

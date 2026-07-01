@@ -1,0 +1,1130 @@
+pub mod inserthook;
+
+use async_channel::Receiver;
+use async_channel::Sender;
+use dbpg::seriesbychannel::ChannelInfoQuery;
+use err::Error;
+use netfetch::ca::connset::CaConnSet;
+use netfetch::ca::connset::CaConnSetCtrl;
+use netfetch::ca::connset::CaConnSetEvent;
+use netfetch::ca::connset::CaConnSetItem;
+use netfetch::conf::CaIngestOpts;
+use netfetch::conf::ChannelConfig;
+use netfetch::conf::ChannelsConfig;
+use netfetch::conf::ScyllaInsertsetConf;
+use netfetch::daemon_common::ChannelName;
+use netfetch::daemon_common::DaemonEvent;
+use netfetch::metrics::RoutesResources;
+use netfetch::throttletrace::ThrottleTrace;
+use netpod::Database;
+use netpod::ttl::RetentionTime;
+use scywr::insertqueues::InsertQueuesRx;
+use scywr::insertqueues::InsertQueuesTx;
+use scywr::insertworker::InsertWorkerOpts;
+use stats::rand_xoshiro::rand_core::Rng;
+use std::pin::Pin;
+use std::sync::Arc;
+use std::sync::RwLock;
+use std::sync::atomic;
+use std::sync::atomic::AtomicU64;
+use std::sync::atomic::AtomicUsize;
+use std::time::Duration;
+use std::time::Instant;
+use taskrun::tokio;
+use tokio::task::JoinHandle;
+
+const CHECK_HEALTH_TIMEOUT: Duration = Duration::from_millis(5000);
+const PRINT_ACTIVE_INTERVAL: Duration = Duration::from_millis(60000);
+const CHECK_CHANNEL_SLOW_WARN: Duration = Duration::from_millis(500);
+
+macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
+macro_rules! warn { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
+macro_rules! info { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
+macro_rules! debug { ($($arg:tt)*) => { if true { log::debug!($($arg)*); } }; }
+
+struct CaIngestCtrls {
+    daemon_tx: Sender<DaemonEvent>,
+    connset_tx: Sender<CaConnSetEvent>,
+}
+
+impl CaIngestCtrls {
+    fn new(daemon_tx: Sender<DaemonEvent>, connset_tx: Sender<CaConnSetEvent>) -> Self {
+        Self { daemon_tx, connset_tx }
+    }
+}
+
+impl netfetch::metrics::CaIngestCtrls for CaIngestCtrls {
+    fn timer_tick(&self, v: u32) -> Box<dyn Future<Output = u32>> {
+        let dtx = self.daemon_tx.clone();
+        Box::new(async move {
+            let (tx, rx) = async_channel::bounded(1);
+            if dtx.send(DaemonEvent::TimerTick(v, tx)).await.is_err() {
+                return 0;
+            }
+            rx.recv().await.unwrap_or(0)
+        })
+    }
+
+    fn get_metrics(
+        &self,
+    ) -> Pin<
+        Box<
+            dyn Future<Output = Result<netfetch::metrics::types::MetricsPrometheusShort, Box<dyn std::error::Error>>>
+                + Send,
+        >,
+    > {
+        let dtx = self.daemon_tx.clone();
+        let fut = async move {
+            let (tx, rx) = async_channel::bounded(1);
+            let x = DaemonEvent::GetMetrics(tx);
+            dtx.send(x).await?;
+            let x = rx.recv().await?;
+            Ok(x)
+        };
+        Box::pin(fut)
+    }
+
+    fn channel_add(
+        &self,
+        conf: ChannelConfig,
+    ) -> Pin<Box<dyn Future<Output = Result<(), Box<dyn std::error::Error>>> + Send>> {
+        let dtx = self.daemon_tx.clone();
+        let fut = async move {
+            let (tx, rx) = async_channel::bounded(1);
+            let x = DaemonEvent::ChannelAdd(conf, tx);
+            dtx.send(x).await?;
+            let x = rx.recv().await?;
+            let x = x?;
+            Ok(x)
+        };
+        Box::pin(fut)
+    }
+
+    fn channel_remove(
+        &self,
+        name: ChannelName,
+    ) -> Pin<Box<dyn Future<Output = Result<(), Box<dyn std::error::Error>>> + Send>> {
+        let dtx = self.daemon_tx.clone();
+        let fut = async move {
+            let x = DaemonEvent::ChannelRemove(name);
+            dtx.send(x).await?;
+            Ok(())
+        };
+        Box::pin(fut)
+    }
+
+    fn config_reload(&self) -> Pin<Box<dyn Future<Output = Result<(), Box<dyn std::error::Error>>> + Send>> {
+        let dtx = self.daemon_tx.clone();
+        let fut = async move {
+            let (tx, rx) = async_channel::bounded(1);
+            let x = DaemonEvent::ConfigReload(tx);
+            dtx.send(x).await?;
+            let x = rx.recv().await?;
+            let x = x.map_err(|_| Error::from_string("error")).map_err(Box::new)?;
+            Ok(x)
+        };
+        Box::pin(fut)
+    }
+
+    fn shutdown(&self) -> Pin<Box<dyn Future<Output = Result<(), Box<dyn std::error::Error>>> + Send>> {
+        let dtx = self.daemon_tx.clone();
+        let fut = async move {
+            let x = DaemonEvent::Shutdown;
+            dtx.send(x).await?;
+            Ok(())
+        };
+        Box::pin(fut)
+    }
+
+    fn channel_states(
+        &self,
+        name: String,
+        limit: u64,
+    ) -> Pin<
+        Box<
+            dyn Future<Output = Result<netfetch::ca::connset::ChannelStatusesResponse, Box<dyn std::error::Error>>>
+                + Send,
+        >,
+    > {
+        let dtx = self.connset_tx.clone();
+        let fut = async move {
+            use netfetch::ca::connset::ChannelStatusesRequest;
+            let (tx, rx) = async_channel::bounded(1);
+            let req = ChannelStatusesRequest { name, limit, tx };
+            let item = CaConnSetEvent::ConnSetCmd(netfetch::ca::connset::ConnSetCmd::ChannelStatuses(req));
+            dtx.send(item).await?;
+            let res = rx.recv().await?;
+            Ok(res)
+        };
+        Box::pin(fut)
+    }
+
+    fn conn2_ctrls(&self) -> Pin<Box<dyn Future<Output = Option<Box<dyn netfetch::metrics::Conn2Ctrls>>> + Send>> {
+        let fut = async { None };
+        Box::pin(fut)
+    }
+}
+
+struct PostIngestCtrls {
+    rres: Arc<RoutesResources>,
+}
+
+impl PostIngestCtrls {
+    fn new(rres: Arc<RoutesResources>) -> Self {
+        Self { rres }
+    }
+}
+
+impl netfetch::metrics::PostIngestCtrls for PostIngestCtrls {
+    fn resources(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = Result<Arc<RoutesResources>, Box<dyn std::error::Error>>> + Send>> {
+        let rres = self.rres.clone();
+        let fut = async move { Ok(rres) };
+        Box::pin(fut)
+    }
+}
+
+pub struct DaemonOpts {
+    pgconf: Database,
+    #[allow(unused)]
+    test_bsread_addr: Option<String>,
+    insert_frac: Arc<AtomicU64>,
+    store_workers_rate: Arc<AtomicU64>,
+}
+
+pub struct Daemon {
+    #[allow(unused)]
+    opts: DaemonOpts,
+    ingest_opts: CaIngestOpts,
+    tx: Sender<DaemonEvent>,
+    rx: Receiver<DaemonEvent>,
+    insert_workers_jhs: Vec<JoinHandle<Result<(), scywr::insertworker::Error>>>,
+    shutting_down: bool,
+    connset_ctrl: CaConnSetCtrl,
+    connset_status_last: Instant,
+    // TODO should be a stats object?
+    insert_workers_running: AtomicU64,
+    metrics_shutdown_tx: Sender<u32>,
+    metrics_shutdown_rx: Receiver<u32>,
+    metrics_jh: Option<JoinHandle<Result<(), Error>>>,
+    channel_info_query_tx: Sender<ChannelInfoQuery>,
+    iqtx: Option<InsertQueuesTx>,
+    daemon_metrics: stats::mett::DaemonMetrics,
+}
+
+impl Daemon {
+    pub async fn new(opts: DaemonOpts, ingest_opts: CaIngestOpts) -> Result<Self, Error> {
+        let (daemon_ev_tx, daemon_ev_rx) = async_channel::bounded(32);
+        // TODO keep join handles and await later
+        let (channel_info_query_tx, jhs, jh) =
+            dbpg::seriesbychannel::start_lookup_workers::<dbpg::seriesbychannel::SalterRandom>(2, &opts.pgconf)
+                .await
+                .map_err(|e| Error::with_msg_no_trace(e.to_string()))?;
+        let local_epics_hostname = ingest_linux::net::local_hostname();
+        let insert_worker_opts = InsertWorkerOpts {
+            store_workers_rate: opts.store_workers_rate.clone(),
+            insert_workers_running: Arc::new(AtomicU64::new(0)),
+            insert_frac: opts.insert_frac.clone(),
+            array_truncate: Arc::new(AtomicU64::new(ingest_opts.array_truncate())),
+        };
+        let insert_worker_opts = Arc::new(insert_worker_opts);
+
+        let (iqtx, iqrx) = {
+            let (st_rf3_tx, st_rf3_rx) = async_channel::bounded(ingest_opts.insert_item_queue_cap());
+            let (st_rf1_tx, st_rf1_rx) = async_channel::bounded(ingest_opts.insert_item_queue_cap());
+            let (mt_rf3_tx, mt_rf3_rx) = async_channel::bounded(ingest_opts.insert_item_queue_cap());
+            let (lt_rf3_tx, lt_rf3_rx) = async_channel::bounded(ingest_opts.insert_item_queue_cap());
+            let (lt_rf3_lat5_tx, lt_rf3_lat5_rx) = async_channel::bounded(ingest_opts.insert_item_queue_cap());
+            let iqtx = InsertQueuesTx {
+                st_rf3_tx,
+                st_rf1_tx,
+                mt_rf3_tx,
+                lt_rf3_tx,
+                lt_rf3_lat5_tx,
+            };
+            let iqrx = InsertQueuesRx {
+                st_rf3_rx,
+                st_rf1_rx,
+                mt_rf3_rx,
+                lt_rf3_rx,
+                lt_rf3_lat5_rx,
+            };
+            (iqtx, iqrx)
+        };
+
+        let iqtx2 = iqtx.clone();
+
+        let conn_set_ctrl = CaConnSet::start(
+            ingest_opts.backend().into(),
+            local_epics_hostname,
+            iqtx,
+            channel_info_query_tx.clone(),
+            ingest_opts.clone(),
+        );
+
+        // TODO remove
+        tokio::spawn({
+            let rx = conn_set_ctrl.receiver().clone();
+            let tx = daemon_ev_tx.clone();
+            async move {
+                loop {
+                    match rx.recv().await {
+                        Ok(item) => {
+                            let item = DaemonEvent::CaConnSetItem(item);
+                            if let Err(_) = tx.send(item).await {
+                                debug!("CaConnSet to Daemon adapter: tx closed, break");
+                                break;
+                            }
+                        }
+                        Err(_) => {
+                            debug!("CaConnSet to Daemon adapter: rx done, break");
+                            break;
+                        }
+                    }
+                }
+            }
+        });
+
+        // Insert queue hook
+        // let query_item_rx = inserthook::active_channel_insert_hook(query_item_rx);
+
+        let ignore_writes = ingest_opts.scylla_ignore_writes();
+
+        let (insert_worker_output_tx, insert_worker_output_rx) = async_channel::bounded(256);
+
+        // TODO join these
+        let mut insert_workers_jhs = Vec::new();
+
+        async fn spawn_scylla_insert_workers(
+            scylla_set: &ScyllaInsertsetConf,
+            ingest_opts: &CaIngestOpts,
+            insert_worker_opts: &Arc<InsertWorkerOpts>,
+            iqrx: InsertQueuesRx,
+            ignore_writes: bool,
+            insert_worker_output_tx: Sender<scywr::insertworker::InsertWorkerOutputItem>,
+        ) -> Result<Vec<JoinHandle<Result<(), scywr::insertworker::Error>>>, Error> {
+            let rts = [
+                RetentionTime::Short,
+                RetentionTime::Short,
+                RetentionTime::Medium,
+                RetentionTime::Long,
+                RetentionTime::Long,
+            ];
+            let scyconfs = [
+                scylla_set.st_rf1().clone(),
+                scylla_set.st_rf3().clone(),
+                scylla_set.mt_rf3().clone(),
+                scylla_set.lt_rf3().clone(),
+                scylla_set.lt_rf3().clone(),
+            ];
+            let rxs = [
+                iqrx.st_rf1_rx,
+                iqrx.st_rf3_rx,
+                iqrx.mt_rf3_rx,
+                iqrx.lt_rf3_rx,
+                iqrx.lt_rf3_lat5_rx,
+            ];
+            let mut jhs = Vec::new();
+            for (rt, (scyconf, rx)) in rts.into_iter().zip(scyconfs.into_iter().zip(rxs.into_iter())) {
+                let jh = scywr::insertworker::spawn_scylla_insert_workers(
+                    rt,
+                    scyconf,
+                    ingest_opts.insert_scylla_sessions(),
+                    ingest_opts.insert_worker_count(),
+                    ingest_opts.insert_worker_concurrency(),
+                    rx,
+                    insert_worker_opts.clone(),
+                    ingest_opts.use_rate_limit_queue(),
+                    ignore_writes,
+                    insert_worker_output_tx.clone(),
+                )
+                .await
+                .map_err(Error::from_string)?;
+                jhs.extend(jh);
+            }
+            Ok(jhs)
+        }
+
+        if ingest_opts.scylla_disable() {
+            let jh = scywr::insertworker::spawn_scylla_insert_workers_dummy(
+                ingest_opts.insert_worker_count(),
+                ingest_opts.insert_worker_concurrency(),
+                iqrx.st_rf1_rx,
+                insert_worker_opts.clone(),
+                insert_worker_output_tx.clone(),
+            )
+            .await
+            .map_err(Error::from_string)?;
+            insert_workers_jhs.extend(jh);
+            let jh = scywr::insertworker::spawn_scylla_insert_workers_dummy(
+                ingest_opts.insert_worker_count(),
+                ingest_opts.insert_worker_concurrency(),
+                iqrx.st_rf3_rx,
+                insert_worker_opts.clone(),
+                insert_worker_output_tx.clone(),
+            )
+            .await
+            .map_err(Error::from_string)?;
+            insert_workers_jhs.extend(jh);
+            let jh = scywr::insertworker::spawn_scylla_insert_workers_dummy(
+                ingest_opts.insert_worker_count(),
+                ingest_opts.insert_worker_concurrency(),
+                iqrx.mt_rf3_rx,
+                insert_worker_opts.clone(),
+                insert_worker_output_tx.clone(),
+            )
+            .await
+            .map_err(Error::from_string)?;
+            insert_workers_jhs.extend(jh);
+            let jh = scywr::insertworker::spawn_scylla_insert_workers_dummy(
+                ingest_opts.insert_worker_count(),
+                ingest_opts.insert_worker_concurrency(),
+                iqrx.lt_rf3_rx,
+                insert_worker_opts.clone(),
+                insert_worker_output_tx.clone(),
+            )
+            .await
+            .map_err(Error::from_string)?;
+            insert_workers_jhs.extend(jh);
+            let jh = scywr::insertworker::spawn_scylla_insert_workers_dummy(
+                ingest_opts.insert_worker_count(),
+                ingest_opts.insert_worker_concurrency(),
+                iqrx.lt_rf3_lat5_rx,
+                insert_worker_opts.clone(),
+                insert_worker_output_tx.clone(),
+            )
+            .await
+            .map_err(Error::from_string)?;
+            insert_workers_jhs.extend(jh);
+        } else {
+            let scyset1 = ingest_opts.scylla_insert_set_conf_main();
+            if let Some(scyset2) = ingest_opts.scylla_insert_set_conf_2nd() {
+                let (iqrx1, iqrx2) = iqrx.clone_2();
+                let jhs = spawn_scylla_insert_workers(
+                    &scyset1,
+                    &ingest_opts,
+                    &insert_worker_opts,
+                    iqrx1,
+                    ignore_writes,
+                    insert_worker_output_tx.clone(),
+                )
+                .await?;
+                insert_workers_jhs.extend(jhs);
+                let jhs = spawn_scylla_insert_workers(
+                    &scyset2,
+                    &ingest_opts,
+                    &insert_worker_opts,
+                    iqrx2,
+                    ignore_writes,
+                    insert_worker_output_tx,
+                )
+                .await?;
+                insert_workers_jhs.extend(jhs);
+            } else {
+                let jhs = spawn_scylla_insert_workers(
+                    &scyset1,
+                    &ingest_opts,
+                    &insert_worker_opts,
+                    iqrx,
+                    ignore_writes,
+                    insert_worker_output_tx.clone(),
+                )
+                .await?;
+                insert_workers_jhs.extend(jhs);
+            }
+            // let lt_rx_combined = ChannelCombineAB::new(iqrx.lt_rf3_rx, iqrx.lt_rf3_lat5_rx);
+        };
+
+        #[cfg(feature = "bsread")]
+        if let Some(bsaddr) = &opts.test_bsread_addr {
+            //netfetch::zmtp::Zmtp;
+            let zmtpopts = ingest_bsread::zmtp::ZmtpClientOpts {
+                backend: opts.backend().into(),
+                addr: bsaddr.parse().unwrap(),
+                do_pulse_id: false,
+                rcvbuf: None,
+                array_truncate: Some(1024),
+                process_channel_count_limit: Some(32),
+            };
+            let client = ingest_bsread::bsreadclient::BsreadClient::new(
+                zmtpopts,
+                ingest_commons.insert_item_queue.sender().unwrap().inner().clone(),
+                channel_info_query_tx.clone(),
+            )
+            .await
+            .map_err(|e| Error::from(e.to_string()))?;
+            let fut = {
+                async move {
+                    let mut client = client;
+                    client.run().await.map_err(|e| Error::from(e.to_string()))?;
+                    Ok::<_, Error>(())
+                }
+            };
+            // TODO await on shutdown
+            let _jh = tokio::spawn(fut);
+            //let mut jhs = Vec::new();
+            //jhs.push(jh);
+            //futures_util::future::join_all(jhs).await;
+            //jh.await.map_err(|e| e.to_string()).map_err(Error::from)??;
+        }
+
+        {
+            // TODO join the task
+            let jh = tokio::task::spawn(Self::insert_worker_out_merge(
+                insert_worker_output_rx,
+                daemon_ev_tx.clone(),
+            ));
+        }
+        let (metrics_shutdown_tx, metrics_shutdown_rx) = async_channel::bounded(8);
+
+        let ret = Self {
+            opts,
+            ingest_opts,
+            tx: daemon_ev_tx,
+            rx: daemon_ev_rx,
+            insert_workers_jhs,
+            shutting_down: false,
+            connset_ctrl: conn_set_ctrl,
+            connset_status_last: Instant::now(),
+            insert_workers_running: AtomicU64::new(0),
+            metrics_shutdown_tx,
+            metrics_shutdown_rx,
+            metrics_jh: None,
+            channel_info_query_tx,
+            iqtx: Some(iqtx2),
+            daemon_metrics: stats::mett::DaemonMetrics::new(),
+        };
+        Ok(ret)
+    }
+
+    async fn insert_worker_out_merge(
+        rx: Receiver<scywr::insertworker::InsertWorkerOutputItem>,
+        tx: Sender<DaemonEvent>,
+    ) {
+        loop {
+            match rx.recv().await {
+                Ok(x) => {
+                    match tx.send(DaemonEvent::ScyllaInsertWorkerOutput(x)).await {
+                        Ok(()) => {}
+                        Err(_) => {
+                            // TODO
+                            break;
+                        }
+                    }
+                }
+                Err(_) => {
+                    // TODO
+                    break;
+                }
+            }
+        }
+    }
+
+    async fn check_health(&mut self, ts1: Instant) -> Result<(), Error> {
+        self.check_health_connset(ts1)?;
+        Ok(())
+    }
+
+    fn check_health_connset(&mut self, ts1: Instant) -> Result<(), Error> {
+        let _ = ts1;
+        let dt = self.connset_status_last.elapsed();
+        if dt > CHECK_HEALTH_TIMEOUT {
+            error!(
+                "CaConnSet has not reported health status  since {:.0}",
+                dt.as_secs_f32() * 1e3
+            );
+        }
+        Ok(())
+    }
+
+    fn get_cpu_usage() -> u64 {
+        let ret = match std::fs::read("/proc/self/stat") {
+            Ok(buf) => {
+                let line = String::from_utf8_lossy(&buf);
+                let a: Vec<_> = line.split(" ").collect();
+                let utime = if let Some(s) = a.get(13) {
+                    match s.parse::<u64>() {
+                        Ok(n) => Some(n),
+                        Err(_) => None,
+                    }
+                } else {
+                    None
+                };
+                let stime = if let Some(s) = a.get(14) {
+                    match s.parse::<u64>() {
+                        Ok(n) => Some(n),
+                        Err(_) => None,
+                    }
+                } else {
+                    None
+                };
+                match (utime, stime) {
+                    (Some(utime), Some(stime)) => Some(utime + stime),
+                    _ => None,
+                }
+            }
+            Err(_) => None,
+        };
+        ret.unwrap_or(0)
+    }
+
+    fn update_cpu_usage(&mut self) {
+        let cpu = Self::get_cpu_usage();
+        self.daemon_metrics.proc_cpu_v0().set(cpu as _);
+    }
+
+    fn get_memory_usage() -> u64 {
+        let ret = match std::fs::read("/proc/self/statm") {
+            Ok(statm_line) => {
+                let statm_str = String::from_utf8_lossy(&statm_line);
+                let mut it = statm_str.split(" ");
+                if let Some(_) = it.next() {
+                    if let Some(s) = it.next() {
+                        match s.parse::<u64>() {
+                            Ok(n) => {
+                                let ps = unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as u64;
+                                Some(n * ps)
+                            }
+                            Err(_) => None,
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            }
+            Err(_) => None,
+        };
+        ret.unwrap_or(0)
+    }
+
+    fn update_memory_usage(&mut self) {
+        let rss = Self::get_memory_usage();
+        self.daemon_metrics.proc_mem_rss().set(rss as _);
+    }
+
+    async fn handle_timer_tick(&mut self) -> Result<(), Error> {
+        if self.shutting_down {
+            let nworkers = self.insert_workers_running.load(atomic::Ordering::Acquire);
+            log::info!("shutting_down  insert_workers_running  {nworkers}");
+        }
+        {
+            let n = SIGINT.load(atomic::Ordering::Acquire);
+            let m = SIGINT_CONFIRM.load(atomic::Ordering::Acquire);
+            if m != n {
+                warn!("Received SIGINT");
+                SIGINT_CONFIRM.store(n, atomic::Ordering::Release);
+            }
+        }
+        if SIGTERM.load(atomic::Ordering::Acquire) == 1 {
+            warn!("Received SIGTERM");
+            SIGTERM.store(2, atomic::Ordering::Release);
+        }
+        {
+            let ts1 = Instant::now();
+            self.check_health(ts1).await?;
+            let dt = ts1.elapsed();
+            if dt > CHECK_CHANNEL_SLOW_WARN {
+                info!("slow check_chans  {:.0} ms", dt.as_secs_f32() * 1e3);
+            }
+        }
+        let iqtxm = self
+            .iqtx
+            .as_ref()
+            .map(|x| scywr::insertqueues::InsertQueuesTxMetrics::from(x));
+        if let Some(iqtxm) = iqtxm {
+            self.daemon_metrics.iqtx_len_st_rf1().set(iqtxm.st_rf1_len as _);
+            self.daemon_metrics.iqtx_len_st_rf3().set(iqtxm.st_rf3_len as _);
+            self.daemon_metrics.iqtx_len_mt_rf3().set(iqtxm.mt_rf3_len as _);
+            self.daemon_metrics.iqtx_len_lt_rf3().set(iqtxm.lt_rf3_len as _);
+            self.daemon_metrics
+                .iqtx_len_lt_rf3_lat5()
+                .set(iqtxm.lt_rf3_lat5_len as _);
+        } else {
+            self.daemon_metrics.iqtx_len_st_rf1().set(0);
+            self.daemon_metrics.iqtx_len_st_rf3().set(0);
+            self.daemon_metrics.iqtx_len_mt_rf3().set(0);
+            self.daemon_metrics.iqtx_len_lt_rf3().set(0);
+            self.daemon_metrics.iqtx_len_lt_rf3_lat5().set(0);
+        }
+        self.update_cpu_usage();
+        self.update_memory_usage();
+        Ok(())
+    }
+
+    async fn handle_channel_add(
+        &mut self,
+        ch_cfg: ChannelConfig,
+        restx: netfetch::ca::conn::CmdResTx,
+    ) -> Result<(), Error> {
+        self.connset_ctrl.add_channel(ch_cfg, restx).await?;
+        Ok(())
+    }
+
+    async fn handle_channel_remove(&mut self, ch: ChannelName) -> Result<(), Error> {
+        self.connset_ctrl.remove_channel(ch.name().into()).await?;
+        Ok(())
+    }
+
+    #[cfg(target_abi = "x32")]
+    async fn handle_ca_conn_done(&mut self, conn_addr: SocketAddrV4) -> Result<(), Error> {
+        info!("handle_ca_conn_done {conn_addr:?}");
+        self.connection_states.remove(&conn_addr);
+        for (_k, v) in self.channel_states.iter_mut() {
+            match &v.value {
+                ChannelStateValue::Active(st2) => match st2 {
+                    ActiveChannelState::WithStatusSeriesId {
+                        status_series_id: _,
+                        state: st3,
+                    } => match &st3.inner {
+                        WithStatusSeriesIdStateInner::UnknownAddress { .. } => {}
+                        WithStatusSeriesIdStateInner::SearchPending { .. } => {}
+                        WithStatusSeriesIdStateInner::WithAddress { addr, .. } => {
+                            if addr == &conn_addr {
+                                self.stats.caconn_done_channel_state_reset_inc();
+                                // TODO reset channel, emit log event for the connection addr only
+                                //info!("ca conn down, reset {k:?}");
+                                *v = ChannelState {
+                                    value: ChannelStateValue::Active(ActiveChannelState::Init {
+                                        since: SystemTime::now(),
+                                    }),
+                                };
+                            } else {
+                                // nothing to do
+                            }
+                        }
+                        WithStatusSeriesIdStateInner::NoAddress { .. } => {}
+                    },
+                    ActiveChannelState::Init { .. } => {}
+                    ActiveChannelState::WaitForStatusSeriesId { .. } => {}
+                },
+                ChannelStateValue::ToRemove { .. } => {}
+            }
+        }
+        let item = QueryItem::ConnectionStatus(ConnectionStatusItem {
+            ts: SystemTime::now(),
+            addr: conn_addr,
+            status: ConnectionStatus::ConnectionHandlerDone,
+        });
+        if let Some(tx) = self.ingest_commons.insert_item_queue.sender() {
+            if let Err(_) = tokio::time::timeout(Duration::from_millis(1000), tx.send(item)).await {
+                error!("timeout on insert queue send");
+            } else {
+            }
+        } else {
+            error!("can not emit CaConn done event");
+        }
+        Ok(())
+    }
+
+    async fn handle_ca_conn_set_item(&mut self, item: CaConnSetItem) -> Result<(), Error> {
+        use CaConnSetItem::*;
+        match item {
+            Healthy => {
+                let tsnow = Instant::now();
+                self.connset_status_last = tsnow;
+                self.daemon_metrics.caconnset_health_response().inc();
+            }
+            Error(e) => {
+                error!("error from CaConnSet: {}", e);
+                self.handle_shutdown().await?;
+            }
+            Metrics(x) => {
+                self.daemon_metrics.ca_conn_set().ingest(x);
+            }
+        }
+        Ok(())
+    }
+
+    async fn handle_shutdown(&mut self) -> Result<(), Error> {
+        let selfname = "handle_shutdown";
+        if self.shutting_down {
+            warn!("{selfname}  already shutting down");
+        } else {
+            info!("{selfname}  handle_shutdown");
+            self.shutting_down = true;
+            // TODO make sure we:
+            // set a flag so that we don't attempt to use resources any longer (why could that happen?)
+            // does anybody might still want to communicate with us? can't be excluded.
+            // send shutdown signal to everyone.
+            // drop our ends of channels to workers (gate them behind option?).
+            // await the connection sets.
+            // await other workers that we've spawned.
+            if let Some(iqtx) = &self.iqtx {
+                info!("{selfname}  scylla output channels  {iqtx}", iqtx = iqtx.summary());
+                // iqtx.close_all();
+            } else {
+                info!("{selfname}  scylla output channels, not set");
+            }
+            drop(self.iqtx.take());
+            self.connset_ctrl.shutdown().await?;
+            self.rx.close();
+        }
+        Ok(())
+    }
+
+    async fn handle_config_reload_inner(&mut self) -> Result<(), Error> {
+        let channels_dir = self.ingest_opts.channels();
+        let channels = match netfetch::conf::parse_channels(channels_dir).await {
+            Ok(Some(x)) => {
+                info!("parsed {} channels", x.len());
+                Some(x)
+            }
+            Ok(None) => {
+                warn!("config does not specify channels");
+                None
+            }
+            Err(e) => {
+                return Err(Error::with_msg_no_trace(format!(
+                    "could not reload channel config  {e}"
+                )));
+            }
+        };
+        if let Some(channels) = channels {
+            // TODO
+            // Send a marker flag-clear to CaConnSet.
+            if true {
+                let (tx, rx) = async_channel::bounded(4);
+                self.connset_ctrl.channel_config_flag_reset(tx).await?;
+                rx.recv().await??;
+            }
+            // Send all the channel-add commands.
+            let mut i = 0;
+            for ch_cfg in channels.channels() {
+                let (tx, rx) = async_channel::bounded(4);
+                self.connset_ctrl.add_channel(ch_cfg.clone(), tx).await?;
+                rx.recv().await??;
+                i += 1;
+            }
+            if true {
+                let (tx, rx) = async_channel::bounded(4);
+                self.connset_ctrl.channel_config_remove_unflagged(tx).await?;
+                rx.recv().await??;
+            }
+            info!("config reload done, applied {} channels", i);
+            // Send a marker remove-cleared to CaConnSet (must impl that on CaConnSet to remove those channels)
+            Ok(())
+        } else {
+            Err(Error::with_msg_no_trace(format!("no channel config found")))
+        }
+    }
+
+    async fn handle_config_reload(
+        &mut self,
+        tx: async_channel::Sender<Result<(), Box<dyn std::error::Error + Send>>>,
+    ) -> Result<(), Error> {
+        match self.handle_config_reload_inner().await {
+            Ok(()) => {
+                if tx.send(Ok(())).await.is_err() {
+                    self.daemon_metrics.channel_send_err().inc();
+                }
+                Ok(())
+            }
+            Err(e) => {
+                error!("handle_config_reload {}", e);
+                if tx.send(Err(Box::new(e))).await.is_err() {
+                    self.daemon_metrics.channel_send_err().inc();
+                }
+                Ok(())
+            }
+        }
+    }
+
+    #[cfg(feature = "DISABLED")]
+    async fn handle_shutdown(&mut self) -> Result<(), Error> {
+        warn!("received shutdown event");
+        if self.shutting_down {
+            Ok(())
+        } else {
+            self.channel_states.clear();
+            self.ca_conn_send_shutdown().await?;
+            self.ingest_commons.insert_item_queue.drop_sender();
+            Ok(())
+        }
+    }
+
+    async fn handle_event(&mut self, item: DaemonEvent) -> Result<(), Error> {
+        use DaemonEvent::*;
+        self.daemon_metrics.handle_event().inc();
+        let ts1 = Instant::now();
+        let item_summary = item.summary();
+        let ret = match item {
+            TimerTick(i, tx) => {
+                let ts1 = Instant::now();
+                let ret = self.handle_timer_tick().await;
+                match tx.send(i.wrapping_add(1)).await {
+                    Ok(()) => {}
+                    Err(_) => {
+                        error!("can not send ticker token");
+                        return Err(Error::with_msg_no_trace("can not send ticker token"));
+                    }
+                }
+                // TODO collect timer tick min/max/avg metrics.
+                let _ = ts1.elapsed();
+                ret
+            }
+            ChannelAdd(ch, tx) => self.handle_channel_add(ch, tx).await,
+            ChannelRemove(ch) => self.handle_channel_remove(ch).await,
+            CaConnSetItem(item) => self.handle_ca_conn_set_item(item).await,
+            CaConnSetCmd(item) => {
+                info!("handle_event  recv CaConnSetCmd  {:?}", item);
+                self.connset_ctrl.send_ca_conn_set_command(item).await?;
+                info!("handle_event  recv CaConnSetCmd  forwarded");
+                Ok(())
+            }
+            Shutdown => self.handle_shutdown().await,
+            ConfigReload(tx) => self.handle_config_reload(tx).await,
+            GetMetrics(tx) => {
+                match tx.send((&self.daemon_metrics).into()).await {
+                    Ok(()) => {}
+                    Err(_) => {
+                        error!("can not send metrics into channel");
+                    }
+                }
+                Ok(())
+            }
+            ScyllaInsertWorkerOutput(x) => {
+                use scywr::insertworker::InsertWorkerOutputItem::*;
+                match x {
+                    Metrics(x) => {
+                        self.daemon_metrics.scy_inswork().ingest(x);
+                        Ok(())
+                    }
+                }
+            }
+        };
+        let dt = ts1.elapsed();
+        if dt > Duration::from_millis(200) {
+            warn!("handle_event  slow  {} ms  {}", dt.as_secs_f32() * 1e3, item_summary);
+        }
+        ret
+    }
+
+    fn spawn_ticker(tx: Sender<DaemonEvent>) {
+        let (ticker_inp_tx, ticker_inp_rx) = async_channel::bounded::<u32>(1);
+        let ticker = {
+            async move {
+                loop {
+                    tokio::time::sleep(Duration::from_millis(200)).await;
+                    if SIGINT.load(atomic::Ordering::Acquire) != 0 || SIGTERM.load(atomic::Ordering::Acquire) != 0 {
+                        if SHUTDOWN_SENT.load(atomic::Ordering::Acquire) == 0 {
+                            if let Err(e) = tx.send(DaemonEvent::Shutdown).await {
+                                error!("can not send TimerTick {}", e);
+                                break;
+                            } else {
+                                SHUTDOWN_SENT.store(1, atomic::Ordering::Release);
+                            }
+                        }
+                    }
+                    if let Err(e) = tx.send(DaemonEvent::TimerTick(0, ticker_inp_tx.clone())).await {
+                        error!("can not send TimerTick {}", e);
+                        break;
+                    }
+                    let c = ticker_inp_rx.len().max(1);
+                    for _ in 0..c {
+                        match ticker_inp_rx.recv().await {
+                            Ok(_) => {}
+                            Err(_) => {
+                                panic!("can not acquire timer ticker token");
+                            }
+                        }
+                    }
+                }
+            }
+        };
+        // TODO use join handle
+        taskrun::spawn(ticker);
+    }
+
+    pub async fn spawn_metrics(&mut self) -> Result<(), Error> {
+        let rres = RoutesResources::new(
+            self.ingest_opts.backend().into(),
+            self.channel_info_query_tx.clone(),
+            self.iqtx
+                .clone()
+                .take()
+                .ok_or_else(|| Error::with_msg_no_trace("no iqtx available"))?,
+            self.ingest_opts.scylla_config_st().clone(),
+            self.ingest_opts.scylla_config_mt().clone(),
+            self.ingest_opts.scylla_config_lt().clone(),
+            self.ingest_opts.postgresql_config().clone(),
+        );
+        let rres = Arc::new(rres);
+        let metrics_jh = {
+            let fut = netfetch::metrics::metrics_service(
+                self.ingest_opts.api_bind(),
+                self.metrics_shutdown_rx.clone(),
+                Arc::new(CaIngestCtrls::new(self.tx.clone(), self.connset_ctrl.sender())),
+                Arc::new(PostIngestCtrls::new(rres)),
+            );
+            tokio::task::spawn(fut)
+        };
+        self.metrics_jh = Some(metrics_jh);
+        Ok(())
+    }
+
+    pub async fn daemon(mut self) -> Result<(), Error> {
+        self.spawn_metrics().await?;
+        Self::spawn_ticker(self.tx.clone());
+        loop {
+            if self.shutting_down {
+                break;
+            }
+            match self.rx.recv().await {
+                Ok(item) => match self.handle_event(item).await {
+                    Ok(()) => {}
+                    Err(e) => {
+                        error!("fn daemon:  error from handle_event  {}", e);
+                        break;
+                    }
+                },
+                Err(e) => {
+                    error!("daemon {}", e);
+                    break;
+                }
+            }
+        }
+        debug!("wait for metrics handler");
+        self.metrics_shutdown_tx.send(1).await?;
+        if let Some(jh) = self.metrics_jh.take() {
+            jh.await.map_err(Error::from_string)??;
+        }
+        debug!("joined metrics handler");
+        debug!("wait for insert workers");
+        while let Some(jh) = self.insert_workers_jhs.pop() {
+            match jh.await.map_err(Error::from_string) {
+                Ok(x) => match x {
+                    Ok(()) => {}
+                    Err(e) => {
+                        error!("joined insert worker, error  {}", e);
+                    }
+                },
+                Err(e) => {
+                    error!("insert worker join error {}", e);
+                }
+            }
+        }
+        debug!("joined insert workers");
+        Ok(())
+    }
+}
+
+static SIGINT: AtomicUsize = AtomicUsize::new(0);
+static SIGINT_CONFIRM: AtomicUsize = AtomicUsize::new(0);
+static SIGTERM: AtomicUsize = AtomicUsize::new(0);
+static SHUTDOWN_SENT: AtomicUsize = AtomicUsize::new(0);
+
+// fn handler_sigint(_a: libc::c_int) {
+fn handler_sigint(_a: libc::c_int, _b: *const libc::siginfo_t, _c: *const libc::c_void) {
+    let n = SIGINT.fetch_add(1, atomic::Ordering::AcqRel);
+    if n >= 2 {
+        let _ = ingest_linux::signal::unset_signal_handler(libc::SIGINT);
+        std::process::exit(13);
+    }
+}
+
+fn handler_sigterm(_a: libc::c_int, _b: *const libc::siginfo_t, _c: *const libc::c_void) {
+    SIGTERM.store(1, atomic::Ordering::Release);
+    let _ = ingest_linux::signal::unset_signal_handler(libc::SIGTERM);
+}
+
+pub async fn run(opts: CaIngestOpts, channels_config: Option<ChannelsConfig>) -> Result<(), Error> {
+    info!("start up {:?}", opts);
+    let act_old_1: RwLock<libc::sigaction> = RwLock::new(unsafe { std::mem::zeroed() });
+    let act_old_2: RwLock<libc::sigaction> = RwLock::new(unsafe { std::mem::zeroed() });
+    ingest_linux::signal::set_signal_handler(libc::SIGINT, handler_sigint, &act_old_1).map_err(Error::from_string)?;
+    ingest_linux::signal::set_signal_handler(libc::SIGTERM, handler_sigterm, &act_old_2).map_err(Error::from_string)?;
+    {
+        let (pg, jh) = dbpg::conn::make_pg_client(opts.postgresql_config())
+            .await
+            .map_err(Error::from_string)?;
+        dbpg::schema::schema_check(&pg).await.map_err(Error::from_string)?;
+        drop(pg);
+        jh.await.map_err(Error::from_string)?.map_err(Error::from_string)?;
+    }
+    if opts.scylla_disable() {
+        warn!("scylla_disable config flag enabled");
+    } else {
+        info!("start scylla schema check");
+        let rts = [
+            RetentionTime::Short,
+            RetentionTime::Medium,
+            RetentionTime::Long,
+            RetentionTime::Short,
+        ];
+        scywr::schema::migrate_scylla_data_schema_all_rt(
+            rts,
+            [
+                &opts.scylla_config_st(),
+                &opts.scylla_config_mt(),
+                &opts.scylla_config_lt(),
+                &opts.scylla_config_st_rf1(),
+            ],
+            false,
+        )
+        .await
+        .map_err(Error::from_string)?;
+        info!("stop scylla schema check");
+    }
+    info!("database check done");
+
+    let channels_config = if opts.test_bsread_addr.is_some() {
+        None
+    } else {
+        channels_config
+    };
+
+    let insert_frac = Arc::new(AtomicU64::new(opts.insert_frac()));
+    let store_workers_rate = Arc::new(AtomicU64::new(opts.store_workers_rate()));
+
+    let opts2 = DaemonOpts {
+        pgconf: opts.postgresql_config().clone(),
+        test_bsread_addr: opts.test_bsread_addr.clone(),
+        insert_frac: insert_frac.clone(),
+        store_workers_rate,
+    };
+    let daemon = Daemon::new(opts2, opts.clone()).await?;
+    let daemon_tx = daemon.tx.clone();
+    let daemon_jh = taskrun::spawn(daemon.daemon());
+    if let Some(channels_config) = channels_config {
+        debug!("will configure {} channels", channels_config.len());
+        let mut thr_msg = ThrottleTrace::new(Duration::from_millis(1000));
+        let mut i = 0;
+        let nmax = 100999777;
+        let nn = channels_config.channels().len();
+        let mut ixs: Vec<usize> = (0..nn).into_iter().collect();
+        if false {
+            let mut rng = stats::xoshiro_from_time();
+            for _ in 0..2 * ixs.len() {
+                let i = rng.next_u32() as usize % nn;
+                let j = rng.next_u32() as usize % nn;
+                ixs.swap(i, j);
+            }
+        }
+        for ix in ixs.into_iter().take(nmax) {
+            let ch_cfg = &channels_config.channels()[ix];
+            match daemon_tx
+                .send(DaemonEvent::ChannelAdd(ch_cfg.clone(), async_channel::bounded(1).0))
+                .await
+            {
+                Ok(()) => {}
+                Err(e) => {
+                    error!("daemon run {}", e);
+                    break;
+                }
+            }
+            thr_msg.trigger("daemon sent ChannelAdd", &[&i as &_]);
+            i += 1;
+        }
+        debug!(
+            "{} of {} configured channels applied",
+            i,
+            channels_config.channels().len()
+        );
+    }
+    daemon_jh.await.map_err(|e| Error::with_msg_no_trace(e.to_string()))??;
+    info!("joined daemon");
+    Ok(())
+}

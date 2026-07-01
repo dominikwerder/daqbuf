@@ -1,0 +1,7 @@
+/target
+/Cargo.lock
+/tmpdoc
+/.vscode
+/tmp
+/.backup-.git
+/.claude/settings.local.json

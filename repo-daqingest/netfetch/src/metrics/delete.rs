@@ -1,0 +1,213 @@
+use super::RoutesResources;
+use crate::metrics::PostIngestCtrls;
+use axum::Json;
+use axum::extract::FromRequest;
+use axum::extract::Query;
+use axum::handler::Handler;
+use axum::http::HeaderMap;
+use bytes::Bytes;
+use chrono::DateTime;
+use chrono::Utc;
+use core::fmt;
+use futures::StreamExt;
+use futures::TryStreamExt;
+use netpod::ScalarType;
+use netpod::TsMs;
+use netpod::TsNano;
+use netpod::log::*;
+use netpod::ttl::RetentionTime;
+use scylla::client::session::Session as ScySession;
+use scywr::config::ScyllaIngestConfig;
+use scywr::insertqueues::InsertDeques;
+use scywr::iteminsertqueue::ArrayValue;
+use scywr::iteminsertqueue::DataValue;
+use scywr::iteminsertqueue::QueryItem;
+use scywr::iteminsertqueue::ScalarValue;
+use scywr::scylla;
+use scywr::scylla::client::PoolSize;
+use scywr::scylla::client::execution_profile::ExecutionProfileBuilder;
+use scywr::scylla::client::session_builder::GenericSessionBuilder;
+use scywr::scylla::statement::Consistency;
+use scywr::scylla::statement::Statement;
+use scywr::scylla::statement::prepared::PreparedStatement;
+use serde::Deserialize;
+use series::SeriesId;
+use serieswriter::writer::SeriesWriter;
+use std::collections::HashMap;
+use std::collections::VecDeque;
+use std::io::Cursor;
+use std::sync::Arc;
+use std::time::Duration;
+use std::time::SystemTime;
+use streams::framed_bytes::FramedBytesStream;
+use taskrun::tokio::time::timeout;
+
+#[allow(unused)]
+macro_rules! debug_cql { ($($arg:expr),*) => ( if false { debug!($($arg),*); } ); }
+
+autoerr::create_error_v1!(
+    name(Error, "HttpDelete"),
+    enum variants {
+        Logic,
+        MissingRetentionTime,
+        MissingSeriesId,
+        MissingScalarType,
+        MissingBegDate,
+        MissingEndDate,
+        ScyllaTransport(#[from] scylla::errors::NewSessionError),
+        ScyllaPrepare(#[from] scylla::errors::PrepareError),
+        ScyllaPagerExecution(#[from] scylla::errors::PagerExecutionError),
+        ScyllaNextRow(#[from] scylla::errors::NextRowError),
+        ScyllaTypeCheck(#[from] scylla::deserialize::TypeCheckError),
+        InvalidTimestamp,
+        Boxed(#[from] Box<dyn std::error::Error>),
+    },
+);
+
+pub async fn delete(
+    (headers, Query(params), body): (HeaderMap, Query<HashMap<String, String>>, axum::body::Body),
+    post_ingest_ctrls: Arc<dyn PostIngestCtrls>,
+) -> Json<serde_json::Value> {
+    match delete_try(headers, params, body, post_ingest_ctrls).await {
+        Ok(k) => k,
+        Err(e) => Json(serde_json::json!({
+            "error": e.to_string(),
+        })),
+    }
+}
+
+fn st_to_ns(v: DateTime<Utc>) -> Result<TsNano, Error> {
+    let sec = v.timestamp();
+    if sec < 0 {
+        Err(Error::InvalidTimestamp)
+    } else if sec > 18446744073 {
+        Err(Error::InvalidTimestamp)
+    } else {
+        let w = 1000000000 * sec as u64 + v.timestamp_subsec_nanos() as u64;
+        Ok(TsNano::from_ns(w))
+    }
+}
+
+// select * from sf_lt.lt_account_00 where token(part, ts) > -100000000 and series = 8554946496751499549 allow filtering
+
+async fn delete_try(
+    headers: HeaderMap,
+    params: HashMap<String, String>,
+    body: axum::body::Body,
+    post_ingest_ctrls: Arc<dyn PostIngestCtrls>,
+) -> Result<Json<serde_json::Value>, Error> {
+    let rres = post_ingest_ctrls.resources().await?;
+    let rt: RetentionTime = params
+        .get("retentionTime")
+        .ok_or(Error::MissingRetentionTime)
+        .and_then(|x| x.parse().map_err(|_| Error::MissingRetentionTime))?;
+    let series = params
+        .get("series")
+        .ok_or(Error::MissingSeriesId)
+        .and_then(|x| x.parse().map_err(|_| Error::MissingSeriesId))
+        .map(SeriesId::new)?;
+    let beg: DateTime<Utc> = params
+        .get("begDate")
+        .ok_or(Error::MissingBegDate)
+        .and_then(|x| x.parse().map_err(|_| Error::MissingBegDate))?;
+    let end: DateTime<Utc> = params
+        .get("endDate")
+        .ok_or(Error::MissingEndDate)
+        .and_then(|x| x.parse().map_err(|_| Error::MissingEndDate))?;
+    let scalar_type: ScalarType = params
+        .get("scalarType")
+        .ok_or(Error::MissingScalarType)
+        .and_then(|x| ScalarType::from_variant_str(x).map_err(|_| Error::MissingScalarType))?;
+    debug_cql!("delete  params  {rt:?}  {series:?}  {beg:?}  {end:?}");
+    let beg = st_to_ns(beg)?;
+    let end = st_to_ns(end)?;
+    let scyconf = &rres.scyconf_st;
+    let scy = scy_connect(scyconf).await?;
+    let qu = {
+        let cql = format!(
+            concat!("select ts_msp from {}.{}ts_msp where series = ?"),
+            scyconf.keyspace(),
+            rt.table_prefix(),
+        );
+        scy.prepare(Statement::new(cql).with_page_size(4)).await?
+    };
+    let qu_delete_val = {
+        let _cql = format!(
+            concat!(
+                "select ts_lsp from {}.{}events_scalar_{}",
+                " where series = ? and ts_msp = ?",
+                " and ts_lsp >= ? and ts_lsp < ?",
+            ),
+            scyconf.keyspace(),
+            rt.table_prefix(),
+            scalar_type.to_scylla_table_name_id(),
+        );
+        let cql = format!(
+            concat!(
+                "delete from {}.{}events_scalar_{}",
+                " where series = ? and ts_msp = ?",
+                " and ts_lsp >= ? and ts_lsp < ?",
+            ),
+            scyconf.keyspace(),
+            rt.table_prefix(),
+            scalar_type.to_scylla_table_name_id(),
+        );
+        scy.prepare(Statement::new(cql).with_page_size(100)).await?
+    };
+    let mut i = 0;
+    debug_cql!("query iteration  {i}");
+    let mut it = scy
+        .execute_iter(qu.clone(), (series.to_i64(),))
+        .await?
+        .rows_stream::<(i64,)>()?;
+    while let Some((msp,)) = it.try_next().await? {
+        let msp = TsMs::from_ms_u64(msp as _);
+        let msp_ns = msp.ns_u64();
+        delete_val(series.clone(), msp, beg, end, &qu_delete_val, &scy).await?;
+    }
+    i += 1;
+    Ok(Json(serde_json::Value::Null))
+}
+
+async fn delete_val(
+    series: SeriesId,
+    msp: TsMs,
+    beg: TsNano,
+    end: TsNano,
+    qu_delete_val: &PreparedStatement,
+    scy: &ScySession,
+) -> Result<(), Error> {
+    let msp_ns = msp.ns_u64();
+    if msp_ns >= end.ns() {
+        debug_cql!("  return early  msp {msp}  after range");
+        return Ok(());
+    }
+    let r1 = if msp_ns >= beg.ns() { 0 } else { beg.ns() - msp_ns };
+    let r2 = end.ns() - msp_ns;
+    let o0 = DateTime::from_timestamp_millis((msp.ms() + 0 / 1000000) as i64).unwrap();
+    let o1 = DateTime::from_timestamp_millis((msp.ms() + r1 / 1000000) as i64).unwrap();
+    let o2 = DateTime::from_timestamp_millis((msp.ms() + r2 / 1000000) as i64).unwrap();
+    debug_cql!("  sub query  {o0:?}  {o1:?}  {o2:?}");
+    let params = (series.to_i64(), msp.ms() as i64, r1 as i64, r2 as i64);
+    let mut it = scy
+        .execute_iter(qu_delete_val.clone(), params)
+        .await?
+        .rows_stream::<(i64,)>()?;
+    while let Some((lsp,)) = it.try_next().await? {}
+    Ok(())
+}
+
+async fn scy_connect(scyconf: &ScyllaIngestConfig) -> Result<Arc<ScySession>, Error> {
+    let profile = ExecutionProfileBuilder::default()
+        .consistency(Consistency::Quorum)
+        .build()
+        .into_handle();
+    let scy = GenericSessionBuilder::new()
+        .pool_size(PoolSize::default())
+        .known_nodes(scyconf.hosts())
+        .default_execution_profile_handle(profile)
+        .build()
+        .await?;
+    let scy = Arc::new(scy);
+    Ok(scy)
+}

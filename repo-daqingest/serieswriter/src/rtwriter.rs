@@ -1,0 +1,521 @@
+use crate::log;
+use crate::msptool::dyngrid::MspSplitDyn;
+use crate::ratelimitwriter::RateLimitWriter;
+use crate::writer::EmittableType;
+use netpod::ScalarType;
+use netpod::Shape;
+use netpod::TsNano;
+use netpod::ttl::RetentionTime;
+use scywr::insertqueues::InsertDeques;
+use scywr::iteminsertqueue::QueryItem;
+use serde::Serialize;
+use series::SeriesId;
+use std::collections::VecDeque;
+use std::time::Duration;
+use std::time::Instant;
+
+macro_rules! trace_reput { ($det:expr, $($arg:tt)*) => ( if false { log::trace!($($arg)*); } ); }
+macro_rules! debug_init { ($det:expr, $($arg:tt)*) => ( if $det { log::info!($($arg)*); } ); }
+macro_rules! trace_emit { ($det:expr, $($arg:tt)*) => ( if $det { log::trace!($($arg)*); } ); }
+macro_rules! trace_rt_decision { ($det:expr, $($arg:tt)*) => ( if $det { log::trace!($($arg)*); } ); }
+
+autoerr::create_error_v1!(
+    name(Error, "SerieswriterRtwriter"),
+    enum variants {
+        SeriesLookupError,
+        SeriesWriter(#[from] crate::writer::Error),
+        RateLimitWriter(#[from] crate::ratelimitwriter::Error),
+    },
+);
+
+#[derive(Debug, Clone, Serialize)]
+pub struct MinQuiets {
+    pub st: Duration,
+    pub mt: Duration,
+    pub lt: Duration,
+}
+
+impl MinQuiets {
+    pub fn test_mon_1_10() -> Self {
+        Self {
+            st: Duration::from_millis(0),
+            mt: Duration::from_millis(1000 * 1),
+            lt: Duration::from_millis(1000 * 10),
+        }
+    }
+
+    pub fn test_1_10_60() -> Self {
+        Self {
+            st: Duration::from_millis(1000 * 1),
+            mt: Duration::from_millis(1000 * 10),
+            lt: Duration::from_millis(1000 * 60),
+        }
+    }
+
+    pub fn http_ingest_default() -> Self {
+        Self {
+            st: Duration::from_millis(0),
+            mt: Duration::from_millis(0),
+            lt: Duration::from_millis(1000 * 60 * 60),
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct State<ET, SPL>
+where
+    ET: EmittableType,
+{
+    writer: RateLimitWriter<ET, SPL>,
+}
+
+#[derive(Debug)]
+pub struct WriteRes {
+    pub st: WriteRtRes,
+    pub mt: WriteRtRes,
+    pub lt: WriteRtRes,
+}
+
+impl WriteRes {
+    pub fn accept_any(&self) -> bool {
+        self.lt.accept || self.mt.accept || self.st.accept
+    }
+
+    pub fn msp_rewrite(&self) -> u8 {
+        self.st.msp_rewrite + self.mt.msp_rewrite + self.lt.msp_rewrite
+    }
+
+    pub fn ignore_rewind_time(&self) -> u8 {
+        self.st.ignore_rewind_time + self.mt.ignore_rewind_time + self.lt.ignore_rewind_time
+    }
+
+    pub fn ignore_same_time(&self) -> u8 {
+        self.st.ignore_same_time + self.mt.ignore_same_time + self.lt.ignore_same_time
+    }
+
+    pub fn ignore_same_value(&self) -> u8 {
+        self.st.ignore_same_value + self.mt.ignore_same_value + self.lt.ignore_same_value
+    }
+
+    pub fn ignore_monitor_not_min_quiet(&self) -> u8 {
+        self.st.ignore_monitor_not_min_quiet
+            + self.mt.ignore_monitor_not_min_quiet
+            + self.lt.ignore_monitor_not_min_quiet
+    }
+
+    pub fn ignore_poll_not_min_quiet(&self) -> u8 {
+        self.st.ignore_poll_not_min_quiet + self.mt.ignore_poll_not_min_quiet + self.lt.ignore_poll_not_min_quiet
+    }
+
+    pub fn ignore_rate_cap(&self) -> u8 {
+        self.st.ignore_rate_cap + self.mt.ignore_rate_cap + self.lt.ignore_rate_cap
+    }
+}
+
+#[derive(Debug)]
+pub struct WriteRtRes {
+    pub accept: bool,
+    pub bytes: u32,
+    pub msp_rewrite: u8,
+    pub ignore_rewind_time: u8,
+    pub ignore_same_time: u8,
+    pub ignore_same_value: u8,
+    pub ignore_monitor_not_min_quiet: u8,
+    pub ignore_poll_not_min_quiet: u8,
+    pub ignore_rate_cap: u8,
+}
+
+impl WriteRtRes {
+    fn ignore_rewind_time() -> Self {
+        Self {
+            accept: false,
+            bytes: 0,
+            msp_rewrite: 0,
+            ignore_rewind_time: 1,
+            ignore_same_time: 0,
+            ignore_same_value: 0,
+            ignore_monitor_not_min_quiet: 0,
+            ignore_poll_not_min_quiet: 0,
+            ignore_rate_cap: 0,
+        }
+    }
+
+    fn ignore_same_time() -> Self {
+        Self {
+            accept: false,
+            bytes: 0,
+            msp_rewrite: 0,
+            ignore_rewind_time: 0,
+            ignore_same_time: 1,
+            ignore_same_value: 0,
+            ignore_monitor_not_min_quiet: 0,
+            ignore_poll_not_min_quiet: 0,
+            ignore_rate_cap: 0,
+        }
+    }
+
+    fn ignore_same_value() -> Self {
+        Self {
+            accept: false,
+            bytes: 0,
+            msp_rewrite: 0,
+            ignore_rewind_time: 0,
+            ignore_same_time: 0,
+            ignore_same_value: 1,
+            ignore_monitor_not_min_quiet: 0,
+            ignore_poll_not_min_quiet: 0,
+            ignore_rate_cap: 0,
+        }
+    }
+}
+
+impl Default for WriteRtRes {
+    fn default() -> Self {
+        Self {
+            accept: false,
+            bytes: 0,
+            msp_rewrite: 0,
+            ignore_rewind_time: 0,
+            ignore_same_time: 0,
+            ignore_same_value: 0,
+            ignore_monitor_not_min_quiet: 0,
+            ignore_poll_not_min_quiet: 0,
+            ignore_rate_cap: 0,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct HousekeepingRes {
+    pub ts_msp_reput: u8,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RtWriter<ET>
+where
+    ET: EmittableType,
+{
+    series: SeriesId,
+    scalar_type: ScalarType,
+    shape: Shape,
+    state_st: State<ET, MspSplitDyn>,
+    state_mt: State<ET, MspSplitDyn>,
+    state_lt: State<ET, MspSplitDyn>,
+    min_quiets: MinQuiets,
+    do_trace_detail: bool,
+    do_st_rf1: bool,
+    last_insert_ts: TsNano,
+    last_insert_val: Option<ET>,
+}
+
+impl<ET> RtWriter<ET>
+where
+    ET: EmittableType,
+{
+    pub fn new(
+        series: SeriesId,
+        scalar_type: ScalarType,
+        shape: Shape,
+        min_quiets: MinQuiets,
+        is_polled: bool,
+        do_st_rf1: bool,
+        emit_state_new: &dyn Fn() -> <ET as EmittableType>::State,
+    ) -> Result<Self, Error> {
+        let dtd = series::dbg::dbg_series(series);
+        debug_init!(dtd, "new  {:?}  is_polled {}", min_quiets, is_polled);
+        let state_st = {
+            let writer = RateLimitWriter::new(
+                series,
+                min_quiets.st,
+                is_polled,
+                emit_state_new(),
+                "st".into(),
+                MspSplitDyn::new(1024 * 64, 1024 * 1024 * 10, RetentionTime::Short),
+            )?;
+            State { writer }
+        };
+        let state_mt = {
+            let writer = RateLimitWriter::new(
+                series,
+                min_quiets.mt,
+                is_polled,
+                emit_state_new(),
+                "mt".into(),
+                MspSplitDyn::new(1024 * 64, 1024 * 1024 * 10, RetentionTime::Medium),
+            )?;
+            State { writer }
+        };
+        let state_lt = {
+            let writer = RateLimitWriter::new(
+                series,
+                min_quiets.lt,
+                is_polled,
+                emit_state_new(),
+                "lt".into(),
+                MspSplitDyn::new(1024 * 64, 1024 * 1024 * 10, RetentionTime::Long),
+            )?;
+            State { writer }
+        };
+        let ret = Self {
+            series,
+            scalar_type,
+            shape,
+            state_st,
+            state_mt,
+            state_lt,
+            min_quiets,
+            do_trace_detail: dtd,
+            do_st_rf1,
+            last_insert_ts: TsNano::from_ns(0),
+            last_insert_val: None,
+        };
+        Ok(ret)
+    }
+
+    pub fn series(&self) -> SeriesId {
+        self.series.clone()
+    }
+
+    pub fn scalar_type(&self) -> ScalarType {
+        self.scalar_type.clone()
+    }
+
+    pub fn shape(&self) -> Shape {
+        self.shape.clone()
+    }
+
+    pub fn min_quiets(&self) -> MinQuiets {
+        self.min_quiets.clone()
+    }
+
+    pub fn write(
+        &mut self,
+        item: ET,
+        ts_net: Instant,
+        tsev: TsNano,
+        iqdqs: &mut InsertDeques,
+    ) -> Result<WriteRes, Error> {
+        let det = self.do_trace_detail;
+        trace_emit!(det, "write  {:?}", item.ts());
+        // TODO
+        // Optimize for the common case that we only write into one of the stores.
+        // Make the decision first, based on ref, then clone only as required.
+        let res_lt;
+        let res_mt;
+        let res_st;
+        let tsl = self.last_insert_ts.clone();
+        if tsev < tsl {
+            trace_rt_decision!(
+                det,
+                "{}  ignore, because rewind time  {:?}  {:?}",
+                self.series,
+                tsev,
+                tsl
+            );
+            res_lt = WriteRtRes::ignore_rewind_time();
+            res_mt = WriteRtRes::ignore_rewind_time();
+            res_st = WriteRtRes::ignore_rewind_time();
+        } else if tsev == tsl {
+            trace_rt_decision!(det, "{}  ignore, because same time  {:?}  {:?}", self.series, tsev, tsl);
+            res_lt = WriteRtRes::ignore_same_time();
+            res_mt = WriteRtRes::ignore_same_time();
+            res_st = WriteRtRes::ignore_same_time();
+        } else if self
+            .last_insert_val
+            .as_ref()
+            .map(|k| item.has_change(k))
+            .unwrap_or(true)
+            == false
+        {
+            trace_rt_decision!(det, "{}  ignore, because value did not change", self.series);
+            res_lt = WriteRtRes::ignore_same_value();
+            res_mt = WriteRtRes::ignore_same_value();
+            res_st = WriteRtRes::ignore_same_value();
+        } else {
+            res_lt = Self::write_inner(&mut self.state_lt, item.clone(), ts_net, tsev, &mut iqdqs.lt_rf3_qu)?;
+            res_mt = Self::write_inner(&mut self.state_mt, item.clone(), ts_net, tsev, &mut iqdqs.mt_rf3_qu)?;
+            res_st = if self.do_st_rf1 {
+                Self::write_inner(&mut self.state_st, item.clone(), ts_net, tsev, &mut iqdqs.st_rf3_qu)?
+            } else {
+                Self::write_inner(&mut self.state_st, item.clone(), ts_net, tsev, &mut iqdqs.st_rf3_qu)?
+            };
+        }
+        let ret = WriteRes {
+            st: res_st,
+            mt: res_mt,
+            lt: res_lt,
+        };
+        if ret.accept_any() {
+            self.last_insert_ts = tsev.clone();
+            self.last_insert_val = Some(item.clone());
+        }
+        Ok(ret)
+    }
+
+    fn write_inner_force(
+        state: &mut State<ET, MspSplitDyn>,
+        item: ET,
+        ts_net: Instant,
+        tsev: TsNano,
+        deque: &mut VecDeque<QueryItem>,
+    ) -> Result<WriteRtRes, Error> {
+        let x = state.writer.write_force(item, ts_net, tsev, deque)?;
+        let ret = WriteRtRes {
+            accept: x.accept,
+            bytes: x.bytes,
+            msp_rewrite: x.msp_rewrite,
+            ignore_rewind_time: 0,
+            ignore_same_time: 0,
+            ignore_same_value: 0,
+            ignore_monitor_not_min_quiet: x.ignore_monitor_not_min_quiet,
+            ignore_poll_not_min_quiet: x.ignore_poll_not_min_quiet,
+            ignore_rate_cap: x.ignore_rate_cap,
+        };
+        Ok(ret)
+    }
+
+    fn write_inner(
+        state: &mut State<ET, MspSplitDyn>,
+        item: ET,
+        ts_net: Instant,
+        tsev: TsNano,
+        deque: &mut VecDeque<QueryItem>,
+    ) -> Result<WriteRtRes, Error> {
+        let x = state.writer.write(item, ts_net, tsev, deque)?;
+        let ret = WriteRtRes {
+            accept: x.accept,
+            bytes: x.bytes,
+            msp_rewrite: x.msp_rewrite,
+            ignore_rewind_time: 0,
+            ignore_same_time: 0,
+            ignore_same_value: 0,
+            ignore_monitor_not_min_quiet: x.ignore_monitor_not_min_quiet,
+            ignore_poll_not_min_quiet: x.ignore_poll_not_min_quiet,
+            ignore_rate_cap: x.ignore_rate_cap,
+        };
+        Ok(ret)
+    }
+
+    fn check_quiet_reput(&mut self, iqdqs: &mut InsertDeques, tsnow: TsNano) -> Result<(), Error> {
+        #[allow(unused)]
+        let dtd = self.do_trace_detail;
+        let tsl_st = Some(&self.state_st.writer)
+            .map(|w| w.last_insert_val().map(|x| (w.last_insert_ts(), x)))
+            .flatten();
+        let tsl_mt = Some(&self.state_mt.writer)
+            .map(|w| w.last_insert_val().map(|x| (w.last_insert_ts(), x)))
+            .flatten();
+        let tsl_lt = Some(&self.state_lt.writer)
+            .map(|w| w.last_insert_val().map(|x| (w.last_insert_ts(), x)))
+            .flatten();
+        trace_reput!(dtd, "tsl_st {tsl_st:?}");
+        trace_reput!(dtd, "tsl_mt {tsl_mt:?}");
+        trace_reput!(dtd, "tsl_lt {tsl_lt:?}");
+        let mut max_tsl: Option<((TsNano, &ET), RetentionTime)> = None;
+        if let Some((tsl, vall)) = &tsl_lt {
+            if max_tsl.as_ref().map_or(true, |x| *tsl > x.0.0) {
+                max_tsl = Some(((*tsl, vall), RetentionTime::Long));
+            }
+        }
+        if let Some((tsl, vall)) = &tsl_mt {
+            if max_tsl.as_ref().map_or(true, |x| *tsl > x.0.0) {
+                max_tsl = Some(((*tsl, vall), RetentionTime::Medium));
+            }
+        }
+        if let Some((tsl, vall)) = &tsl_st {
+            if max_tsl.as_ref().map_or(true, |x| *tsl > x.0.0) {
+                max_tsl = Some(((*tsl, vall), RetentionTime::Short));
+            }
+        }
+        trace_reput!(dtd, "max_tsl {max_tsl:?}");
+        match max_tsl {
+            Some(((tsl, vall), RetentionTime::Short)) => {
+                trace_reput!(dtd, "MATCH Short");
+                let mut chosen = false;
+                if !chosen {
+                    let q = self.min_quiets().lt;
+                    let tt = TsNano::from_ns(tsl.ns().saturating_add(q.as_nanos() as u64));
+                    if tt <= tsnow {
+                        trace_reput!(dtd, "MATCH Short - Long go");
+                        chosen = true;
+                        let _ = chosen;
+                        let vall = vall.clone();
+                        Self::write_inner_force(&mut self.state_lt, vall, Instant::now(), tsl, &mut iqdqs.lt_rf3_qu)?;
+                        return Ok(());
+                    } else {
+                        trace_reput!(dtd, "MATCH Short - Long wait");
+                    }
+                }
+                if !chosen {
+                    let q = self.min_quiets().mt;
+                    let tt = TsNano::from_ns(tsl.ns().saturating_add(q.as_nanos() as u64));
+                    if tt <= tsnow {
+                        trace_reput!(dtd, "MATCH Short - Medium go");
+                        chosen = true;
+                        let vall = vall.clone();
+                        Self::write_inner_force(&mut self.state_mt, vall, Instant::now(), tsl, &mut iqdqs.mt_rf3_qu)?;
+                    } else {
+                        trace_reput!(dtd, "MATCH Short - Medium wait");
+                    }
+                }
+                let _ = chosen;
+            }
+            Some(((tsl, vall), RetentionTime::Medium)) => {
+                trace_reput!(dtd, "MATCH Medium");
+                let mut chosen = false;
+                if !chosen {
+                    let q = self.min_quiets().lt;
+                    let tt = TsNano::from_ns(tsl.ns().saturating_add(q.as_nanos() as u64));
+                    if tt <= tsnow {
+                        trace_reput!(dtd, "MATCH Medium - Long go");
+                        chosen = true;
+                        let vall = vall.clone();
+                        Self::write_inner_force(&mut self.state_lt, vall, Instant::now(), tsl, &mut iqdqs.lt_rf3_qu)?;
+                    } else {
+                        trace_reput!(dtd, "MATCH Medium - Long wait");
+                    }
+                }
+                let _ = chosen;
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    pub fn tick(&mut self, iqdqs: &mut InsertDeques, tsnow: TsNano) -> Result<(), Error> {
+        self.check_quiet_reput(iqdqs, tsnow)?;
+        if self.do_st_rf1 {
+            self.state_st.writer.tick(&mut iqdqs.st_rf1_qu)?;
+        } else {
+            self.state_st.writer.tick(&mut iqdqs.st_rf3_qu)?;
+        }
+        self.state_mt.writer.tick(&mut iqdqs.mt_rf3_qu)?;
+        self.state_lt.writer.tick(&mut iqdqs.lt_rf3_qu)?;
+        Ok(())
+    }
+
+    pub fn on_close(&mut self, iqdqs: &mut InsertDeques) -> Result<(), Error> {
+        if self.do_st_rf1 {
+            self.state_st.writer.on_close(&mut iqdqs.st_rf1_qu)?;
+        } else {
+            self.state_st.writer.on_close(&mut iqdqs.st_rf3_qu)?;
+        }
+        self.state_mt.writer.on_close(&mut iqdqs.mt_rf3_qu)?;
+        self.state_lt.writer.on_close(&mut iqdqs.lt_rf3_qu)?;
+        Ok(())
+    }
+
+    pub fn housekeeping(&mut self, iqdqs: &mut InsertDeques) -> Result<HousekeepingRes, Error> {
+        let res_st = if self.do_st_rf1 {
+            self.state_st.writer.housekeeping(&mut iqdqs.st_rf1_qu)?
+        } else {
+            self.state_st.writer.housekeeping(&mut iqdqs.st_rf3_qu)?
+        };
+        let res_mt = self.state_mt.writer.housekeeping(&mut iqdqs.mt_rf3_qu)?;
+        let res_lt = self.state_lt.writer.housekeeping(&mut iqdqs.lt_rf3_qu)?;
+        let ret = HousekeepingRes {
+            ts_msp_reput: res_st.ts_msp_reput + res_mt.ts_msp_reput + res_lt.ts_msp_reput,
+        };
+        Ok(ret)
+    }
+}
