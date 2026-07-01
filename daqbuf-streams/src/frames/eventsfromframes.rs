@@ -1,0 +1,121 @@
+use futures_util::Stream;
+use futures_util::StreamExt;
+use items_0::framable::FrameTypeInnerStatic;
+use items_0::streamitem::sitem_err_from_string;
+use items_0::streamitem::RangeCompletableItem;
+use items_0::streamitem::Sitemty;
+use items_0::streamitem::StreamItem;
+use items_2::frame::decode_frame;
+use items_2::inmem::InMemoryFrame;
+use netpod::log::*;
+use serde::de::DeserializeOwned;
+use std::marker::PhantomData;
+use std::pin::Pin;
+use std::task::Context;
+use std::task::Poll;
+
+pub struct EventsFromFrames<O, INP> {
+    inp: INP,
+    dbgdesc: String,
+    errored: bool,
+    completed: bool,
+    _m1: PhantomData<O>,
+}
+
+impl<O, INP> EventsFromFrames<O, INP> {
+    pub fn new(inp: INP, dbgdesc: String) -> Self {
+        Self {
+            inp,
+            dbgdesc,
+            errored: false,
+            completed: false,
+            _m1: PhantomData,
+        }
+    }
+}
+
+impl<O, INP> Stream for EventsFromFrames<O, INP>
+where
+    O: FrameTypeInnerStatic + DeserializeOwned + Unpin,
+    INP: Stream<Item = Sitemty<InMemoryFrame>> + Unpin,
+{
+    type Item = Sitemty<O>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
+        use Poll::*;
+        let span = span!(Level::INFO, "EvFrFr", id = tracing::field::Empty);
+        span.record("id", &self.dbgdesc);
+        let _spg = span.enter();
+        loop {
+            break if self.completed {
+                panic!("poll_next on completed");
+            } else if self.errored {
+                self.completed = true;
+                Ready(None)
+            } else {
+                match self.inp.poll_next_unpin(cx) {
+                    Ready(Some(Ok(item))) => match item {
+                        StreamItem::Log(item) => Ready(Some(Ok(StreamItem::Log(item)))),
+                        StreamItem::Stats(item) => Ready(Some(Ok(StreamItem::Stats(item)))),
+                        StreamItem::DataItem(x) => match x {
+                            RangeCompletableItem::Data(frame) => {
+                                match decode_frame::<Sitemty<O>>(&frame) {
+                                    Ok(item) => match item {
+                                        Ok(item) => match item {
+                                            StreamItem::DataItem(item2) => match item2 {
+                                                RangeCompletableItem::Data(item3) => {
+                                                    Ready(Some(Ok(StreamItem::DataItem(
+                                                        RangeCompletableItem::Data(item3),
+                                                    ))))
+                                                }
+                                                RangeCompletableItem::RangeComplete => {
+                                                    debug!("EventsFromFrames  RangeComplete");
+                                                    Ready(Some(Ok(StreamItem::DataItem(
+                                                        RangeCompletableItem::RangeComplete,
+                                                    ))))
+                                                }
+                                            },
+                                            StreamItem::Log(k) => {
+                                                Ready(Some(Ok(StreamItem::Log(k))))
+                                            }
+                                            StreamItem::Stats(k) => {
+                                                Ready(Some(Ok(StreamItem::Stats(k))))
+                                            }
+                                        },
+                                        Err(e) => {
+                                            error!("rcvd err: {}", e);
+                                            self.errored = true;
+                                            Ready(Some(Err(e)))
+                                        }
+                                    },
+                                    Err(e) => {
+                                        error!(
+                                            "frame payload  len {}  tyid {:04x}  {}",
+                                            frame.buf().len(),
+                                            frame.tyid(),
+                                            e
+                                        );
+                                        self.errored = true;
+                                        Ready(Some(sitem_err_from_string(e)))
+                                    }
+                                }
+                            }
+                            RangeCompletableItem::RangeComplete => Ready(Some(Ok(
+                                StreamItem::DataItem(RangeCompletableItem::RangeComplete),
+                            ))),
+                        },
+                    },
+                    Ready(Some(Err(e))) => {
+                        self.errored = true;
+                        Ready(Some(sitem_err_from_string(e)))
+                    }
+                    Ready(None) => {
+                        self.completed = true;
+                        Ready(None)
+                    }
+                    Pending => Pending,
+                }
+            };
+        }
+    }
+}
