@@ -2,12 +2,12 @@ use crate::bodystream::response;
 use crate::err::Error;
 use bytes::Bytes;
 use http::StatusCode;
-use httpclient::body_bytes;
-use httpclient::body_empty;
 use httpclient::Requ;
 use httpclient::StreamResponse;
-use netpod::log::*;
+use httpclient::body_bytes;
+use httpclient::body_empty;
 use netpod::ReqCtx;
+use netpod::log::*;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -72,9 +72,10 @@ fn extract_all_files() -> Contents {
     }
 }
 
-// .
+// TODO
 fn blob() -> &'static [u8] {
-    include_bytes!(concat!("../../../../apidoc/book.cbor"))
+    // include_bytes!(concat!("../../../../apidoc/book.cbor"))
+    b""
 }
 
 pub struct DocsHandler {}

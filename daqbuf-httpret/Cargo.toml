@@ -1,9 +1,9 @@
 [package]
-name = "httpret"
-version = "0.4.1"
+name = "daqbuf-httpret"
+version = "0.5.0"
 authors = ["Dominik Werder <dominik.werder@gmail.com>"]
 license = "GPL-3.0-only"
-edition = "2021"
+edition = "2024"
 
 [lib]
 path = "src/httpret.rs"
@@ -37,25 +37,25 @@ ciborium = "0.2.2"
 flate2 = "1"
 brotli = "8.0.1"
 autoerr = "0.0"
-daqbuf-err = { path = "../../../daqbuf-err" }
-netpod = { path = "../../../daqbuf-netpod", package = "daqbuf-netpod" }
-query = { path = "../../../daqbuf-query", package = "daqbuf-query" }
-dbconn = { path = "../dbconn" }
-disk = { path = "../disk" }
-items_0 = { path = "../../../daqbuf-items-0", package = "daqbuf-items-0" }
-items_2 = { path = "../../../daqbuf-items-2", package = "daqbuf-items-2" }
-series = { path = "../../../daqbuf-series", package = "daqbuf-series" }
-parse = { path = "../../../daqbuf-parse", package = "daqbuf-parse" }
-streams = { path = "../../../daqbuf-streams", package = "daqbuf-streams" }
-log = { path = "../../../daqbuf-log", package = "daqbuf-log" }
-streamio = { path = "../streamio" }
-nodenet = { path = "../nodenet" }
-commonio = { path = "../commonio" }
-taskrun = { path = "../taskrun" }
-scyllaconn = { path = "../scyllaconn" }
+daqbuf-err = { path = "../daqbuf-err" }
+netpod = { path = "../daqbuf-netpod", package = "daqbuf-netpod" }
+query = { path = "../daqbuf-query", package = "daqbuf-query" }
+dbconn = { path = "../daqbuf-dbconn", package = "daqbuf-dbconn" }
+disk = { path = "../daqbuf-disk", package = "daqbuf-disk" }
+items_0 = { path = "../daqbuf-items-0", package = "daqbuf-items-0" }
+items_2 = { path = "../daqbuf-items-2", package = "daqbuf-items-2" }
+series = { path = "../daqbuf-series", package = "daqbuf-series" }
+parse = { path = "../daqbuf-parse", package = "daqbuf-parse" }
+streams = { path = "../daqbuf-streams", package = "daqbuf-streams" }
+log = { path = "../daqbuf-log", package = "daqbuf-log" }
+streamio = { path = "../daqbuf-streamio", package = "daqbuf-streamio" }
+nodenet = { path = "../daqbuf-nodenet", package = "daqbuf-nodenet" }
+commonio = { path = "../daqbuf-commonio", package = "daqbuf-commonio" }
+taskrun = { path = "../daqbuf-taskrun", package = "daqbuf-taskrun" }
+scyllaconn = { path = "../daqbuf-scyllaconn", package = "daqbuf-scyllaconn" }
 daqbuf-redis = { path = "../daqbuf-redis" }
-httpclient = { path = "../httpclient" }
-daqingest-ui = { path = "../../../daqbuf-ingest-ui", package = "daqbuf-ingest-ui" }
+httpclient = { path = "../daqbuf-httpclient", package = "daqbuf-httpclient" }
+daqingest-ui = { path = "../daqbuf-ingest-ui", package = "daqbuf-ingest-ui" }
 
 [features]
 default = []

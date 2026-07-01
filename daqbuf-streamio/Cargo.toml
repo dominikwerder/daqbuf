@@ -1,8 +1,8 @@
 [package]
-name = "streamio"
+name = "daqbuf-streamio"
 version = "0.0.2"
 authors = ["Dominik Werder <dominik.werder@gmail.com>"]
-edition = "2021"
+edition = "2024"
 
 [dependencies]
 tokio = { version = "1.43", features = ["io-util", "net", "time", "sync", "fs"] }
@@ -21,15 +21,15 @@ byteorder = "1.5.0"
 rand_xoshiro = "0.7.0"
 autoerr = "0.0"
 chrono = { version = "0.4.39", features = ["serde"] }
-netpod = { path = "../../../daqbuf-netpod", package = "daqbuf-netpod" }
-query = { path = "../../../daqbuf-query", package = "daqbuf-query" }
-items_0 = { path = "../../../daqbuf-items-0", package = "daqbuf-items-0" }
-items_2 = { path = "../../../daqbuf-items-2", package = "daqbuf-items-2" }
-parse = { path = "../../../daqbuf-parse", package = "daqbuf-parse" }
-streams = { path = "../../../daqbuf-streams", package = "daqbuf-streams" }
+netpod = { path = "../daqbuf-netpod", package = "daqbuf-netpod" }
+query = { path = "../daqbuf-query", package = "daqbuf-query" }
+items_0 = { path = "../daqbuf-items-0", package = "daqbuf-items-0" }
+items_2 = { path = "../daqbuf-items-2", package = "daqbuf-items-2" }
+parse = { path = "../daqbuf-parse", package = "daqbuf-parse" }
+streams = { path = "../daqbuf-streams", package = "daqbuf-streams" }
 http = "1"
 http-body = "1"
 http-body-util = "0.1.2"
 
 [dev-dependencies]
-taskrun = { path = "../taskrun" }
+taskrun = { path = "../daqbuf-taskrun", package = "daqbuf-taskrun" }

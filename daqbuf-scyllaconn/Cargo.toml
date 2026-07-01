@@ -1,0 +1,27 @@
+[package]
+name = "daqbuf-scyllaconn"
+version = "0.0.2"
+authors = ["Dominik Werder <dominik.werder@gmail.com>"]
+license = "GPL-3.0-only"
+edition = "2024"
+
+[dependencies]
+futures-util = "0.3.31"
+pin-project = "1"
+async-channel = "2.3.1"
+scylla = "1.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+time = { version = "0.3.41", features = ["parsing", "formatting", "macros"] }
+hashbrown = "0.16.0"
+autoerr = "0.0"
+daqbuf-err = { path = "../daqbuf-err" }
+log = { path = "../daqbuf-log", package = "daqbuf-log" }
+netpod = { path = "../daqbuf-netpod", package = "daqbuf-netpod" }
+query = { path = "../daqbuf-query", package = "daqbuf-query" }
+items_0 = { path = "../daqbuf-items-0", package = "daqbuf-items-0" }
+items_2 = { path = "../daqbuf-items-2", package = "daqbuf-items-2" }
+streams = { path = "../daqbuf-streams", package = "daqbuf-streams" }
+rand_xoshiro = "0.8.0"
+daqbuf-series = { path = "../daqbuf-series" }
+taskrun = { path = "../daqbuf-taskrun", package = "daqbuf-taskrun" }

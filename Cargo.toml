@@ -29,4 +29,14 @@ members = [
     # "daqbuf-ingest-bsread",
     "daqbuf-netfetch",
     "daqbuf-daqingest",
+    #
+    "daqbuf-httpclient",
+    "daqbuf-dbconn",
+    "daqbuf-disk",
+    "daqbuf-streamio",
+    "daqbuf-nodenet",
+    "daqbuf-commonio",
+    "daqbuf-redis",
+    "daqbuf-httpret",
+    "daqbuf-daqretrieve",
 ]

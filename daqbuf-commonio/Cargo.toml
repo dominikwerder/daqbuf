@@ -1,8 +1,8 @@
 [package]
-name = "commonio"
-version = "0.0.2"
+name = "daqbuf-commonio"
+version = "0.0.3"
 authors = ["Dominik Werder <dominik.werder@gmail.com>"]
-edition = "2021"
+edition = "2024"
 
 [lib]
 path = "src/commonio.rs"
@@ -17,7 +17,7 @@ chrono = "0.4"
 async-channel = "2.3.1"
 parking_lot = "0.12"
 crc32fast = "1.4"
-daqbuf-err = { path = "../../../daqbuf-err" }
-netpod = { path = "../../../daqbuf-netpod", package = "daqbuf-netpod" }
-taskrun = { path = "../taskrun" }
-items_0 = { path = "../../../daqbuf-items-0", package = "daqbuf-items-0" }
+daqbuf-err = { path = "../daqbuf-err" }
+netpod = { path = "../daqbuf-netpod", package = "daqbuf-netpod" }
+taskrun = { path = "../daqbuf-taskrun", package = "daqbuf-taskrun" }
+items_0 = { path = "../daqbuf-items-0", package = "daqbuf-items-0" }

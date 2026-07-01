@@ -2,10 +2,10 @@ use chrono::DateTime;
 use chrono::Duration;
 use chrono::Utc;
 use clap::Parser;
+use daqbuf_daqretrieve::cli::ClientType;
+use daqbuf_daqretrieve::cli::Opts;
+use daqbuf_daqretrieve::cli::SubCmd;
 use daqbuf_err::Error;
-use daqretrieve::cli::ClientType;
-use daqretrieve::cli::Opts;
-use daqretrieve::cli::SubCmd;
 use netpod::NodeConfig;
 use netpod::NodeConfigCached;
 use netpod::ProxyConfig;
@@ -83,12 +83,14 @@ async fn go() -> Result<(), Error> {
                 info!("Parsed json config from {}", subcmd.config);
                 let cfg: Result<NodeConfigCached, netpod::Error> = cfg.into();
                 let cfg = cfg.map_err(Error::from_string)?;
-                daqbufp2::run_node(cfg, service_version).await?;
+                println!("daqbufp2 not available")
+                // daqbufp2::run_node(cfg, service_version).await?;
             } else if let Ok(cfg) = serde_yaml::from_slice::<NodeConfig>(&buf) {
                 info!("Parsed yaml config from {}", subcmd.config);
                 let cfg: Result<NodeConfigCached, netpod::Error> = cfg.into();
                 let cfg = cfg.map_err(Error::from_string)?;
-                daqbufp2::run_node(cfg, service_version).await?;
+                println!("daqbufp2 not available")
+                // daqbufp2::run_node(cfg, service_version).await?;
             } else {
                 return Err(Error::with_msg_no_trace(format!(
                     "can not parse config at {}",
@@ -105,31 +107,34 @@ async fn go() -> Result<(), Error> {
             let proxy_config: ProxyConfig =
                 serde_yaml::from_slice(&buf).map_err(|e| Error::with_msg_no_trace(e.to_string()))?;
             info!("Parsed yaml config from {}", subcmd.config);
-            daqbufp2::run_proxy(proxy_config.clone(), service_version).await?;
+            println!("daqbufp2 not available")
+            // daqbufp2::run_proxy(proxy_config.clone(), service_version).await?;
         }
         SubCmd::Client(client) => match client.client_type {
             ClientType::Status(opts) => {
-                daqbufp2::client::status(opts.host, opts.port).await?;
+                println!("daqbufp2 not available")
+                // daqbufp2::client::status(opts.host, opts.port).await?;
             }
             ClientType::Binned(opts) => {
                 let beg = parse_ts(&opts.beg)?;
                 let end = parse_ts(&opts.end)?;
                 let cache_usage = CacheUsage::from_string(&opts.cache).map_err(Error::from_string)?;
-                daqbufp2::client::get_binned(
-                    opts.host,
-                    opts.port,
-                    opts.backend,
-                    opts.channel,
-                    beg,
-                    end,
-                    opts.bins,
-                    cache_usage,
-                    opts.disk_stats_every_kb,
-                )
-                .await?;
+                println!("daqbufp2 not available")
+                // daqbufp2::client::get_binned(
+                //     opts.host,
+                //     opts.port,
+                //     opts.backend,
+                //     opts.channel,
+                //     beg,
+                //     end,
+                //     opts.bins,
+                //     cache_usage,
+                //     opts.disk_stats_every_kb,
+                // )
+                // .await?;
             }
             ClientType::CborEvents(opts) => {
-                daqretrieve::fetch::fetch_cbor(
+                daqbuf_daqretrieve::fetch::fetch_cbor(
                     &opts.url,
                     ScalarType::from_variant_str(&opts.scalar_type).unwrap(),
                     Shape::from_dims_str(&opts.shape).unwrap(),
@@ -153,16 +158,17 @@ async fn go() -> Result<(), Error> {
     Ok(())
 }
 
+// TODO
 async fn test_log() {
-    daqbufp2::test_log().await;
-    let logspan = tracing::span!(tracing::Level::INFO, "log_span_debug", spanlevel = "info");
-    daqbufp2::test_log().instrument(logspan).await;
-    let logspan = tracing::span!(tracing::Level::INFO, "log_span_debug", spanlevel = "trace");
-    daqbufp2::test_log().instrument(logspan).await;
-    let logspan = tracing::span!(tracing::Level::TRACE, "log_span_trace", spanlevel = "info");
-    daqbufp2::test_log().instrument(logspan).await;
-    let logspan = tracing::span!(tracing::Level::TRACE, "log_span_trace", spanlevel = "trace");
-    daqbufp2::test_log().instrument(logspan).await;
+    // daqbufp2::test_log().await;
+    // let logspan = tracing::span!(tracing::Level::INFO, "log_span_debug", spanlevel = "info");
+    // daqbufp2::test_log().instrument(logspan).await;
+    // let logspan = tracing::span!(tracing::Level::INFO, "log_span_debug", spanlevel = "trace");
+    // daqbufp2::test_log().instrument(logspan).await;
+    // let logspan = tracing::span!(tracing::Level::TRACE, "log_span_trace", spanlevel = "info");
+    // daqbufp2::test_log().instrument(logspan).await;
+    // let logspan = tracing::span!(tracing::Level::TRACE, "log_span_trace", spanlevel = "trace");
+    // daqbufp2::test_log().instrument(logspan).await;
 }
 
 // TODO test data needs to be generated.

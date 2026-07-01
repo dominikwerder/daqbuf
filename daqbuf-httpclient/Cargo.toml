@@ -1,6 +1,6 @@
 [package]
-name = "httpclient"
-version = "0.0.3"
+name = "daqbuf-httpclient"
+version = "0.0.4"
 authors = ["Dominik Werder <dominik.werder@gmail.com>"]
 edition = "2024"
 
@@ -14,13 +14,13 @@ tracing = "0.1.41"
 http = "1.2.0"
 http-body = "1.0.1"
 http-body-util = "0.1.2"
-hyper = { version = "1.6.0", features = ["http1", "http2", "client", "server"] }
+hyper = { version = "1.10.1", features = ["http1", "http2", "client", "server"] }
 #hyper-tls = { version = "0.6.0" }
 hyper-util = { version = "0.1.10", features = ["full"] }
 bytes = "1.10.0"
 async-channel = "2.5"
 autoerr = "0.0"
-daqbuf-err = { path = "../../../daqbuf-err" }
-netpod = { path = "../../../daqbuf-netpod", package = "daqbuf-netpod" }
-parse = { path = "../../../daqbuf-parse", package = "daqbuf-parse" }
-streams = { path = "../../../daqbuf-streams", package = "daqbuf-streams" }
+daqbuf-err = { path = "../daqbuf-err" }
+netpod = { path = "../daqbuf-netpod", package = "daqbuf-netpod" }
+parse = { path = "../daqbuf-parse", package = "daqbuf-parse" }
+streams = { path = "../daqbuf-streams", package = "daqbuf-streams" }

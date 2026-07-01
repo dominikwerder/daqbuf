@@ -1,50 +1,50 @@
 use super::tools::HandleRes2;
+use crate::ServiceSharedResources;
 use crate::api4::binned_v2::binexpand::BinnedExpand;
 use crate::api4::binned_v2::edgecheck::Edgecheck;
 use crate::bodystream::response;
 use crate::requests::accepts_cbor_framed;
 use crate::requests::accepts_json_framed;
 use crate::requests::accepts_json_or_all;
-use crate::ServiceSharedResources;
 use bytes::Bytes;
 use daqbuf_err as err;
 use dbconn::worker::PgQueue;
 use futures_util::Stream;
 use futures_util::StreamExt;
-use http::header::CONTENT_TYPE;
-use http::request::Parts;
 use http::Method;
 use http::StatusCode;
+use http::header::CONTENT_TYPE;
+use http::request::Parts;
+use httpclient::IntoBody;
+use httpclient::Requ;
+use httpclient::StreamResponse;
+use httpclient::ToJsonBody;
 use httpclient::bad_request_response;
 use httpclient::body_empty;
 use httpclient::body_stream;
 use httpclient::error_response;
 use httpclient::error_status_response;
 use httpclient::not_found_response;
-use httpclient::IntoBody;
-use httpclient::Requ;
-use httpclient::StreamResponse;
-use httpclient::ToJsonBody;
 use items_0::collect_s::CollectableDyn;
 use items_0::streamitem::RangeCompletableItem;
 use items_0::streamitem::StreamItem;
 use items_2::binning::container_bins::ContainerBins;
 use items_2::jsonbytes::JsonBytes;
+use netpod::APP_JSON;
+use netpod::APP_JSON_FRAMED;
+use netpod::BinnedRange;
+use netpod::FromUrl;
+use netpod::HEADER_NAME_REQUEST_ID;
+use netpod::NodeConfigCached;
+use netpod::ReqCtx;
 use netpod::log;
 use netpod::req_uri_to_url;
 use netpod::ttl::RetentionTime;
-use netpod::BinnedRange;
-use netpod::FromUrl;
-use netpod::NodeConfigCached;
-use netpod::ReqCtx;
-use netpod::APP_JSON;
-use netpod::APP_JSON_FRAMED;
-use netpod::HEADER_NAME_REQUEST_ID;
 use query::api4::binned::BinnedQuery;
 use scyllaconn::binned2::binnedrtpbp::BinnedRtPbpStream;
 use scyllaconn::worker::ScyllaQueue;
-use series::msp::PrebinnedPartitioning;
 use series::SeriesId;
+use series::msp::PrebinnedPartitioning;
 use std::time::Duration;
 use std::time::Instant;
 use streams::collect::Collect;
@@ -234,7 +234,7 @@ fn build_stream(
     res2: HandleRes2<'_>,
     ctx: &ReqCtx,
     _ncc: &NodeConfigCached,
-) -> impl Stream<Item = Result<StreamItem<ContainerBins<f32, f32>>, Error>> {
+) -> impl Stream<Item = Result<StreamItem<ContainerBins<f32, f32>>, Error>> + use<> {
     let series = SeriesId::new(res2.ch_conf.series().unwrap());
     let range = res2.query.range().to_time().unwrap();
     let scyqueue = res2.scyqueue.as_ref().unwrap();
