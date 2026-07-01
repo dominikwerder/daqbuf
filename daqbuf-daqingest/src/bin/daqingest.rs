@@ -1,4 +1,5 @@
 use clap::Parser;
+use daqbuf_daqingest as daqingest;
 use daqingest::opts::DaqIngestOpts;
 use err::Error;
 use log::*;
@@ -12,7 +13,10 @@ use taskrun::TracingMode;
 pub fn main() -> Result<(), Error> {
     let opts = DaqIngestOpts::parse();
     // TODO offer again function to get runtime and configure tracing in one call
-    let runtime = taskrun::get_runtime_opts(opts.worker_threads.unwrap_or(8), opts.blocking_threads.unwrap_or(256));
+    let runtime = taskrun::get_runtime_opts(
+        opts.worker_threads.unwrap_or(8),
+        opts.blocking_threads.unwrap_or(256),
+    );
     match taskrun::tracing_init(TracingMode::Production) {
         Ok(()) => {}
         Err(()) => return Err(Error::with_msg_no_trace("tracing init failed")),
@@ -112,7 +116,8 @@ async fn main_run_inner(opts: DaqIngestOpts) -> Result<(), Error> {
         SubCmd::ChannelAccess(k) => match k {
             ChannelAccess::CaIngest(k) => {
                 info!("daqingest version {} {}", clap::crate_version!(), buildmark);
-                let (conf, channels_config) = parse_config(k.config).await.map_err(Error::from_string)?;
+                let (conf, channels_config) =
+                    parse_config(k.config).await.map_err(Error::from_string)?;
                 daqingest::daemon::run(conf, channels_config).await?
             }
             ChannelAccess::CaSearch(_k) => {
@@ -197,7 +202,12 @@ async fn scylla_schema_check(opts: CaIngestOpts, do_change: bool) -> Result<(), 
         ];
         scywr::schema::migrate_scylla_data_schema_all_rt(
             rts,
-            [&conf.st_rf3(), &conf.mt_rf3(), &conf.lt_rf3(), &conf.st_rf1()],
+            [
+                &conf.st_rf3(),
+                &conf.mt_rf3(),
+                &conf.lt_rf3(),
+                &conf.st_rf1(),
+            ],
             do_change,
         )
         .await

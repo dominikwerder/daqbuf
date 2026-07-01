@@ -4,6 +4,10 @@ version = "0.3.4-aa.0"
 authors = ["Dominik Werder <dominik.werder@gmail.com>"]
 edition = "2024"
 
+[[bin]]
+name = "daqingest"
+path = "src/bin/daqingest.rs"
+
 [features]
 default = []
 # default = ["bsread"]
@@ -23,15 +27,14 @@ libc = "0.2"
 autoerr = "0.0.5"
 err = { path = "../daqbuf-err", package = "daqbuf-err" }
 netpod = { path = "../daqbuf-netpod", package = "daqbuf-netpod" }
-taskrun = { path = "../daqbuf-taskrun" }
+taskrun = { path = "../daqbuf-taskrun", package = "daqbuf-taskrun" }
 series = { path = "../daqbuf-series", package = "daqbuf-series" }
 channeltools = { path = "../daqbuf-channeltools", package = "daqbuf-channeltools" }
 log = { path = "../daqbuf-log", package = "daqbuf-log" }
-stats = { path = "../daqbuf-stats" }
-scywr = { path = "../daqbuf-scywr" }
-dbpg = { path = "../daqbuf-dbpg" }
-daqbuf_dbpg = { path = "../daqbuf-dbpg", package = "daqbuf-dbpg" }
-netfetch = { path = "../daqbuf-netfetch" }
-serieswriter = { path = "../daqbuf-serieswriter" }
-# ingest-bsread = { path = "../daqbuf-ingest-bsread" }
-ingest-linux = { path = "../daqbuf-ingest-linux" }
+stats = { path = "../daqbuf-stats", package = "daqbuf-stats" }
+scywr = { path = "../daqbuf-scywr", package = "daqbuf-scywr" }
+dbpg = { path = "../daqbuf-dbpg", package = "daqbuf-dbpg" }
+netfetch = { path = "../daqbuf-netfetch", package = "daqbuf-netfetch" }
+serieswriter = { path = "../daqbuf-serieswriter", package = "daqbuf-serieswriter" }
+# ingest-bsread = { path = "../daqbuf-ingest-bsread", package = "daqbuf-ingest-bsread" }
+ingest-linux = { path = "../daqbuf-ingest-linux", package = "daqbuf-ingest-linux" }
