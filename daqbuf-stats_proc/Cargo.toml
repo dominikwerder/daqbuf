@@ -1,5 +1,5 @@
 [package]
-name = "stats_proc"
+name = "daqbuf-stats_proc"
 version = "0.0.1"
 authors = ["Dominik Werder <dominik.werder@gmail.com>"]
 edition = "2021"
@@ -9,6 +9,6 @@ path = "src/stats_proc.rs"
 proc-macro = true
 
 [dependencies]
-stats_types = { path = "../stats_types" }
+stats_types = { path = "../daqbuf-stats_types", package = "daqbuf-stats_types" }
 syn = "2"
 quote = "1"
