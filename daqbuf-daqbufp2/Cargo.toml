@@ -1,0 +1,37 @@
+[package]
+name = "daqbuf-daqbufp2"
+version = "0.0.3"
+authors = ["Dominik Werder <dominik.werder@gmail.com>"]
+edition = "2024"
+
+[lib]
+path = "src/daqbufp2.rs"
+
+[dependencies]
+tokio = { version = "1.43.0", features = ["rt-multi-thread", "io-util", "net", "time", "sync", "fs"] }
+hyper = { version = "1.6.0", features = ["client", "http1", "http2"] }
+http = "1"
+tracing = "0.1.41"
+tracing-subscriber = "0.3.19"
+futures-util = "0.3.31"
+bytes = "1.10.0"
+serde = "1.0"
+serde_derive = "1.0"
+serde_json = "1.0"
+chrono = "0.4"
+url = "2.5.4"
+lazy_static = "1.5.0"
+daqbuf-err = { path = "../daqbuf-err" }
+taskrun = { path = "../daqbuf-taskrun", package = "daqbuf-taskrun" }
+netpod = { path = "../daqbuf-netpod", package = "daqbuf-netpod" }
+query = { path = "../daqbuf-query", package = "daqbuf-query" }
+httpret = { path = "../daqbuf-httpret", package = "daqbuf-httpret" }
+httpclient = { path = "../daqbuf-httpclient", package = "daqbuf-httpclient" }
+disk = { path = "../daqbuf-disk", package = "daqbuf-disk" }
+items_0 = { path = "../daqbuf-items-0", package = "daqbuf-items-0" }
+items_2 = { path = "../daqbuf-items-2", package = "daqbuf-items-2" }
+streams = { path = "../daqbuf-streams", package = "daqbuf-streams" }
+parse = { path = "../daqbuf-parse", package = "daqbuf-parse" }
+
+[features]
+DISABLED = []

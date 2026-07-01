@@ -22,7 +22,7 @@ netpod = { path = "../daqbuf-netpod", package = "daqbuf-netpod" }
 disk = { path = "../daqbuf-disk", package = "daqbuf-disk" }
 httpclient = { path = "../daqbuf-httpclient", package = "daqbuf-httpclient" }
 streams = { path = "../daqbuf-streams", package = "daqbuf-streams" }
-# daqbufp2 = { path = "../daqbufp2" }
+daqbufp2 = { path = "../daqbuf-daqbufp2", package = "daqbuf-daqbufp2" }
 
 [features]
 DISABLED = []

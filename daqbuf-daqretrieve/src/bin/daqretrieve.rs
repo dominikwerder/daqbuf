@@ -83,14 +83,12 @@ async fn go() -> Result<(), Error> {
                 info!("Parsed json config from {}", subcmd.config);
                 let cfg: Result<NodeConfigCached, netpod::Error> = cfg.into();
                 let cfg = cfg.map_err(Error::from_string)?;
-                println!("daqbufp2 not available")
-                // daqbufp2::run_node(cfg, service_version).await?;
+                daqbufp2::run_node(cfg, service_version).await?;
             } else if let Ok(cfg) = serde_yaml::from_slice::<NodeConfig>(&buf) {
                 info!("Parsed yaml config from {}", subcmd.config);
                 let cfg: Result<NodeConfigCached, netpod::Error> = cfg.into();
                 let cfg = cfg.map_err(Error::from_string)?;
-                println!("daqbufp2 not available")
-                // daqbufp2::run_node(cfg, service_version).await?;
+                daqbufp2::run_node(cfg, service_version).await?;
             } else {
                 return Err(Error::with_msg_no_trace(format!(
                     "can not parse config at {}",
@@ -107,8 +105,7 @@ async fn go() -> Result<(), Error> {
             let proxy_config: ProxyConfig =
                 serde_yaml::from_slice(&buf).map_err(|e| Error::with_msg_no_trace(e.to_string()))?;
             info!("Parsed yaml config from {}", subcmd.config);
-            println!("daqbufp2 not available")
-            // daqbufp2::run_proxy(proxy_config.clone(), service_version).await?;
+            daqbufp2::run_proxy(proxy_config.clone(), service_version).await?;
         }
         SubCmd::Client(client) => match client.client_type {
             ClientType::Status(opts) => {
