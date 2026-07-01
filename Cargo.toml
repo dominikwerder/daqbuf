@@ -20,4 +20,5 @@ members = [
     "daqbuf-taskrun",
     "daqbuf-mrucache",
     "daqbuf-stats",
+    "daqbuf-batchtools",
 ]
