@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8"/>
+    <title>Databuffer API 1 Documentation</title>
+    <meta name="keywords" content="PSI, DAQ, Databuffer">
+    <meta name="author" content="Dominik Werder">
+    <link rel="shortcut icon" href="about:blank"/>
+    <link rel="stylesheet" href="style.css"/>
+</head>
+
+<body>
+
+<h1>Databuffer API 1 Documentation</h1>
+
+<h2>Available backends</h2>
+Currently available backends:
+<ul>
+    <li>sf-databuffer</li>
+    <li>sf-imagebuffer</li>
+    <li>hipa-archive</li>
+    <li>gls-archive</li>
+</ul>
+
+<h2>API functions</h2>
+<p>Currently available:</p>
+<ul>
+    <li><a href="#channel-search-names">Channel search, with return of channel names</a></li>
+    <li><a href="#channel-search-configs">Channel search, with return of channel configurations</a></li>
+    <li><a href="#map-pulse">Map pulse-id to timestamp (for SwissFEL)</a></li>
+</ul>
+
+
+<a id="channel-search-names"></a>
+<h2>Channel Search, returns only channel names</h2>
+<p><strong>Method:</strong> POST</p>
+<p><strong>URL:</strong> https://data-api.psi.ch/api/1/channels</p>
+<p><strong>Request body:</strong> JSON with search parameters</p>
+<p><strong>Request body outline:</strong></p>
+<pre>
+{
+  "regex":             "[Optional: Regular expression to search in channel name]",
+  "sourceRegex":       "[Optional: Search in sourcename of the channel]",
+  "descriptionRegex":  "[Optional: Search in the channel's description]",
+  "backends":          ["gls-archive", "hipa-archive", "sf-databuffer"]
+}
+</pre>
+<p><strong>Request body example:</strong></p>
+<pre>
+{
+  "regex": "SARES20-LSCP9:CH0",
+  "backends": ["sf-databuffer", "hipa-archive"]
+}
+</pre>
+<p><strong>Result body example:</strong></p>
+<p>Assuming that "hipa-archive" would be unavailable:</p>
+<pre>
+[
+    {
+        "backend": "sf-databuffer",
+        "channels": [
+            "SARES20-LSCP9:CH0:2",
+            "SARES20-LSCP9:CH0:1"
+        ]
+    },
+    {
+        "backend": "hipa-archive",
+        "channels": [],
+        "error": {
+            "code": "Error"  // can be: "Error" | "Timeout" (more to be added in the future)
+        }
+    }
+]
+</pre>
+<p>Notes:</p>
+<p>The search constraints are AND'ed together.</p>
+<p>If some backend responds with an error, that error is indicated by the error key in the affected backend (see example above).</p>
+
+
+<h4>CURL example:</h4>
+<pre>
+QUERY='{ "regex": "LSCP9:CH0", "backends": ["sf-databuffer"] }'
+curl -H 'Content-Type: application/json' -H 'Accept: application/json' -d "$QUERY" https://data-api.psi.ch/api/1/channels
+</pre>
+
+
+<a id="channel-search-configs"></a>
+<h2>Channel Search, with return of configuration information</h2>
+<p><strong>Method:</strong> POST</p>
+<p><strong>URL:</strong> https://data-api.psi.ch/api/1/channels/config</p>
+<p><strong>Request body:</strong> JSON with search parameters</p>
+<p><strong>Request body outline:</strong></p>
+<pre>
+{
+  "regex":             "[Optional: Regular expression to search in channel name]",
+  "sourceRegex":       "[Optional: Search in sourcename of the channel]",
+  "descriptionRegex":  "[Optional: Search in the channel's description]",
+  "backends":          ["gls-archive", "hipa-archive", "sf-databuffer"]
+}
+</pre>
+<p><strong>Result body example:</strong></p>
+<p>Assuming that "hipa-archive" would be unavailable:</p>
+<pre>
+[
+    {
+        "backend": "sf-databuffer",
+        "channels": [
+            {
+                "backend": "sf-databuffer",
+                "description": "",
+                "name": "SARES20-LSCP9:CH0:2",
+                "shape": [
+                    512
+                ],
+                "source": "tcp://SARES20-CVME-01:9999",
+                "type": "Float32",
+                "unit": ""
+            },
+            {
+                "backend": "sf-databuffer",
+                "description": "",
+                "name": "SARES20-LSCP9:CH0:1",
+                "shape": [
+                    512
+                ],
+                "source": "tcp://SARES20-CVME-01:9999",
+                "type": "Int16",
+                "unit": ""
+            }
+        ]
+    },
+    {
+        "backend": "hipa-archive",
+        "channels": [],
+        "error": {
+            "code": "Error"  // can be: "Error" | "Timeout" (more to be added in the future)
+        }
+    }
+]
+</pre>
+<p>Notes:</p>
+<p>The search constraints are AND'ed together.</p>
+<p>If some backend responds with an error, that error is indicated by the error key in the affected backend (see example above).</p>
+
+
+<h4>CURL example:</h4>
+<pre>
+QUERY='{ "regex": "LSCP9:CH0", "backends": ["sf-databuffer"] }'
+curl -H 'Content-Type: application/json' -H 'Accept: application/json' -d "$QUERY" https://data-api.psi.ch/api/1/channels/config
+</pre>
+
+
+<a id="map-pulse"></a>
+<h2>Map pulse-id to timestamp (SwissFEL)</h2>
+<p><strong>Method:</strong> GET</p>
+<p><strong>URL:</strong> https://data-api.psi.ch/api/1/map/pulse/PULSEID</p>
+<p><strong>Result body example:</strong></p>
+<pre>1677392847564</pre>
+<h4>CURL example:</h4>
+<pre>
+curl -H 'Content-Type: application/json' -H 'Accept: application/json' https://data-api.psi.ch/api/1/map/pulse/7461843
+</pre>
+
+
+<h2>Feedback and comments</h2>
+<p>Feedback is very much appreciated:</p>
+<p>dominik.werder@psi.ch</p>
+<p>or please assign me a JIRA ticket.</p>
+
+<div id="footer"></div>
+
+</body>
+</html>

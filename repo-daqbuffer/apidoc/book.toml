@@ -1,0 +1,6 @@
+[book]
+authors = ["Dominik Werder <dominik.werder@gmail.com>"]
+language = "en"
+multilingual = false
+src = "src"
+title = "Daqbuf API"

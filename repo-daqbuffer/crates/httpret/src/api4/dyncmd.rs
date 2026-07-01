@@ -1,0 +1,1723 @@
+#![allow(unused_macros)]
+
+mod create_test_data;
+
+use crate::bodystream::response;
+use crate::ReqCtx;
+use crate::ServiceSharedResources;
+use bytes::BytesMut;
+use chrono::TimeZone;
+use dbconn::worker::PgQueue;
+use futures_util::future::ready;
+use futures_util::Stream;
+use futures_util::StreamExt;
+use futures_util::TryFutureExt;
+use futures_util::TryStreamExt;
+use http::header;
+use http::Method;
+use http::StatusCode;
+use httpclient::body_bytes;
+use httpclient::body_empty;
+use httpclient::body_stream;
+use httpclient::body_string;
+use httpclient::Requ;
+use httpclient::StreamBody;
+use httpclient::StreamResponse;
+use items_0::on_sitemty_data;
+use items_0::streamitem::sitem2_data;
+use items_0::streamitem::RangeCompletableItem;
+use items_0::streamitem::StreamItem;
+use items_2::binning::container_events::ContainerEvents;
+use netpod::ttl::RetentionTime;
+use netpod::CacheBypass;
+use netpod::NodeConfigCached;
+use netpod::RangeExcl;
+use netpod::SeriesKind;
+use netpod::APP_JSON;
+use netpod::APP_JSON_FRAMED;
+use scyllaconn::events2::onebeforeandbulk::OneBeforeAndBulk;
+use scyllaconn::events3::ks::eventsks::EventsKs;
+use scyllaconn::events3::msplsp::MspEv;
+use scyllaconn::events3::SeriesInfo;
+use scyllaconn::range::ScyllaSeriesRange;
+use scyllaconn::worker::ScyllaOptsSubmit;
+use scyllaconn::worker::ScyllaQueue;
+use serde::Deserialize;
+use serde::Serialize;
+use series::SeriesId;
+use std::collections::BTreeMap;
+use std::collections::VecDeque;
+use std::pin::Pin;
+use std::time::Duration;
+use std::time::Instant;
+use streams::lenframe::bytes_chunks_to_len_framed_str;
+use taskrun::tokio::time::timeout;
+use tracing::Level;
+
+macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
+macro_rules! info { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
+macro_rules! debug { ($($arg:tt)*) => { if true { log::debug!($($arg)*); } }; }
+
+autoerr::create_error_v1!(
+    name(Error, "DynCmd"),
+    enum variants {
+        Msg(#[from] String),
+        ScyllaConnWorker(#[from] scyllaconn::worker::Error),
+        ReadMsp03(#[from] scyllaconn::events3::mspfwd::Error),
+        Read03MspBck(#[from] scyllaconn::events3::mspbck::Error),
+        AsyncChannel(#[from] netpod::AsyncChannelError),
+        LspLst(#[from] scyllaconn::events3::lsplst::Error),
+        ChConf(#[from] dbconn::channelconfig::Error),
+        PgWorker(#[from] dbconn::worker::Error),
+        Search(#[from] dbconn::search::Error),
+        Elapsed(#[from] taskrun::tokio::time::error::Elapsed),
+        LspFwdMspMulti(#[from] scyllaconn::events3::ks::lsp_fwd_msp_multi::Error),
+        LspFwdMspSerial(#[from] scyllaconn::events3::ks::lsp_fwd_msp_serial::Error),
+        Http(#[from] http::Error),
+        Todo,
+    },
+);
+
+impl crate::IntoBoxedError for Error {}
+
+const MSP_LIMIT_DEF: u32 = 4;
+const LSP_LIMIT_DEF: u32 = 73;
+const MSP_RESERVE_MIN: usize = 20;
+const MSP_PREOPEN_MIN: usize = 6;
+const LSP_SINGLE_BUF_MAX: usize = 5;
+
+#[derive(Debug, Serialize, Deserialize)]
+struct ReadMsp {
+    backend: String,
+    series: String,
+    name: String,
+    rt: Option<RetentionTime>,
+    limit: Option<u32>,
+    ts1: String,
+    ts2: String,
+}
+
+impl ReadMsp {
+    fn series(&self) -> SeriesId {
+        SeriesId::new(self.series.parse().unwrap())
+    }
+
+    fn to_scyopts(&self) -> ScyllaOptsSubmit {
+        ScyllaOptsSubmit::no_choice()
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct ScyllaConfigGetCmd {
+    backend: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct Read03LspLst {
+    backend: String,
+    series: String,
+    name: String,
+    rt: Option<RetentionTime>,
+    limit: Option<u32>,
+    ts1: String,
+    ts2: String,
+}
+
+impl Read03LspLst {
+    fn series(&self) -> SeriesId {
+        SeriesId::new(self.series.parse().unwrap())
+    }
+
+    fn to_scyopts(&self) -> ScyllaOptsSubmit {
+        ScyllaOptsSubmit::no_choice()
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct LspFwdMspMultiCmd {
+    backend: String,
+    series: String,
+    name: String,
+    ts1: String,
+    ts2: String,
+    msp_limit: Option<u32>,
+    lsp_limit: Option<u32>,
+    msp_reserve_min: Option<usize>,
+    msp_preopen_min: Option<usize>,
+    lsp_single_buf_max: Option<usize>,
+}
+
+impl LspFwdMspMultiCmd {
+    fn series(&self) -> SeriesId {
+        SeriesId::new(self.series.parse().unwrap())
+    }
+
+    fn to_scyopts(&self) -> ScyllaOptsSubmit {
+        ScyllaOptsSubmit::no_choice()
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct LspFwdMspSerialCmd {
+    backend: String,
+    series: String,
+    name: String,
+    ts1: String,
+    ts2: String,
+    msp_limit: Option<u32>,
+    lsp_limit: Option<u32>,
+    msp_reserve_min: Option<usize>,
+    msp_preopen_min: Option<usize>,
+    lsp_single_buf_max: Option<usize>,
+}
+
+impl LspFwdMspSerialCmd {
+    fn series(&self) -> SeriesId {
+        SeriesId::new(self.series.parse().unwrap())
+    }
+
+    fn to_scyopts(&self) -> ScyllaOptsSubmit {
+        ScyllaOptsSubmit::no_choice()
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct LspFwdMspCompareCmd {
+    backend: String,
+    series: String,
+    name: String,
+    ts1: String,
+    ts2: String,
+    msp_limit: Option<u32>,
+    lsp_limit: Option<u32>,
+    msp_reserve_min: Option<usize>,
+    msp_preopen_min: Option<usize>,
+    lsp_single_buf_max: Option<usize>,
+    cache_bypass_asc: Option<String>,
+    cache_bypass_desc: Option<String>,
+    avoid_order_desc: Option<String>,
+    lsp_lst_concurrent: Option<usize>,
+}
+
+impl LspFwdMspCompareCmd {
+    fn series(&self) -> SeriesId {
+        SeriesId::new(self.series.parse().unwrap())
+    }
+
+    fn to_scyopts(&self) -> ScyllaOptsSubmit {
+        let asc = self
+            .cache_bypass_asc
+            .as_ref()
+            .map(|x| x.parse().ok())
+            .flatten()
+            .map(CacheBypass::from_bool);
+        let desc = self
+            .cache_bypass_desc
+            .as_ref()
+            .map(|x| x.parse().ok())
+            .flatten()
+            .map(CacheBypass::from_bool);
+        let avoid_order_desc = self.avoid_order_desc.as_ref().map(|x| x.parse().ok()).flatten();
+        let lsp_lst_concurrent = self.lsp_lst_concurrent;
+        ScyllaOptsSubmit {
+            msp_cache_bypass: asc,
+            lsp_asc_cache_bypass: asc,
+            lsp_desc_cache_bypass: desc,
+            bins_fwd_cache_bypass: asc,
+            avoid_order_desc,
+            lsp_lst_concurrent,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct LspMergeAllCmd {
+    backend: String,
+    cluster_block: Option<String>,
+    keyspace_block: Option<String>,
+    series: String,
+    name: String,
+    ts1: String,
+    ts2: String,
+    one_before: Option<bool>,
+    msp_limit: Option<u32>,
+    lsp_limit: Option<u32>,
+    msp_reserve_min: Option<usize>,
+    msp_preopen_min: Option<usize>,
+    lsp_single_buf_max: Option<usize>,
+    res_mime: Option<String>,
+    dedup: Option<String>,
+    level: Option<String>,
+    cache_bypass_asc: Option<String>,
+    cache_bypass_desc: Option<String>,
+    avoid_order_desc: Option<String>,
+    lsp_lst_concurrent: Option<usize>,
+}
+
+impl LspMergeAllCmd {
+    fn series(&self) -> SeriesId {
+        SeriesId::new(self.series.parse().unwrap())
+    }
+
+    fn to_scyopts(&self) -> ScyllaOptsSubmit {
+        let asc = self
+            .cache_bypass_asc
+            .as_ref()
+            .map(|x| x.parse().ok())
+            .flatten()
+            .map(CacheBypass::from_bool);
+        let desc = self
+            .cache_bypass_desc
+            .as_ref()
+            .map(|x| x.parse().ok())
+            .flatten()
+            .map(CacheBypass::from_bool);
+        let avoid_order_desc = self.avoid_order_desc.as_ref().map(|x| x.parse().ok()).flatten();
+        let lsp_lst_concurrent = self.lsp_lst_concurrent;
+        ScyllaOptsSubmit {
+            msp_cache_bypass: asc,
+            lsp_asc_cache_bypass: asc,
+            lsp_desc_cache_bypass: desc,
+            bins_fwd_cache_bypass: asc,
+            avoid_order_desc,
+            lsp_lst_concurrent,
+        }
+    }
+
+    fn one_before(&self) -> bool {
+        self.one_before.unwrap_or(true)
+    }
+}
+
+pub struct DynCmdHandler {}
+
+impl DynCmdHandler {
+    pub fn path() -> &'static str {
+        "/api/4/private/dyncmd"
+    }
+
+    pub fn handler(req: &Requ) -> Option<Self> {
+        if req.uri().path() == Self::path() {
+            Some(Self {})
+        } else {
+            None
+        }
+    }
+
+    pub async fn handle(
+        &self,
+        req: Requ,
+        _ctx: &ReqCtx,
+        shared_res: &ServiceSharedResources,
+        ncc: &NodeConfigCached,
+    ) -> Result<StreamResponse, crate::RetrievalError> {
+        let (req, body) = req.into_parts();
+        if req.method != Method::POST {
+            Ok(response(StatusCode::METHOD_NOT_ALLOWED).body(body_empty())?)
+        } else {
+            let mut bs = http_body_util::BodyStream::new(body);
+            let mut buf = BytesMut::with_capacity(1024 * 2);
+            while let Some(fr) = bs.try_next().await? {
+                if let Ok(b) = fr.into_data() {
+                    buf.extend(b);
+                }
+            }
+            info!("Received command: {}", String::from_utf8_lossy(&buf));
+            #[derive(Deserialize)]
+            struct DynCmd {
+                ty1: String,
+            }
+            if let Ok(cmd) = serde_json::from_slice::<DynCmd>(&buf) {
+                if cmd.ty1 == "scyqu" {
+                    if let Some(scyqu) = &shared_res.scyqueue {
+                        #[allow(unused)]
+                        #[derive(Debug, Deserialize)]
+                        struct DynCmd {
+                            ty1: String,
+                            ty2: String,
+                        }
+                        if let Ok(cmd) = serde_json::from_slice::<DynCmd>(&buf) {
+                            info!("{cmd:?}");
+                            if cmd.ty2 == "create_test_data" {
+                                let x = create_test_data::create_test_data(scyqu).await;
+                                let buf = serde_json::to_vec(&ok_or_err_jsval(x)).unwrap();
+                                Ok(response(StatusCode::OK).body(body_bytes(buf))?)
+                            } else if cmd.ty2 == "read_msp" {
+                                if let Ok(cmd) = serde_json::from_slice::<ReadMsp>(&buf) {
+                                    let x = read_msp(cmd, scyqu).await;
+                                    let buf = serde_json::to_vec(&ok_or_err_jsval(x)).unwrap();
+                                    Ok(response(StatusCode::OK).body(body_bytes(buf))?)
+                                } else {
+                                    Ok(response(StatusCode::BAD_REQUEST).body(body_empty())?)
+                                }
+                            } else if cmd.ty2 == "attached_scyllas" {
+                                let x = attached_scyllas(scyqu).await;
+                                let buf = serde_json::to_vec(&ok_or_err_jsval(x)).unwrap();
+                                Ok(response(StatusCode::OK).body(body_bytes(buf))?)
+                            } else if cmd.ty2 == "read_03_lsp_lst" {
+                                if let Ok(cmd) = serde_json::from_slice::<Read03LspLst>(&buf) {
+                                    let x = lsp_lst(cmd, scyqu, shared_res.pgqueue.clone()).await;
+                                    let buf = serde_json::to_vec(&ok_or_err_jsval(x)).unwrap();
+                                    Ok(response(StatusCode::OK).body(body_bytes(buf))?)
+                                } else {
+                                    Ok(response(StatusCode::BAD_REQUEST).body(body_empty())?)
+                                }
+                            } else if cmd.ty2 == "LspFwdMspMultiCmd" {
+                                if let Ok(cmd) = serde_json::from_slice::<LspFwdMspMultiCmd>(&buf) {
+                                    info!("{cmd:?}");
+                                    if true {
+                                        let res =
+                                            LspFwdMspMultiCmd::exec_stream_head(cmd, scyqu, shared_res.pgqueue.clone())
+                                                .await?;
+                                        Ok(res)
+                                    } else {
+                                        let x = LspFwdMspMultiCmd::exec(cmd, scyqu, shared_res.pgqueue.clone()).await;
+                                        info!("exec yields {x:?}");
+                                        let x = ok_or_err_jsval(x);
+                                        info!("return  OK  {x:?}");
+                                        let buf = serde_json::to_vec(&x).unwrap();
+                                        Ok(response(StatusCode::OK).body(body_bytes(buf))?)
+                                    }
+                                } else {
+                                    info!("Failed to parse {}", cmd.ty2);
+                                    Ok(response(StatusCode::BAD_REQUEST).body(body_empty())?)
+                                }
+                            } else if cmd.ty2 == "LspFwdMspSerialCmd" {
+                                if let Ok(cmd) = serde_json::from_slice::<LspFwdMspSerialCmd>(&buf) {
+                                    info!("{cmd:?}");
+                                    let res =
+                                        LspFwdMspSerialCmd::exec_stream_head(cmd, scyqu, shared_res.pgqueue.clone())
+                                            .await?;
+                                    Ok(res)
+                                } else {
+                                    info!("Failed to parse {}", cmd.ty2);
+                                    Ok(response(StatusCode::BAD_REQUEST).body(body_empty())?)
+                                }
+                            } else if cmd.ty2 == "LspFwdMspCompareCmd" {
+                                if let Ok(cmd) = serde_json::from_slice::<LspFwdMspCompareCmd>(&buf) {
+                                    info!("{cmd:?}");
+                                    let res =
+                                        LspFwdMspCompareCmd::exec_stream_head(cmd, scyqu, shared_res.pgqueue.clone())
+                                            .await?;
+                                    Ok(res)
+                                } else {
+                                    info!("Failed to parse {}", cmd.ty2);
+                                    Ok(response(StatusCode::BAD_REQUEST).body(body_empty())?)
+                                }
+                            } else if cmd.ty2 == "LspMergeAllCmd" {
+                                if let Ok(cmd) = serde_json::from_slice::<LspMergeAllCmd>(&buf) {
+                                    info!("{cmd:?}");
+                                    let res = LspMergeAllCmd::exec_stream_head(cmd, scyqu, shared_res.pgqueue.clone())
+                                        .await?;
+                                    Ok(res)
+                                } else {
+                                    info!("Failed to parse {}", cmd.ty2);
+                                    Ok(response(StatusCode::BAD_REQUEST).body(body_empty())?)
+                                }
+                            } else if cmd.ty2 == "ScyllaConfigGetCmd" {
+                                if let Ok(cmd) = serde_json::from_slice::<ScyllaConfigGetCmd>(&buf) {
+                                    let res = ScyllaConfigGetCmd::exec_stream_head(cmd, ncc).await?;
+                                    Ok(res)
+                                } else {
+                                    info!("Failed to parse {}", cmd.ty2);
+                                    Ok(response(StatusCode::BAD_REQUEST).body(body_empty())?)
+                                }
+                            } else {
+                                Ok(response(StatusCode::BAD_REQUEST).body(body_empty())?)
+                            }
+                        } else {
+                            Ok(response(StatusCode::BAD_REQUEST).body(body_empty())?)
+                        }
+                    } else {
+                        Ok(response(StatusCode::BAD_REQUEST).body(body_empty())?)
+                    }
+                } else {
+                    Ok(response(StatusCode::BAD_REQUEST).body(body_empty())?)
+                }
+            } else {
+                let c: serde_json::Value = serde_json::from_slice(&buf)?;
+                let s = serde_json::to_string(&c).unwrap();
+                let s = format!("GOT COMMAND: {s}");
+                let buf = s.into_bytes();
+                Ok(response(StatusCode::OK).body(httpclient::body_bytes(buf))?)
+            }
+        }
+    }
+}
+
+fn ok_or_err_jsval<E>(x: Result<serde_json::Value, E>) -> serde_json::Value
+where
+    E: ToString,
+{
+    use serde_json::json;
+    match x {
+        Ok(x) => x,
+        Err(e) => json!({"error": e.to_string()}),
+    }
+}
+
+async fn attached_scyllas(scyqu: &ScyllaQueue) -> Result<serde_json::Value, Error> {
+    let clusters: Vec<_> = scyqu
+        .clusters()
+        .iter()
+        .map(|cl| {
+            let keyspaces: Vec<_> = cl
+                .keyspaces()
+                .iter()
+                .map(|x| serde_json::to_value(x).unwrap())
+                .collect();
+            serde_json::json!({
+                "tag": cl.tag(),
+                "keyspaces": keyspaces,
+            })
+        })
+        .collect();
+    let ret = serde_json::json!({
+        "clusters": clusters,
+    });
+    Ok(ret)
+}
+
+impl ScyllaConfigGetCmd {
+    async fn exec_stream_body(_cmd: Self, _scyqu: ScyllaQueue, _pgqu: PgQueue) -> Result<StreamBody, Error> {
+        Ok(netpod::todoval())
+    }
+
+    async fn exec_stream_head(cmd: Self, ncc: &NodeConfigCached) -> Result<StreamResponse, Error> {
+        use serde_json::json;
+        let js = json!({
+            "node_config": ncc.node_config,
+        });
+        // let body = body_stream(stream);
+        let body = body_string(serde_json::to_string(&js).unwrap());
+        let res = response(StatusCode::OK)
+            .header(header::CONTENT_TYPE, APP_JSON)
+            .body(body)?;
+        Ok(res)
+    }
+}
+
+async fn read_msp(cmd: ReadMsp, scyqu: &ScyllaQueue) -> Result<serde_json::Value, Error> {
+    use netpod::FromUrl;
+    use serde_json::json;
+    let msp_limit = 4;
+    json!({
+        "error": "no scylla",
+    });
+    let date_zero = chrono::Utc.timestamp_millis_opt(0).unwrap();
+    let range = netpod::query::TimeRangeQuery::from_pairs(
+        &[("begDate", cmd.ts1.clone()), ("endDate", cmd.ts2.clone())]
+            .map(|x| (x.0.into(), x.1))
+            .into_iter()
+            .collect(),
+    )
+    .map_err(|e| Error::from(e.to_string()))?;
+    let range = netpod::range::evrange::NanoRange::from(range);
+    let range = ScyllaSeriesRange::new(range.beg_ts(), range.end_ts());
+    let mut ret1 = Vec::new();
+    for cl in scyqu.clusters() {
+        let mut ret2 = Vec::new();
+        for ks in cl.keyspaces() {
+            let x2 = cl
+                .read_03_msp_fwd(
+                    ks.clone(),
+                    cmd.series(),
+                    range.clone(),
+                    RangeExcl::None,
+                    msp_limit,
+                    cmd.to_scyopts(),
+                )
+                .await?;
+            let dates: Vec<_> = x2
+                .iter()
+                .map(|x| {
+                    chrono::Utc
+                        .timestamp_millis_opt(x.ms() as i64)
+                        .single()
+                        .unwrap_or(date_zero)
+                })
+                .collect();
+            let x = json!({
+                "keyspace": ks,
+                "msps": x2,
+                "dates": dates,
+            });
+            ret2.push(x);
+        }
+        let x = json!({
+            "cluster": cl.tag(),
+            "keyspaces": ret2,
+        });
+        ret1.push(x);
+    }
+    let ret = serde_json::to_value(&ret1).unwrap();
+    Ok(ret)
+}
+
+async fn lsp_lst(cmd: Read03LspLst, scyqu: &ScyllaQueue, pgqu: PgQueue) -> Result<serde_json::Value, Error> {
+    use netpod::FromUrl;
+    use serde_json::json;
+    json!({
+        "error": "no scylla",
+    });
+    let date_zero = chrono::Utc.timestamp_millis_opt(0).unwrap();
+    let range = netpod::query::TimeRangeQuery::from_pairs(
+        &[("begDate", cmd.ts1.clone()), ("endDate", cmd.ts2.clone())]
+            .map(|x| (x.0.into(), x.1))
+            .into_iter()
+            .collect(),
+    )
+    .map_err(|e| Error::from(e.to_string()))?;
+    let series_id = if cmd.series().id() == 0 {
+        let qu = netpod::ChannelSearchQuery {
+            backend: Some(cmd.backend.clone()),
+            name_regex: cmd.name.clone(),
+            source_regex: String::new(),
+            description_regex: String::new(),
+            icase: false,
+            kind: SeriesKind::ChannelData,
+            log_level: String::new(),
+        };
+        let mut res = pgqu.search_channel_scylla(qu).await??;
+        let c1 = res
+            .channels
+            .pop()
+            .ok_or_else(|| Error::Msg(format!("channel not found")))?;
+        SeriesId::new(c1.series)
+    } else {
+        cmd.series()
+    };
+    let chi = pgqu.chconf_for_series(&cmd.backend, series_id.id()).await??;
+    let si = SeriesInfo::from(&chi);
+    let range = netpod::range::evrange::NanoRange::from(range);
+    let range = ScyllaSeriesRange::new(range.beg_ts(), range.end_ts());
+    let msp_limit = 4;
+    let mut msp_bck = Vec::new();
+    let quto = Duration::from_millis(2000);
+    for cl in scyqu.clusters() {
+        let mut ret2 = Vec::new();
+        for ks in cl.keyspaces() {
+            let mut ret3 = Vec::new();
+            if true {
+                error!("TODO change to forward read over past window");
+                return Err(Error::Todo);
+            }
+            let msp_bck = timeout(
+                quto,
+                cl.read_03_msp_fwd(
+                    ks.clone(),
+                    series_id,
+                    range.clone(),
+                    RangeExcl::None,
+                    msp_limit,
+                    cmd.to_scyopts(),
+                ),
+            )
+            .await??;
+            for msp in msp_bck.iter() {
+                let msp = MspEv::from(*msp);
+                // TODO also add `read_03_lsp_only` method
+                let lsp_lst_opn = timeout(
+                    quto,
+                    cl.read_03_lsp_lst(ks.clone(), si.clone(), msp, None, cmd.to_scyopts()),
+                )
+                .await?;
+                let end = msp.lsp(range.end());
+                // TODO if end is None, we can skip the query.
+                let lsp_lst_lim = timeout(
+                    quto,
+                    cl.read_03_lsp_lst(ks.clone(), si.clone(), msp, end, cmd.to_scyopts()),
+                )
+                .await?;
+                if end.is_none() {
+                    if let (Ok(a), Ok(b)) = (&lsp_lst_opn, &lsp_lst_lim) {
+                        if a != b {
+                            return Err(Error::Msg(format!("lsp_lst_lim != lsp_lst_opn")));
+                        }
+                    }
+                }
+                let msp_st = chrono::Utc
+                    .timestamp_millis_opt(msp.to_ms().to_i64())
+                    .single()
+                    .unwrap_or(date_zero);
+                let x = json!({
+                    "msp": (msp, msp_st),
+                    "lsp_lst_opn": lsp_lst_opn.map_err(|x| x.to_string()),
+                    "lsp_lst_lim": lsp_lst_lim.map_err(|x| x.to_string()),
+                });
+                ret3.push(x);
+            }
+            let x = json!({
+                "keyspace": ks,
+                "msp_bck": ret3,
+            });
+            ret2.push(x);
+        }
+        let x = json!({
+            "cluster": cl.tag(),
+            "keyspaces": ret2,
+        });
+        msp_bck.push(x);
+    }
+    let ret = json!({
+        "series_id": format!("{}", series_id.id()),
+        "msp_bck": msp_bck,
+    });
+    Ok(ret)
+}
+
+#[allow(unused)]
+mod res_to_stream {
+    use futures_util::Stream;
+    use futures_util::StreamExt;
+    use std::pin::Pin;
+    use std::task::Context;
+    use std::task::Poll;
+
+    pub struct ResultToStream<S, E1> {
+        stream: Option<S>,
+        errval: Option<E1>,
+    }
+
+    impl<S, E1> ResultToStream<S, E1> {
+        pub fn new<T1, F>(params: Result<T1, E1>, f: F) -> Self
+        where
+            F: FnOnce(T1) -> S,
+            S: Stream + Unpin,
+        {
+            match params {
+                Ok(x) => Self {
+                    stream: Some(f(x)),
+                    errval: None,
+                },
+                Err(e) => Self {
+                    stream: None,
+                    errval: Some(e),
+                },
+            }
+        }
+    }
+
+    impl<S, T2, E1, E2> Stream for ResultToStream<S, E1>
+    where
+        S: Stream<Item = Result<T2, E2>> + Unpin,
+        E1: Into<E2> + Unpin,
+    {
+        type Item = Result<T2, E2>;
+
+        fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+            use Poll::*;
+            if let Some(e) = self.as_mut().get_mut().errval.take() {
+                Ready(Some(Err(e.into())))
+            } else {
+                if let Some(stream) = self.as_mut().get_mut().stream.as_mut() {
+                    match stream.poll_next_unpin(cx) {
+                        Ready(Some(Ok(x))) => Ready(Some(Ok(x))),
+                        Ready(Some(Err(e))) => Ready(Some(Err(e))),
+                        Ready(None) => {
+                            self.stream = None;
+                            Ready(None)
+                        }
+                        Pending => Pending,
+                    }
+                } else {
+                    Ready(None)
+                }
+            }
+        }
+    }
+}
+
+impl LspFwdMspMultiCmd {
+    async fn _exec_stream_body_old(cmd: Self, scyqu: ScyllaQueue, pgqu: PgQueue) -> Result<StreamBody, Error> {
+        use futures_util::stream::iter;
+        use netpod::FromUrl;
+        use serde_json::json;
+        let range = netpod::query::TimeRangeQuery::from_pairs(
+            &[("begDate", cmd.ts1.clone()), ("endDate", cmd.ts2.clone())]
+                .map(|x| (x.0.into(), x.1))
+                .into_iter()
+                .collect(),
+        )
+        .map_err(|e| Error::from(e.to_string()))?;
+        let series_id = if cmd.series().id() == 0 {
+            let qu = netpod::ChannelSearchQuery {
+                backend: Some(cmd.backend.clone()),
+                name_regex: cmd.name.clone(),
+                source_regex: String::new(),
+                description_regex: String::new(),
+                icase: false,
+                kind: SeriesKind::ChannelData,
+                log_level: String::new(),
+            };
+            let mut res = pgqu.search_channel_scylla(qu).await??;
+            let c1 = res
+                .channels
+                .pop()
+                .ok_or_else(|| Error::Msg(format!("channel not found")))?;
+            SeriesId::new(c1.series)
+        } else {
+            cmd.series()
+        };
+        let chi = pgqu.chconf_for_series(&cmd.backend, series_id.id()).await??;
+        let series_info = SeriesInfo::from(&chi);
+        let range = netpod::range::evrange::NanoRange::from(range);
+        let range = ScyllaSeriesRange::new(range.beg_ts(), range.end_ts());
+        let stream = iter(scyqu.into_clusters())
+            .map(move |cl| {
+                iter(cl.keyspaces().to_vec())
+                    .then({
+                        let cl = cl.clone();
+                        let series_info = series_info.clone();
+                        let range = range.clone();
+                        let scyopts = cmd.to_scyopts();
+                        move |ks| {
+                            scyllaconn::events3::mspbck::msp_bck(
+                                ks.clone(),
+                                series_info.clone(),
+                                range.beg(),
+                                cl.as_ref().clone(),
+                                scyopts.clone(),
+                            )
+                            .map_ok(|msp_bck| (ks, msp_bck))
+                        }
+                    })
+                    .map({
+                        let cl = cl.clone();
+                        let series_info = series_info.clone();
+                        let range = range.clone();
+                        let scyopts = cmd.to_scyopts();
+                        move |x| {
+                            res_to_stream::ResultToStream::new(x, |(ks, msp_bck)| {
+                                for x in msp_bck.iter() {
+                                    info!("msp_bck  {ks:?}  {x}");
+                                }
+                                let cl = cl.clone();
+                                let series_info = series_info.clone();
+                                let range = range.clone();
+                                let opts = scyllaconn::events3::ks::lsp_fwd_msp_multi::Opts::new(
+                                    cmd.msp_limit.unwrap_or(MSP_LIMIT_DEF),
+                                    cmd.lsp_limit.unwrap_or(LSP_LIMIT_DEF),
+                                    cmd.msp_reserve_min.unwrap_or(MSP_RESERVE_MIN),
+                                    cmd.msp_preopen_min.unwrap_or(MSP_PREOPEN_MIN),
+                                    cmd.lsp_single_buf_max.unwrap_or(LSP_SINGLE_BUF_MAX),
+                                );
+                                let msps = msp_bck.into_iter().map(MspEv::from).collect();
+                                let stream = scyllaconn::events3::ks::lsp_fwd_msp_multi::LspFwdMspMulti::new(
+                                    ks.clone(),
+                                    series_info.clone(),
+                                    range.clone(),
+                                    opts,
+                                    scyopts.clone(),
+                                    cl.as_ref().clone(),
+                                    msps,
+                                );
+                                let stream = stream.map_err(Error::from).map_ok(move |x| (ks.clone(), x));
+                                stream
+                            })
+                        }
+                    })
+                    .flatten()
+                    .map(|x| x)
+                    .map_ok(move |(ks, x)| (cl.clone(), ks, x))
+            })
+            .flatten()
+            .map(|x| x)
+            .map(|x| match x {
+                Ok((cl, ks, x)) => match x {
+                    StreamItem::DataItem(x) => match x {
+                        RangeCompletableItem::Data(x) => {
+                            let x = x.to_f32_for_binning_v01();
+                            if let Some(x) = x.as_any_ref().downcast_ref::<ContainerEvents<f32>>() {
+                                let (tss, vals) =
+                                    x.iter_zip()
+                                        .fold((Vec::new(), Vec::new()), |(mut tss, mut vals), (ts, val)| {
+                                            tss.push(ts.fmt().to_string());
+                                            vals.push(val);
+                                            (tss, vals)
+                                        });
+                                json!({
+                                    "type": "events",
+                                    "cl": cl.tag(),
+                                    "ks": ks.name(),
+                                    "tss:": tss,
+                                    "vals": vals,
+                                })
+                            } else {
+                                json!({
+                                    "type": "error",
+                                    "cl": cl.tag(),
+                                    "ks": ks.name(),
+                                    "error": "can not downcast",
+                                })
+                            }
+                        }
+                        RangeCompletableItem::RangeComplete => {
+                            json!({
+                                "type": "RangeFinal",
+                                "cl": cl.tag(),
+                                "ks": ks.name(),
+                            })
+                        }
+                    },
+                    StreamItem::Log(x) => {
+                        json!({
+                            "type": "log",
+                            "cl": cl.tag(),
+                            "ks": ks.name(),
+                            "log": x,
+                        })
+                    }
+                    StreamItem::Stats(x) => {
+                        json!({
+                            "type": "stats",
+                            "cl": cl.tag(),
+                            "ks": ks.name(),
+                            "stats": x,
+                        })
+                    }
+                },
+                Err(e) => json!({
+                    "type": "error",
+                    // "cl": cl.tag(),
+                    // "ks": ks.name(),
+                    "error": e.to_string(),
+                }),
+            })
+            .map(|x| Ok::<_, Error>(serde_json::to_string(&x).unwrap()));
+        let stream = bytes_chunks_to_len_framed_str(stream);
+        let res = body_stream(stream);
+        Ok(res)
+    }
+
+    async fn exec_stream_body(cmd: Self, scyqu: ScyllaQueue, pgqu: PgQueue) -> Result<StreamBody, Error> {
+        use netpod::FromUrl;
+        use serde_json::json;
+        let range = netpod::query::TimeRangeQuery::from_pairs(
+            &[("begDate", cmd.ts1.clone()), ("endDate", cmd.ts2.clone())]
+                .map(|x| (x.0.into(), x.1))
+                .into_iter()
+                .collect(),
+        )
+        .map_err(|e| Error::from(e.to_string()))?;
+        let series_id = if cmd.series().id() == 0 {
+            let qu = netpod::ChannelSearchQuery {
+                backend: Some(cmd.backend.clone()),
+                name_regex: cmd.name.clone(),
+                source_regex: String::new(),
+                description_regex: String::new(),
+                icase: false,
+                kind: SeriesKind::ChannelData,
+                log_level: String::new(),
+            };
+            let mut res = pgqu.search_channel_scylla(qu).await??;
+            let c1 = res
+                .channels
+                .pop()
+                .ok_or_else(|| Error::Msg(format!("channel not found")))?;
+            SeriesId::new(c1.series)
+        } else {
+            cmd.series()
+        };
+        let chi = pgqu.chconf_for_series(&cmd.backend, series_id.id()).await??;
+        let series_info = SeriesInfo::from(&chi);
+        let range = netpod::range::evrange::NanoRange::from(range);
+        let range = ScyllaSeriesRange::new(range.beg_ts(), range.end_ts());
+        let stream = scyllaconn::events3::ks::lsp_fwd_msp_multi::LspFwdMspMultiOverClusters::new(
+            series_info.clone(),
+            range.clone(),
+            scyllaconn::events3::ks::lsp_fwd_msp_multi::Opts::new(
+                cmd.msp_limit.unwrap_or(MSP_LIMIT_DEF),
+                cmd.lsp_limit.unwrap_or(LSP_LIMIT_DEF),
+                cmd.msp_reserve_min.unwrap_or(MSP_RESERVE_MIN),
+                cmd.msp_preopen_min.unwrap_or(MSP_PREOPEN_MIN),
+                cmd.lsp_single_buf_max.unwrap_or(LSP_SINGLE_BUF_MAX),
+            ),
+            cmd.to_scyopts(),
+            scyqu.clone(),
+        );
+        let stream = stream
+            .map(|x| match x {
+                Ok(x) => match x {
+                    StreamItem::DataItem(x) => match x {
+                        RangeCompletableItem::Data(x) => {
+                            let cl = x.cl;
+                            let ks = x.ks;
+                            let x = x.item.to_f32_for_binning_v01();
+                            if let Some(x) = x.as_any_ref().downcast_ref::<ContainerEvents<f32>>() {
+                                let (tss, vals) =
+                                    x.iter_zip()
+                                        .fold((Vec::new(), Vec::new()), |(mut tss, mut vals), (ts, val)| {
+                                            tss.push(ts.ms());
+                                            vals.push(val);
+                                            (tss, vals)
+                                        });
+                                json!({
+                                    "type": "events",
+                                    "cl": cl,
+                                    "ks": ks,
+                                    "tss": tss,
+                                    "vals": vals,
+                                })
+                            } else {
+                                json!({
+                                    "type": "error",
+                                    "cl": cl,
+                                    "ks": ks,
+                                    "error": "can not downcast",
+                                })
+                            }
+                        }
+                        RangeCompletableItem::RangeComplete => {
+                            json!({
+                                "type": "RangeFinal",
+                            })
+                        }
+                    },
+                    StreamItem::Log(x) => {
+                        json!({
+                            "type": "log",
+                            "log": x,
+                        })
+                    }
+                    StreamItem::Stats(x) => {
+                        json!({
+                            "type": "stats",
+                            "stats": x,
+                        })
+                    }
+                },
+                Err(e) => json!({
+                    "type": "error",
+                    "error": e.to_string(),
+                }),
+            })
+            .map(|x| serde_json::to_string(&x))
+            .take_while({
+                let mut had_err = false;
+                let mut n = 0;
+                move |x| {
+                    let ret = match x {
+                        Ok(x) => {
+                            if n < 1024 * 1024 * 80 {
+                                n += x.len();
+                                true
+                            } else {
+                                false
+                            }
+                        }
+                        Err(_) => {
+                            if had_err {
+                                false
+                            } else {
+                                had_err = true;
+                                true
+                            }
+                        }
+                    };
+                    ready(ret)
+                }
+            });
+        let stream = bytes_chunks_to_len_framed_str(stream);
+        let res = body_stream(stream);
+        Ok(res)
+    }
+
+    async fn exec_stream_head(cmd: Self, scyqu: &ScyllaQueue, pgqu: PgQueue) -> Result<StreamResponse, Error> {
+        let body = Self::exec_stream_body(cmd, scyqu.clone(), pgqu).await?;
+        let res = response(StatusCode::OK)
+            .header(header::CONTENT_TYPE, APP_JSON_FRAMED)
+            .body(body)?;
+        Ok(res)
+    }
+
+    async fn exec(cmd: Self, scyqu: &ScyllaQueue, pgqu: PgQueue) -> Result<serde_json::Value, Error> {
+        use netpod::FromUrl;
+        use serde_json::json;
+        let range = netpod::query::TimeRangeQuery::from_pairs(
+            &[("begDate", cmd.ts1.clone()), ("endDate", cmd.ts2.clone())]
+                .map(|x| (x.0.into(), x.1))
+                .into_iter()
+                .collect(),
+        )
+        .map_err(|e| Error::from(e.to_string()))?;
+        let series_id = if cmd.series().id() == 0 {
+            let qu = netpod::ChannelSearchQuery {
+                backend: Some(cmd.backend.clone()),
+                name_regex: cmd.name.clone(),
+                source_regex: String::new(),
+                description_regex: String::new(),
+                icase: false,
+                kind: SeriesKind::ChannelData,
+                log_level: String::new(),
+            };
+            let mut res = pgqu.search_channel_scylla(qu).await??;
+            let c1 = res
+                .channels
+                .pop()
+                .ok_or_else(|| Error::Msg(format!("channel not found")))?;
+            SeriesId::new(c1.series)
+        } else {
+            cmd.series()
+        };
+        let chi = pgqu.chconf_for_series(&cmd.backend, series_id.id()).await??;
+        let series_info = SeriesInfo::from(&chi);
+        let range = netpod::range::evrange::NanoRange::from(range);
+        let range = ScyllaSeriesRange::new(range.beg_ts(), range.end_ts());
+        let mut ret1 = Vec::new();
+        for cl in scyqu.clusters() {
+            let mut ret2 = Vec::new();
+            for ks in cl.keyspaces() {
+                let opts = scyllaconn::events3::ks::lsp_fwd_msp_multi::Opts::new(
+                    cmd.msp_limit.unwrap_or(MSP_LIMIT_DEF),
+                    cmd.lsp_limit.unwrap_or(LSP_LIMIT_DEF),
+                    cmd.msp_reserve_min.unwrap_or(MSP_RESERVE_MIN),
+                    cmd.msp_preopen_min.unwrap_or(MSP_PREOPEN_MIN),
+                    cmd.lsp_single_buf_max.unwrap_or(LSP_SINGLE_BUF_MAX),
+                );
+                let msps = VecDeque::new();
+                let mut stream = scyllaconn::events3::ks::lsp_fwd_msp_multi::LspFwdMspMulti::new(
+                    ks.clone(),
+                    series_info.clone(),
+                    range.clone(),
+                    opts,
+                    cmd.to_scyopts(),
+                    cl.as_ref().clone(),
+                    msps,
+                );
+                let mut tss = Vec::new();
+                let mut vals = Vec::new();
+                let mut strs = Vec::new();
+                while let Some(x) = stream.next().await {
+                    let x = x?;
+                    match x {
+                        StreamItem::DataItem(x) => match x {
+                            RangeCompletableItem::Data(x) => {
+                                let x = x.to_f32_for_binning_v01();
+                                if let Some(x) = x.as_any_ref().downcast_ref::<ContainerEvents<f32>>() {
+                                    for (ts, val) in x.iter_zip() {
+                                        tss.push(ts.fmt().to_string());
+                                        vals.push(val);
+                                    }
+                                } else {
+                                    strs.push(format!("can not downcast"));
+                                }
+                            }
+                            RangeCompletableItem::RangeComplete => {
+                                strs.push(format!("RangeComplete"));
+                            }
+                        },
+                        StreamItem::Log(x) => {
+                            strs.push(x.display_log_file().to_string());
+                        }
+                        StreamItem::Stats(x) => {
+                            strs.push(format!("{x:?}"));
+                        }
+                    }
+                }
+                let x = json!({
+                    "keyspace": ks,
+                    "strs": strs,
+                    "tss": tss,
+                    "vals": vals,
+                });
+                ret2.push(x);
+            }
+            let x = json!({
+                "cluster": cl.tag(),
+                "keyspaces": ret2,
+            });
+            ret1.push(x);
+        }
+        let ret = json!({
+            "type": std::any::type_name::<Self>(),
+            "series_id": format!("{}", series_id.id()),
+            "ret1": ret1,
+        });
+        Ok(ret)
+    }
+}
+
+impl LspFwdMspSerialCmd {
+    async fn exec_stream_body(cmd: Self, scyqu: ScyllaQueue, pgqu: PgQueue) -> Result<StreamBody, Error> {
+        use netpod::FromUrl;
+        use serde_json::json;
+        let range = netpod::query::TimeRangeQuery::from_pairs(
+            &[("begDate", cmd.ts1.clone()), ("endDate", cmd.ts2.clone())]
+                .map(|x| (x.0.into(), x.1))
+                .into_iter()
+                .collect(),
+        )
+        .map_err(|e| Error::from(e.to_string()))?;
+        let series_id = if cmd.series().id() == 0 {
+            let qu = netpod::ChannelSearchQuery {
+                backend: Some(cmd.backend.clone()),
+                name_regex: cmd.name.clone(),
+                source_regex: String::new(),
+                description_regex: String::new(),
+                icase: false,
+                kind: SeriesKind::ChannelData,
+                log_level: String::new(),
+            };
+            let mut res = pgqu.search_channel_scylla(qu).await??;
+            let c1 = res
+                .channels
+                .pop()
+                .ok_or_else(|| Error::Msg(format!("channel not found")))?;
+            SeriesId::new(c1.series)
+        } else {
+            cmd.series()
+        };
+        let chi = pgqu.chconf_for_series(&cmd.backend, series_id.id()).await??;
+        let series_info = SeriesInfo::from(&chi);
+        let range = netpod::range::evrange::NanoRange::from(range);
+        let range = ScyllaSeriesRange::new(range.beg_ts(), range.end_ts());
+        let stream = scyllaconn::events3::ks::lsp_fwd_msp_serial::LspFwdMspSerialOverClusters::new(
+            series_info.clone(),
+            range.clone(),
+            cmd.msp_limit.unwrap_or(MSP_LIMIT_DEF),
+            cmd.lsp_limit.unwrap_or(LSP_LIMIT_DEF),
+            cmd.lsp_single_buf_max.unwrap_or(LSP_SINGLE_BUF_MAX),
+            cmd.to_scyopts(),
+            scyqu.clone(),
+        );
+        let stream = stream
+            .map(|x| match x {
+                Ok(x) => match x {
+                    StreamItem::DataItem(x) => match x {
+                        RangeCompletableItem::Data(x) => {
+                            let cl = x.cl;
+                            let ks = x.ks;
+                            let msp = x.msp;
+                            let x = x.item.to_f32_for_binning_v01();
+                            if let Some(x) = x.as_any_ref().downcast_ref::<ContainerEvents<f32>>() {
+                                let (tss, vals) =
+                                    x.iter_zip()
+                                        .fold((Vec::new(), Vec::new()), |(mut tss, mut vals), (ts, val)| {
+                                            tss.push(ts.ms());
+                                            vals.push(val);
+                                            (tss, vals)
+                                        });
+                                json!({
+                                    "type": "events",
+                                    "cl": cl,
+                                    "ks": ks,
+                                    "msp": msp.to_ms().to_u64(),
+                                    "tss": tss,
+                                    "vals": vals,
+                                })
+                            } else {
+                                json!({
+                                    "type": "error",
+                                    "cl": cl,
+                                    "ks": ks,
+                                    "error": "can not downcast",
+                                })
+                            }
+                        }
+                        RangeCompletableItem::RangeComplete => {
+                            json!({
+                                "type": "RangeFinal",
+                            })
+                        }
+                    },
+                    StreamItem::Log(x) => {
+                        json!({
+                            "type": "log",
+                            "log": x,
+                        })
+                    }
+                    StreamItem::Stats(x) => {
+                        json!({
+                            "type": "stats",
+                            "stats": x,
+                        })
+                    }
+                },
+                Err(e) => json!({
+                    "type": "error",
+                    "error": e.to_string(),
+                }),
+            })
+            .map(|x| serde_json::to_string(&x))
+            .take_while({
+                let mut nerr = 0;
+                let mut n = 0;
+                move |x| {
+                    let ret = match x {
+                        Ok(x) => {
+                            if n < 1024 * 1024 * 80 {
+                                n += x.len();
+                                true
+                            } else {
+                                false
+                            }
+                        }
+                        Err(_) => {
+                            if nerr > 10 {
+                                false
+                            } else {
+                                nerr += 1;
+                                true
+                            }
+                        }
+                    };
+                    ready(ret)
+                }
+            });
+        let stream = bytes_chunks_to_len_framed_str(stream);
+        let res = body_stream(stream);
+        Ok(res)
+    }
+
+    async fn exec_stream_head(cmd: Self, scyqu: &ScyllaQueue, pgqu: PgQueue) -> Result<StreamResponse, Error> {
+        let body = Self::exec_stream_body(cmd, scyqu.clone(), pgqu).await?;
+        let res = response(StatusCode::OK)
+            .header(header::CONTENT_TYPE, APP_JSON_FRAMED)
+            .body(body)?;
+        Ok(res)
+    }
+}
+
+impl LspFwdMspCompareCmd {
+    async fn exec_stream_body(cmd: Self, scyqu: ScyllaQueue, pgqu: PgQueue) -> Result<StreamBody, Error> {
+        use netpod::FromUrl;
+        use serde_json::json;
+        let ts1 = Instant::now();
+        let range = netpod::query::TimeRangeQuery::from_pairs(
+            &[("begDate", cmd.ts1.clone()), ("endDate", cmd.ts2.clone())]
+                .map(|x| (x.0.into(), x.1))
+                .into_iter()
+                .collect(),
+        )
+        .map_err(|e| Error::from(e.to_string()))?;
+        let series_id = if cmd.series().id() == 0 {
+            let qu = netpod::ChannelSearchQuery {
+                backend: Some(cmd.backend.clone()),
+                name_regex: cmd.name.clone(),
+                source_regex: String::new(),
+                description_regex: String::new(),
+                icase: false,
+                kind: SeriesKind::ChannelData,
+                log_level: String::new(),
+            };
+            let mut res = pgqu.search_channel_scylla(qu).await??;
+            let c1 = res
+                .channels
+                .pop()
+                .ok_or_else(|| Error::Msg(format!("channel not found")))?;
+            SeriesId::new(c1.series)
+        } else {
+            cmd.series()
+        };
+        let chi = pgqu.chconf_for_series(&cmd.backend, series_id.id()).await??;
+        let series_info = SeriesInfo::from(&chi);
+        let range = netpod::range::evrange::NanoRange::from(range);
+        let range = ScyllaSeriesRange::new(range.beg_ts(), range.end_ts());
+
+        let mut msgs = Vec::new();
+
+        let ts2 = Instant::now();
+
+        let map1 = {
+            let stream = scyllaconn::events3::ks::lsp_fwd_msp_multi::LspFwdMspMultiOverClusters::new(
+                series_info.clone(),
+                range.clone(),
+                scyllaconn::events3::ks::lsp_fwd_msp_multi::Opts::new(
+                    cmd.msp_limit.unwrap_or(MSP_LIMIT_DEF),
+                    cmd.lsp_limit.unwrap_or(LSP_LIMIT_DEF),
+                    cmd.msp_reserve_min.unwrap_or(MSP_RESERVE_MIN),
+                    cmd.msp_preopen_min.unwrap_or(MSP_PREOPEN_MIN),
+                    cmd.lsp_single_buf_max.unwrap_or(LSP_SINGLE_BUF_MAX),
+                ),
+                cmd.to_scyopts(),
+                scyqu.clone(),
+            );
+            stream
+                .fold(BTreeMap::new(), |mut mm, x| {
+                    match x {
+                        Ok(x) => match x {
+                            StreamItem::DataItem(x) => match x {
+                                RangeCompletableItem::Data(x) => {
+                                    let cl = x.cl;
+                                    let ks = x.ks;
+
+                                    // TODO check order group by cl, ks.
+
+                                    let x = x.item.to_f32_for_binning_v01();
+                                    if let Some(x) = x.as_any_ref().downcast_ref::<ContainerEvents<f32>>() {
+                                        let (tss, vals) = x.iter_zip().fold(
+                                            (Vec::new(), Vec::new()),
+                                            |(mut tss, mut vals), (ts, val)| {
+                                                tss.push(ts.ms());
+                                                vals.push(val);
+                                                (tss, vals)
+                                            },
+                                        );
+                                        if mm.len() < 1024 * 1024 * 80 {
+                                            for (ts, val) in tss.into_iter().zip(vals.into_iter()) {
+                                                // map1.entry(ts).and_modify(|e| ).or_insert(val);
+                                                mm.insert((ts, val.to_le_bytes()), 1u8);
+                                            }
+                                        } else {
+                                            info!("mm full");
+                                        }
+                                    } else {
+                                    }
+                                }
+                                RangeCompletableItem::RangeComplete => {}
+                            },
+                            StreamItem::Log(x) => {
+                                if x.level() <= Level::WARN {
+                                    msgs.push(format!("{x:?}"));
+                                }
+                            }
+                            StreamItem::Stats(x) => {
+                                msgs.push(format!("{x:?}"));
+                            }
+                        },
+                        Err(e) => {
+                            msgs.push(format!("{e:?}"));
+                        }
+                    }
+                    ready(mm)
+                })
+                .await
+        };
+
+        let ts3 = Instant::now();
+
+        let map2 = {
+            let stream = scyllaconn::events3::ks::lsp_fwd_msp_serial::LspFwdMspSerialOverClusters::new(
+                series_info.clone(),
+                range.clone(),
+                // TODO introduce newtype
+                cmd.msp_limit.unwrap_or(MSP_LIMIT_DEF),
+                cmd.lsp_limit.unwrap_or(LSP_LIMIT_DEF),
+                cmd.lsp_single_buf_max.unwrap_or(LSP_SINGLE_BUF_MAX),
+                cmd.to_scyopts(),
+                scyqu.clone(),
+            );
+            stream
+                .fold(BTreeMap::new(), |mut mm, x| {
+                    match x {
+                        Ok(x) => match x {
+                            StreamItem::DataItem(x) => match x {
+                                RangeCompletableItem::Data(x) => {
+                                    let cl = x.cl;
+                                    let ks = x.ks;
+                                    let x = x.item.to_f32_for_binning_v01();
+                                    if let Some(x) = x.as_any_ref().downcast_ref::<ContainerEvents<f32>>() {
+                                        let (tss, vals) = x.iter_zip().fold(
+                                            (Vec::new(), Vec::new()),
+                                            |(mut tss, mut vals), (ts, val)| {
+                                                tss.push(ts.ms());
+                                                vals.push(val);
+                                                (tss, vals)
+                                            },
+                                        );
+                                        if mm.len() < 1024 * 1024 * 80 {
+                                            for (ts, val) in tss.into_iter().zip(vals.into_iter()) {
+                                                // map1.entry(ts).and_modify(|e| ).or_insert(val);
+                                                mm.insert((ts, val.to_le_bytes()), 2u8);
+                                            }
+                                        } else {
+                                            info!("mm full");
+                                        }
+                                    } else {
+                                    }
+                                }
+                                RangeCompletableItem::RangeComplete => {}
+                            },
+                            StreamItem::Log(x) => {
+                                if x.level() <= Level::WARN {
+                                    msgs.push(format!("{x:?}"));
+                                }
+                            }
+                            StreamItem::Stats(x) => {
+                                msgs.push(format!("{x:?}"));
+                            }
+                        },
+                        Err(e) => {
+                            msgs.push(format!("{e:?}"));
+                        }
+                    }
+                    ready(mm)
+                })
+                .await
+        };
+
+        let ts4 = Instant::now();
+
+        let mut map3 = BTreeMap::new();
+        for e in map1 {
+            if let Some(e) = map3.get_mut(&e.0) {
+                *e += 1;
+            } else {
+                map3.insert(e.0, 1);
+            }
+        }
+        for e in map2 {
+            if let Some(e) = map3.get_mut(&e.0) {
+                *e += 1;
+            } else {
+                map3.insert(e.0, 1);
+            }
+        }
+
+        let ts5 = Instant::now();
+
+        let mut nbin1 = 0;
+        let mut nbin2 = 0;
+        let mut nbinx = 0;
+        for (_, n) in map3 {
+            if n == 1 {
+                nbin1 += 1;
+            } else if n == 2 {
+                nbin2 += 1;
+            } else {
+                nbinx += 1;
+            }
+        }
+
+        let ts6 = Instant::now();
+
+        let tss = [ts1, ts2, ts3, ts4, ts5, ts6];
+        let timings: Vec<_> = tss
+            .iter()
+            .zip(tss.iter().skip(1))
+            .map(|(a, b)| 1e3 * b.saturating_duration_since(*a).as_secs_f32())
+            .map(|x| format!("{x:.2} ms"))
+            .collect();
+
+        let js = json!({
+            "nbin1": nbin1,
+            "nbin2": nbin2,
+            "nbinx": nbinx,
+            "timings": timings,
+            "z_msgs": msgs,
+        });
+        let js = serde_json::to_string(&js).unwrap();
+        let stream = futures_util::stream::iter([Ok::<_, Error>(js)]);
+
+        let stream = bytes_chunks_to_len_framed_str(stream);
+        let res = body_stream(stream);
+        Ok(res)
+    }
+
+    async fn exec_stream_head(cmd: Self, scyqu: &ScyllaQueue, pgqu: PgQueue) -> Result<StreamResponse, Error> {
+        let body = Self::exec_stream_body(cmd, scyqu.clone(), pgqu).await?;
+        let res = response(StatusCode::OK)
+            .header(header::CONTENT_TYPE, APP_JSON_FRAMED)
+            .body(body)?;
+        Ok(res)
+    }
+}
+
+macro_rules! reqfeat {
+    ($s:tt) => {{
+        #[cfg(not(target_feature = $s))]
+        compile_error!(concat!("codegen feature missing: ", $s));
+        if is_x86_feature_detected!($s) {
+        } else {
+            return Err(Error::Msg(concat!("codegen feature missing: ", $s).into()));
+        }
+    }};
+}
+
+impl LspMergeAllCmd {
+    async fn exec_stream_body(cmd: Self, scyqu: ScyllaQueue, pgqu: PgQueue) -> Result<StreamBody, Error> {
+        use netpod::FromUrl;
+        info!("LspMergeAllCmd  exec_stream_body  {:?}", cmd.to_scyopts());
+        let range = netpod::query::TimeRangeQuery::from_pairs(
+            &[("begDate", cmd.ts1.clone()), ("endDate", cmd.ts2.clone())]
+                .map(|x| (x.0.into(), x.1))
+                .into_iter()
+                .collect(),
+        )
+        .map_err(|e| Error::from(e.to_string()))?;
+        let series_id = if cmd.series().id() == 0 {
+            let qu = netpod::ChannelSearchQuery {
+                backend: Some(cmd.backend.clone()),
+                name_regex: cmd.name.clone(),
+                source_regex: String::new(),
+                description_regex: String::new(),
+                icase: false,
+                kind: SeriesKind::ChannelData,
+                log_level: String::new(),
+            };
+            let mut res = pgqu.search_channel_scylla(qu).await??;
+            let c1 = res
+                .channels
+                .pop()
+                .ok_or_else(|| Error::Msg(format!("channel not found")))?;
+            SeriesId::new(c1.series)
+        } else {
+            cmd.series()
+        };
+        let chi = pgqu.chconf_for_series(&cmd.backend, series_id.id()).await??;
+        let series_info = SeriesInfo::from(&chi);
+        debug!("series_info {series_info:?}");
+        let range = netpod::range::evrange::NanoRange::from(range);
+        let range = ScyllaSeriesRange::new(range.beg_ts(), range.end_ts());
+        reqfeat!("sse");
+        reqfeat!("sse2");
+        // reqfeat!("sse3");
+        // reqfeat!("sse4.1");
+        // reqfeat!("sse4.2");
+        // reqfeat!("avx");
+        // reqfeat!("avx2");
+        // reqfeat!("avx512f");
+        let mut inps = Vec::new();
+        let clblk = cmd
+            .cluster_block
+            .as_ref()
+            .map(|x| x.split(",").map(|x| x.to_string()).collect())
+            .unwrap_or(Vec::new());
+        let ksblk = cmd
+            .keyspace_block
+            .as_ref()
+            .map(|x| x.split(",").map(|x| x.to_string()).collect())
+            .unwrap_or(Vec::new());
+        for cl in scyqu.clusters() {
+            if clblk.iter().any(|x| x.as_str() == cl.tag()) {
+                debug!("ignore {}", cl.tag());
+            } else {
+                for ks in cl.keyspaces() {
+                    if ksblk.iter().any(|x| x.as_str() == ks.name()) {
+                        debug!("ignore {}", ks.name());
+                    } else if false {
+                        let opts = scyllaconn::events3::ks::lsp_fwd_msp_multi::Opts::new(
+                            cmd.msp_limit.unwrap_or(MSP_LIMIT_DEF),
+                            cmd.lsp_limit.unwrap_or(LSP_LIMIT_DEF),
+                            cmd.msp_reserve_min.unwrap_or(MSP_RESERVE_MIN),
+                            cmd.msp_preopen_min.unwrap_or(MSP_PREOPEN_MIN),
+                            cmd.lsp_single_buf_max.unwrap_or(LSP_SINGLE_BUF_MAX),
+                        );
+                        let msps = scyllaconn::events3::mspbck::msp_bck(
+                            ks.clone(),
+                            series_info.clone(),
+                            range.beg(),
+                            cl.as_ref().clone(),
+                            cmd.to_scyopts(),
+                        )
+                        .await?
+                        .into_iter()
+                        .map(MspEv::from)
+                        .collect();
+                        let stream = scyllaconn::events3::ks::lsp_fwd_msp_multi::LspFwdMspMulti::new(
+                            ks.clone(),
+                            series_info.clone(),
+                            range.clone(),
+                            opts,
+                            cmd.to_scyopts(),
+                            cl.as_ref().clone(),
+                            msps,
+                        );
+                        // inps.push(stream);
+                    } else {
+                        let opts = scyllaconn::events3::ks::eventsks::Opts::new(
+                            cmd.to_scyopts(),
+                            cmd.msp_limit.unwrap_or(MSP_LIMIT_DEF),
+                            cmd.lsp_limit.unwrap_or(LSP_LIMIT_DEF),
+                            cmd.msp_reserve_min.unwrap_or(MSP_RESERVE_MIN),
+                            cmd.msp_preopen_min.unwrap_or(MSP_PREOPEN_MIN),
+                            cmd.lsp_single_buf_max.unwrap_or(LSP_SINGLE_BUF_MAX),
+                        )
+                        .set_one_before(cmd.one_before());
+                        let stream = EventsKs::new(
+                            series_info.clone(),
+                            ks.clone(),
+                            // TODO avoid this clone
+                            cl.as_ref().clone(),
+                            range.clone(),
+                            opts,
+                        );
+                        let stream = streams::withlenhisto::WithLenHisto::new(
+                            stream,
+                            format!(
+                                "after-LspFwdMspMulti-{}-{}-{}",
+                                cl.tag(),
+                                ks.name(),
+                                ks.rt().debug_tag()
+                            ),
+                        );
+                        if true || ks.rt() == RetentionTime::Short {
+                            inps.push(stream);
+                        }
+                    }
+                }
+            }
+        }
+        let stream = scyllaconn::events3::ks::lspmerge::LspMerge::new(inps, cmd.lsp_limit.unwrap_or(LSP_LIMIT_DEF));
+        let stream = streams::withlenhisto::WithLenHisto::new(stream, format!("after-LspMerge"));
+        let stream = streams::monotonic::CheckMonotonic::new(stream, format!("after-LspMerge"));
+        let stream = OneBeforeAndBulk::new(
+            stream,
+            range.beg(),
+            cmd.one_before(),
+            format!("dyncmd-final-bulk-taker"),
+        )
+        .map(|x| {
+            use scyllaconn::events2::onebeforeandbulk::Output;
+            on_sitemty_data!(x, |x| match x {
+                Output::Before(x) => sitem2_data(x),
+                Output::Bulk(x) => sitem2_data(x),
+            })
+        });
+        // Box<dyn BinningggContainerEventsDyn>
+        type StreamBox<T> = Pin<Box<dyn Stream<Item = T> + Send>>;
+        let stream = if cmd.dedup.map_or(true, |x| x == "1") {
+            let stream = streams::dedup::Dedup::new(stream).map(|x| x);
+            Box::pin(stream) as StreamBox<_>
+        } else {
+            Box::pin(stream) as StreamBox<_>
+        };
+        // TODO factor into helper with default.
+        let lvl: netpod::log::Level = cmd
+            .level
+            .as_ref()
+            .map(|x| x.parse().ok())
+            .flatten()
+            .unwrap_or(netpod::log::Level::ERROR);
+        let stream = streams::logfilter::LogFilter::new(stream, lvl);
+        let stream = streams::tojsonf32::to_json_f32(stream);
+        let stream = stream.map(|x| serde_json::to_string(&x)).take_while({
+            let mut had_err = false;
+            let mut n = 0;
+            move |x| {
+                let ret = match x {
+                    Ok(x) => {
+                        if true || n < 1024 * 1024 * 81 {
+                            n += x.len();
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                    Err(_) => {
+                        if had_err {
+                            false
+                        } else {
+                            had_err = true;
+                            true
+                        }
+                    }
+                };
+                ready(ret)
+            }
+        });
+        let stream = bytes_chunks_to_len_framed_str(stream);
+        let res = body_stream(stream);
+        Ok(res)
+    }
+
+    async fn exec_stream_head(cmd: Self, scyqu: &ScyllaQueue, pgqu: PgQueue) -> Result<StreamResponse, Error> {
+        let res_mime = cmd.res_mime.as_ref().map_or(APP_JSON_FRAMED.to_string(), |x| x.clone());
+        let body = Self::exec_stream_body(cmd, scyqu.clone(), pgqu).await?;
+        let res = response(StatusCode::OK)
+            .header(header::CONTENT_TYPE, res_mime)
+            .body(body)?;
+        Ok(res)
+    }
+}

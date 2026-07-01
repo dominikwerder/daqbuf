@@ -1,0 +1,35 @@
+[package]
+name = "streamio"
+version = "0.0.2"
+authors = ["Dominik Werder <dominik.werder@gmail.com>"]
+edition = "2021"
+
+[dependencies]
+tokio = { version = "1.43", features = ["io-util", "net", "time", "sync", "fs"] }
+tokio-stream = "0.1.17"
+futures-util = "0.3.31"
+pin-project = "1.1.9"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_cbor = "0.11.2"
+typetag = "0.2.19"
+ciborium = "0.2.2"
+bytes = "1.10"
+arrayref = "0.3.9"
+crc32fast = "1.4.2"
+byteorder = "1.5.0"
+rand_xoshiro = "0.7.0"
+autoerr = "0.0"
+chrono = { version = "0.4.39", features = ["serde"] }
+netpod = { path = "../../../daqbuf-netpod", package = "daqbuf-netpod" }
+query = { path = "../../../daqbuf-query", package = "daqbuf-query" }
+items_0 = { path = "../../../daqbuf-items-0", package = "daqbuf-items-0" }
+items_2 = { path = "../../../daqbuf-items-2", package = "daqbuf-items-2" }
+parse = { path = "../../../daqbuf-parse", package = "daqbuf-parse" }
+streams = { path = "../../../daqbuf-streams", package = "daqbuf-streams" }
+http = "1"
+http-body = "1"
+http-body-util = "0.1.2"
+
+[dev-dependencies]
+taskrun = { path = "../taskrun" }

@@ -1,0 +1,5 @@
+max_width = 120
+#unstable_features = true
+#comment_width = 120
+#empty_item_single_line = false
+#control_brace_style = "ClosingNextLine"

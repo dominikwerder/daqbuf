@@ -1,0 +1,336 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8" />
+  <title>Databuffer API 4 Documentation</title>
+  <meta name="keywords" content="PSI, DAQ, Databuffer">
+  <meta name="author" content="Dominik Werder">
+  <link rel="shortcut icon" href="about:blank" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+
+<body>
+
+  <h1>Databuffer API 4 Documentation</h1>
+
+  <p>Documented here is the databuffer http api 4. The "original" unversioned api is documented at
+    <a href="https://git.psi.ch/sf_daq/ch.psi.daq.databuffer/blob/master/ch.psi.daq.queryrest/Readme.md">this
+      location</a>.
+  </p>
+  <p>API version 1:
+    <a href="https://data-api.psi.ch/api/1/documentation/">https://data-api.psi.ch/api/1/documentation/</a>
+  </p>
+  <p>In order to keep the api surface as small as possible in comparison to api 0, we add functionality on demand,
+    so please feel free to create some Jira ticket!</p>
+
+
+  <h2>API functions</h2>
+  <p>Currently available functionality:</p>
+  <ul>
+    <li><a href="#timestamp-format">A note on how timestamps are encoded.</a></li>
+    <li><a href="#list-backends">List available backends.</a></li>
+    <li><a href="#api-version">More version information about the running service.</a></li>
+    <li><a href="#search-channel">Search channel.</a></li>
+    <li><a href="#map-pulse">Map pulse.</a></li>
+    <li><a href="#query-events">Query unbinned event data.</a></li>
+    <li><a href="#query-binned">Query binned data.</a></li>
+  </ul>
+
+
+
+  <a id="timestamp-format"></a>
+  <h2>Timestamp format</h2>
+  <p>The result encodes timestamps in the form:</p>
+  <pre>{
+  "tsAnchor": 1623909860,                    // Time-anchor of this result in UNIX epoch seconds.
+  "tsOffMs": [173, 472, 857, ...],       // Millisecond-offset to tsAnchor for each event/bin-edge.
+  "tsOffNs": [422901, 422902, 422903, ...],  // Nanosecond-offset to tsAnchor in addition to tsOffMs for each event/bin-edge.
+}</pre>
+  <p>which results in these nanosecond-timestamps:</p>
+  <pre>1623909860573422901
+1623909875671422902
+1623909897932422903</pre>
+  <p>Formally: tsAbsolute = tsAnchor * 10<sup>9</sup> + tsOffMs * 10<sup>6</sup> + tsOffNs</p>
+  <p>Two reasons lead to this choice of timestamp format:</p>
+  <ul>
+    <li>Javascript can not represent the full nanosecond-resolution timestamps in a single numeric variable.</li>
+    <li>The lowest 6 digits of the nanosecond timestamp are anyway abused by the timing system to emit a pulse-id.
+    </li>
+  </ul>
+
+
+
+  <a id="list-backends"></a>
+  <h2>List available backends</h2>
+  <p><strong>Method:</strong> GET</p>
+  <p><strong>URL:</strong> https://data-api.psi.ch/api/4/backends</p>
+  <p><strong>Request header:</strong> "Accept" should be "application/json" for forward compatibility.</p>
+  <h4>CURL example:</h4>
+  <pre>
+curl -H 'Accept: application/json' 'https://data-api.psi.ch/api/4/backends'
+</pre>
+  <h4>Example response</h4>
+  <pre>{
+  "backends": [
+    "sf-databuffer",
+    "hipa-archive",
+    "gls-archive",
+    "proscan-archive",
+    "sls-archive"
+  ]
+}</pre>
+
+
+
+  <a id="api-version"></a>
+  <h2>Get version details</h2>
+  <p><strong>Method:</strong> GET</p>
+  <p><strong>URL:</strong> https://data-api.psi.ch/api/4/version</p>
+  <p><strong>Request header:</strong> "Accept" should be "application/json" for forward compatibility.</p>
+  <h4>CURL example:</h4>
+  <pre>
+curl -H 'Accept: application/json' 'https://data-api.psi.ch/api/4/version'
+</pre>
+  <h4>Example response</h4>
+  <pre>{ "data_api_version": { "major": 4, "minor": 0} }</pre>
+
+
+
+  <a id="search-channel"></a>
+  <h2>Search channel</h2>
+  <p><strong>Method:</strong> GET</p>
+  <p><strong>URL:</strong> https://data-api.psi.ch/api/4/search/channel</p>
+  <p><strong>Query parameters:</strong> (all optional)</p>
+  <ul>
+    <li>backend (e.g. "sf-databuffer", "sls-archive", ... any from list-backends API)</li>
+    <li>nameRegex (e.g. "LSCP.*6")</li>
+    <li>sourceRegex (e.g. "178:9999")</li>
+    <li>descriptionRegex (e.g. "celsius")</li>
+  </ul>
+  <p><strong>Request header:</strong> "Accept" should be "application/json" for forward-compatibility but can be
+    omitted for e.g. a quick manual search using CURL.</p>
+  <p>Full channel list is long, so it's encouraged to provide a search string of some minimal length.</p>
+
+  <h4>CURL example:</h4>
+  <pre>
+curl -H 'Accept: application/json' 'https://data-api.psi.ch/api/4/search/channel?sourceRegex=CV.E.+37&nameRegex=120.+y2$'
+</pre>
+
+  <h4>Example response:</h4>
+  <p><strong>Keys always present: </strong>name, backend.</p>
+  <p>Other keys are optional, it depends on the data found on disk: sometimes there is an empty string on disk,
+    sometimes
+    that key is missing.</p>
+  <pre>{
+  "channels": [
+    {
+      "name": "S10MA01-DBPM120:Y2",
+      "backend": "sf-databuffer",
+      "source": "tcp://S20-CVME-DBPM2371:9000",
+      "type": "Float32",
+      "shape": [],
+      "unit": "",
+      "description": ""
+    },
+    {
+      "name": "S20SY02-DBPM120:Y2",
+      "backend": "sf-databuffer",
+      "source": "tcp://S20-CVME-DBPM2371:9000",
+      "type": "Float32",
+      "shape": [],
+      "unit": "",
+      "description": ""
+    },
+    {
+      "isApi0": true,
+      "name": "EXAMPLE-CHANNEL-FROM-API-0-BACKEND",
+      "backend": "twlha-databuffer",
+      "source": "tcp://.....",
+      "type": "int32",
+      "shape": [],
+      "unit": "",
+      "description": ""
+    }
+  ]
+}</pre>
+  <p>The search constraints are AND'd.</p>
+
+
+
+  <a id="map-pulse"></a>
+  <h2>Map pulse</h2>
+  <p><strong>Method:</strong> GET</p>
+  <p><strong>URL:</strong> https://data-api.psi.ch/api/4/map/pulse/BACKEND/PULSE</p>
+  <p><strong>Request header:</strong> "Accept" should be "application/json" for forward-compatibility but can be
+    omitted for e.g. a quick manual search using CURL.</p>
+
+  <h4>CURL example:</h4>
+  <pre>
+curl -H 'Accept: application/json' 'https://data-api.psi.ch/api/4/map/pulse/sf-databuffer/424242'
+</pre>
+
+
+
+  <a id="query-events"></a>
+  <h2>Query event data</h2>
+  <p>Returns the full event values in a given time range.</p>
+  <p><strong>Method:</strong> GET</p>
+  <p><strong>URL:</strong> https://data-api.psi.ch/api/4/events</p>
+  <p><strong>Query parameters:</strong></p>
+  <ul>
+    <li>backend (e.g. "sf-databuffer")</li>
+    <li>channelName (e.g. "S10CB02-RBOC-DCP10:FOR-AMPLT-AVG")</li>
+    <li>begDate (e.g. "2021-05-26T07:10:00.000Z")</li>
+    <li>endDate (e.g. "2021-05-26T07:16:00.000Z")</li>
+  </ul>
+  <p><strong>Request header:</strong> "Accept" should be "application/json" for forward compatibility.</p>
+
+  <h4>Timeout</h4>
+  <p>If the requested range takes too long to retrieve, then the flags <strong>timedOut: true</strong> will be set.
+  </p>
+
+  <h4>CURL example:</h4>
+  <pre>
+curl -H 'Accept: application/json' 'https://data-api.psi.ch/api/4/events?backend=sf-databuffer
+  &channelName=S10CB02-RBOC-DCP10:FOR-AMPLT-AVG&begDate=2021-05-26T07:10:00.000Z&endDate=2021-05-26T07:16:00.000Z'
+</pre>
+
+  <p>Example response:</p>
+  <pre>
+{
+  "rangeFinal": true,
+  "tsAnchor": 1623763172,
+  "tsMs": [
+    5,
+    15,
+    25,
+    35
+  ],
+  "tsNs": [
+    299319,
+    299320,
+    299321,
+    299322
+  ],
+  "values": [
+    0.6080216765403748,
+    0.6080366969108582,
+    0.6080275177955627,
+    0.6080636382102966
+  ]
+}
+</pre>
+
+  <h4>Finalised range</h4>
+  <p>If the server can determine that no more data will be added to the requested time range
+    then it will add the flag <strong>rangeFinal: true</strong> to the response.</p>
+
+
+
+
+  <a id="query-binned"></a>
+  <h2>Query binned data</h2>
+  <p><strong>Method:</strong> GET</p>
+  <p><strong>URL:</strong> https://data-api.psi.ch/api/4/binned</p>
+  <p><strong>Query parameters:</strong></p>
+  <ul>
+    <li>backend (e.g. "sf-databuffer")</li>
+    <li>channelName (e.g. "SLAAR-LSCP4-LAS6891:CH7:1")</li>
+    <li>begDate (e.g. "2021-05-26T07:10:00.000Z")</li>
+    <li>endDate (e.g. "2021-05-26T07:16:00.000Z")</li>
+    <li>binCount (number of requested bins in time-dimension, e.g. "6". The actual number of returned bins depends on
+      bin-cache-grid-resolution. The server tries to find a reasonable match.)</li>
+    <li>binningScheme (optional)</li>
+    <ul>
+      <li>if not specified: default is "binningScheme=timeWeightedScalar".</li>
+      <li>"binningScheme=unweightedScalar": non-weighted binning, waveform gets first averaged to a scalar.</li>
+      <li>"binningScheme=timeWeightedScalar": time-weighted binning, waveform gets first averaged to a scalar.
+      </li>
+      <li>"binningScheme=binnedX&binnedXcount=13": waveform gets first binned to 13 bins in X-dimension
+        (waveform-dimension).</li>
+      <li>"binningScheme=binnedX&binnedXcount=0": waveform is not binned in X-dimension but kept at full length.
+      </li>
+    </ul>
+  </ul>
+  <p><strong>Request header:</strong> "Accept" should be "application/json" for forward compatibility.</p>
+
+  <h4>CURL example:</h4>
+  <pre>
+curl -H 'Accept: application/json' 'https://data-api.psi.ch/api/4/binned?backend=sf-databuffer
+  &channelName=SLAAR-LSCP4-LAS6891:CH7:1&begDate=2021-05-25T00:00:00.000Z&endDate=2021-05-26T00:00:00.000Z&binCount=3'
+</pre>
+
+  <h4>Partial result</h4>
+  <p>If the requested range takes longer time to retrieve, then a partial result with at least one bin is returned.
+    The partial result will contain the necessary information to send another request with a range that
+    starts with the first not-yet-retrieved bin.
+    This information is provided by the <strong>continueAt</strong> and <strong>missingBins</strong> fields.
+    This enables the user agent to start the presentation to the user while updating the user interface
+    as new bins are received.</p>
+
+  <h4>Example response (without usage of binningScheme):</h4>
+  <pre>{
+  "tsAnchor": 1623769850,
+  "ts1Ms": [
+    0,
+    10000,
+    20000
+  ],
+  "ts1Ns": [
+    0,
+    0,
+    0
+  ],
+  "ts2Ms": [
+    10000,
+    20000,
+    30000
+  ],
+  "ts2Ns": [
+    0,
+    0,
+    0
+  ],
+  "counts": [
+    1000,
+    999,
+    1000
+  ],
+  "avgs": [
+    16204.087890625,
+    16204.3798828125,
+    16203.9296875
+  ],
+  "maxs": [
+    48096,
+    48100,
+    48094
+  ],
+  "mins": [
+    0,
+    0,
+    0
+  ],
+  "rangeFinal": true
+}
+</pre>
+
+  <h4>Complete result</h4>
+  <p>If the result does not contain a <strong>continueAt</strong> key then the result is complete.</p>
+
+  <h4>Finalised range</h4>
+  <p>If the server can determine that no more data will be added to the requested time range
+    then it will add the flag <strong>rangeFinal: true</strong> to the response.</p>
+
+
+
+  <h2>Feedback and comments very much appreciated!</h2>
+  <p>dominik.werder@psi.ch</p>
+  <p>or please assign me a JIRA ticket.</p>
+
+  <div id="footer"></div>
+
+</body>
+
+</html>

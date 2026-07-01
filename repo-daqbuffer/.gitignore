@@ -1,0 +1,13 @@
+/Cargo.lock
+/target
+/archapp/src/generated
+/.idea
+/.vscode
+/tmpdata
+/tmpdoc
+/docs
+/docs1
+/docs2
+/apidoc/book
+/apidoc/book.cbor
+/.claude

@@ -1,0 +1,26 @@
+[package]
+name = "httpclient"
+version = "0.0.3"
+authors = ["Dominik Werder <dominik.werder@gmail.com>"]
+edition = "2024"
+
+[dependencies]
+futures-util = "0.3.31"
+serde = { version = "1.0.217", features = ["derive"] }
+serde_json = "1.0.138"
+url = "2.5.4"
+tokio = { version = "1.43.0", features = ["rt-multi-thread", "io-util", "net", "time", "sync", "fs"] }
+tracing = "0.1.41"
+http = "1.2.0"
+http-body = "1.0.1"
+http-body-util = "0.1.2"
+hyper = { version = "1.6.0", features = ["http1", "http2", "client", "server"] }
+#hyper-tls = { version = "0.6.0" }
+hyper-util = { version = "0.1.10", features = ["full"] }
+bytes = "1.10.0"
+async-channel = "2.5"
+autoerr = "0.0"
+daqbuf-err = { path = "../../../daqbuf-err" }
+netpod = { path = "../../../daqbuf-netpod", package = "daqbuf-netpod" }
+parse = { path = "../../../daqbuf-parse", package = "daqbuf-parse" }
+streams = { path = "../../../daqbuf-streams", package = "daqbuf-streams" }

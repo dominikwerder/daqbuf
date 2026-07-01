@@ -1,0 +1,32 @@
+[package]
+name = "taskrun"
+version = "0.0.4"
+authors = ["Dominik Werder <dominik.werder@gmail.com>"]
+edition = "2021"
+
+[lib]
+path = "src/taskrun.rs"
+
+[dependencies]
+tokio = { version = "1.43.0", features = ["full", "tracing", "time"] }
+futures-util = "0.3.31"
+tracing = "0.1.41"
+tracing-log = "0.2.0"
+tracing-subscriber = { version = "0.3.19", features = ["fmt", "time"] }
+time = { version = "0.3", features = ["formatting"] }
+backtrace = "0.3.74"
+chrono = "0.4.39"
+daqbuf-err = { path = "../../../daqbuf-err" }
+
+
+[features]
+with-console = []
+#console-subscriber = { version = "0.3.0" }
+DISABLED_LOKI = []
+DISABLED_CONSOLE = []
+
+with-loki = []
+#tracing-loki = { version = "0.2.1", default-features = false, features = ["compat-0-2-1"] }
+
+# The tracing subscriber env filter would require its feature "env-filter" enabled
+with-env-filter = []

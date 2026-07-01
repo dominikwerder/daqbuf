@@ -1,0 +1,18 @@
+[package]
+name = "dq"
+version = "0.1.0"
+authors = ["Dominik Werder <dominik.werder@gmail.com>"]
+edition = "2024"
+
+[dependencies]
+tokio = { version = "1.43.0", features = ["rt-multi-thread", "io-util", "net", "time", "sync", "fs"] }
+futures-util = "0.3.31"
+clap = { version = "4.5", features = ["derive", "cargo"] }
+chrono = "0.4.39"
+bytes = "1.10"
+daqbuf-err = { path = "../../../daqbuf-err" }
+taskrun = { path = "../taskrun" }
+netpod = { path = "../../../daqbuf-netpod", package = "daqbuf-netpod" }
+parse = { path = "../../../daqbuf-parse", package = "daqbuf-parse" }
+disk = { path = "../disk" }
+streams = { path = "../../../daqbuf-streams", package = "daqbuf-streams" }
