@@ -8,4 +8,5 @@ members = [
     "daqbuf-items-proc",
     "daqbuf-parse",
     "daqbuf-items-2",
+    "daqbuf-log",
 ]
