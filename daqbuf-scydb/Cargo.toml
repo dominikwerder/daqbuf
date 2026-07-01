@@ -16,4 +16,4 @@ autoerr = "0.0"
 serde = { version = "1", features = ["derive"] }
 series = { path = "../daqbuf-series", package = "daqbuf-series" }
 netpod = { path = "../daqbuf-netpod", package = "daqbuf-netpod" }
-taskrun = { path = "../daqbuffer/crates/taskrun" }
+taskrun = { path = "../daqbuf-taskrun", package = "daqbuf-taskrun" }

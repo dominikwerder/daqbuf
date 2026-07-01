@@ -22,4 +22,5 @@ members = [
     "daqbuf-stats",
     "daqbuf-batchtools",
     "daqbuf-dbpg",
+    "daqbuf-scydb",
 ]
