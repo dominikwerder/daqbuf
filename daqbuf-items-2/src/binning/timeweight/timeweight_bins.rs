@@ -260,6 +260,8 @@ where
 
 #[test]
 fn test_input_not_covering_first_bin() {
+    use netpod::DtMs;
+    use netpod::range::evrange::NanoRange;
     let range = NanoRange::from_strings("1970-01-01T00:10:00Z", "1970-01-01T00:20:00Z").unwrap();
     let binlen = DtMs::from_ms_u64(1000 * 10);
     let range = BinnedRange::from_nano_range(range, binlen);
@@ -274,6 +276,8 @@ fn test_input_not_covering_first_bin() {
 
 #[test]
 fn test_00() {
+    use netpod::DtMs;
+    use netpod::range::evrange::NanoRange;
     let range = NanoRange::from_strings("1970-01-01T00:10:00Z", "1970-01-01T00:20:00Z").unwrap();
     let binlen = DtMs::from_ms_u64(1000 * 10);
     let range = BinnedRange::from_nano_range(range, binlen);

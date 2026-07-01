@@ -22,11 +22,7 @@ impl HistoLog2 {
         let po = if po >= self.histo.len() + self.sub {
             self.histo.len() - 1
         } else {
-            if po > self.sub {
-                po - self.sub
-            } else {
-                0
-            }
+            if po > self.sub { po - self.sub } else { 0 }
         };
         self.histo[po] += 1;
     }

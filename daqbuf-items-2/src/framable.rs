@@ -7,18 +7,18 @@ use bytes::BytesMut;
 use core::fmt;
 use daqbuf_err as err;
 use items_0::framable::FrameTypeInnerStatic;
+use items_0::streamitem::ERROR_FRAME_TYPE_ID;
+use items_0::streamitem::EVENT_QUERY_JSON_STRING_FRAME;
 use items_0::streamitem::LogItem;
 use items_0::streamitem::RangeCompletableItem;
+use items_0::streamitem::SITEMTY_NONSPEC_FRAME_TYPE_ID;
 use items_0::streamitem::Sitemty;
 use items_0::streamitem::StatsItem;
 use items_0::streamitem::StreamItem;
-use items_0::streamitem::ERROR_FRAME_TYPE_ID;
-use items_0::streamitem::EVENT_QUERY_JSON_STRING_FRAME;
-use items_0::streamitem::SITEMTY_NONSPEC_FRAME_TYPE_ID;
 use netpod::log::*;
-use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 
 pub const INMEM_FRAME_ENCID: u32 = 0x12121212;
 pub const INMEM_FRAME_HEAD: usize = 20;
@@ -179,12 +179,7 @@ where
 fn test_frame_log() {
     use crate::channelevents::ChannelEvents;
     use crate::frame::decode_from_slice;
-    use netpod::log::Level;
-    let item = LogItem {
-        node_ix: 123,
-        level: Level::TRACE,
-        msg: format!("test-log-message"),
-    };
+    let item = LogItem::debug(format!("test-log-message"));
     let item: Sitemty<ChannelEvents> = Ok(StreamItem::Log(item));
     let buf = Framable::make_frame_dyn(&item).unwrap();
     let len = u32::from_le_bytes(buf[12..16].try_into().unwrap());

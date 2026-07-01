@@ -7,4 +7,5 @@ members = [
     "daqbuf-items-0",
     "daqbuf-items-proc",
     "daqbuf-parse",
+    "daqbuf-items-2",
 ]

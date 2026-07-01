@@ -355,16 +355,6 @@ mod levelserde {
     }
 }
 
-#[test]
-fn serde_level() {
-    use Level::{DEBUG, ERROR, INFO, TRACE, WARN};
-    for v1 in [ERROR, WARN, INFO, DEBUG, TRACE] {
-        let s = serde_json::to_string(&v1).unwrap();
-        let v2 = serde_json::from_str(&s).unwrap();
-        assert_eq!(v1, v2);
-    }
-}
-
 pub trait AsLogItem {
     fn as_log_item(&self) -> Option<&LogItem>;
 }

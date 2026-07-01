@@ -20,6 +20,9 @@ use serde::Serialize;
 use std::fmt;
 use std::num::NonZeroUsize;
 
+#[cfg(test)]
+use daqbuf_err as err;
+
 type Nres<'a, O, E = nom::error::Error<&'a [u8]>> = Result<(&'a [u8], O), nom::Err<E>>;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
