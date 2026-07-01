@@ -1,0 +1,27 @@
+[package]
+name = "daqbuf-netpod"
+version = "0.0.4"
+authors = ["Dominik Werder <dominik.werder@gmail.com>"]
+license = "GPL-3.0-only"
+edition = "2024"
+
+[lib]
+path = "src/netpod.rs"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml = "0.9.34"
+http = "1.0.0"
+humantime = "2.1.0"
+humantime-serde = "1.1.1"
+bytes = "1.8.0"
+chrono = { version = "0.4.19", features = ["serde"] }
+time = { version = "0.3.41", features = ["macros", "parsing"] }
+futures-util = "0.3.14"
+tracing = "0.1.37"
+url = "2.5.3"
+num-traits = "0.2.16"
+hex = "0.4.3"
+rand = "0.8.5"
+autoerr = "0.0"
