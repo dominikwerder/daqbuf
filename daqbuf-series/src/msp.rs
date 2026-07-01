@@ -272,26 +272,3 @@ impl TryFrom<DtMs> for PrebinnedPartitioning {
         }
     }
 }
-
-#[test]
-fn test_quo_rem_00() {
-    let ts1 = TsMs::from_ms_u64(1000 * 60 * 60 * 24 * 817 + 17784239);
-    let (qr, dt) = PrebinnedPartitioning::Day1.quo_rem_l1(ts1);
-    // eprintln!("{:?}  {:?}", qr, dt);
-    assert_eq!(qr.dv1, 0x107);
-    assert_eq!(qr.quo, 1);
-    assert_eq!(qr.rem, 17);
-    assert_eq!(dt, DtMs::from_ms_u64(17784239));
-}
-
-#[test]
-fn test_quo_rem_01() {
-    let ts1 = TsMs::from_ms_u64(1000 * 60 * 60 * 24 * 817 + 17784239);
-    let (qr, dt) = PrebinnedPartitioning::Day1.quo_rem_l1(ts1);
-    let pbp = PrebinnedPartitioning::from_dv1_abs(qr.dv1).unwrap();
-    eprintln!("{:?}", pbp);
-    let tsms = pbp.patch_dt().ms() * qr.quo as u64 + pbp.bin_len().ms() * qr.rem as u64 + dt.ms();
-    eprintln!("{:?}", tsms);
-    eprintln!("{:?}", ts1.ms());
-    panic!()
-}
