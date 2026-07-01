@@ -10,4 +10,5 @@ members = [
     "daqbuf-items-2",
     "daqbuf-log",
     "daqbuf-series",
+    "daqbuf-query",
 ]
