@@ -8,8 +8,8 @@ use items_0::streamitem::StreamItem;
 use items_2::binning::container_events::ContainerEvents;
 use items_2::channelevents::ChannelEvents;
 use netpod::range::evrange::NanoRange;
-use netpod::DtMs;
 use netpod::DtNano;
+use netpod::OneBeforeFlag;
 use netpod::TsNano;
 use std::collections::VecDeque;
 
@@ -42,7 +42,7 @@ where
                 ChannelEvents::Events(x) => {
                     tss_items.push_back(x.tss_for_testing());
                 }
-                ChannelEvents::Status(x) => {}
+                ChannelEvents::Status(_) => {}
             }
         } else {
             eprintln!("other item ----------: {:?}", e);
@@ -112,8 +112,8 @@ fn test_single_prune_nothing_00() {
     let range2 = NanoRange::from_ms_u64(10, 20);
     let vtss_exp = gen_vstss(&range1, []);
     let inp = gen_inp_stream(&range2, []);
-    let one_before_range = false;
-    let stream = RangeFilter2::new(inp, range1, one_before_range);
+    let one_before = OneBeforeFlag::from_bool(false);
+    let stream = RangeFilter2::new(inp, range1, one_before);
     let fut = async move {
         let tss_items = fetch_into_tss_items(stream).await;
         eprintln!("{:?}", tss_items);
@@ -129,8 +129,8 @@ fn test_prune_high_00() {
     let range2 = NanoRange::from_ms_u64(10, 21);
     let vtss_exp = gen_vstss(&range1, []);
     let inp = gen_inp_stream(&range2, []);
-    let one_before_range = false;
-    let stream = RangeFilter2::new(inp, range1, one_before_range);
+    let one_before = OneBeforeFlag::from_bool(false);
+    let stream = RangeFilter2::new(inp, range1, one_before);
     let fut = async move {
         let tss_items = fetch_into_tss_items(stream).await;
         // eprintln!("{:?}", tss_items);
@@ -146,8 +146,8 @@ fn test_prune_high_01() {
     let range2 = NanoRange::from_ms_u64(10, 21);
     let vtss_exp = gen_vstss(&range1, [14]);
     let inp = gen_inp_stream(&range2, [14]);
-    let one_before_range = false;
-    let stream = RangeFilter2::new(inp, range1, one_before_range);
+    let one_before = OneBeforeFlag::from_bool(false);
+    let stream = RangeFilter2::new(inp, range1, one_before);
     let fut = async move {
         let tss_items = fetch_into_tss_items(stream).await;
         // eprintln!("{:?}", tss_items);
@@ -164,8 +164,8 @@ fn test_prune_low() {
     let range3 = NanoRange::from_ms_u64(10, 18);
     let inp = gen_inp_stream(&range2, [14]);
     let vtss_exp = gen_vstss(&range3, [14]);
-    let one_before_range = false;
-    let stream = RangeFilter2::new(inp, range1, one_before_range);
+    let one_before = OneBeforeFlag::from_bool(false);
+    let stream = RangeFilter2::new(inp, range1, one_before);
     let fut = async move {
         let tss_items = fetch_into_tss_items(stream).await;
         // eprintln!("{:?}", tss_items);

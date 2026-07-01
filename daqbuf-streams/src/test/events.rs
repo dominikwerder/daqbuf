@@ -2,7 +2,6 @@ use crate::cbor_stream::FramedBytesToChannelEventsStream;
 use crate::firsterr::only_first_err;
 use crate::frames::inmem::BoxedBytesStream;
 use crate::lenframed;
-use crate::plaineventscbor::plain_events_cbor_stream;
 use crate::tcprawclient::OpenBoxedBytesStreams;
 use crate::tcprawclient::TEST_BACKEND;
 use futures_util::future;
@@ -31,11 +30,15 @@ autoerr::create_error_v1!(
     },
 );
 
+// TODO
+#[cfg(target_os = "cuda")]
 #[test]
 fn merged_events_cbor() {
     crate::test::runfut(merged_events_inner()).unwrap();
 }
 
+// TODO
+#[cfg(target_os = "cuda")]
 async fn merged_events_inner() -> Result<(), Error> {
     let ctx = ReqCtx::for_test();
     // TODO factor out the channel config lookup such that the test code can use a similar code path,

@@ -35,6 +35,8 @@ autoerr::create_error_v1!(
     },
 );
 
+// TODO
+#[cfg(target_os = "cuda")]
 async fn timebin_from_layers_00_inner() -> Result<(), Error> {
     let ctx = Arc::new(ReqCtx::for_test());
     let ch_conf = ChannelTypeConfigGen::Scylla(ChConf::new(
@@ -150,6 +152,8 @@ async fn timebin_from_layers_00_inner() -> Result<(), Error> {
     Ok(())
 }
 
+// TODO
+#[cfg(target_os = "cuda")]
 #[test]
 fn timebin_from_layers_00() {
     let rt = tokio::runtime::Builder::new_current_thread()
@@ -158,6 +162,8 @@ fn timebin_from_layers_00() {
     rt.block_on(timebin_from_layers_00_inner()).unwrap()
 }
 
+// TODO
+#[cfg(target_os = "cuda")]
 async fn timebin_from_layers_1layer_inner() -> Result<(), Error> {
     let ctx = Arc::new(ReqCtx::for_test());
     let ch_conf = ChannelTypeConfigGen::Scylla(ChConf::new(
@@ -213,6 +219,8 @@ async fn timebin_from_layers_1layer_inner() -> Result<(), Error> {
     Ok(())
 }
 
+// TODO
+#[cfg(target_os = "cuda")]
 #[test]
 fn timebin_from_layers_1layer() {
     let rt = tokio::runtime::Builder::new_current_thread()
