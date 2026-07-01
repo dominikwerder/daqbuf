@@ -1,0 +1,35 @@
+[package]
+name = "daqbuf-items-2"
+version = "0.0.4"
+authors = ["Dominik Werder <dominik.werder@gmail.com>"]
+license = "GPL-3.0-only"
+edition = "2024"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ciborium = "0.2.1"
+rmp-serde = "1.1.1"
+postcard = { version = "1.0.0", features = ["use-std"] }
+erased-serde = "0.4"
+typetag = "0.2.14"
+bytes = "1.8"
+num-traits = "0.2.15"
+chrono = { version = "0.4.19", features = ["serde"] }
+crc32fast = "1.3.2"
+futures-util = "0.3.24"
+humantime-serde = "1.1.1"
+itertools = "0.13.0"
+autoerr = "0.0"
+daqbuf-err = { path = "../daqbuf-err" }
+items_0 = { path = "../daqbuf-items-0", package = "daqbuf-items-0" }
+items_proc = { path = "../daqbuf-items-proc", package = "daqbuf-items-proc" }
+netpod = { path = "../daqbuf-netpod", package = "daqbuf-netpod" }
+parse = { path = "../daqbuf-parse", package = "daqbuf-parse" }
+bitshuffle = { path = "../daqbuf-bitshuffle", package = "daqbuf-bitshuffle" }
+
+[features]
+heavy = []
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt"] }
