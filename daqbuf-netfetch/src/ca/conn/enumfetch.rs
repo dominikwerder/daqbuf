@@ -3,7 +3,6 @@ use super::CreatedState;
 use super::Ioid;
 use ca_proto::ca::proto;
 use dbpg::seriesbychannel::ChannelInfoQuery;
-use log::*;
 use proto::CaMsg;
 use proto::ReadNotify;
 use series::SeriesId;
@@ -11,7 +10,7 @@ use std::pin::Pin;
 use std::time::Instant;
 
 autoerr::create_error_v1!(
-    name(Error, "NetfetchEnumfetch"),
+    name(Error, "Enumfetch"),
     enum variants {
         MissingState,
     },
@@ -28,7 +27,6 @@ pub struct EnumFetch {
 
 impl EnumFetch {
     pub fn new(created_state: CreatedState, conn: &mut CaConn) -> Self {
-        if created_state.cssid.id() == 4705698279895902114 {}
         // info!("EnumFetch::new  name {}", created_state.name());
         let dbr_ctrl_enum = 31;
         let ioid = conn.ioid_next();
@@ -59,11 +57,11 @@ impl ConnFuture for EnumFetch {
                     crst.enum_str_table = Some(meta.variants);
                 }
                 _ => {
-                    warn!("unexpected message");
+                    log::warn!("unexpected message");
                 }
             },
             _ => {
-                warn!("unexpected message");
+                log::warn!("unexpected message");
             }
         };
 

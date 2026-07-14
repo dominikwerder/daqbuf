@@ -1,0 +1,161 @@
+name: Buildtest
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      IMAGE_FN: devimgs-centos-7-rust-flat
+      BUILDER_IMAGE: localhost/devimgs/centos-7-rust-flat:latest
+      PODMAN_STORAGE: ${{gitea.workspace}}/.podman-storage
+      PODMAN_RUNROOT: ${{gitea.workspace}}/.podman-runroot
+    steps:
+      - name: Check docker
+        run: |
+          echo $(which docker)
+          echo $(which podman)
+          echo $(which zstd)
+          echo $(which curl)
+          echo $(which python)
+          echo $(which python3)
+          docker --version
+      - name: Load build image
+        run: |
+          PODMAN="docker"
+          $PODMAN info
+          echo "---  Image list  ------------------"
+          $PODMAN image list
+          echo "-----------------------------------"
+          # echo $($PODMAN image rm "$BUILDER_IMAGE")
+          if docker image inspect "$BUILDER_IMAGE" 2>&1 >/dev/null; then
+            echo "Image available"
+          else
+            echo "Image missing"
+            curl -L -o "$IMAGE_FN.tgz" "https://gitea.psi.ch/api/packages/daqbuf/generic/$IMAGE_FN/0.1.1/$IMAGE_FN.tgz"
+            zstd -d --stdout <"$IMAGE_FN.tgz" | $PODMAN image load
+          fi
+          echo "---  Image list  ------------------"
+          $PODMAN image list
+          echo "---  Container list  --------------"
+          $PODMAN container list
+      - name: Tool versions
+        run: |
+          PODMAN="docker"
+          PRUN="$PODMAN run --rm $BUILDER_IMAGE"
+          echo PRUN [["$PRUN"]]
+          echo C: $(docker run --rm "$BUILDER_IMAGE" uname -a)
+          $PRUN id
+          $PRUN pwd
+          $PRUN ls /data
+          $PRUN cc --version
+          $PRUN cargo --version
+          $PRUN rustc --version
+          cat /proc/cpuinfo | grep "model name"
+          echo [[${{ github.repository }}]]
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          repository: daqbuf/daqbuf
+          path: src
+      - name: Build
+        run: |
+          echo -------------------
+          echo docker container ls -a
+          docker container ls -a
+          echo -------------------
+          echo docker image ls -a
+          docker image ls -a
+          echo -------------------
+          echo docker info --format 'Name={{.Name}} OperatingSystem={{.OperatingSystem}} DockerRootDir={{.DockerRootDir}}'
+          docker info --format 'Name={{.Name}} OperatingSystem={{.OperatingSystem}} DockerRootDir={{.DockerRootDir}}'
+          echo -------------------
+          echo docker info | sed -n '/Server:/,/Client:/p'
+          docker info | sed -n '/Server:/,/Client:/p'
+          echo -------------------
+          cat >cf1 <<EOF
+          FROM $BUILDER_IMAGE
+          COPY src /data
+          WORKDIR /data
+          CMD ["cargo", "build", "--release"]
+          EOF
+          cat cf1
+          echo "---   DOCKER BUILD   ---"
+          docker image build --file cf1 --iidfile img1 .
+          img1=$(cat img1)
+          echo img1 $img1
+          echo "---   DOCKER CREATE   ---"
+          cid1=$(docker create $img1)
+          echo cid1 $cid1
+          echo "---   DOCKER START   ---"
+          docker start --attach $cid1
+          mkdir -p artifacts
+          echo "---   DOCKER CP   ---"
+          docker container cp $cid1:/data/target artifacts/
+          echo "---   DOCKER CONTAINER RM   ---"
+          docker container rm $cid1
+          echo "---   DOCKER IMAGE RM   ---"
+          docker image rm $img1
+          echo -------------------
+          ls -l artifacts
+          echo -------------------
+          ls -l artifacts/target
+          echo -------------------
+          ls -l artifacts/target/release
+          echo -------------------
+          # cid=$(docker create --rm $BUILDER_IMAGE bash -c "cd /data && ls -la")
+          # echo cid: $cid
+          # docker cp $(realpath src)/. $cid:/data
+          # docker start -a $cid
+          # cid=$(docker create --rm $BUILDER_IMAGE bash -c "cd /data && cargo build --release")
+          # echo cid: $cid
+          # docker cp $(realpath src)/. $cid:/data
+          # docker start -a $cid
+          echo -------------------
+          echo docker container ls -a
+          docker container ls -a
+          echo -------------------
+          echo docker image ls -a
+          docker image ls -a
+          echo -------------------
+          artifacts/target/release/daqingest version
+      - name: Publish package
+        env:
+          PSI_GITEA_PUB: ${{secrets.PSI_GITEA_PUB}}
+        run: |
+          D0=artifacts/target/release
+          FNAME=daqingest
+          VER=$($D0/$FNAME version)
+          URL="https://gitea.psi.ch/api/packages/${{gitea.repository_owner}}/generic/$FNAME/$VER"
+          curl --fail --request DELETE --header "authorization: token $PSI_GITEA_PUB" "$URL"
+          URL="https://gitea.psi.ch/api/packages/${{gitea.repository_owner}}/generic/$FNAME/$VER/$FNAME"
+          echo URL "$URL"
+          curl \
+            --fail \
+            --user "${{gitea.actor}}:$PSI_GITEA_PUB" \
+            --upload-file $D0/$FNAME \
+            "$URL"
+          FNAME=daqretrieve
+          VER=$($D0/$FNAME version)
+          URL="https://gitea.psi.ch/api/packages/${{gitea.repository_owner}}/generic/$FNAME/$VER"
+          curl --fail --request DELETE --header "authorization: token $PSI_GITEA_PUB" "$URL"
+          URL="https://gitea.psi.ch/api/packages/${{gitea.repository_owner}}/generic/$FNAME/$VER/$FNAME"
+          echo URL "$URL"
+          curl \
+            --fail \
+            --user "${{gitea.actor}}:$PSI_GITEA_PUB" \
+            --upload-file $D0/$FNAME \
+            "$URL"
+      - name: Publish package
+        if: false
+        uses: actions/upload-artifact@v3
+        with:
+          name: daqingest
+          path: artifacts/target/release/daqingest
+          retention-days: 7

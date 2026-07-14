@@ -44,7 +44,7 @@ macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
 macro_rules! warn { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
 macro_rules! info { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
 macro_rules! debug { ($($arg:tt)*) => { if true { log::debug!($($arg)*); } }; }
-macro_rules! trace { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
+macro_rules! trace { ($($arg:tt)*) => { if true { log::trace!($($arg)*); } }; }
 macro_rules! trace2 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
 macro_rules! trace3 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
 macro_rules! trace4 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
@@ -347,22 +347,22 @@ impl Stream for Connected {
                                     hpp.mark_progress();
                                     match x {
                                         CaItem::Msg(x) => {
-                                            trace3!("{selfname}  PROTOWRAP  Msg");
+                                            trace!("{selfname}  PROTOWRAP  Msg");
                                             self2.inp_buf.push_back_force(x);
                                         }
                                         CaItem::Empty => {
-                                            trace3!("{selfname}  PROTOWRAP  Empty");
+                                            trace!("{selfname}  PROTOWRAP  Empty");
                                         }
                                     }
                                 }
                                 Ready(Some(Err(e))) => {
                                     hpp.mark_progress();
-                                    trace3!("{selfname}  PROTOWRAP  error  {e}");
+                                    debug!("{selfname}  PROTOWRAP  error  {e}");
                                     self2.goto_state_done();
                                     break 'outer Ready(Some(Err(e.into())));
                                 }
                                 Ready(None) => {
-                                    trace3!("{selfname}  PROTOWRAP  Done");
+                                    trace!("{selfname}  PROTOWRAP  Done");
                                 }
                                 Pending => {
                                     trace4!("{selfname}  PROTOWRAP  Pending");
@@ -406,6 +406,7 @@ impl Stream for Connected {
                                         self2.protowrap.push_back_or_drop(x);
                                     }
                                     crate::ca::conn2::conn::handshake::Item::HandshakeDone => {
+                                        trace!("HandshakeDone");
                                         hpp.mark_progress();
                                         let st1 = std::mem::replace(st1, st1.to_dummy());
                                         let (buf,) = st1.dismantle();

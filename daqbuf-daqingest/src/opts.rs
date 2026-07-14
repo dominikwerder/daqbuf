@@ -34,7 +34,7 @@ pub enum SubCmd {
     LogTest,
     Ca(Ca),
     Test00,
-    Test01,
+    Test01(Test01),
     Test02,
     Test03,
     Test04,
@@ -89,6 +89,11 @@ pub struct BsreadDump {
 pub enum ChannelAccess {
     CaIngest(CaConfig),
     CaSearch(CaSearch),
+}
+
+#[derive(Debug, clap::Parser)]
+pub struct Test01 {
+    pub config: String,
 }
 
 #[derive(Debug, clap::Parser)]

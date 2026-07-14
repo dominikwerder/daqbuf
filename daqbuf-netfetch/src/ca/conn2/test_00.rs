@@ -224,7 +224,7 @@ impl netfetch::metrics::PostIngestCtrls for PostIngestCtrls {
     }
 }
 
-pub async fn test_01() {
+pub async fn test_01(cfgfn: String) {
     let (mut int_tx, mut int_rx) = asynchan::bounded(16, "SIGINT");
     if true {
         let mut fds = [0; 2];
@@ -289,10 +289,10 @@ pub async fn test_01() {
         }
     } else {
         if false {
-            let buf = std::fs::read("daqingest.yml").unwrap();
+            let buf = std::fs::read(&cfgfn).unwrap();
             let ingest_opts: crate::conf::CaIngestOpts = serde_yaml::from_slice(&buf).unwrap();
         }
-        let (ingest_opts, channels_config) = crate::conf::parse_config("daqingest.yml").await.unwrap();
+        let (ingest_opts, channels_config) = crate::conf::parse_config(&cfgfn).await.unwrap();
         let mut connset = ConnSet::new(ingest_opts.backend().into(), "".into(), ingest_opts.clone())
             .await
             .unwrap();
@@ -316,7 +316,11 @@ pub async fn test_01() {
             });
         }
         let fut = async move {
-            if true {
+            if channels_config
+                .as_ref()
+                .map(|x| x.channels().iter().any(|ch| ch.name() == "testset-01"))
+                .unwrap_or(false)
+            {
                 for j in 10..12 {
                     let g = 1000 * j;
                     let h = 10 + g;

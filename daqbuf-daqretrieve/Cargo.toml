@@ -1,6 +1,6 @@
 [package]
 name = "daqbuf-daqretrieve"
-version = "0.6.0"
+version = "0.6.1-aa.0"
 authors = ["Dominik Werder <dominik.werder@gmail.com>"]
 license = "GPL-3.0-only"
 edition = "2024"

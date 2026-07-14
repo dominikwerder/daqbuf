@@ -17,7 +17,7 @@ macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
 macro_rules! warn { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
 macro_rules! info { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
 macro_rules! debug { ($($arg:tt)*) => { if true { log::debug!($($arg)*); } }; }
-macro_rules! trace_in_out { ($($arg:tt)*) => { if false { log::debug!($($arg)*); } }; }
+macro_rules! trace_in_out { ($($arg:tt)*) => { if true { log::trace!($($arg)*); } }; }
 
 autoerr::create_error_v1!(
     name(Error, "CaProto"),
@@ -698,11 +698,7 @@ impl CaMsgTy {
                 }
                 let d = e.channel.as_bytes();
                 if buf.len() < d.len() + 1 {
-                    error!(
-                        "bad buffer given for search payload {} vs {}",
-                        buf.len(),
-                        d.len()
-                    );
+                    error!("bad buffer given for search payload {} vs {}", buf.len(), d.len());
                     panic!();
                 }
                 buf[0..d.len()].copy_from_slice(&d[0..d.len()]);
@@ -717,11 +713,7 @@ impl CaMsgTy {
                 }
                 let d = x.channel.as_bytes();
                 if buf.len() < d.len() + 1 {
-                    error!(
-                        "bad buffer given for create chan payload {} vs {}",
-                        buf.len(),
-                        d.len()
-                    );
+                    error!("bad buffer given for create chan payload {} vs {}", buf.len(), d.len());
                     panic!();
                 }
                 buf[0..d.len()].copy_from_slice(&d[0..d.len()]);
@@ -974,20 +966,14 @@ impl CaMsg {
         Ok(val)
     }
 
-    fn ca_wave_value(
-        scalar_type: &CaScalarType,
-        n: usize,
-        buf: &[u8],
-    ) -> Result<CaDataValue, Error> {
+    fn ca_wave_value(scalar_type: &CaScalarType, n: usize, buf: &[u8]) -> Result<CaDataValue, Error> {
         let val = match scalar_type {
             CaScalarType::I8 => convert_wave_value!(i8, I8, n, buf),
             CaScalarType::I16 => convert_wave_value!(i16, I16, n, buf),
             CaScalarType::I32 => convert_wave_value!(i32, I32, n, buf),
             CaScalarType::F32 => convert_wave_value!(f32, F32, n, buf),
             CaScalarType::F64 => convert_wave_value!(f64, F64, n, buf),
-            CaScalarType::String => {
-                CaDataValue::Scalar(CaDataScalarValue::String("todo-array-string".into()))
-            }
+            CaScalarType::String => CaDataValue::Scalar(CaDataScalarValue::String("todo-array-string".into())),
             _ => {
                 warn!("TODO conversion array {scalar_type:?}");
                 return Err(Error::TodoConversionArray);
@@ -1033,8 +1019,7 @@ impl CaMsg {
                 if payload.len() < 2 {
                     return Err(Error::CaProtoVersionMissing);
                 }
-                let proto_version =
-                    u16::from_be_bytes(payload[0..2].try_into().map_err(|_| Error::BadSlice)?);
+                let proto_version = u16::from_be_bytes(payload[0..2].try_into().map_err(|_| Error::BadSlice)?);
                 let ty = CaMsgTy::SearchRes(SearchRes {
                     tcp_port: hi.data_type,
                     addr: hi.param1,
@@ -1144,11 +1129,7 @@ impl CaMsg {
         Ok(msg)
     }
 
-    fn extract_ca_data_value(
-        hi: &HeadInfo,
-        payload: &[u8],
-        array_truncate: usize,
-    ) -> Result<CaEventValue, Error> {
+    fn extract_ca_data_value(hi: &HeadInfo, payload: &[u8], array_truncate: usize) -> Result<CaEventValue, Error> {
         use netpod::Shape;
         let ca_dbr_ty = CaDbrType::from_ca_u16(hi.data_type)?;
         let ca_sh = Shape::from_ca_count(hi.data_count() as _).map_err(|_| {
@@ -1159,14 +1140,10 @@ impl CaMsg {
             CaDbrMetaType::Plain => return Err(Error::MismatchDbrTimeType),
             CaDbrMetaType::Status => return Err(Error::MismatchDbrTimeType),
             CaDbrMetaType::Time => {
-                let status =
-                    u16::from_be_bytes(payload[0..2].try_into().map_err(|_| Error::BadSlice)?);
-                let severity =
-                    u16::from_be_bytes(payload[2..4].try_into().map_err(|_| Error::BadSlice)?);
-                let ca_secs =
-                    u32::from_be_bytes(payload[4..8].try_into().map_err(|_| Error::BadSlice)?);
-                let ca_nanos =
-                    u32::from_be_bytes(payload[8..12].try_into().map_err(|_| Error::BadSlice)?);
+                let status = u16::from_be_bytes(payload[0..2].try_into().map_err(|_| Error::BadSlice)?);
+                let severity = u16::from_be_bytes(payload[2..4].try_into().map_err(|_| Error::BadSlice)?);
+                let ca_secs = u32::from_be_bytes(payload[4..8].try_into().map_err(|_| Error::BadSlice)?);
+                let ca_nanos = u32::from_be_bytes(payload[8..12].try_into().map_err(|_| Error::BadSlice)?);
                 let meta = CaMetaValue::CaMetaTime(CaMetaTime {
                     status,
                     severity,
@@ -1176,12 +1153,9 @@ impl CaMsg {
                 (meta, 12)
             }
             CaDbrMetaType::Ctrl => {
-                let status =
-                    u16::from_be_bytes(payload[0..2].try_into().map_err(|_| Error::BadSlice)?);
-                let severity =
-                    u16::from_be_bytes(payload[2..4].try_into().map_err(|_| Error::BadSlice)?);
-                let varcnt =
-                    u16::from_be_bytes(payload[4..6].try_into().map_err(|_| Error::BadSlice)?);
+                let status = u16::from_be_bytes(payload[0..2].try_into().map_err(|_| Error::BadSlice)?);
+                let severity = u16::from_be_bytes(payload[2..4].try_into().map_err(|_| Error::BadSlice)?);
+                let varcnt = u16::from_be_bytes(payload[4..6].try_into().map_err(|_| Error::BadSlice)?);
                 if varcnt > 16 {
                     return Err(Error::BadCaCount);
                 }
@@ -1189,13 +1163,10 @@ impl CaMsg {
                 let mut variants = Vec::new();
                 for i in 0..varcnt {
                     let p = (6 + 26 * i) as usize;
-                    let s1 = std::ffi::CStr::from_bytes_until_nul(&payload[p..p + 26]).map_or(
-                        String::from("encodingerror"),
-                        |x| {
-                            x.to_str()
-                                .map_or(String::from("encodingerror"), |x| x.to_string())
-                        },
-                    );
+                    let s1 = std::ffi::CStr::from_bytes_until_nul(&payload[p..p + 26])
+                        .map_or(String::from("encodingerror"), |x| {
+                            x.to_str().map_or(String::from("encodingerror"), |x| x.to_string())
+                        });
                     let s1 = if s1.len() >= 26 {
                         String::from("toolongerror")
                     } else {
@@ -1245,11 +1216,7 @@ impl CaMsg {
         let valbuf = &payload[data_offset + meta_padding..];
         let value = match ca_sh {
             Shape::Scalar => Self::ca_scalar_value(&ca_dbr_ty.scalar_type, valbuf)?,
-            Shape::Wave(n) => Self::ca_wave_value(
-                &ca_dbr_ty.scalar_type,
-                (n as usize).min(array_truncate),
-                valbuf,
-            )?,
+            Shape::Wave(n) => Self::ca_wave_value(&ca_dbr_ty.scalar_type, (n as usize).min(array_truncate), valbuf)?,
             Shape::Image(_, _) => return Err(Error::CaImageUnsupported),
         };
         let value = CaEventValue { data: value, meta };
@@ -1564,14 +1531,12 @@ impl CaProto {
                             //     debug!("received data  {:?}", &rbuf.filled()[0..t]);
                             // }
                             if TESTING_PROTOCOL_ERROR_TODO_REMOVE {
-                                self.bytes_recv_testing =
-                                    self.bytes_recv_testing.saturating_add(nf as u32);
+                                self.bytes_recv_testing = self.bytes_recv_testing.saturating_add(nf as u32);
                                 if self.bytes_recv_testing <= TESTING_PROTOCOL_ERROR_AFTER_BYTES {
                                     self.buf.wadv(nf)?;
                                 } else {
-                                    let nr = (self.bytes_recv_testing
-                                        - TESTING_PROTOCOL_ERROR_AFTER_BYTES)
-                                        .min(nf as u32);
+                                    let nr =
+                                        (self.bytes_recv_testing - TESTING_PROTOCOL_ERROR_AFTER_BYTES).min(nf as u32);
                                     self.buf.wadv(nf - nr as usize)?;
                                     for _ in 0..nr {
                                         self.buf.put_u8(0x55)?;
@@ -1733,10 +1698,7 @@ impl CaProto {
         self.buf.len() as u64
     }
 
-    pub fn poll_outbound(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context,
-    ) -> Option<Poll<Option<Result<(), Error>>>> {
+    pub fn poll_outbound(mut self: Pin<&mut Self>, cx: &mut Context) -> Option<Poll<Option<Result<(), Error>>>> {
         use Poll::*;
         let mut have_pending = false;
         let mut have_progress = false;

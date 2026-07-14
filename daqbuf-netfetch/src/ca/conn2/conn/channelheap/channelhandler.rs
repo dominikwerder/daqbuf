@@ -2,6 +2,7 @@ const INP_BUF_CAP: usize = 64;
 
 mod create;
 mod fetchmpx;
+mod readenum;
 mod running;
 
 use crate::asynchan;
@@ -12,6 +13,7 @@ use crate::ca::conn2::caids::Subid;
 use crate::ca::conn2::channel_event_value::ChannelEventValue;
 use crate::ca::conn2::conn::channelheap::ProtoRxItem;
 use crate::ca::conn2::conn::channelheap::channelhandler::create::Creating;
+use crate::ca::conn2::conn::channelheap::channelhandler::readenum::ReadEnum;
 use crate::ca::conn2::conn::channelheap::channelhandler::running::Running;
 use crate::ca::conn2::locallog;
 use crate::ca::conn2::timeoutable;
@@ -103,6 +105,7 @@ struct Closing2 {}
 enum State {
     Init(Init),
     Creating(Creating),
+    ReadEnum(ReadEnum),
     Running(Running),
     Closing1(Closing1),
     Closing2(Closing2),
@@ -122,6 +125,7 @@ impl State {
         match self {
             State::Init(..) => "Init",
             State::Creating(st) => st.name_short(),
+            State::ReadEnum(..) => "ReadEnum",
             State::Running(..) => "Running",
             State::Closing1(..) => "Closing1",
             State::Closing2(..) => "Closing2",
@@ -278,6 +282,7 @@ impl ChannelHandler {
         match &self.state {
             State::Init(_) => None,
             State::Creating(_) => None,
+            State::ReadEnum(st) => Some(st.sid()),
             State::Running(st) => Some(st.sid()),
             State::Closing1(_) => None,
             State::Closing2(_) => None,
@@ -309,6 +314,9 @@ impl ChannelHandler {
                 panic!("TODO impl Cmd::Remove for State::Creating");
                 // TODO add flags to Creating so that we now what proto messages we still expect
                 // TODO add timeout to Creating (anyways!)
+            }
+            State::ReadEnum(st2) => {
+                st2.trigger_remove();
             }
             State::Running(st2) => {
                 st2.trigger_remove();
@@ -434,6 +442,7 @@ impl ChannelHandler {
         match &mut self.state {
             State::Init(st) => {}
             State::Creating(st) => st.inp_done(),
+            State::ReadEnum(st) => st.inp_done(),
             State::Running(st) => st.inp_done(),
             State::Closing1(st) => todo!(),
             State::Closing2(st) => todo!(),
@@ -532,6 +541,8 @@ impl Stream for ChannelHandler {
                                         break Ready(Some(Ok(item)));
                                     }
                                     create::CreatingItem::Done((sid, scalar_type, shape, ca_dbr_ty, chi)) => {
+                                        // TODO move on to fetch-enum
+                                        // Let's always go through that state.
                                         self2.state = State::Running(Running::new(
                                             self2.cid(),
                                             sid,
@@ -563,6 +574,10 @@ impl Stream for ChannelHandler {
                             hpp.mark_pending();
                         }
                     }
+                }
+                State::ReadEnum(..) => {
+                    error!("TODO ReadEnum {} {}", file!(), "49611fd");
+                    self.state = State::Done;
                 }
                 State::Running(st2) => {
                     let vi = &mut self2.proto_inp_buf;
