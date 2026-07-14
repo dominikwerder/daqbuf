@@ -17,6 +17,13 @@ jobs:
       PODMAN_STORAGE: ${{gitea.workspace}}/.podman-storage
       PODMAN_RUNROOT: ${{gitea.workspace}}/.podman-runroot
     steps:
+      - name: Check version tag
+        run: |
+          echo ${{gitea.ref}}
+          BRANCH=$(git branch -r --contains ${{ github.ref }} --format "%(refname:lstrip=3)")
+          echo BRANCH "[[$BRANCH]]"
+          echo abort
+          false
       - name: Check docker
         run: |
           echo $(which docker)
