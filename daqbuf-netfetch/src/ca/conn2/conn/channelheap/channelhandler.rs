@@ -13,7 +13,6 @@ use crate::ca::conn2::caids::Subid;
 use crate::ca::conn2::channel_event_value::ChannelEventValue;
 use crate::ca::conn2::conn::channelheap::ProtoRxItem;
 use crate::ca::conn2::conn::channelheap::channelhandler::create::Creating;
-use crate::ca::conn2::conn::channelheap::channelhandler::readenum::ReadEnum;
 use crate::ca::conn2::conn::channelheap::channelhandler::running::Running;
 use crate::ca::conn2::locallog;
 use crate::ca::conn2::timeoutable;
@@ -48,7 +47,7 @@ macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
 macro_rules! warn { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
 macro_rules! info { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
 macro_rules! debug { ($($arg:tt)*) => { if true { log::debug!($($arg)*); } }; }
-macro_rules! trace { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
+macro_rules! trace { ($($arg:tt)*) => { if true { log::trace!($($arg)*); } }; }
 macro_rules! trace2 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
 macro_rules! trace3 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
 macro_rules! trace4 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
@@ -105,7 +104,7 @@ struct Closing2 {}
 enum State {
     Init(Init),
     Creating(Creating),
-    ReadEnum(ReadEnum),
+    ReadEnum(readenum::ReadEnum),
     Running(Running),
     Closing1(Closing1),
     Closing2(Closing2),
@@ -541,17 +540,28 @@ impl Stream for ChannelHandler {
                                         break Ready(Some(Ok(item)));
                                     }
                                     create::CreatingItem::Done((sid, scalar_type, shape, ca_dbr_ty, chi)) => {
-                                        // TODO move on to fetch-enum
-                                        // Let's always go through that state.
-                                        self2.state = State::Running(Running::new(
-                                            self2.cid(),
-                                            sid,
-                                            scalar_type,
-                                            shape,
-                                            ca_dbr_ty,
-                                            chi,
-                                            self2.conf.clone(),
-                                        ));
+                                        trace!("got create::CreatingItem::Done  {scalar_type}  {shape}");
+                                        if let netpod::ScalarType::Enum = scalar_type {
+                                            self2.state = State::ReadEnum(readenum::ReadEnum::new(
+                                                self2.cid(),
+                                                sid,
+                                                scalar_type,
+                                                shape,
+                                                ca_dbr_ty,
+                                                chi,
+                                                self2.conf.clone(),
+                                            ));
+                                        } else {
+                                            self2.state = State::Running(Running::new(
+                                                self2.cid(),
+                                                sid,
+                                                scalar_type,
+                                                shape,
+                                                ca_dbr_ty,
+                                                chi,
+                                                self2.conf.clone(),
+                                            ));
+                                        }
                                     }
                                 },
                                 Err(e) => {

@@ -25,7 +25,7 @@ macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
 macro_rules! warn { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
 macro_rules! info { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
 macro_rules! debug { ($($arg:tt)*) => { if true { log::debug!($($arg)*); } }; }
-macro_rules! trace { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
+macro_rules! trace { ($($arg:tt)*) => { if true { log::trace!($($arg)*); } }; }
 macro_rules! trace2 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
 macro_rules! trace3 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
 macro_rules! trace4 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
@@ -293,7 +293,7 @@ impl Stream for Creating {
                     match rx.poll_unpin(cx) {
                         Ready((x, sid, scalar_type, shape, ca_dbr_type)) => {
                             hpp.mark_progress();
-                            trace3!("received channel info {x:?}");
+                            trace!("received channel info  {scalar_type}  {shape}  {x:?}");
                             self2.state = State::Done;
                             match x {
                                 Ok(x) => match x {
