@@ -46,7 +46,7 @@ autoerr::create_error_v1!(
         ProtoRxClosed,
         ChannelHandlerRxClosed,
         Timeout,
-        CreateMonitorUnexpectedMessage,
+        ProtoRxUnexpected,
     },
 );
 
@@ -54,12 +54,13 @@ autoerr::create_error_v1!(
 pub enum ReadEnumItem {
     CaMsgOutIoid(CaMsg, Sid, Instant),
     LocalLog(locallog::Entry),
+    EnumStringSet(Sid, ScalarType, Shape, CaDbrTy, ChannelInfoResult, Vec<String>),
 }
 
 #[derive(Debug)]
 enum State {
     SendMsg(),
-    WaitMsg(),
+    WaitMsg(Instant),
     Done,
 }
 
@@ -78,6 +79,9 @@ pub struct ReadEnum {
     state: State,
     cid: Cid,
     sid: Sid,
+    scalar_type: ScalarType,
+    shape: Shape,
+    ca_dbr_ty: CaDbrTy,
     chi: ChannelInfoResult,
     removing: bool,
     chan_close_ack: bool,
@@ -101,6 +105,9 @@ impl ReadEnum {
             state: State::SendMsg(),
             cid,
             sid,
+            scalar_type,
+            shape,
+            ca_dbr_ty,
             chi,
             removing: false,
             chan_close_ack: false,
@@ -143,7 +150,10 @@ impl ReadEnum {
         self.inp_done = true;
     }
 
-    fn poll_inp_dispatch(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Result<(), Error>>> {
+    fn poll_inp_dispatch(
+        mut self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<Option<ReadEnumItem>, Error>>> {
         let selfname = "poll_inp_dispatch";
         use Poll::*;
         loop {
@@ -153,9 +163,31 @@ impl ReadEnum {
                 State::Done => {}
                 _ => {
                     if let Some(item) = self2.inp_buf.pop_front() {
-                        match &item.msg.ty {
-                            proto::CaMsgTy::ReadNotifyRes(x) => {
+                        match &mut self2.state {
+                            State::WaitMsg(ts1) => {
                                 trace!("{selfname}  inp proto msg {item:?}");
+                                let dt = ts1.elapsed();
+                                let dtms = 1e3 * dt.as_secs_f32();
+                                trace!("WaitMsg Recv dt {dtms:0} ms");
+                                let (_, m2) = item.msg.into_parts();
+                                match m2 {
+                                    CaMsgTy::ReadNotifyRes(m3) => match m3.value.meta {
+                                        proto::CaMetaValue::CaMetaVariants(vars) => {
+                                            trace!("variants {vars:?}");
+                                            let item = ReadEnumItem::EnumStringSet(
+                                                self2.sid.clone(),
+                                                self2.scalar_type.clone(),
+                                                self2.shape.clone(),
+                                                self2.ca_dbr_ty.clone(),
+                                                self2.chi.clone(),
+                                                vars.variants,
+                                            );
+                                            break Ready(Some(Ok(Some(item))));
+                                        }
+                                        _ => break Ready(Some(Err(Error::ProtoRxUnexpected))),
+                                    },
+                                    _ => break Ready(Some(Err(Error::ProtoRxUnexpected))),
+                                }
                             }
                             _ => {
                                 trace!("{selfname}  IGNORED inp proto msg {item:?}");
@@ -197,7 +229,8 @@ impl Stream for ReadEnum {
                     Ready(Some(x)) => {
                         hpp.mark_progress();
                         match x {
-                            Ok(()) => {}
+                            Ok(None) => {}
+                            Ok(Some(x)) => break Ready(Some(Ok(x))),
                             Err(e) => {
                                 error!("TODO handle error {e}");
                                 self.state = State::Done;
@@ -217,23 +250,22 @@ impl Stream for ReadEnum {
             let self2 = self.as_mut().get_mut();
             match &mut self2.state {
                 State::SendMsg(..) => {
-                    let dbr_gr_enum = 24;
+                    let _dbr_gr_enum = 24;
                     let dbr_ctrl_enum = 31;
                     let msg = CaMsg::from_ty_ts(
                         CaMsgTy::ReadNotify(ReadNotify {
-                            data_type: dbr_gr_enum,
+                            data_type: dbr_ctrl_enum,
                             data_count: 0,
                             sid: self2.sid.to_u32(),
                             ioid: 0,
                         }),
                         tsnow,
                     );
-                    self2.state = State::WaitMsg();
+                    self2.state = State::WaitMsg(tsnow);
                     break Ready(Some(Ok(ReadEnumItem::CaMsgOutIoid(msg, self2.sid.clone(), tsnow))));
                 }
                 State::WaitMsg(..) => {
                     trace!("..............   in WaitMsg");
-                    hpp.mark_pending();
                 }
                 State::Done => {}
             }

@@ -622,6 +622,25 @@ impl Stream for ChannelHandler {
                                             inner: ItemInner::LocalLog(x),
                                         })));
                                     }
+                                    readenum::ReadEnumItem::EnumStringSet(
+                                        sid,
+                                        scalar_type,
+                                        shape,
+                                        ca_dbr_ty,
+                                        chi,
+                                        vars,
+                                    ) => {
+                                        trace!("EnumStringSet  {vars:?}");
+                                        self2.state = State::Running(Running::new(
+                                            self2.cid(),
+                                            sid,
+                                            scalar_type,
+                                            shape,
+                                            ca_dbr_ty,
+                                            chi,
+                                            self2.conf.clone(),
+                                        ));
+                                    }
                                 },
                                 Err(e) => {
                                     info!("ChannelHandler:Running:Ready:Err {e}");

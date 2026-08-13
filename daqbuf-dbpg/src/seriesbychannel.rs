@@ -86,7 +86,7 @@ impl fmt::Debug for ChannelInfoQuery {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ChannelInfoResult {
     pub backend: String,
     pub channel: String,
