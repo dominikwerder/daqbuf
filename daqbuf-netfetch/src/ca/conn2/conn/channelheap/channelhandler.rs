@@ -63,6 +63,7 @@ autoerr::create_error_v1!(
         Recv,
         TimeoutError(#[from] timeoutable::TimeoutError),
         Creating(#[from] create::Error),
+        ReadEnum(#[from] readenum::Error),
         Running(#[from] running::Error),
         Logic,
     },
@@ -439,7 +440,7 @@ impl ChannelHandler {
     pub fn inp_done(&mut self) {
         self.proto_inp_done = true;
         match &mut self.state {
-            State::Init(st) => {}
+            State::Init(_) => {}
             State::Creating(st) => st.inp_done(),
             State::ReadEnum(st) => st.inp_done(),
             State::Running(st) => st.inp_done(),
@@ -585,9 +586,90 @@ impl Stream for ChannelHandler {
                         }
                     }
                 }
-                State::ReadEnum(..) => {
-                    error!("TODO ReadEnum {} {}", file!(), "49611fd");
-                    self.state = State::Done;
+                State::ReadEnum(st2) => {
+                    let vi = &mut self2.proto_inp_buf;
+                    while let Some(item) = vi.pop_front() {
+                        match st2.inp_push_try(item) {
+                            Some(x) => {
+                                hpp.mark_pending();
+                                vi.push_front(x);
+                                break;
+                            }
+                            None => {
+                                if 1 + vi.len() >= vi.capacity() {
+                                    if let Some(w) = self2.waker_2.take() {
+                                        w.wake();
+                                    }
+                                }
+                                hpp.mark_progress();
+                            }
+                        }
+                    }
+                    match st2.poll_next_unpin(cx) {
+                        Ready(Some(x)) => {
+                            hpp.mark_progress();
+                            match x {
+                                Ok(x) => match x {
+                                    readenum::ReadEnumItem::CaMsgOutIoid(msg, sid, ts) => {
+                                        break Ready(Some(Ok(ChannelHandlerItem {
+                                            ts_create: Instant::now(),
+                                            inner: ItemInner::ProtoOutIoid(msg, sid, ts),
+                                        })));
+                                    }
+                                    readenum::ReadEnumItem::LocalLog(x) => {
+                                        break Ready(Some(Ok(ChannelHandlerItem {
+                                            ts_create: Instant::now(),
+                                            inner: ItemInner::LocalLog(x),
+                                        })));
+                                    }
+                                },
+                                Err(e) => {
+                                    info!("ChannelHandler:Running:Ready:Err {e}");
+                                    self2.state = State::Done1;
+                                    break Ready(Some(Err(e.into())));
+                                }
+                            }
+                        }
+                        Ready(None) => {
+                            hpp.mark_progress();
+                            let chn = self2.conf.name();
+                            if self2.removing.is_none() {
+                                warn!("move ReadEnum to Closing1, but apparently not on user command  {chn}");
+                            }
+                            let item = if let Some(sid) = self2.sid() {
+                                let msg = CaMsg::from_ty_ts(
+                                    CaMsgTy::ChannelClose(proto::ChannelClose {
+                                        sid: sid.to_u32(),
+                                        cid: self2.cid.to_u32(),
+                                    }),
+                                    tsloop,
+                                );
+                                Some(ChannelHandlerItem {
+                                    ts_create: tsloop,
+                                    inner: ItemInner::ProtoOut(msg),
+                                })
+                            } else {
+                                warn!("can not close channel, maybe never fully created  {chn}");
+                                // seems like the channel got never created.
+                                // TODO except in the case when we send create but did not receive response.
+                                None
+                            };
+                            let fut = async move { Ok(()) };
+                            self2.state = State::Closing1(Closing1 {
+                                // TODO channel close may be also already received from server in Running state.
+                                // TODO handle the remove done tx in better way.
+                                chan_close_ack: false,
+                                fut: Some(fut.box2()),
+                                to: tokio::time::sleep(Duration::from_millis(2000)).box2(),
+                            });
+                            if let Some(item) = item {
+                                break Ready(Some(Ok(item)));
+                            }
+                        }
+                        Pending => {
+                            hpp.mark_pending();
+                        }
+                    }
                 }
                 State::Running(st2) => {
                     let vi = &mut self2.proto_inp_buf;

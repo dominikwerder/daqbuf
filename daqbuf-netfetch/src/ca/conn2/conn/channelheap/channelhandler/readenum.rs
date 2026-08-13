@@ -1,25 +1,20 @@
 pub(super) const INP_BUF_CAP: usize = 64;
 
-use super::fetchmpx::Fetchmpx;
-use crate::asynchan;
 use crate::ca::conn2::caids::CaDbrTy;
 use crate::ca::conn2::caids::Cid;
 use crate::ca::conn2::caids::Sid;
-use crate::ca::conn2::channel_event_value::ChannelEventValue;
 use crate::ca::conn2::conn::channelheap::ProtoRxItem;
-use crate::ca::conn2::conn::channelheap::channelhandler::fetchmpx;
 use crate::ca::conn2::locallog;
 use crate::ca::progpend::HaveProgressPending;
 use crate::conf::ChannelConfig;
 use ca_proto::ca::proto;
 use ca_proto::ca::proto::CaMsg;
+use ca_proto::ca::proto::CaMsgTy;
+use ca_proto::ca::proto::ReadNotify;
 use dbpg::seriesbychannel::ChannelInfoResult;
 use futures::Stream;
-use futures::StreamExt;
 use netpod::ScalarType;
 use netpod::Shape;
-use netpod::channelstatus::ChannelStatus;
-use series::SeriesId;
 use stats::mett::ChannelHandlerMetrics;
 use std::collections::VecDeque;
 use std::pin::Pin;
@@ -57,26 +52,22 @@ autoerr::create_error_v1!(
 
 #[derive(Debug)]
 pub enum ReadEnumItem {
-    CaMsgOut(CaMsg),
     CaMsgOutIoid(CaMsg, Sid, Instant),
-    CaMsgOutSubid(CaMsg, Instant),
-    SubidRemove(Cid),
-    TestValue(crate::ca::connset2::connset::TestValue),
     LocalLog(locallog::Entry),
-    ChannelStatus(ChannelStatus),
-    ChannelEventValue(ChannelEventValue),
 }
 
 #[derive(Debug)]
 enum State {
-    Normal(Fetchmpx),
+    SendMsg(),
+    WaitMsg(),
     Done,
 }
 
 impl State {
     fn str(&self) -> &str {
         match self {
-            State::Normal(..) => "Normal",
+            State::SendMsg(..) => "SendMsg",
+            State::WaitMsg(..) => "WaitMsg",
             State::Done => "Done",
         }
     }
@@ -107,15 +98,7 @@ impl ReadEnum {
         chconf: ChannelConfig,
     ) -> Self {
         Self {
-            state: State::Normal(Fetchmpx::new(
-                chi.series.to_series(),
-                cid.clone(),
-                sid.clone(),
-                scalar_type.clone(),
-                shape.clone(),
-                ca_dbr_ty.clone(),
-                chconf,
-            )),
+            state: State::SendMsg(),
             cid,
             sid,
             chi,
@@ -133,34 +116,16 @@ impl ReadEnum {
     }
 
     pub fn trigger_remove(&mut self) {
-        todo_shutdown!("TODO set up teardown");
+        todo_shutdown!("trigger_remove");
         self.removing = true;
         match &mut self.state {
-            State::Normal(x) => {
-                x.trigger_remove();
+            State::SendMsg(..) => {
+                //
+            }
+            State::WaitMsg(..) => {
+                //
             }
             State::Done => {}
-        }
-        // TODO
-        // Tear down, but ChannelHandler must do the channel close when we are Done.
-        // add necessary commands to outbuf.
-        // in poll loop, check for outbuf and poll emit.
-        // handle:
-        // CA_PROTO_EVENT_CANCEL leads to 0-size CA_PROTO_EVENT_ADD response
-        // CA_PROTO_CLEAR_CHANNEL leads to CA_PROTO_CLEAR_CHANNEL response
-        // and flag when those messages come in "removing" mode.
-        // Otherwise, the IOC may also shut down of course.
-        // TODO make sure the IOC disconnect triggers correct logic in ingest. (log!)
-        // When we are in removing mode, and received all cleanup confirmations, then trigger state change.
-    }
-
-    pub fn handle_channel_handler_cmd(&mut self, cmd: serde_json::Value) -> serde_json::Value {
-        use serde_json::json;
-        match &mut self.state {
-            State::Normal(st) => st.handle_channel_handler_cmd(cmd),
-            State::Done => json!({
-                "error": format!("Running  {}", self.state.str()),
-            }),
         }
     }
 
@@ -176,10 +141,6 @@ impl ReadEnum {
 
     pub fn inp_done(&mut self) {
         self.inp_done = true;
-        match &mut self.state {
-            State::Normal(st) => st.inp_done(),
-            State::Done => {}
-        }
     }
 
     fn poll_inp_dispatch(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Result<(), Error>>> {
@@ -192,13 +153,14 @@ impl ReadEnum {
                 State::Done => {}
                 _ => {
                     if let Some(item) = self2.inp_buf.pop_front() {
-                        trace3!("{selfname}  have item  {item:?}");
-                        let to_mpx = match &item.msg.ty {
-                            proto::CaMsgTy::EventAddRes(_) => true,
-                            proto::CaMsgTy::EventAddResEmpty(_) => true,
-                            proto::CaMsgTy::ReadNotifyRes(_) => true,
-                            _ => false,
-                        };
+                        match &item.msg.ty {
+                            proto::CaMsgTy::ReadNotifyRes(x) => {
+                                trace!("{selfname}  inp proto msg {item:?}");
+                            }
+                            _ => {
+                                trace!("{selfname}  IGNORED inp proto msg {item:?}");
+                            }
+                        }
                     } else if self.inp_done {
                     } else {
                         hpp.mark_pending();
@@ -223,10 +185,11 @@ impl Stream for ReadEnum {
     type Item = Result<ReadEnumItem, Error>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let selfname = "Creating::poll_next";
+        let selfname = "ReadEnum::poll_next";
         trace4!("{selfname}");
         use Poll::*;
         loop {
+            let tsnow = Instant::now();
             let mut hpp = HaveProgressPending::new();
             match &self.state {
                 State::Done => {}
@@ -251,64 +214,27 @@ impl Stream for ReadEnum {
                     }
                 },
             }
-            match &mut self.state {
-                State::Normal(fetchmpx) => match fetchmpx.poll_next_unpin(cx) {
-                    Ready(Some(x)) => match x {
-                        Ok(x) => {
-                            hpp.mark_progress();
-                            match x {
-                                fetchmpx::FetchmpxItem::CaMsgOut(msg) => {
-                                    let g = ReadEnumItem::CaMsgOut(msg);
-                                    break Ready(Some(Ok(g)));
-                                }
-                                fetchmpx::FetchmpxItem::CaMsgOutIoid(msg, sid, tscmd) => {
-                                    let g = ReadEnumItem::CaMsgOutIoid(msg, sid, tscmd);
-                                    break Ready(Some(Ok(g)));
-                                }
-                                fetchmpx::FetchmpxItem::CaMsgOutSubid(msg, tscmd) => {
-                                    let g = ReadEnumItem::CaMsgOutSubid(msg, tscmd);
-                                    break Ready(Some(Ok(g)));
-                                }
-                                fetchmpx::FetchmpxItem::SubidRemove(cid) => {
-                                    let g = ReadEnumItem::SubidRemove(cid);
-                                    break Ready(Some(Ok(g)));
-                                }
-                                fetchmpx::FetchmpxItem::TestValue(x) => {
-                                    let g = ReadEnumItem::TestValue(x);
-                                    break Ready(Some(Ok(g)));
-                                }
-                                fetchmpx::FetchmpxItem::LocalLog(x) => {
-                                    let g = ReadEnumItem::LocalLog(x);
-                                    break Ready(Some(Ok(g)));
-                                }
-                                fetchmpx::FetchmpxItem::ChannelStatus(x) => {
-                                    let g = ReadEnumItem::ChannelStatus(x);
-                                    break Ready(Some(Ok(g)));
-                                }
-                                fetchmpx::FetchmpxItem::ChannelEventValue(x) => {
-                                    let g = ReadEnumItem::ChannelEventValue(x);
-                                    break Ready(Some(Ok(g)));
-                                }
-                                fetchmpx::FetchmpxItem::InputDone => {
-                                    info!("got FetchmpxItem::InputDone  but that's just a notice");
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            error!("TODO handle error {e}");
-                            self.state = State::Done;
-                            hpp.mark_progress();
-                        }
-                    },
-                    Ready(None) => {
-                        hpp.mark_progress();
-                        debug_shutdown!("Done");
-                        self.state = State::Done;
-                    }
-                    Pending => {
-                        hpp.mark_pending();
-                    }
-                },
+            let self2 = self.as_mut().get_mut();
+            match &mut self2.state {
+                State::SendMsg(..) => {
+                    let dbr_gr_enum = 24;
+                    let dbr_ctrl_enum = 31;
+                    let msg = CaMsg::from_ty_ts(
+                        CaMsgTy::ReadNotify(ReadNotify {
+                            data_type: dbr_gr_enum,
+                            data_count: 0,
+                            sid: self2.sid.to_u32(),
+                            ioid: 0,
+                        }),
+                        tsnow,
+                    );
+                    self2.state = State::WaitMsg();
+                    break Ready(Some(Ok(ReadEnumItem::CaMsgOutIoid(msg, self2.sid.clone(), tsnow))));
+                }
+                State::WaitMsg(..) => {
+                    trace!("..............   in WaitMsg");
+                    hpp.mark_pending();
+                }
                 State::Done => {}
             }
             break if hpp.have_progress() {
