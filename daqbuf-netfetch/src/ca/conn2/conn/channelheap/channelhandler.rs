@@ -16,6 +16,8 @@ use crate::ca::conn2::conn::channelheap::channelhandler::create::Creating;
 use crate::ca::conn2::conn::channelheap::channelhandler::running::Running;
 use crate::ca::conn2::locallog;
 use crate::ca::conn2::timeoutable;
+use crate::ca::connset2::connset::channeltrace::ChannelTraceItem;
+use crate::ca::connset2::connset::channeltrace::ChannelTraceItemInner;
 use crate::ca::progpend::HaveProgressPending;
 use crate::conf::ChannelConfig;
 use crate::futwrap::FutDbg;
@@ -147,6 +149,7 @@ pub enum ItemInner {
     LocalLog(locallog::Entry),
     ChannelStatus(ChannelStatus),
     ChannelEventValue(ChannelEventValue),
+    ChannelTrace(ChannelTraceItem),
 }
 
 #[derive(Debug)]
@@ -193,6 +196,7 @@ pub struct ChannelHandler {
     cid: CidOwned,
     backend: String,
     conf: ChannelConfig,
+    enum_variants: Option<Vec<String>>,
     proto_inp_buf: VecDeque<ProtoRxItem>,
     proto_inp_done: bool,
     counters: Counters,
@@ -215,6 +219,7 @@ impl ChannelHandler {
             cid,
             backend,
             conf,
+            enum_variants: None,
             proto_inp_buf: VecDeque::with_capacity(INP_BUF_CAP),
             proto_inp_done: false,
             counters: Counters::new(),
@@ -236,18 +241,21 @@ impl ChannelHandler {
     pub fn handle_dyn_cmd_v03(&mut self, cmd: serde_json::Value) -> impl Future<Output = serde_json::Value> + use<> {
         use futures::future::ready;
         use serde_json::json;
-        // let s = format!("{:?}", self.conf);
         let x = json!({
-            // "DUMMY": format!("response from handle {s}"),
-            "config": serde_json::to_value(&self.conf).unwrap(),
+            "DUMMY": "continue-here",
         });
-        ready(x)
-        // match &mut self.state {
-        //     State::Running(st) => st.handle_channel_handler_cmd(cmd),
-        //     _ => json!({
-        //         "error": format!("ChannelHandler  {:?}", self.state),
-        //     }),
-        // }
+        let v = match &mut self.state {
+            // State::Running(st) => st.handle_channel_handler_cmd(cmd),
+            _ => json!({
+                "state": {
+                    "type": "ChannelHandler",
+                    "state": format!("{:?}", self.state),
+                    "config": serde_json::to_value(&self.conf).unwrap(),
+                    "enum_variants": self.enum_variants,
+                },
+            }),
+        };
+        ready(v)
     }
 
     pub fn channel_info_v1(&mut self) -> crate::metrics::ChannelInfoV1 {
@@ -542,6 +550,13 @@ impl Stream for ChannelHandler {
                                     }
                                     create::CreatingItem::Done((sid, scalar_type, shape, ca_dbr_ty, chi)) => {
                                         trace!("got create::CreatingItem::Done  {scalar_type}  {shape}");
+                                        // TODO guard on outbuf len?
+                                        self2.outbuf.push_back(ChannelHandlerItem {
+                                            ts_create: Instant::now(),
+                                            inner: ItemInner::ChannelTrace(ChannelTraceItem::new(
+                                                ChannelTraceItemInner::Created,
+                                            )),
+                                        });
                                         if let netpod::ScalarType::Enum = scalar_type {
                                             self2.state = State::ReadEnum(readenum::ReadEnum::new(
                                                 self2.cid(),

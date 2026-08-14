@@ -1,6 +1,7 @@
 const INP_BUF_CAP: usize = 128;
 
 mod channels;
+pub mod channeltrace;
 mod cmd_handler;
 mod cmder;
 mod futs;
@@ -222,6 +223,7 @@ pub struct ConnSet {
     conn_idle_disconnect_futs: VecDeque<FutDbg<Result<(), Error>>>,
     out_buf: AsynBuf<ConnSetItem>,
     llog: LocalLog,
+    chtrace: channeltrace::ChannelTraceStash,
 }
 
 impl ConnSet {
@@ -264,6 +266,7 @@ impl ConnSet {
             conn_idle_disconnect_futs: VecDeque::new(),
             out_buf: AsynBuf::new(INP_BUF_CAP),
             llog: LocalLog::new(),
+            chtrace: channeltrace::ChannelTraceStash::new(),
         };
         Ok(ret)
     }
@@ -542,6 +545,9 @@ impl ConnSet {
                                             }
                                             conn2::conn::CaConnItem::ChannelEventValue(x) => {
                                                 self2.out_buf.push_back_force(ConnSetItem::ChannelEventValue(x));
+                                            }
+                                            conn2::conn::CaConnItem::ChannelTrace(x) => {
+                                                self2.chtrace.push(x);
                                             }
                                         }
                                     }

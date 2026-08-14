@@ -17,6 +17,7 @@ use crate::ca::conn2::conn::channelheap::channelhandler::ChannelHandler;
 use crate::ca::conn2::locallog;
 use crate::ca::conn2::timeoutable::TimeoutError;
 use crate::ca::conn2::timeoutable::Timeoutable;
+use crate::ca::connset2::connset::channeltrace::ChannelTraceItem;
 use crate::ca::progpend::HaveProgressPending;
 use crate::conf::ChannelConfig;
 use crate::futwrap::FutDbg;
@@ -41,7 +42,7 @@ macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
 macro_rules! warn { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
 macro_rules! info { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
 macro_rules! debug { ($($arg:tt)*) => { if true { log::debug!($($arg)*); } }; }
-macro_rules! trace { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
+macro_rules! trace { ($($arg:tt)*) => { if true { log::trace!($($arg)*); } }; }
 macro_rules! trace2 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
 macro_rules! trace3 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
 macro_rules! trace4 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
@@ -197,6 +198,7 @@ pub enum ItemInner {
     LocalLog(locallog::Entry),
     ChannelEventValue(ChannelEventValue),
     ProtoOut(CaMsg),
+    ChannelTrace(ChannelTraceItem),
 }
 
 #[derive(Debug)]
@@ -215,6 +217,7 @@ enum PollHandlerItem {
     TestValue(crate::ca::connset2::connset::TestValue),
     LocalLog(locallog::Entry),
     ChannelEventValue(ChannelEventValue),
+    ChannelTrace(ChannelTraceItem),
 }
 
 #[derive(Debug, Serialize)]
@@ -496,6 +499,30 @@ impl ChannelHeap {
                         }))
                         .box2(),
                     }
+                } else if cmd2.type_channel_heap == "channel_details_v00"
+                    && let Ok(cmd3) = serde_json::from_value::<CmdTmpNamed>(cmd.clone())
+                {
+                    match &mut self.state {
+                        State::Running => {
+                            for ch in self.by_cid.iter_mut().filter(|x| x.1.name == cmd3.chname) {
+                                return match &mut ch.1.ch_handler {
+                                    ChHandler::ChHandlerActive(st2) => st2.handler.handle_dyn_cmd_v03(cmd).box2(),
+                                    ChHandler::Done => ready(json!({
+                                        "error": "ChannelHeap  ChHandler::Done",
+                                    }))
+                                    .box2(),
+                                };
+                            }
+                            ready(json!({
+                                "error": "ChannelHeap  chname not found",
+                            }))
+                            .box2()
+                        }
+                        State::Done => ready(json!({
+                            "error": "ChannelHeap  State::Done",
+                        }))
+                        .box2(),
+                    }
                 } else {
                     ready(json!({
                         "error": format!("unexpected command {cmd:?}"),
@@ -503,8 +530,8 @@ impl ChannelHeap {
                     .box2()
                 }
             }
-            Err(_) => ready(json!({
-                "error": "unexpected command {cmd:?}",
+            Err(e) => ready(json!({
+                "error": format!("error on command {cmd:?} {e:?}"),
             }))
             .box2(),
         }
@@ -662,11 +689,15 @@ impl ChannelHeap {
                     match x {
                         Ok(item) => {
                             let item = match item.inner {
-                                channelhandler::ItemInner::ProtoOut(item) => {
-                                    trace!("{selfname}  received channelhandler::ItemInner::ProtoOut {item:?}");
-                                    PollHandlerItem::ProtoOut(item)
+                                channelhandler::ItemInner::ProtoOut(msg) => {
+                                    trace!("{selfname}  received channelhandler::ItemInner::ProtoOut {msg:?}");
+                                    PollHandlerItem::ProtoOut(msg)
                                 }
-                                channelhandler::ItemInner::ProtoOutIoid(mut ca_msg, sid, tscmd) => {
+                                channelhandler::ItemInner::ProtoOutIoid(mut msg, sid, tscmd) => {
+                                    {
+                                        let dt = 1e3 * tscmd.elapsed().as_secs_f32();
+                                        trace!("seeing channelhandler::ItemInner::ProtoOutIoid  {dt:0} ms  {msg:?}");
+                                    }
                                     if let Some(sid2) = handler.sid() {
                                         if sid2 != sid {
                                             warn!("{selfname}  ProtoOutIoid but handler sid differs");
@@ -674,18 +705,22 @@ impl ChannelHeap {
                                         } else {
                                             let ioid = ioid_reg.current().inc();
                                             ioid_reg.register(sid, ioid.clone(), cid, tscmd, tsnow);
-                                            ca_msg.overwrite_ioid(ioid.to_u32());
-                                            PollHandlerItem::ProtoOut(ca_msg)
+                                            msg.overwrite_ioid(ioid.to_u32());
+                                            PollHandlerItem::ProtoOut(msg)
                                         }
                                     } else {
                                         warn!("{selfname}  ProtoOutIoid but handler missing sid");
                                         PollHandlerItem::None
                                     }
                                 }
-                                channelhandler::ItemInner::ProtoOutSubid(mut ca_msg, tscmd) => {
+                                channelhandler::ItemInner::ProtoOutSubid(mut msg, tscmd) => {
+                                    {
+                                        let dt = 1e3 * tscmd.elapsed().as_secs_f32();
+                                        trace!("seeing channelhandler::ItemInner::ProtoOutSubid  {dt:0} ms  {msg:?}");
+                                    }
                                     let subid = subid_reg.register(cid, tsnow);
-                                    ca_msg.overwrite_subid(subid.to_u32());
-                                    PollHandlerItem::ProtoOut(ca_msg)
+                                    msg.overwrite_subid(subid.to_u32());
+                                    PollHandlerItem::ProtoOut(msg)
                                 }
                                 channelhandler::ItemInner::SubidRemove(cid) => {
                                     subid_reg.remove(cid);
@@ -704,6 +739,7 @@ impl ChannelHeap {
                                 channelhandler::ItemInner::ChannelEventValue(x) => {
                                     PollHandlerItem::ChannelEventValue(x)
                                 }
+                                channelhandler::ItemInner::ChannelTrace(x) => PollHandlerItem::ChannelTrace(x),
                             };
                             break Ready(Some(Ok(item)));
                         }
@@ -906,6 +942,12 @@ impl ChannelHeap {
                                                 error!("TODO handle PollHandlerItem::ChHandlerMod");
                                             }
                                             PollHandlerItem::ProtoOut(x) => {
+                                                {
+                                                    let dt = 1e3 * x.ts().elapsed().as_secs_f32();
+                                                    trace!(
+                                                        "PollHandlerItem::ProtoOut  self2.out_buf.push_back_force  {dt:0} ms  {x:?}"
+                                                    );
+                                                }
                                                 let x = ChannelHeapItem {
                                                     ts_create: tsnow,
                                                     inner: ItemInner::ProtoOut(x),
@@ -937,6 +979,13 @@ impl ChannelHeap {
                                                 let x = ChannelHeapItem {
                                                     ts_create: tsnow,
                                                     inner: ItemInner::ChannelEventValue(x),
+                                                };
+                                                self2.out_buf.push_back_force(x);
+                                            }
+                                            PollHandlerItem::ChannelTrace(x) => {
+                                                let x = ChannelHeapItem {
+                                                    ts_create: tsnow,
+                                                    inner: ItemInner::ChannelTrace(x),
                                                 };
                                                 self2.out_buf.push_back_force(x);
                                             }
@@ -999,6 +1048,7 @@ impl ChannelHeap {
         use Poll::*;
         let selfname = "poll_all_handler";
         trace4!("{selfname}");
+        let mut hpp2 = HaveProgressPending::new();
         loop {
             trace4!("{selfname}  loop");
             if self.out_buf.len() >= OUT_BUF_MAX_LEN {
@@ -1026,6 +1076,7 @@ impl ChannelHeap {
                 match self.as_mut().poll_all_handler_sub(cx) {
                     Ready(Some(x)) => {
                         hpp.mark_progress();
+                        hpp2.mark_progress();
                         match x {
                             Ok(x) => match x {
                                 PollHandlerItemB::None => {
@@ -1066,6 +1117,8 @@ impl ChannelHeap {
             }
             break if hpp.have_progress() {
                 continue;
+            } else if hpp2.have_progress() {
+                Ready(Some(Ok(PollHandlerItem::None)))
             } else if hpp.have_pending() {
                 Pending
             } else {
@@ -1258,6 +1311,7 @@ impl ChannelHeap {
                     match self.as_mut().poll_all_handler(cx) {
                         Ready(Some(x)) => {
                             hpp.mark_progress();
+                            trace!("after ChannelHeap::poll_all_handler");
                             match x {
                                 Ok(x) => match x {
                                     PollHandlerItem::None => {}
@@ -1299,6 +1353,14 @@ impl ChannelHeap {
                                     }
                                     PollHandlerItem::ChannelEventValue(x) => {
                                         let inner = ItemInner::ChannelEventValue(x);
+                                        let item = ChannelHeapItem {
+                                            ts_create: tsloop,
+                                            inner,
+                                        };
+                                        self.out_buf.push_back_force(item);
+                                    }
+                                    PollHandlerItem::ChannelTrace(x) => {
+                                        let inner = ItemInner::ChannelTrace(x);
                                         let item = ChannelHeapItem {
                                             ts_create: tsloop,
                                             inner,

@@ -847,6 +847,10 @@ impl CaMsg {
         (self.common, self.ty)
     }
 
+    pub fn ts(&self) -> Instant {
+        self.common.ts()
+    }
+
     fn len(&self) -> usize {
         self.ty.len()
     }
