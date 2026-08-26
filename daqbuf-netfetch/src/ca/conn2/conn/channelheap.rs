@@ -18,6 +18,7 @@ use crate::ca::conn2::locallog;
 use crate::ca::conn2::timeoutable::TimeoutError;
 use crate::ca::conn2::timeoutable::Timeoutable;
 use crate::ca::connset2::connset::channeltrace::ChannelTraceItem;
+use crate::ca::connset2::connset::channeltrace::ChannelTraceL1Item;
 use crate::ca::progpend::HaveProgressPending;
 use crate::conf::ChannelConfig;
 use crate::futwrap::FutDbg;
@@ -198,7 +199,7 @@ pub enum ItemInner {
     LocalLog(locallog::Entry),
     ChannelEventValue(ChannelEventValue),
     ProtoOut(CaMsg),
-    ChannelTrace(ChannelTraceItem),
+    ChannelTrace(ChannelTraceL1Item),
 }
 
 #[derive(Debug)]
@@ -217,7 +218,7 @@ enum PollHandlerItem {
     TestValue(crate::ca::connset2::connset::TestValue),
     LocalLog(locallog::Entry),
     ChannelEventValue(ChannelEventValue),
-    ChannelTrace(ChannelTraceItem),
+    ChannelTrace(ChannelTraceL1Item),
 }
 
 #[derive(Debug, Serialize)]
@@ -739,7 +740,9 @@ impl ChannelHeap {
                                 channelhandler::ItemInner::ChannelEventValue(x) => {
                                     PollHandlerItem::ChannelEventValue(x)
                                 }
-                                channelhandler::ItemInner::ChannelTrace(x) => PollHandlerItem::ChannelTrace(x),
+                                channelhandler::ItemInner::ChannelTrace(x) => PollHandlerItem::ChannelTrace(
+                                    ChannelTraceL1Item::new(handler.channel_config().name().into(), x),
+                                ),
                             };
                             break Ready(Some(Ok(item)));
                         }

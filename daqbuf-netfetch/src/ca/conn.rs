@@ -1115,17 +1115,17 @@ impl<'a> EventAddIngestRefobj<'a> {
                         "event_add_ingest", self.chname, tsev
                     );
                 }
-                crst.dw_st_last = stnow;
+                crst.dw_st_last = tsev.to_system_time();
                 crst.val_lst_st = value.to_json_value();
                 crst.acc_st.push_written(payload_len);
             }
             if wres.mt.accept {
-                crst.dw_mt_last = stnow;
+                crst.dw_mt_last = tsev.to_system_time();
                 crst.val_lst_mt = value.to_json_value();
                 crst.acc_mt.push_written(payload_len);
             }
             if wres.lt.accept {
-                crst.dw_lt_last = stnow;
+                crst.dw_lt_last = tsev.to_system_time();
                 crst.val_lst_lt = value.to_json_value();
                 crst.acc_lt.push_written(payload_len);
             }

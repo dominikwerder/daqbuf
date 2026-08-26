@@ -17,6 +17,7 @@ use crate::ca::conn2::conn::ctchan::CtChan;
 use crate::ca::conn2::locallog;
 use crate::ca::conn2::protowrap;
 use crate::ca::connset2::connset::channeltrace::ChannelTraceItem;
+use crate::ca::connset2::connset::channeltrace::ChannelTraceL1Item;
 use crate::ca::progpend::HaveProgressPending;
 use ca_proto::ca::proto::CaItem;
 use ca_proto::ca::proto::CaMsg;
@@ -80,7 +81,7 @@ pub enum ItemInner {
     TestValue(crate::ca::connset2::connset::TestValue),
     LocalLog(locallog::Entry),
     ChannelEventValue(ChannelEventValue),
-    ChannelTrace(ChannelTraceItem),
+    ChannelTrace(ChannelTraceL1Item),
 }
 
 #[derive(Debug)]
@@ -183,6 +184,10 @@ impl Connected {
                 CaConnConnectedMetrics::new()
             }
         }
+    }
+
+    pub fn addr(&self) -> SocketAddrV4 {
+        self.addr
     }
 
     fn goto_state_done(&mut self) {

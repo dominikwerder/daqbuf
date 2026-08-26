@@ -177,6 +177,7 @@ use crate::asynbuf;
 use crate::asynbuf::AsynBuf;
 use crate::asynbuf::TsMark;
 use crate::ca::connset2::connset::channeltrace::ChannelTraceItem;
+use crate::ca::connset2::connset::channeltrace::ChannelTraceL1Item;
 use ca_proto::ca::proto::CaMsgTy;
 use serde_helper::serde_instant::serde_Instant_elapsed_ms::serialize as inser3;
 
@@ -241,7 +242,7 @@ pub enum ItemInner {
     LocalLog(locallog::Entry),
     ChannelEventValue(ChannelEventValue),
     ProtoOut(CaMsg),
-    ChannelTrace(ChannelTraceItem),
+    ChannelTrace(ChannelTraceL1Item),
 }
 
 #[derive(Debug)]

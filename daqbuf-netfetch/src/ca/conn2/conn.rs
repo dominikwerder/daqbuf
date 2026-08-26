@@ -17,6 +17,7 @@ use crate::ca::conn2::channel_event_value::ChannelEventValue;
 use crate::ca::conn2::locallog;
 use crate::ca::connset2::connset::TestValue;
 use crate::ca::connset2::connset::channeltrace::ChannelTraceItem;
+use crate::ca::connset2::connset::channeltrace::ChannelTraceL2Item;
 use crate::ca::progpend::HaveProgressPending;
 use crate::conf::ChannelConfig;
 use crate::futwrap::FutDbg;
@@ -365,7 +366,7 @@ pub enum CaConnItem {
     TestValue(TestValue),
     LocalLog(locallog::Entry),
     ChannelEventValue(ChannelEventValue),
-    ChannelTrace(ChannelTraceItem),
+    ChannelTrace(ChannelTraceL2Item),
 }
 
 #[derive(Debug)]
@@ -868,7 +869,8 @@ impl Stream for CaConn {
                                                     self2.out_buf.push_back_force(item);
                                                 }
                                                 connected::ItemInner::ChannelTrace(x) => {
-                                                    let item = CaConnItem::ChannelTrace(x);
+                                                    let item = ChannelTraceL2Item::new(st1.addr(), x);
+                                                    let item = CaConnItem::ChannelTrace(item);
                                                     self2.out_buf.push_back_force(item);
                                                 }
                                             }

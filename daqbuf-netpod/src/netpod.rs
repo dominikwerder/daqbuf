@@ -809,10 +809,7 @@ impl<'a> From<EnumVariantRef<'a>> for EnumVariant {
 
 impl EnumVariant {
     pub fn new(ix: i16, name: impl Into<String>) -> Self {
-        Self {
-            ix,
-            name: name.into(),
-        }
+        Self { ix, name: name.into() }
     }
 
     pub fn ix(&self) -> i16 {
@@ -934,10 +931,7 @@ mod serde_port {
             E: serde::de::Error,
         {
             match val.parse::<u16>() {
-                Err(_) => Err(serde::de::Error::invalid_type(
-                    serde::de::Unexpected::Str(val),
-                    &self,
-                )),
+                Err(_) => Err(serde::de::Error::invalid_type(serde::de::Unexpected::Str(val), &self)),
                 Ok(v) => Ok(v),
             }
         }
@@ -990,9 +984,7 @@ impl Node {
         // TODO should be able to decide whether we are reachable via tls.
         // So far this does not matter because this `baseurl` is used for internal communication
         // and is always non-tls.
-        format!("http://{}:{}", self.host, self.port)
-            .parse()
-            .unwrap()
+        format!("http://{}:{}", self.host, self.port).parse().unwrap()
     }
 
     pub fn listen(&self) -> String {
@@ -1324,10 +1316,7 @@ impl FromUrl for SfDbChannel {
 
     fn from_pairs(pairs: &BTreeMap<String, String>) -> Result<Self, Self::Error> {
         let ret = SfDbChannel {
-            backend: pairs
-                .get("backend")
-                .ok_or_else(|| Error::MissingBackend)?
-                .into(),
+            backend: pairs.get("backend").ok_or_else(|| Error::MissingBackend)?.into(),
             name: pairs
                 .get("channelName")
                 .map(String::from)
@@ -1415,10 +1404,7 @@ impl FromUrl for DaqbufSeries {
                 .get("seriesId")
                 .ok_or_else(|| Error::MissingSeries)
                 .map(|x| x.parse::<u64>())??,
-            backend: pairs
-                .get("backend")
-                .ok_or_else(|| Error::MissingBackend)?
-                .into(),
+            backend: pairs.get("backend").ok_or_else(|| Error::MissingBackend)?.into(),
             name: pairs
                 .get("channelName")
                 .map(String::from)
@@ -1480,11 +1466,7 @@ pub enum ByteOrder {
 
 impl ByteOrder {
     pub fn from_dtype_flags(flags: u8) -> Self {
-        if flags & 0x20 == 0 {
-            Self::Little
-        } else {
-            Self::Big
-        }
+        if flags & 0x20 == 0 { Self::Little } else { Self::Big }
     }
 
     pub fn from_bsread_str(s: &str) -> Result<ByteOrder, Error> {
@@ -1666,9 +1648,7 @@ impl Shape {
                 }
             }
             JsVal::Object(j) => match j.get("Wave") {
-                Some(JsVal::Number(j)) => Ok(Shape::Wave(
-                    j.as_u64().ok_or_else(|| Error::ShapeBad)? as u32,
-                )),
+                Some(JsVal::Number(j)) => Ok(Shape::Wave(j.as_u64().ok_or_else(|| Error::ShapeBad)? as u32)),
                 _ => Err(Error::ShapeBad),
             },
             _ => Err(Error::ShapeBad),
@@ -1746,10 +1726,7 @@ impl Shape {
         match self {
             Shape::Scalar => JsVal::Array(Vec::new()),
             Shape::Wave(n) => JsVal::Array(vec![JsVal::Number(Number::from(*n))]),
-            Shape::Image(n, m) => JsVal::Array(vec![
-                JsVal::Number(Number::from(*n)),
-                JsVal::Number(Number::from(*m)),
-            ]),
+            Shape::Image(n, m) => JsVal::Array(vec![JsVal::Number(Number::from(*n)), JsVal::Number(Number::from(*m))]),
         }
     }
 
@@ -2101,6 +2078,16 @@ impl TsNano {
         Self::from_ns(x)
     }
 
+    pub fn to_system_time(&self) -> SystemTime {
+        let sec = self.0 / 1000000000;
+        let ns = self.0 % 1000000000;
+        SystemTime::UNIX_EPOCH
+            .checked_add(Duration::from_secs(sec))
+            .unwrap()
+            .checked_add(Duration::from_nanos(ns))
+            .unwrap()
+    }
+
     pub fn fmt(&self) -> TsNanoFmt {
         TsNanoFmt { ts: self.clone() }
     }
@@ -2130,16 +2117,13 @@ impl FromStr for TsNano {
     type Err = Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let fm = time::macros::format_description!(
-            "[year]-[month]-[day]T[hour]:[minute]:[second].[subsecond digits:3]Z"
-        );
-        time::UtcDateTime::parse(s, fm)
-            .map_err(|_| Error::InputBad)
-            .map(|x| {
-                let sec = x.unix_timestamp() as u64;
-                let ms = x.millisecond() as u64;
-                TsNano::from_ms(1000 * sec + ms)
-            })
+        let fm =
+            time::macros::format_description!("[year]-[month]-[day]T[hour]:[minute]:[second].[subsecond digits:3]Z");
+        time::UtcDateTime::parse(s, fm).map_err(|_| Error::InputBad).map(|x| {
+            let sec = x.unix_timestamp() as u64;
+            let ms = x.millisecond() as u64;
+            TsNano::from_ms(1000 * sec + ms)
+        })
     }
 }
 
@@ -2440,8 +2424,8 @@ pub fn time_bin_len_cache_opts() -> &'static [DtMs] {
 }
 
 const PULSE_BIN_THRESHOLDS: [u64; 25] = [
-    10, 20, 40, 80, 100, 200, 400, 800, 1000, 2000, 4000, 8000, 10000, 20000, 40000, 80000, 100000,
-    200000, 400000, 800000, 1000000, 2000000, 4000000, 8000000, 10000000,
+    10, 20, 40, 80, 100, 200, 400, 800, 1000, 2000, 4000, 8000, 10000, 20000, 40000, 80000, 100000, 200000, 400000,
+    800000, 1000000, 2000000, 4000000, 8000000, 10000000,
 ];
 
 #[allow(unused)]
@@ -2487,15 +2471,11 @@ where
     }
 
     pub fn patch_beg(&self) -> T {
-        self.bin_len()
-            .times(self.bin_count)
-            .times(self.patch_offset)
+        self.bin_len().times(self.bin_count).times(self.patch_offset)
     }
 
     pub fn patch_end(&self) -> T {
-        self.bin_len()
-            .times(self.bin_count)
-            .times(1 + self.patch_offset)
+        self.bin_len().times(self.bin_count).times(1 + self.patch_offset)
     }
 
     pub fn series_range(&self) -> SeriesRange {
@@ -2560,18 +2540,10 @@ impl PreBinnedPatchCoordEnum {
     pub fn span_desc(&self) -> String {
         match self {
             PreBinnedPatchCoordEnum::Time(k) => {
-                format!(
-                    "pre-W-{}-B-{}",
-                    k.bin_len.0 * k.bin_count / SEC,
-                    k.patch_offset / SEC
-                )
+                format!("pre-W-{}-B-{}", k.bin_len.0 * k.bin_count / SEC, k.patch_offset / SEC)
             }
             PreBinnedPatchCoordEnum::Pulse(k) => {
-                format!(
-                    "pre-W-{}-B-{}",
-                    k.bin_len.0 * k.bin_count / SEC,
-                    k.patch_offset / SEC
-                )
+                format!("pre-W-{}-B-{}", k.bin_len.0 * k.bin_count / SEC, k.patch_offset / SEC)
             }
         }
     }
@@ -2655,8 +2627,7 @@ impl PreBinnedPatchRangeEnum {
                 let patch_off_1 = a.div_v(&patch_len);
                 let patch_off_2 = (b.add(&patch_len).sub_n(1)).div_v(&patch_len);
                 let patch_count = patch_off_2 - patch_off_1;
-                let ret =
-                    T::to_pre_binned_patch_range_enum(&bl, bin_count, patch_off_1, patch_count);
+                let ret = T::to_pre_binned_patch_range_enum(&bl, bin_count, patch_off_1, patch_count);
                 return Ok(ret);
             }
         }
@@ -2666,12 +2637,8 @@ impl PreBinnedPatchRangeEnum {
     /// Cover at least the given range with at least as many as the requested number of bins.
     pub fn covering_range(range: SeriesRange, min_bin_count: u32) -> Result<Self, Error> {
         match range {
-            SeriesRange::TimeRange(k) => {
-                Self::covering_range_ty(TsNano(k.beg), TsNano(k.end), min_bin_count)
-            }
-            SeriesRange::PulseRange(k) => {
-                Self::covering_range_ty(PulseId(k.beg), PulseId(k.end), min_bin_count)
-            }
+            SeriesRange::TimeRange(k) => Self::covering_range_ty(TsNano(k.beg), TsNano(k.end), min_bin_count),
+            SeriesRange::PulseRange(k) => Self::covering_range_ty(PulseId(k.beg), PulseId(k.end), min_bin_count),
         }
     }
 }
@@ -2691,13 +2658,7 @@ impl fmt::Debug for BinnedRange<TsNano> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         let beg = self.bin_len.times(self.bin_off);
         let end = self.bin_len.times(self.bin_off + self.bin_cnt);
-        write!(
-            fmt,
-            "BinnedRange {{ {}, {}, {} }}",
-            beg,
-            end,
-            self.bin_len.to_dt_ms()
-        )
+        write!(fmt, "BinnedRange {{ {}, {}, {} }}", beg, end, self.bin_len.to_dt_ms())
     }
 }
 
@@ -2889,10 +2850,7 @@ impl BinnedRangeEnum {
     /// Cover at least the given range while selecting the bin width which best fits the requested bin width.
     pub fn covering_range_time(range: SeriesRange, bin_len_req: DtMs) -> Result<Self, Error> {
         match range {
-            SeriesRange::TimeRange(k) => Ok(Self::Time(BinnedRange::covering_range_time(
-                k,
-                bin_len_req,
-            )?)),
+            SeriesRange::TimeRange(k) => Ok(Self::Time(BinnedRange::covering_range_time(k, bin_len_req)?)),
             SeriesRange::PulseRange(_) => Err(Error::TimelikeBinWidthImpossibleForPulseRange),
         }
     }
@@ -2900,12 +2858,8 @@ impl BinnedRangeEnum {
     /// Cover at least the given range with at least as many as the requested number of bins.
     pub fn covering_range(range: SeriesRange, min_bin_count: u32) -> Result<Self, Error> {
         match range {
-            SeriesRange::TimeRange(k) => {
-                Self::covering_range_ty(TsNano(k.beg), TsNano(k.end), min_bin_count)
-            }
-            SeriesRange::PulseRange(k) => {
-                Self::covering_range_ty(PulseId(k.beg), PulseId(k.end), min_bin_count)
-            }
+            SeriesRange::TimeRange(k) => Self::covering_range_ty(TsNano(k.beg), TsNano(k.end), min_bin_count),
+            SeriesRange::PulseRange(k) => Self::covering_range_ty(PulseId(k.beg), PulseId(k.end), min_bin_count),
         }
     }
 
@@ -3534,16 +3488,9 @@ impl ChannelSearchQuery {
         let ret = Self {
             backend: pairs.get("backend").map(Into::into),
             name_regex: pairs.get("nameRegex").map_or(String::new(), |k| k.clone()),
-            source_regex: pairs
-                .get("sourceRegex")
-                .map_or(String::new(), |k| k.clone()),
-            description_regex: pairs
-                .get("descriptionRegex")
-                .map_or(String::new(), |k| k.clone()),
-            icase: pairs
-                .get("icase")
-                .map_or(None, |x| x.parse().ok())
-                .unwrap_or(false),
+            source_regex: pairs.get("sourceRegex").map_or(String::new(), |k| k.clone()),
+            description_regex: pairs.get("descriptionRegex").map_or(String::new(), |k| k.clone()),
+            icase: pairs.get("icase").map_or(None, |x| x.parse().ok()).unwrap_or(false),
             kind: SeriesKind::from_pairs(&pairs)?,
             log_level: pairs.get("log_level").map_or(String::new(), String::from),
         };
@@ -3691,10 +3638,7 @@ impl HasTimeout for MapQuery {
 }
 
 pub fn get_url_query_pairs(url: &Url) -> BTreeMap<String, String> {
-    BTreeMap::from_iter(
-        url.query_pairs()
-            .map(|(j, k)| (j.to_string(), k.to_string())),
-    )
+    BTreeMap::from_iter(url.query_pairs().map(|(j, k)| (j.to_string(), k.to_string())))
 }
 
 // Request type of the channel/config api.
@@ -4250,9 +4194,7 @@ pub fn archapp_test_cluster() -> Cluster {
 
 pub fn test_data_base_path_databuffer() -> PathBuf {
     let homedir = std::env::var("HOME").unwrap();
-    let data_base_path = PathBuf::from(homedir)
-        .join("daqbuffer-testdata")
-        .join("databuffer");
+    let data_base_path = PathBuf::from(homedir).join("daqbuffer-testdata").join("databuffer");
     data_base_path
 }
 
@@ -4446,12 +4388,9 @@ mod instant_serde {
     pub fn ser<S: Serializer>(x: &SystemTime, ser: S) -> Result<S::Ok, S::Error> {
         use chrono::LocalResult;
         let dur = x.duration_since(std::time::UNIX_EPOCH).unwrap();
-        let res =
-            chrono::TimeZone::timestamp_opt(&chrono::Utc, dur.as_secs() as i64, dur.subsec_nanos());
+        let res = chrono::TimeZone::timestamp_opt(&chrono::Utc, dur.as_secs() as i64, dur.subsec_nanos());
         match res {
-            LocalResult::None => Err(serde::ser::Error::custom(format!(
-                "Bad local instant conversion"
-            ))),
+            LocalResult::None => Err(serde::ser::Error::custom(format!("Bad local instant conversion"))),
             LocalResult::Single(dt) => {
                 let s = dt.format(DATETIME_FMT_3MS).to_string();
                 ser.serialize_str(&s)
@@ -4548,10 +4487,7 @@ impl StatusBoard {
             let tss = tss;
             let tsm = tss[tss.len() / 3];
             let a = std::mem::replace(&mut self.entries, BTreeMap::new());
-            self.entries = a
-                .into_iter()
-                .filter(|(_k, v)| v.ts_updated >= tsm)
-                .collect();
+            self.entries = a.into_iter().filter(|(_k, v)| v.ts_updated >= tsm).collect();
         }
     }
 
@@ -4650,9 +4586,7 @@ pub fn req_uri_to_url(uri: &Uri) -> Result<Url, UriError> {
             .parse()
             .map_err(|_| UriError::ParseError(uri.clone()))
     } else {
-        uri.to_string()
-            .parse()
-            .map_err(|_| UriError::ParseError(uri.clone()))
+        uri.to_string().parse().map_err(|_| UriError::ParseError(uri.clone()))
     }
 }
 
@@ -4871,11 +4805,7 @@ impl CacheBypass {
     }
 
     pub fn from_bool(v: bool) -> Self {
-        if v {
-            CacheBypass::Bypass
-        } else {
-            CacheBypass::Cache
-        }
+        if v { CacheBypass::Bypass } else { CacheBypass::Cache }
     }
 }
 

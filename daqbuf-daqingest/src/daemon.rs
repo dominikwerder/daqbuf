@@ -946,9 +946,7 @@ impl Daemon {
                 .clone()
                 .take()
                 .ok_or_else(|| Error::with_msg_no_trace("no iqtx available"))?,
-            self.ingest_opts.scylla_config_st().clone(),
-            self.ingest_opts.scylla_config_mt().clone(),
-            self.ingest_opts.scylla_config_lt().clone(),
+            self.ingest_opts.scylla_insert_set_conf_main(),
             self.ingest_opts.postgresql_config().clone(),
         );
         let rres = Arc::new(rres);

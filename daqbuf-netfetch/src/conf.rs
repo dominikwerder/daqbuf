@@ -1,5 +1,6 @@
 use netpod::Database;
 use netpod::log;
+use netpod::ttl::RetentionTime;
 use regex::Regex;
 use scywr::config::ScyllaIngestConfig;
 use serde::Deserialize;
@@ -117,7 +118,7 @@ impl CaIngestOpts {
             .hosts
             .as_ref()
             .map_or(d.as_ref().map_or(Vec::new(), |x| x.hosts.clone()), |x| x.clone());
-        ScyllaIngestConfig::new(hosts, c.keyspace.clone())
+        ScyllaIngestConfig::new(hosts, c.keyspace.clone(), RetentionTime::Short)
     }
 
     pub fn scylla_config_mt(&self) -> ScyllaIngestConfig {
@@ -127,7 +128,7 @@ impl CaIngestOpts {
             .hosts
             .as_ref()
             .map_or(d.as_ref().map_or(Vec::new(), |x| x.hosts.clone()), |x| x.clone());
-        ScyllaIngestConfig::new(hosts, c.keyspace.clone())
+        ScyllaIngestConfig::new(hosts, c.keyspace.clone(), RetentionTime::Medium)
     }
 
     pub fn scylla_config_lt(&self) -> ScyllaIngestConfig {
@@ -137,7 +138,7 @@ impl CaIngestOpts {
             .hosts
             .as_ref()
             .map_or(d.as_ref().map_or(Vec::new(), |x| x.hosts.clone()), |x| x.clone());
-        ScyllaIngestConfig::new(hosts, c.keyspace.clone())
+        ScyllaIngestConfig::new(hosts, c.keyspace.clone(), RetentionTime::Long)
     }
 
     pub fn scylla_config_st_rf1(&self) -> ScyllaIngestConfig {
@@ -147,7 +148,7 @@ impl CaIngestOpts {
             .hosts
             .as_ref()
             .map_or(d.as_ref().map_or(Vec::new(), |x| x.hosts.clone()), |x| x.clone());
-        ScyllaIngestConfig::new(hosts, c.keyspace.clone())
+        ScyllaIngestConfig::new(hosts, c.keyspace.clone(), RetentionTime::Short)
     }
 
     pub fn search(&self) -> &Vec<String> {
@@ -232,25 +233,25 @@ impl ScyllaConfigBlockV2 {
     pub fn scylla_config_st(&self) -> ScyllaIngestConfig {
         let c = &self.scylla_st;
         let hosts = self.fill_hosts_if_empty(c);
-        ScyllaIngestConfig::new(hosts, c.keyspace.clone())
+        ScyllaIngestConfig::new(hosts, c.keyspace.clone(), RetentionTime::Short)
     }
 
     pub fn scylla_config_mt(&self) -> ScyllaIngestConfig {
         let c = &self.scylla_mt;
         let hosts = self.fill_hosts_if_empty(c);
-        ScyllaIngestConfig::new(hosts, c.keyspace.clone())
+        ScyllaIngestConfig::new(hosts, c.keyspace.clone(), RetentionTime::Medium)
     }
 
     pub fn scylla_config_lt(&self) -> ScyllaIngestConfig {
         let c = &self.scylla_lt;
         let hosts = self.fill_hosts_if_empty(c);
-        ScyllaIngestConfig::new(hosts, c.keyspace.clone())
+        ScyllaIngestConfig::new(hosts, c.keyspace.clone(), RetentionTime::Long)
     }
 
     pub fn scylla_config_st_rf1(&self) -> ScyllaIngestConfig {
         let c = &self.scylla_st_rf1;
         let hosts = self.fill_hosts_if_empty(c);
-        ScyllaIngestConfig::new(hosts, c.keyspace.clone())
+        ScyllaIngestConfig::new(hosts, c.keyspace.clone(), RetentionTime::Short)
     }
 
     fn fill_hosts_if_empty(&self, c: &ScyllaRtConf) -> Vec<String> {

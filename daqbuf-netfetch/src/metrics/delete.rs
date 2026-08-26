@@ -121,7 +121,7 @@ async fn delete_try(
     debug_cql!("delete  params  {rt:?}  {series:?}  {beg:?}  {end:?}");
     let beg = st_to_ns(beg)?;
     let end = st_to_ns(end)?;
-    let scyconf = &rres.scyconf_st;
+    let scyconf = &rres.scyconfset.st_rf3();
     let scy = scy_connect(scyconf).await?;
     let qu = {
         let cql = format!(

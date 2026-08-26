@@ -5,10 +5,11 @@ use serde::Deserialize;
 pub struct ScyllaIngestConfig {
     keyspace: String,
     hosts: Vec<String>,
+    rt: RetentionTime,
 }
 
 impl ScyllaIngestConfig {
-    pub fn new<I, H, K1>(hosts: I, ks: K1) -> Self
+    pub fn new<I, H, K1>(hosts: I, ks: K1, rt: RetentionTime) -> Self
     where
         I: IntoIterator<Item = H>,
         H: Into<String>,
@@ -17,6 +18,7 @@ impl ScyllaIngestConfig {
         Self {
             keyspace: ks.into(),
             hosts: hosts.into_iter().map(Into::into).collect(),
+            rt,
         }
     }
 

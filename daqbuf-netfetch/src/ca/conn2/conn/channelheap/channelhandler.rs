@@ -18,6 +18,7 @@ use crate::ca::conn2::locallog;
 use crate::ca::conn2::timeoutable;
 use crate::ca::connset2::connset::channeltrace::ChannelTraceItem;
 use crate::ca::connset2::connset::channeltrace::ChannelTraceItemInner;
+use crate::ca::connset2::connset::channeltrace::ChannelTraceL1Item;
 use crate::ca::progpend::HaveProgressPending;
 use crate::conf::ChannelConfig;
 use crate::futwrap::FutDbg;
@@ -280,6 +281,10 @@ impl ChannelHandler {
 
     pub fn mett_take(&mut self) -> ChannelHandlerMetrics {
         std::mem::replace(&mut self.mett, ChannelHandlerMetrics::new())
+    }
+
+    pub fn channel_config(&self) -> &ChannelConfig {
+        &self.conf
     }
 
     pub fn cid(&self) -> Cid {

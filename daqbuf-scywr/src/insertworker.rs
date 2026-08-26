@@ -116,25 +116,34 @@ pub async fn spawn_scylla_insert_workers(
         item_inp
     };
     let mut jhs = Vec::new();
-    let mut data_stores = Vec::new();
-    for _ in 0..insert_scylla_sessions {
-        let data_store = Arc::new(DataStore::new(&scyconf, rett.clone()).await?);
-        data_stores.push(data_store);
-    }
-    for worker_ix in 0..insert_worker_count {
-        let data_store = data_stores[worker_ix * data_stores.len() / insert_worker_count].clone();
-        let wid = InsertWorkerId::new(rett.clone(), scyconf.clone(), worker_ix);
-        let jh = tokio::spawn(worker_streamed(
-            worker_ix,
-            insert_worker_concurrency,
-            item_inp.clone(),
-            insert_worker_opts.clone(),
-            Some(data_store),
-            ignore_writes,
-            tx.clone(),
-            wid,
-        ));
+    if scyconf.keyspace() == "none" {
+        let jh = tokio::spawn(async move {
+            let _tx = tx;
+            while let Ok(_) = item_inp.recv().await {}
+            Ok(())
+        });
         jhs.push(jh);
+    } else {
+        let mut data_stores = Vec::new();
+        for _ in 0..insert_scylla_sessions {
+            let data_store = Arc::new(DataStore::new(&scyconf, rett.clone()).await?);
+            data_stores.push(data_store);
+        }
+        for worker_ix in 0..insert_worker_count {
+            let data_store = data_stores[worker_ix * data_stores.len() / insert_worker_count].clone();
+            let wid = InsertWorkerId::new(rett.clone(), scyconf.clone(), worker_ix);
+            let jh = tokio::spawn(worker_streamed(
+                worker_ix,
+                insert_worker_concurrency,
+                item_inp.clone(),
+                insert_worker_opts.clone(),
+                Some(data_store),
+                ignore_writes,
+                tx.clone(),
+                wid,
+            ));
+            jhs.push(jh);
+        }
     }
     Ok(jhs)
 }
@@ -151,7 +160,7 @@ pub async fn spawn_scylla_insert_workers_dummy(
         let data_store = None;
         let wid = InsertWorkerId::new(
             RetentionTime::Short,
-            ScyllaIngestConfig::new(["dummy"], "dummy"),
+            ScyllaIngestConfig::new(["dummy"], "dummy", RetentionTime::Short),
             worker_ix,
         );
         let jh = tokio::spawn(worker_streamed(

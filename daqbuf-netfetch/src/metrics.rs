@@ -12,6 +12,7 @@ use crate::ca::connset::ChannelStatusesResponse;
 use crate::ca::connset::ConnSetCmd;
 use crate::ca::statemap::ChannelState;
 use crate::conf::ChannelConfig;
+use crate::conf::ScyllaInsertsetConf;
 use crate::daemon_common::ChannelName;
 use crate::daemon_common::DaemonEvent;
 use crate::metrics::types::MetricsPrometheusShort;
@@ -425,9 +426,7 @@ pub struct RoutesResources {
     backend: String,
     worker_tx: Sender<ChannelInfoQuery>,
     iqtx: InsertQueuesTx,
-    scyconf_st: ScyllaIngestConfig,
-    scyconf_mt: ScyllaIngestConfig,
-    scyconf_lt: ScyllaIngestConfig,
+    scyconfset: ScyllaInsertsetConf,
     pgconf: netpod::Database,
 }
 
@@ -436,18 +435,14 @@ impl RoutesResources {
         backend: String,
         worker_tx: Sender<ChannelInfoQuery>,
         iqtx: InsertQueuesTx,
-        scyconf_st: ScyllaIngestConfig,
-        scyconf_mt: ScyllaIngestConfig,
-        scyconf_lt: ScyllaIngestConfig,
+        scyconfset: ScyllaInsertsetConf,
         pgconf: netpod::Database,
     ) -> Self {
         Self {
             backend,
             worker_tx,
             iqtx,
-            scyconf_st,
-            scyconf_mt,
-            scyconf_lt,
+            scyconfset,
             pgconf,
         }
     }

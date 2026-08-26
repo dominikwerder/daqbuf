@@ -241,7 +241,8 @@ fn channel_details_v00(
     }
     if let Ok(cmd2) = serde_json::from_str::<Cmd>(&cmd) {
         let _ = &cmd2.tmp;
-        info!("{cmd2:?}");
+        // info!("{cmd2:?}");
+        let channel_trace_dump = self1.chtrace.dump();
         let comms = self1
             .ca_conns
             .iter()
@@ -259,6 +260,9 @@ fn channel_details_v00(
             let x = sss.into_iter().collect::<BTreeMap<_, _>>();
             let x = json!({
                 "results": x,
+                "channel_trace": {
+                    "dump": channel_trace_dump,
+                },
             });
             let _ = tx.try_send(x);
             Ok(())
