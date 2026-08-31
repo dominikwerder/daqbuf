@@ -28,46 +28,41 @@ async fn run_batcher<T>(rx: Receiver<T>, batch_tx: Sender<Vec<T>>, batch_limit: 
     loop {
         use tokio::time::error::Elapsed;
         if do_emit {
-            do_emit = false;
             let batch = std::mem::replace(&mut all, Vec::new());
-            match tokio::time::timeout(Duration::from_millis(4000), batch_tx.send(batch)).await {
-                Ok(Ok(())) => {}
-                Ok(Err(e)) => {
-                    log::error!("can not send batch");
-                    all = e.into_inner();
+            match batch_tx.send(batch).await {
+                Ok(()) => {
+                    do_emit = false;
                 }
                 Err(_) => {
-                    log::error!("send timeout");
-                }
-            }
-        }
-        match tokio::time::timeout(timeout, rx.recv()).await {
-            Ok(k) => match k {
-                Ok(item) => {
-                    all.push(item);
-                    if all.len() >= batch_limit {
-                        do_emit = true;
-                    }
-                }
-                Err(_) => {
-                    let batch = std::mem::replace(&mut all, Vec::new());
-                    match tokio::time::timeout(Duration::from_millis(4000), batch_tx.send(batch)).await {
-                        Ok(Ok(())) => {}
-                        Ok(Err(_)) => {
-                            log::error!("can not send batch");
-                        }
-                        Err(_) => {
-                            log::error!("send timeout");
-                        }
-                    }
+                    log::error!("batch send error, channel closed");
                     break;
                 }
-            },
-            Err(e) => {
-                let _: Elapsed = e;
-                // trace!("--------------------------    batcher timeout  rx len {}", rx.len());
-                if all.len() > 0 {
-                    do_emit = true;
+            }
+        } else {
+            match tokio::time::timeout(timeout, rx.recv()).await {
+                Ok(k) => match k {
+                    Ok(item) => {
+                        all.push(item);
+                        if all.len() >= batch_limit {
+                            do_emit = true;
+                        }
+                    }
+                    Err(_) => {
+                        let batch = std::mem::replace(&mut all, Vec::new());
+                        match batch_tx.send(batch).await {
+                            Ok(()) => {}
+                            Err(_) => {
+                                log::error!("can not send batch");
+                            }
+                        }
+                        break;
+                    }
+                },
+                Err(e) => {
+                    let _: Elapsed = e;
+                    if all.len() > 0 {
+                        do_emit = true;
+                    }
                 }
             }
         }
