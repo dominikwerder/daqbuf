@@ -12,6 +12,7 @@ use futures::Stream;
 use futures::TryFutureExt;
 use netpod::ScalarType;
 use netpod::Shape;
+use serde::Serialize;
 use std::collections::VecDeque;
 use std::pin::Pin;
 use std::task::Context;
@@ -64,9 +65,10 @@ pub enum CreatingItem {
 
 #[derive(Debug)]
 enum State {
-    CreateChanSend(VecDeque<CaMsg>, FutDbg<()>),
-    CreateChanRecv(FutDbg<()>),
+    CreateChanSend(Instant, VecDeque<CaMsg>, FutDbg<()>),
+    CreateChanRecv(Instant, FutDbg<()>),
     SeriesIdRecv(
+        Instant,
         FutDbg<(
             Result<Result<dbpg::seriesbychannel::ChannelInfoResult, dbpg::seriesbychannel::Error>, Error>,
             Sid,
@@ -74,9 +76,28 @@ enum State {
             Shape,
             CaDbrTy,
         )>,
-        FutDbg<()>,
     ),
-    Done,
+    Done(Instant),
+}
+
+#[derive(Debug, Serialize)]
+#[serde(tag = "type")]
+enum StateSerde {
+    CreateChanSend(Duration),
+    CreateChanRecv(Duration),
+    SeriesIdRecv(Duration),
+    Done(Duration),
+}
+
+impl From<&State> for StateSerde {
+    fn from(value: &State) -> Self {
+        match value {
+            State::CreateChanSend(ts, _, _) => StateSerde::CreateChanSend(ts.elapsed()),
+            State::CreateChanRecv(ts, _) => StateSerde::CreateChanRecv(ts.elapsed()),
+            State::SeriesIdRecv(ts, _) => StateSerde::SeriesIdRecv(ts.elapsed()),
+            State::Done(ts) => StateSerde::Done(ts.elapsed()),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -108,7 +129,7 @@ impl Creating {
             cid,
             name,
             backend,
-            state: State::CreateChanSend(msgs, to.box2()),
+            state: State::CreateChanSend(tsnow, msgs, to.box2()),
             removing: false,
             inp_buf: VecDeque::with_capacity(16),
             inp_done: false,
@@ -164,11 +185,12 @@ impl Stream for Creating {
         loop {
             let mut hpp = HaveProgressPending::new();
             let self2 = self.as_mut().get_mut();
+            let tsnow = Instant::now();
             match &mut self2.state {
-                State::CreateChanSend(msgs, to) => {
+                State::CreateChanSend(_ts, msgs, to) => {
                     match to.poll_unpin(cx) {
                         Ready(()) => {
-                            self2.state = State::Done;
+                            self2.state = State::Done(tsnow);
                             break Ready(Some(Err(Error::TimeoutCreateChanSend)));
                         }
                         Pending => {
@@ -181,13 +203,13 @@ impl Stream for Creating {
                     } else {
                         hpp.mark_progress();
                         let to = std::mem::replace(to, async {}.box2());
-                        self2.state = State::CreateChanRecv(to);
+                        self2.state = State::CreateChanRecv(tsnow, to);
                     }
                 }
-                State::CreateChanRecv(to) => {
+                State::CreateChanRecv(_ts, to) => {
                     match to.poll_unpin(cx) {
                         Ready(()) => {
-                            self2.state = State::Done;
+                            self2.state = State::Done(tsnow);
                             break Ready(Some(Err(Error::TimeoutCreateChanRecv)));
                         }
                         Pending => {
@@ -249,7 +271,7 @@ impl Stream for Creating {
                                     let chi = rx.recv().map_err(|_| Error::RecvChannelInfoResult).await;
                                     (chi, sid, scalar_type, shape, ca_dbr_type)
                                 };
-                                self.state = State::SeriesIdRecv(fut.box2(), to);
+                                self.state = State::SeriesIdRecv(tsnow, fut.box2());
                                 let item = CreatingItem::ChannelInfoQuery(item);
                                 trace3!("--- EMIT --- {item:?}");
                                 break Ready(Some(Ok(item)));
@@ -273,28 +295,18 @@ impl Stream for Creating {
                     } else if self.inp_done {
                         // TODO status event
                         hpp.mark_progress();
-                        self.state = State::Done;
+                        self.state = State::Done(tsnow);
                     } else {
                         hpp.mark_pending();
                     }
                 }
-                State::SeriesIdRecv(rx, to) => {
+                State::SeriesIdRecv(ts, rx) => {
                     trace3!("State::SeriesIdRecv  polling");
-                    match to.poll_unpin(cx) {
-                        Ready(()) => {
-                            hpp.mark_progress();
-                            self2.state = State::Done;
-                            break Ready(Some(Err(Error::TimeoutSeriesIdRecv)));
-                        }
-                        Pending => {
-                            hpp.mark_pending();
-                        }
-                    }
                     match rx.poll_unpin(cx) {
                         Ready((x, sid, scalar_type, shape, ca_dbr_type)) => {
                             hpp.mark_progress();
                             trace!("received channel info  {scalar_type}  {shape}  {x:?}");
-                            self2.state = State::Done;
+                            self2.state = State::Done(tsnow);
                             match x {
                                 Ok(x) => match x {
                                     Ok(x) => {
@@ -302,12 +314,12 @@ impl Stream for Creating {
                                         break Ready(Some(Ok(item)));
                                     }
                                     Err(e) => {
-                                        self2.state = State::Done;
+                                        self2.state = State::Done(tsnow);
                                         break Ready(Some(Err(e.into())));
                                     }
                                 },
                                 Err(e) => {
-                                    self2.state = State::Done;
+                                    self2.state = State::Done(tsnow);
                                     break Ready(Some(Err(e)));
                                 }
                             }
@@ -317,7 +329,7 @@ impl Stream for Creating {
                         }
                     }
                 }
-                State::Done => break Ready(Some(Err(Error::Logic))),
+                State::Done(_ts) => break Ready(Some(Err(Error::Logic))),
             }
             break if hpp.have_progress() {
                 trace4!("HPP:Progress");

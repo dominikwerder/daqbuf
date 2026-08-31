@@ -250,7 +250,7 @@ impl ChannelHandler {
             _ => json!({
                 "state": {
                     "type": "ChannelHandler",
-                    "state": format!("{:?}", self.state),
+                    "state_dbg": format!("{:?}", self.state),
                     "config": serde_json::to_value(&self.conf).unwrap(),
                     "enum_variants": self.enum_variants,
                 },

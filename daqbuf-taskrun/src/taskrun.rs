@@ -159,7 +159,7 @@ fn tracing_init_inner(mode: TracingMode) -> Result<(), Error> {
     use tracing_subscriber::Layer;
     let fmtstr = "[year]-[month]-[day]T[hour]:[minute]:[second].[subsecond digits:3]Z";
     let timer = tracing_subscriber::fmt::time::UtcTime::new(
-        time::format_description::parse(fmtstr).map_err(|e| format!("{e}"))?,
+        time::format_description::parse_borrowed::<3>(fmtstr).map_err(|e| format!("{e}"))?,
     );
     if let TracingMode::Console = mode {
         // Only async console

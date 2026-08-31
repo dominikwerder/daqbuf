@@ -176,7 +176,6 @@ use std::collections::VecDeque;
 use std::fmt;
 use std::iter::FromIterator;
 use std::net::SocketAddr;
-use std::ops::Deref;
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::str::FromStr;
@@ -1108,7 +1107,7 @@ cluster:
     name: some
   nodes:
 "###;
-    let cfg = serde_yaml::from_slice::<NodeConfig>(cfg.as_bytes()).unwrap();
+    let _cfg = serde_yaml::from_slice::<NodeConfig>(cfg.as_bytes()).unwrap();
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -4632,6 +4631,7 @@ mod serde_UseScylla6Workarounds {
     use serde::Deserializer;
     use serde::Serializer;
 
+    #[allow(unused)]
     pub fn serialize<S>(x: &Option<UseScylla6Workarounds>, ser: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
@@ -4661,6 +4661,7 @@ mod serde_UseScylla6Workarounds {
         }
     }
 
+    #[allow(unused)]
     pub fn deserialize<'de, D>(de: D) -> Result<Option<UseScylla6Workarounds>, D::Error>
     where
         D: Deserializer<'de>,

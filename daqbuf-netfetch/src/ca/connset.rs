@@ -345,6 +345,10 @@ impl CanSendChannelInfoResult for SeriesLookupSender {
         let fut = async move { tx.send(item.map_err(Into::into)).await.map_err(|_| ()) };
         Box::pin(fut)
     }
+
+    fn is_closed(&self) -> bool {
+        self.tx.is_closed()
+    }
 }
 
 struct StateTransRes<'a> {

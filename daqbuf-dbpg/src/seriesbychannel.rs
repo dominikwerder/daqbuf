@@ -55,6 +55,7 @@ pub type BoxedSend = Pin<Box<dyn Future<Output = Result<(), ()>> + Send>>;
 
 pub trait CanSendChannelInfoResult: Sync {
     fn make_send(&self, item: Result<ChannelInfoResult, Error>) -> BoxedSend;
+    fn is_closed(&self) -> bool;
 }
 
 impl CanSendChannelInfoResult for async_channel::Sender<Result<ChannelInfoResult, Error>> {
@@ -62,6 +63,10 @@ impl CanSendChannelInfoResult for async_channel::Sender<Result<ChannelInfoResult
         let tx = self.clone();
         let fut = async move { tx.send(item).map_err(|_| ()).await };
         Box::pin(fut)
+    }
+
+    fn is_closed(&self) -> bool {
+        self.is_closed()
     }
 }
 
@@ -239,6 +244,18 @@ impl Worker {
             // TODO
             // stats.recv_batch().inc();
             // stats.recv_items().add(batch.len() as _);
+            let mut n_closed: u32 = 0;
+            let batch: Vec<_> = batch
+                .into_iter()
+                .filter(|x| {
+                    if x.tx.is_closed() {
+                        n_closed += 1;
+                        false
+                    } else {
+                        true
+                    }
+                })
+                .collect();
             for x in &batch {
                 trace2!(
                     "search for {}  {}  {:?}  {:?}",
@@ -248,31 +265,33 @@ impl Worker {
                     x.shape
                 );
             }
-            self.pg.execute("begin", &[]).await?;
-            match self.handle_batch::<FR>(batch).await {
-                Ok(()) => {
-                    let ts1 = Instant::now();
-                    match self.pg.execute("commit", &[]).await {
-                        Ok(n) => {
-                            let dt = ts1.elapsed();
-                            // TODO
-                            // stats.commit_duration_ms().ingest((1e3 * dt.as_secs_f32()) as u32);
-                            if dt > Duration::from_millis(40) {
-                                debug!("commit {} {:.0} ms", n, dt.as_secs_f32());
+            if batch.len() != 0 {
+                self.pg.execute("begin", &[]).await?;
+                match self.handle_batch::<FR>(batch).await {
+                    Ok(()) => {
+                        let ts1 = Instant::now();
+                        match self.pg.execute("commit", &[]).await {
+                            Ok(n) => {
+                                let dt = ts1.elapsed();
+                                // TODO
+                                // stats.commit_duration_ms().ingest((1e3 * dt.as_secs_f32()) as u32);
+                                if dt > Duration::from_millis(40) {
+                                    debug!("commit {} {:.0} ms", n, dt.as_secs_f32());
+                                }
                             }
-                        }
-                        Err(e) => {
-                            warn!("commit error {}", e);
-                            self.pg.execute("rollback", &[]).await?;
-                            tokio::time::sleep(Duration::from_millis(1000)).await;
-                        }
-                    };
+                            Err(e) => {
+                                warn!("commit error {}", e);
+                                self.pg.execute("rollback", &[]).await?;
+                                tokio::time::sleep(Duration::from_millis(1000)).await;
+                            }
+                        };
+                    }
+                    Err(e) => {
+                        error!("transaction error {}", e);
+                        self.pg.execute("rollback", &[]).await?;
+                    }
                 }
-                Err(e) => {
-                    error!("transaction error {}", e);
-                    self.pg.execute("rollback", &[]).await?;
-                }
-            };
+            }
         }
         trace1!("Worker2 done");
         Ok(())
