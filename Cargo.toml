@@ -12,6 +12,7 @@ members = [
     "daqbuf-series",
     "daqbuf-query",
     "daqbuf-serde-helper",
+    "daqbuf-serde-helper-derive",
     "daqbuf-streams",
     "mettrics-macros",
     "mettrics",

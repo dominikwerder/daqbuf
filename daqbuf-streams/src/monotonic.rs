@@ -70,10 +70,7 @@ where
                                     if let Some(t1) = x.ts_min() {
                                         if t1 < self.tmax {
                                             self.buf = Some(sitem2_data(x));
-                                            let msg = format!(
-                                                "{}  bad order  {}  {}",
-                                                self.name, self.tmax, t1
-                                            );
+                                            let msg = format!("{}  bad order  {}  {}", self.name, self.tmax, t1);
                                             let x = LogItem::info(msg);
                                             Ready(Some(sitem2_log(x)))
                                         } else {
@@ -84,10 +81,8 @@ where
                                                 Ready(Some(Ok(x)))
                                             } else {
                                                 self.buf = Some(sitem2_data(x));
-                                                let msg = format!(
-                                                    "{}  min but no max  {}  {}",
-                                                    self.name, self.tmax, t1
-                                                );
+                                                let msg =
+                                                    format!("{}  min but no max  {}  {}", self.name, self.tmax, t1);
                                                 let x = LogItem::info(msg);
                                                 Ready(Some(sitem2_log(x)))
                                             }
@@ -99,9 +94,9 @@ where
                                     }
                                 }
                             }
-                            RangeCompletableItem::RangeComplete => Ready(Some(Ok(
-                                StreamItem::DataItem(RangeCompletableItem::RangeComplete),
-                            ))),
+                            RangeCompletableItem::RangeComplete => {
+                                Ready(Some(Ok(StreamItem::DataItem(RangeCompletableItem::RangeComplete))))
+                            }
                         },
                         StreamItem::Log(x) => Ready(Some(Ok(StreamItem::Log(x)))),
                         StreamItem::Stats(x) => Ready(Some(Ok(StreamItem::Stats(x)))),

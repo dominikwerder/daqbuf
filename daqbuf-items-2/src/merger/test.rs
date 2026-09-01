@@ -32,10 +32,7 @@ async fn merger_00_inner() {
     evs0.push_back(TsNano::from_ns(9), 9.0);
     let mut evs1 = ContainerEvents::<f32>::new();
     evs1.push_back(TsNano::from_ns(11), 11.0);
-    let inp0: MergeInp<_> = Box::pin(futures_util::stream::iter([
-        sitem_data(evs0),
-        sitem_data(evs1),
-    ]));
+    let inp0: MergeInp<_> = Box::pin(futures_util::stream::iter([sitem_data(evs0), sitem_data(evs1)]));
     let inps = vec![inp0];
     let mut merger = Merger::new(inps, None);
     while let Some(x) = merger.next().await {
@@ -142,9 +139,7 @@ where
             conts.push(sitem_data(c));
         }
         let st = futures_util::stream::iter(conts);
-        streams.push(
-            Box::pin(st) as Pin<Box<dyn Stream<Item = Sitemty<ContainerEvents<f32>>> + Send>>
-        );
+        streams.push(Box::pin(st) as Pin<Box<dyn Stream<Item = Sitemty<ContainerEvents<f32>>> + Send>>);
     }
     streams
 }
@@ -187,12 +182,7 @@ async fn merger_overlap_00_inner() {
     let pattern = [
         &[a!([400, 405, 408, 410, 414]), a!([416, 417, 418, 419])][..],
         &[a!([402]), a!([404, 406, 411, 412, 413])][..],
-        &[
-            a!([401]),
-            a!([403]),
-            a!([406, 407, 409]),
-            a!([413, 414, 415]),
-        ][..],
+        &[a!([401]), a!([403]), a!([406, 407, 409]), a!([413, 414, 415])][..],
     ];
     let inps = make_streams_from_pattern(pattern);
     let exp_00 = make_container(400, 1, 20);

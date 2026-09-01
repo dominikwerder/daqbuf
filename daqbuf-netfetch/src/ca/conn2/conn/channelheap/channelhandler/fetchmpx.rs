@@ -21,6 +21,7 @@ use netpod::ScalarType;
 use netpod::Shape;
 use netpod::channelstatus::ChannelStatus;
 use serde::Deserialize;
+use serde_helper::ToSerde;
 use series::SeriesId;
 use stats::mett::ChannelHandlerMetrics;
 use std::collections::VecDeque;
@@ -103,7 +104,8 @@ pub enum FetchmpxItem {
     ChannelEventValue(ChannelEventValue),
 }
 
-#[derive(Debug)]
+#[derive(Debug, ToSerde)]
+#[to_serde(vis = "pub", serde(tag = "ty", content = "co"))]
 enum State {
     Normal,
     Closing1,
@@ -122,21 +124,37 @@ impl State {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, ToSerde)]
+#[to_serde(vis = "pub")]
 pub struct Fetchmpx {
+    #[to_serde(nest)]
     state: State,
+    /// Set by `transition_state`, reported as time-in-state.
+    #[to_serde(elapsed)]
+    ts_state_enter: Instant,
     series: SeriesId,
     cid: Cid,
     sid: Sid,
+    #[to_serde(nest)]
     polling: FetchPolling,
+    #[to_serde(nest)]
     monitoring: FetchMonitoring,
+    #[to_serde(len)]
     inp_buf: VecDeque<ProtoRxItem>,
     inp_done: bool,
+    #[to_serde(skip)]
     mett: ChannelHandlerMetrics,
+    #[to_serde(skip)]
     llog: locallog::LocalLog,
 }
 
 impl Fetchmpx {
+    /// Single choke point for state changes so the time-in-state stamp can not drift.
+    fn transition_state(&mut self, new: State) {
+        self.state = new;
+        self.ts_state_enter = Instant::now();
+    }
+
     pub fn new(
         series: SeriesId,
         cid: Cid,
@@ -168,6 +186,7 @@ impl Fetchmpx {
         }
         Self {
             state: State::Normal,
+            ts_state_enter: Instant::now(),
             series,
             cid,
             sid,
@@ -190,7 +209,7 @@ impl Fetchmpx {
                 );
                 self.monitoring.trigger_closing(reason.clone());
                 self.polling.trigger_closing(reason);
-                self.state = State::Closing1;
+                self.transition_state(State::Closing1);
             }
             State::Closing1 => {}
             State::Done => {}
@@ -366,7 +385,7 @@ impl Stream for Fetchmpx {
                                 },
                                 Err(e) => {
                                     error!("{selfname}  TODO handle error {e}");
-                                    self.state = State::Done;
+                                    self.transition_state(State::Done);
                                 }
                             }
                         }
@@ -404,7 +423,7 @@ impl Stream for Fetchmpx {
                                 },
                                 Err(e) => {
                                     error!("{selfname}  {e}");
-                                    self.state = State::Done;
+                                    self.transition_state(State::Done);
                                     break Ready(Some(Err(e.into())));
                                 }
                             }
@@ -445,7 +464,7 @@ impl Stream for Fetchmpx {
                                 }
                                 Err(e) => {
                                     error!("{selfname}  {e}");
-                                    self.state = State::Done;
+                                    self.transition_state(State::Done);
                                     break Ready(Some(Err(e.into())));
                                 }
                             }
@@ -469,7 +488,7 @@ impl Stream for Fetchmpx {
                                 },
                                 Err(e) => {
                                     error!("{selfname}  TODO handle error {e}");
-                                    self.state = State::Done;
+                                    self.transition_state(State::Done);
                                 }
                             }
                         }
@@ -508,7 +527,7 @@ impl Stream for Fetchmpx {
                                 },
                                 Err(e) => {
                                     error!("{selfname}  {e}");
-                                    self.state = State::Done;
+                                    self.transition_state(State::Done);
                                     break Ready(Some(Err(e.into())));
                                 }
                             }
@@ -549,7 +568,7 @@ impl Stream for Fetchmpx {
                                 }
                                 Err(e) => {
                                     error!("{selfname}  {e}");
-                                    self.state = State::Done;
+                                    self.transition_state(State::Done);
                                     break Ready(Some(Err(e.into())));
                                 }
                             }
@@ -562,11 +581,11 @@ impl Stream for Fetchmpx {
                     if hpp.have_progress() || hpp.have_pending() {
                     } else {
                         todo_shutdown!("NOTE Closing1 no HPP go to Done");
-                        self.state = State::Done;
+                        self.transition_state(State::Done);
                     }
                 }
                 State::Done => {
-                    self.state = State::Done2;
+                    self.transition_state(State::Done2);
                 }
                 State::Done2 => {
                     error!("{selfname}  polled after done");

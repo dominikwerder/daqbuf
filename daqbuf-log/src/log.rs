@@ -16,8 +16,7 @@ struct FmtWriter<'a, 'b>(&'a mut fmt::Formatter<'b>);
 
 impl io::Write for FmtWriter<'_, '_> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        let s =
-            std::str::from_utf8(buf).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        let s = std::str::from_utf8(buf).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
         self.0
             .write_str(s)
             .map_err(|_| io::Error::new(io::ErrorKind::Other, "fmt error"))?;
@@ -39,12 +38,9 @@ impl TsNow {
 
 impl fmt::Display for TsNow {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let f2 = time::macros::format_description!(
-            "[year]-[month]-[day] [hour]:[minute]:[second].[subsecond digits:3]"
-        );
-        self.0
-            .format_into(&mut FmtWriter(fmt), f2)
-            .map_err(|_| fmt::Error)?;
+        let f2 =
+            time::macros::format_description!("[year]-[month]-[day] [hour]:[minute]:[second].[subsecond digits:3]");
+        self.0.format_into(&mut FmtWriter(fmt), f2).map_err(|_| fmt::Error)?;
         Ok(())
     }
 }
@@ -52,8 +48,7 @@ impl fmt::Display for TsNow {
 #[allow(unused)]
 #[inline(always)]
 pub fn is_log_direct() -> bool {
-    static ONCE: LazyLock<bool> =
-        LazyLock::new(|| std::env::var("LOG_DIRECT").map_or(false, |x| x == "1"));
+    static ONCE: LazyLock<bool> = LazyLock::new(|| std::env::var("LOG_DIRECT").map_or(false, |x| x == "1"));
     *ONCE
 }
 

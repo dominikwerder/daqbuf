@@ -1,6 +1,6 @@
+use crate::StatsChannel;
 use crate::read;
 use crate::seek;
-use crate::StatsChannel;
 use daqbuf_err as err;
 use err::Error;
 use netpod::log::*;

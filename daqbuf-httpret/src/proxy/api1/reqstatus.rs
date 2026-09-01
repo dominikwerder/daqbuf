@@ -1,21 +1,21 @@
 use crate::bodystream::response;
 use crate::err::Error;
 use crate::requests::accepts_json_or_all;
-use http::request::Parts;
 use http::Method;
 use http::StatusCode;
+use http::request::Parts;
+use httpclient::Requ;
+use httpclient::StreamResponse;
 use httpclient::body_bytes;
 use httpclient::body_empty;
 use httpclient::body_string;
 use httpclient::read_body_bytes;
-use httpclient::Requ;
-use httpclient::StreamResponse;
+use netpod::APP_JSON;
+use netpod::ProxyConfig;
+use netpod::ReqCtx;
 use netpod::get_url_query_pairs;
 use netpod::log::*;
 use netpod::req_uri_to_url;
-use netpod::ProxyConfig;
-use netpod::ReqCtx;
-use netpod::APP_JSON;
 
 pub struct RequestStatusHandler {}
 

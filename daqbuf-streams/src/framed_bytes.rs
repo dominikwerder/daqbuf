@@ -68,8 +68,7 @@ where
         assert!(self.buf.len() <= self.buf.capacity());
         if self.buf.capacity() < frame_len {
             let add_max = BUF_MAX - self.buf.capacity().min(BUF_MAX);
-            let nadd =
-                ((frame_len.min(FRAME_PAYLOAD_MAX as usize) - self.buf.len()) * 2).min(add_max);
+            let nadd = ((frame_len.min(FRAME_PAYLOAD_MAX as usize) - self.buf.len()) * 2).min(add_max);
             self.buf.reserve(nadd);
         }
         let adv = (frame_len + 7) / 8 * 8;
@@ -111,10 +110,7 @@ where
                         },
                         Ready(None) => {
                             if self.buf.len() > 0 {
-                                warn!(
-                                    "remaining bytes in input buffer, input closed  len {}",
-                                    self.buf.len()
-                                );
+                                warn!("remaining bytes in input buffer, input closed  len {}", self.buf.len());
                             }
                             self.state = State::Done;
                             Ready(None)

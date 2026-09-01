@@ -1,9 +1,9 @@
 use arrayref::array_ref;
 use daqbuf_err as err;
 use err::Error;
+use netpod::TsNano;
 use netpod::log::*;
 use netpod::range::evrange::NanoRange;
-use netpod::TsNano;
 use std::mem::size_of;
 use taskrun::tokio;
 use tokio::fs::File;

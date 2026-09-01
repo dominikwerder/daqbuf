@@ -1,7 +1,7 @@
 use bytes::Bytes;
 use h3::server::RequestStream;
-use h3_quinn::quinn::crypto::rustls::QuicServerConfig;
 use h3_quinn::BidiStream;
+use h3_quinn::quinn::crypto::rustls::QuicServerConfig;
 use http::Request;
 use http::StatusCode;
 use netpod::log;

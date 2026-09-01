@@ -389,11 +389,7 @@ where
                 }
             }
         }
-        if has_pending {
-            Ok(Pending)
-        } else {
-            Ok(Ready(()))
-        }
+        if has_pending { Ok(Pending) } else { Ok(Ready(())) }
     }
 
     fn poll3(mut self: Pin<&mut Self>, cx: &mut Context) -> ControlFlow<Poll<Option<Error>>> {
@@ -410,12 +406,7 @@ where
             .zip(self.items.iter())
             .filter(|(a, b)| a.is_some() && b.is_none())
             .count();
-        trace3!(
-            "ninps {}  nitems {}  nitemsmissing {}",
-            ninps,
-            nitems,
-            nitemsmissing
-        );
+        trace3!("ninps {}  nitems {}  nitemsmissing {}", ninps, nitems, nitemsmissing);
         if nitemsmissing != 0 {
             let e = Error::NoPendingButMissing;
             return Break(Ready(Some(e)));
@@ -428,20 +419,12 @@ where
             }
         }
         if let Some(out) = self.out.as_ref() {
-            if out.len() >= self.out_max_len
-                || out.byte_estimate() >= OUT_MAX_BYTES
-                || self.do_clear_out
-                || last_emit
-            {
+            if out.len() >= self.out_max_len || out.byte_estimate() >= OUT_MAX_BYTES || self.do_clear_out || last_emit {
                 if out.len() > 2 * self.out_max_len {
                     debug_inp!("over length item  {} vs {}", out.len(), self.out_max_len);
                 }
                 if out.byte_estimate() > 2 * OUT_MAX_BYTES {
-                    debug_inp!(
-                        "over weight item  {} vs {}",
-                        out.byte_estimate(),
-                        OUT_MAX_BYTES
-                    );
+                    debug_inp!("over weight item  {} vs {}", out.byte_estimate(), OUT_MAX_BYTES);
                 }
                 trace3!("decide to output");
                 self.do_clear_out = false;
@@ -456,11 +439,7 @@ where
             }
         } else {
             trace4!("no output candidate");
-            if last_emit {
-                Break(Ready(None))
-            } else {
-                Continue(())
-            }
+            if last_emit { Break(Ready(None)) } else { Continue(()) }
         }
     }
 

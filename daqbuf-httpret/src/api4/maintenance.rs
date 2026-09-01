@@ -1,20 +1,20 @@
+use crate::RetrievalError;
 use crate::bodystream::response;
 use crate::err::Error;
-use crate::RetrievalError;
 use bytes::Bytes;
 use futures_util::StreamExt;
 use http::Method;
 use http::StatusCode;
+use httpclient::Requ;
+use httpclient::StreamResponse;
 use httpclient::body_empty;
 use httpclient::body_stream;
 use httpclient::body_string;
-use httpclient::Requ;
-use httpclient::StreamResponse;
-use netpod::log;
-use netpod::NodeConfigCached;
-use netpod::ReqCtx;
 use netpod::APP_JSON;
 use netpod::APP_JSON_LINES;
+use netpod::NodeConfigCached;
+use netpod::ReqCtx;
+use netpod::log;
 
 macro_rules! info { ($($arg:tt)*) => ( if true { log::info!($($arg)*); } ); }
 

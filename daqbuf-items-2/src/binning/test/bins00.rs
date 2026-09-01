@@ -48,8 +48,6 @@ fn test_bin_events_f32_simple_01() -> Result<(), Error> {
         // exp_avgs(&bins, "2.30  1.5333")?;
         Ok(())
     };
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .build()
-        .unwrap();
+    let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
     rt.block_on(fut)
 }

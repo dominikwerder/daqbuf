@@ -7,12 +7,12 @@ use crate::binning::container_events::ContainerEvents;
 use crate::binning::timeweight::timeweight_events::BinnedEventsTimeweight;
 use crate::testgen::events_gen::new_events_gen_dim1_f32_v00;
 use futures_util::StreamExt;
-use netpod::log::*;
-use netpod::range::evrange::NanoRange;
 use netpod::BinnedRange;
 use netpod::DtMs;
 use netpod::EnumVariant;
 use netpod::TsNano;
+use netpod::log::*;
+use netpod::range::evrange::NanoRange;
 use std::task::Context;
 
 autoerr::create_error_v1!(

@@ -80,13 +80,10 @@ impl Container<EnumVariant> for EnumVariantContainer {
     }
 
     fn iter_ty_1(&self) -> impl Iterator<Item = <EnumVariant as EventValueType>::IterTy1<'_>> {
-        self.ixs
-            .iter()
-            .zip(self.names.iter())
-            .map(|x| EnumVariantRef {
-                ix: *x.0,
-                name: x.1.as_str(),
-            })
+        self.ixs.iter().zip(self.names.iter()).map(|x| EnumVariantRef {
+            ix: *x.0,
+            name: x.1.as_str(),
+        })
     }
 
     fn into_iter_ty_2(self) -> impl Iterator<Item = EnumVariant> {

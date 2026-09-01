@@ -10,8 +10,8 @@ use streams::collect::Collect;
 use streams::collect::CollectResult;
 use streams::firsterr::non_empty;
 use streams::firsterr::only_first_err;
-use streams::json_stream::events_stream_to_json_stream;
 use streams::json_stream::JsonStream;
+use streams::json_stream::events_stream_to_json_stream;
 use streams::streamtimeout::StreamTimeout2;
 use streams::tcprawclient::OpenBoxedBytesStreamsBox;
 

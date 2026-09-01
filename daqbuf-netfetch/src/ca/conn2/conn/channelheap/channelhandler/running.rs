@@ -19,6 +19,7 @@ use futures::StreamExt;
 use netpod::ScalarType;
 use netpod::Shape;
 use netpod::channelstatus::ChannelStatus;
+use serde_helper::ToSerde;
 use series::SeriesId;
 use stats::mett::ChannelHandlerMetrics;
 use std::collections::VecDeque;
@@ -83,9 +84,10 @@ pub enum RunningItem {
     ChannelEventValue(ChannelEventValue),
 }
 
-#[derive(Debug)]
+#[derive(Debug, ToSerde)]
+#[to_serde(vis = "pub", serde(tag = "ty", content = "co"))]
 enum State {
-    Normal(Fetchmpx),
+    Normal(#[to_serde(nest)] Fetchmpx),
     Done,
 }
 
@@ -98,21 +100,35 @@ impl State {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, ToSerde)]
+#[to_serde(vis = "pub")]
 pub struct Running {
+    #[to_serde(nest)]
     state: State,
+    /// Set by `transition_state`, reported as time-in-state.
+    #[to_serde(elapsed)]
+    ts_state_enter: Instant,
     cid: Cid,
     sid: Sid,
     chi: ChannelInfoResult,
     removing: bool,
     chan_close_ack: bool,
+    #[to_serde(len)]
     outbuf: VecDeque<CaMsg>,
+    #[to_serde(len)]
     inp_buf: VecDeque<ProtoRxItem>,
     inp_done: bool,
+    #[to_serde(skip)]
     mett: ChannelHandlerMetrics,
 }
 
 impl Running {
+    /// Single choke point for state changes so the time-in-state stamp can not drift.
+    fn transition_state(&mut self, new: State) {
+        self.state = new;
+        self.ts_state_enter = Instant::now();
+    }
+
     pub fn new(
         cid: Cid,
         sid: Sid,
@@ -132,6 +148,7 @@ impl Running {
                 ca_dbr_ty.clone(),
                 chconf,
             )),
+            ts_state_enter: Instant::now(),
             cid,
             sid,
             chi,
@@ -287,14 +304,14 @@ impl Stream for Running {
                             Ok(()) => {}
                             Err(e) => {
                                 error!("TODO handle error {e}");
-                                self.state = State::Done;
+                                self.transition_state(State::Done);
                             }
                         }
                     }
                     Ready(None) => {
                         error!("TODO even on input abort, continue with clean shutdown");
                         hpp.mark_progress();
-                        self.state = State::Done;
+                        self.transition_state(State::Done);
                     }
                     Pending => {
                         hpp.mark_pending();
@@ -346,14 +363,14 @@ impl Stream for Running {
                         }
                         Err(e) => {
                             error!("TODO handle error {e}");
-                            self.state = State::Done;
+                            self.transition_state(State::Done);
                             hpp.mark_progress();
                         }
                     },
                     Ready(None) => {
                         hpp.mark_progress();
                         debug_shutdown!("Done");
-                        self.state = State::Done;
+                        self.transition_state(State::Done);
                     }
                     Pending => {
                         hpp.mark_pending();

@@ -122,11 +122,7 @@ impl TimeBinnedFromLayers {
             };
             Ok(ret)
         } else {
-            trace_init!(
-                "{}::new  bin_len off layers  {:?}",
-                Self::type_name(),
-                range
-            );
+            trace_init!("{}::new  bin_len off layers  {:?}", Self::type_name(), range);
             let x = if cache_usage.is_cache_read() {
                 find_next_finer_bin_len(bin_len, &bin_len_layers)
             } else {
@@ -176,18 +172,9 @@ impl TimeBinnedFromLayers {
                             one_before_range,
                             transform_query.clone(),
                         );
-                        let evq = EventsSubQuery::from_parts(
-                            select,
-                            sub.clone(),
-                            ctx.reqid().into(),
-                            log_level.clone(),
-                        );
-                        let inp = BinnedFromEvents::new(
-                            range,
-                            evq,
-                            do_time_weight,
-                            events_read_provider,
-                        )?;
+                        let evq =
+                            EventsSubQuery::from_parts(select, sub.clone(), ctx.reqid().into(), log_level.clone());
+                        let inp = BinnedFromEvents::new(range, evq, do_time_weight, events_read_provider)?;
                         let ret = Self {
                             inp: Box::pin(inp),
                             outbuf: VecDeque::new(),

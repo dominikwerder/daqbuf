@@ -77,10 +77,7 @@ struct MetricsStructNameItem {}
 impl syn::parse::Parse for MetricsStructNameItem {
     fn parse(inp: ParseStream) -> syn::Result<Self> {
         let metric_name_item = inp.parse::<syn::ItemType>();
-        log(&format!(
-            "TRIED TO PARSE AN ITEM {:?}",
-            metric_name_item.is_ok()
-        ));
+        log(&format!("TRIED TO PARSE AN ITEM {:?}", metric_name_item.is_ok()));
         let metric_name_item = metric_name_item?;
         match metric_name_item.ty.as_ref() {
             syn::Type::Path(x) => {
@@ -118,8 +115,7 @@ impl syn::parse::Parse for ComposeAggModItem {
                         if item.ident.to_string() == "Input" {
                             match item.ty.as_ref() {
                                 syn::Type::Path(tp) => {
-                                    input =
-                                        Some(tp.path.get_ident().expect("path-ident").to_string());
+                                    input = Some(tp.path.get_ident().expect("path-ident").to_string());
                                 }
                                 _ => {
                                     let e = inp.error(format!("expect a path type"));
@@ -129,8 +125,7 @@ impl syn::parse::Parse for ComposeAggModItem {
                         } else if item.ident.to_string() == "Aggtor" {
                             match item.ty.as_ref() {
                                 syn::Type::Path(tp) => {
-                                    aggtor =
-                                        Some(tp.path.get_ident().expect("path-ident").to_string());
+                                    aggtor = Some(tp.path.get_ident().expect("path-ident").to_string());
                                 }
                                 _ => {
                                     let e = inp.error(format!("expect a path type"));
@@ -140,8 +135,7 @@ impl syn::parse::Parse for ComposeAggModItem {
                         } else if item.ident.to_string() == "Name" {
                             match item.ty.as_ref() {
                                 syn::Type::Path(tp) => {
-                                    name =
-                                        Some(tp.path.get_ident().expect("path-ident").to_string());
+                                    name = Some(tp.path.get_ident().expect("path-ident").to_string());
                                 }
                                 _ => {
                                     let e = inp.error(format!("expect a path type"));
@@ -191,8 +185,7 @@ impl syn::parse::Parse for AggregationModItem {
                         if item.ident.to_string() == "StructName" {
                             match item.ty.as_ref() {
                                 syn::Type::Path(tp) => {
-                                    struct_name =
-                                        Some(tp.path.get_ident().expect("path-ident").to_string());
+                                    struct_name = Some(tp.path.get_ident().expect("path-ident").to_string());
                                 }
                                 _ => {
                                     let e = inp.error(format!("expect a path type"));
@@ -202,8 +195,7 @@ impl syn::parse::Parse for AggregationModItem {
                         } else if item.ident.to_string() == "Input" {
                             match item.ty.as_ref() {
                                 syn::Type::Path(tp) => {
-                                    input =
-                                        Some(tp.path.get_ident().expect("path-ident").to_string());
+                                    input = Some(tp.path.get_ident().expect("path-ident").to_string());
                                 }
                                 _ => {
                                     let e = inp.error(format!("expect a path type"));
@@ -218,8 +210,7 @@ impl syn::parse::Parse for AggregationModItem {
                     syn::Item::Mod(im) => {
                         let x = syn::Item::Mod(im);
                         let ts3 = quote::quote! { #x };
-                        let x =
-                            syn::parse::Parser::parse(|inp: ParseStream| inp.parse(), ts3.into())?;
+                        let x = syn::parse::Parser::parse(|inp: ParseStream| inp.parse(), ts3.into())?;
                         compose_agg_mods.push(x);
                     }
                     _ => {
@@ -280,8 +271,7 @@ impl syn::parse::Parse for ComposeModItem {
                         } else if item.ident.to_string() == "Name" {
                             match item.ty.as_ref() {
                                 syn::Type::Path(tp) => {
-                                    name =
-                                        Some(tp.path.get_ident().expect("path-ident").to_string());
+                                    name = Some(tp.path.get_ident().expect("path-ident").to_string());
                                 }
                                 _ => {
                                     let e = inp.error(format!("expect a path type"));
@@ -336,8 +326,7 @@ impl syn::parse::Parse for MetricsModItem {
                         if item.ident.to_string() == "StructName" {
                             match item.ty.as_ref() {
                                 syn::Type::Path(tp) => {
-                                    struct_name =
-                                        Some(tp.path.get_ident().expect("path-ident").to_string());
+                                    struct_name = Some(tp.path.get_ident().expect("path-ident").to_string());
                                 }
                                 _ => {
                                     let e = inp.error(format!("expect a path type"));
@@ -354,10 +343,7 @@ impl syn::parse::Parse for MetricsModItem {
                         if idn == "Compose" {
                             let item = syn::Item::Mod(item);
                             let ts3 = quote::quote! { #item };
-                            let x = syn::parse::Parser::parse(
-                                |inp: ParseStream| inp.parse(),
-                                ts3.into(),
-                            )?;
+                            let x = syn::parse::Parser::parse(|inp: ParseStream| inp.parse(), ts3.into())?;
                             log("==============   DONE  ComposeModItem");
                             compose_mods.push(x);
                         } else {
@@ -384,8 +370,7 @@ impl syn::parse::Parse for MetricsModItem {
                                 histolog2_names.push(s);
                             }
                         } else {
-                            let e = inp
-                                .error(format!("expect enum `counters`, `values` or `histolog2s`"));
+                            let e = inp.error(format!("expect enum `counters`, `values` or `histolog2s`"));
                             return Err(e);
                         }
                     }
@@ -533,10 +518,7 @@ impl syn::parse::Parse for MetricsDecl {
                 let inp2 = inp.fork();
                 let _ = inp2;
                 let metric_name_item = inp.parse::<syn::ItemType>();
-                log(&format!(
-                    "TRIED TO PARSE AN ITEM {:?}",
-                    metric_name_item.is_ok()
-                ));
+                log(&format!("TRIED TO PARSE AN ITEM {:?}", metric_name_item.is_ok()));
                 let metric_name_item = metric_name_item?;
                 match metric_name_item.ty.as_ref() {
                     syn::Type::Path(x) => {

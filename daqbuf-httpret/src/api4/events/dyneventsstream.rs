@@ -1,21 +1,21 @@
 use items_2::channelevents::ChannelEvents;
 use items_2::merger::Merger;
-use netpod::range::evrange::NanoRange;
 use netpod::ChannelTypeConfigGen;
 use netpod::OneBeforeFlag;
 use netpod::ReqCtx;
+use netpod::range::evrange::NanoRange;
 use query::api4::events::PlainEventsQuery;
-use scyllaconn::events3::ks::clksmerge::cl_ks_merged;
 use scyllaconn::events3::SeriesInfo;
+use scyllaconn::events3::ks::clksmerge::cl_ks_merged;
 use scyllaconn::worker::ScyllaOptsSubmit;
 use scyllaconn::worker::ScyllaQueue;
 use series::SeriesId;
+use streams::ChannelEventsStream;
 use streams::assert_max_one_before::AssertMaxOneBefore;
 use streams::rangefilter2::RangeFilter2;
+use streams::tcprawclient::OpenBoxedBytesStreamsBox;
 use streams::tcprawclient::container_stream_from_bytes_stream;
 use streams::tcprawclient::make_sub_query;
-use streams::tcprawclient::OpenBoxedBytesStreamsBox;
-use streams::ChannelEventsStream;
 
 macro_rules! debug { ($($arg:tt)*) => { if true { log::debug!($($arg)*); } }; }
 macro_rules! trace { ($($arg:tt)*) => { if true { log::trace!($($arg)*); } }; }

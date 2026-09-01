@@ -7,9 +7,7 @@ use items_0::timebin::BinningggContainerEventsDyn;
 use items_2::binning::container_events::ContainerEvents;
 use serde_json::json;
 
-pub fn to_json_f32<T, E>(
-    stream: impl Stream<Item = Sitemty2<T, E>>,
-) -> impl Stream<Item = serde_json::Value>
+pub fn to_json_f32<T, E>(stream: impl Stream<Item = Sitemty2<T, E>>) -> impl Stream<Item = serde_json::Value>
 where
     T: AsRef<dyn BinningggContainerEventsDyn>,
     E: ToString,
@@ -20,14 +18,13 @@ where
                 RangeCompletableItem::Data(x) => {
                     let x = x.as_ref().to_f32_for_binning_v01();
                     if let Some(x) = x.as_any_ref().downcast_ref::<ContainerEvents<f32>>() {
-                        let (tss, vals) = x.iter_zip().fold(
-                            (Vec::new(), Vec::new()),
-                            |(mut tss, mut vals), (ts, val)| {
-                                tss.push(ts.ms());
-                                vals.push(val);
-                                (tss, vals)
-                            },
-                        );
+                        let (tss, vals) =
+                            x.iter_zip()
+                                .fold((Vec::new(), Vec::new()), |(mut tss, mut vals), (ts, val)| {
+                                    tss.push(ts.ms());
+                                    vals.push(val);
+                                    (tss, vals)
+                                });
                         json!({
                             "type": "events",
                             "tss": tss,

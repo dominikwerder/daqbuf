@@ -22,6 +22,8 @@ use futures::FutureExt;
 use netpod::ScalarType;
 use netpod::Shape;
 use netpod::TsNano;
+use serde::Serialize;
+use serde_helper::ToSerde;
 use series::SeriesId;
 use stats::mett::ChannelHandlerMetrics;
 use std::collections::VecDeque;
@@ -55,7 +57,7 @@ autoerr::create_error_v1!(
     },
 );
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 enum StateDirection {
     None,
     Disable,
@@ -72,20 +74,22 @@ pub enum MonitoringItem {
     LocalLog(locallog::Entry),
 }
 
-fn transition_state(old: &mut State, new: State, llog: &mut locallog::LocalLog) {
+fn transition_state(old: &mut State, new: State, ts: &mut Instant, llog: &mut locallog::LocalLog) {
     debug_transition_state!("{}", format!("transition  {} -> {}", old, new));
     llog.push(format!("transition  {} -> {}", old, new));
     *old = new;
+    *ts = Instant::now();
 }
 
-#[derive(Debug)]
+#[derive(Debug, ToSerde)]
+#[to_serde(vis = "pub", serde(tag = "ty", content = "co"))]
 enum State {
     DoNothing(),
     CreateMonitorSend(StateDirection),
-    CreateMonitorRecv(FutDbg<()>, StateDirection),
-    Monitoring(FutDbg<()>, StateDirection),
+    CreateMonitorRecv(#[to_serde(skip)] FutDbg<()>, StateDirection),
+    Monitoring(#[to_serde(skip)] FutDbg<()>, StateDirection),
     RemoveMonitorSend(StateDirection),
-    RemoveMonitorRecv(FutDbg<()>, StateDirection),
+    RemoveMonitorRecv(#[to_serde(skip)] FutDbg<()>, StateDirection),
     RemoveSubidSend(StateDirection),
     Closing1,
     Done,
@@ -107,19 +111,28 @@ impl fmt::Display for State {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, ToSerde)]
+#[to_serde(vis = "pub")]
 pub struct FetchMonitoring {
+    #[to_serde(nest)]
     state: State,
+    /// Set by `transition_state`, reported as time-in-state.
+    #[to_serde(elapsed)]
+    ts_state_enter: Instant,
     series: SeriesId,
     cid: Cid,
     sid: Sid,
     scalar_type: ScalarType,
     shape: Shape,
     ca_dbr_ty: CaDbrTy,
+    #[to_serde(len)]
     inp_buf: VecDeque<ProtoRxItem>,
     inp_done: bool,
+    #[to_serde(skip)]
     mett: ChannelHandlerMetrics,
+    #[to_serde(skip)]
     rng: stats::rand_xoshiro::Xoshiro128PlusPlus,
+    #[to_serde(skip)]
     llog: locallog::LocalLog,
 }
 
@@ -134,6 +147,7 @@ impl FetchMonitoring {
     ) -> Self {
         Self {
             state: State::DoNothing(),
+            ts_state_enter: Instant::now(),
             series,
             cid,
             sid,
@@ -168,6 +182,7 @@ impl FetchMonitoring {
                 transition_state(
                     &mut self.state,
                     State::CreateMonitorSend(StateDirection::Enable),
+                    &mut self.ts_state_enter,
                     &mut self.llog,
                 );
             }
@@ -323,7 +338,12 @@ impl FetchMonitoring {
                     let ret = self2.handle_received_item(item);
                     let dur = self2.duration_jitter(SILENCE_MONITOR_WAKEUP);
                     let fut = tokio::time::sleep(dur).box2();
-                    transition_state(&mut self2.state, State::Monitoring(fut, stdir), &mut self2.llog);
+                    transition_state(
+                        &mut self2.state,
+                        State::Monitoring(fut, stdir),
+                        &mut self2.ts_state_enter,
+                        &mut self2.llog,
+                    );
                     ret
                 }
                 State::Monitoring(..) => {
@@ -340,7 +360,7 @@ impl FetchMonitoring {
                         CaMsgTy::EventAddResEmpty(..) | CaMsgTy::EventCancelRes(..) => {
                             let stdir = stdir.clone();
                             let stn = State::RemoveSubidSend(stdir);
-                            transition_state(&mut self2.state, stn, &mut self2.llog);
+                            transition_state(&mut self2.state, stn, &mut self2.ts_state_enter, &mut self2.llog);
                         }
                         CaMsgTy::EventAddRes(..) => {}
                         _ => {
@@ -417,7 +437,12 @@ impl FetchMonitoring {
                     // TODO add some jitter
                     let fut = tokio::time::sleep(CREATE_SEND_TIMEOUT).box2();
                     let stdir = stdir.clone();
-                    transition_state(&mut self2.state, State::CreateMonitorRecv(fut, stdir), &mut self2.llog);
+                    transition_state(
+                        &mut self2.state,
+                        State::CreateMonitorRecv(fut, stdir),
+                        &mut self2.ts_state_enter,
+                        &mut self2.llog,
+                    );
                     let ret = MonitoringItem::ProtoOutSubid(msg, tsnow);
                     return Ready(Some(Ok(ret)));
                 }
@@ -428,7 +453,12 @@ impl FetchMonitoring {
                         // let dur = self2.duration_jitter(CREA);
                         // let fut = tokio::time::sleep(dur).box2();
                         // let stdir = stdir.clone();
-                        transition_state(&mut self2.state, State::DoNothing(), &mut self2.llog);
+                        transition_state(
+                            &mut self2.state,
+                            State::DoNothing(),
+                            &mut self2.ts_state_enter,
+                            &mut self2.llog,
+                        );
                     }
                     Pending => {
                         hpp.mark_pending();
@@ -440,7 +470,7 @@ impl FetchMonitoring {
                         let stdir = stdir.clone();
                         let stn = State::RemoveMonitorSend(stdir);
                         debug_shutdown!("State::Monitoring  go to {stn:?}");
-                        transition_state(&mut self2.state, stn, &mut self2.llog);
+                        transition_state(&mut self2.state, stn, &mut self2.ts_state_enter, &mut self2.llog);
                     }
                     StateDirection::Enable => match to.poll_unpin(cx) {
                         Ready(()) => {
@@ -449,7 +479,12 @@ impl FetchMonitoring {
                             let stdir = stdir.clone();
                             let dur = self2.duration_jitter(SILENCE_MONITOR_WAKEUP);
                             let fut = tokio::time::sleep(dur).box2();
-                            transition_state(&mut self2.state, State::Monitoring(fut, stdir), &mut self2.llog);
+                            transition_state(
+                                &mut self2.state,
+                                State::Monitoring(fut, stdir),
+                                &mut self2.ts_state_enter,
+                                &mut self2.llog,
+                            );
                         }
                         Pending => {
                             hpp.mark_pending();
@@ -473,7 +508,12 @@ impl FetchMonitoring {
                     // TODO add some jitter
                     let fut = tokio::time::sleep(CREATE_SEND_TIMEOUT).box2();
                     let stdir = stdir.clone();
-                    transition_state(&mut self2.state, State::RemoveMonitorRecv(fut, stdir), &mut self2.llog);
+                    transition_state(
+                        &mut self2.state,
+                        State::RemoveMonitorRecv(fut, stdir),
+                        &mut self2.ts_state_enter,
+                        &mut self2.llog,
+                    );
                     let ret = MonitoringItem::ProtoOutSubid(msg, tsnow);
                     break Ready(Some(Ok(ret)));
                 }
@@ -484,7 +524,12 @@ impl FetchMonitoring {
                             debug_shutdown!("{selfname}  RemoveMonitorRecv  Timeout  7d956c9");
                             // TODO return some error
                             // TODO check state direction
-                            transition_state(&mut self2.state, State::DoNothing(), &mut self2.llog);
+                            transition_state(
+                                &mut self2.state,
+                                State::DoNothing(),
+                                &mut self2.ts_state_enter,
+                                &mut self2.llog,
+                            );
                         }
                         Pending => {
                             hpp.mark_pending();
@@ -498,22 +543,22 @@ impl FetchMonitoring {
                             // TODO RemoveMonitorRecv should actually not accommodate StateDirection::None
                             debug_shutdown!("{selfname}  State::RemoveMonitorRecv  dir None");
                             let stn = State::DoNothing();
-                            transition_state(&mut self2.state, stn, &mut self2.llog);
+                            transition_state(&mut self2.state, stn, &mut self2.ts_state_enter, &mut self2.llog);
                         }
                         StateDirection::Disable => {
                             debug_shutdown!("{selfname}  State::RemoveMonitorRecv  dir Disable");
                             let stn = State::DoNothing();
-                            transition_state(&mut self2.state, stn, &mut self2.llog);
+                            transition_state(&mut self2.state, stn, &mut self2.ts_state_enter, &mut self2.llog);
                         }
                         StateDirection::Enable => {
                             debug_shutdown!("{selfname}  State::RemoveMonitorRecv  dir Enable");
                             let stdir = stdir.clone();
                             let stn = State::CreateMonitorSend(stdir);
-                            transition_state(&mut self2.state, stn, &mut self2.llog);
+                            transition_state(&mut self2.state, stn, &mut self2.ts_state_enter, &mut self2.llog);
                         }
                         StateDirection::Closing => {
                             let stn = State::Closing1;
-                            transition_state(&mut self2.state, stn, &mut self2.llog);
+                            transition_state(&mut self2.state, stn, &mut self2.ts_state_enter, &mut self2.llog);
                         }
                     }
                     let ret = MonitoringItem::SubidRemove(self2.cid.clone());
@@ -523,7 +568,7 @@ impl FetchMonitoring {
                     todo_shutdown!("TODO  emit all writes for shutdown");
                     hpp.mark_progress();
                     self.inp_done();
-                    self.state = State::Done;
+                    transition_state(&mut self.state, State::Done, &mut self.ts_state_enter, &mut self.llog);
                 }
                 State::Done => {}
             }

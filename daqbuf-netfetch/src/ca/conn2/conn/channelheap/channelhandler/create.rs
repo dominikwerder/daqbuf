@@ -12,7 +12,7 @@ use futures::Stream;
 use futures::TryFutureExt;
 use netpod::ScalarType;
 use netpod::Shape;
-use serde::Serialize;
+use serde_helper::ToSerde;
 use std::collections::VecDeque;
 use std::pin::Pin;
 use std::task::Context;
@@ -63,12 +63,18 @@ pub enum CreatingItem {
     ),
 }
 
-#[derive(Debug)]
+#[derive(Debug, ToSerde)]
+#[to_serde(vis = "pub", serde(tag = "ty", content = "co"))]
 enum State {
-    CreateChanSend(Instant, VecDeque<CaMsg>, FutDbg<()>),
-    CreateChanRecv(Instant, FutDbg<()>),
+    CreateChanSend(
+        #[to_serde(elapsed)] Instant,
+        #[to_serde(len)] VecDeque<CaMsg>,
+        #[to_serde(skip)] FutDbg<()>,
+    ),
+    CreateChanRecv(#[to_serde(elapsed)] Instant, #[to_serde(skip)] FutDbg<()>),
     SeriesIdRecv(
-        Instant,
+        #[to_serde(elapsed)] Instant,
+        #[to_serde(skip)]
         FutDbg<(
             Result<Result<dbpg::seriesbychannel::ChannelInfoResult, dbpg::seriesbychannel::Error>, Error>,
             Sid,
@@ -77,39 +83,24 @@ enum State {
             CaDbrTy,
         )>,
     ),
-    Done(Instant),
+    Done(#[to_serde(elapsed)] Instant),
 }
 
-#[derive(Debug, Serialize)]
-#[serde(tag = "type")]
-pub enum StateSerde {
-    CreateChanSend(Duration),
-    CreateChanRecv(Duration),
-    SeriesIdRecv(Duration),
-    Done(Duration),
-}
-
-impl From<&State> for StateSerde {
-    fn from(value: &State) -> Self {
-        match value {
-            State::CreateChanSend(ts, _, _) => StateSerde::CreateChanSend(ts.elapsed()),
-            State::CreateChanRecv(ts, _) => StateSerde::CreateChanRecv(ts.elapsed()),
-            State::SeriesIdRecv(ts, _) => StateSerde::SeriesIdRecv(ts.elapsed()),
-            State::Done(ts) => StateSerde::Done(ts.elapsed()),
-        }
-    }
-}
-
-#[derive(Debug)]
+#[derive(Debug, ToSerde)]
+#[to_serde(vis = "pub")]
 pub struct Creating {
     cid: Cid,
     name: String,
     backend: String,
+    #[to_serde(nest)]
     state: State,
     removing: bool,
+    #[to_serde(len)]
     inp_buf: VecDeque<ProtoRxItem>,
     inp_done: bool,
+    #[to_serde(skip)]
     waker_inp_prd: Option<Waker>,
+    #[to_serde(skip)]
     waker_inp_cns: Option<Waker>,
 }
 
@@ -136,10 +127,6 @@ impl Creating {
             waker_inp_prd: None,
             waker_inp_cns: None,
         }
-    }
-
-    pub fn state_serde(&self) -> StateSerde {
-        (&self.state).into()
     }
 
     pub fn set_removing(&mut self) {

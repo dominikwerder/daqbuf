@@ -13,6 +13,8 @@ use futures::FutureExt;
 use netpod::ScalarType;
 use netpod::Shape;
 use netpod::TsNano;
+use serde::Serialize;
+use serde_helper::ToSerde;
 use series::SeriesId;
 use stats::mett::ChannelHandlerMetrics;
 use std::collections::VecDeque;
@@ -45,7 +47,7 @@ autoerr::create_error_v1!(
     },
 );
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 enum StateDirection {
     None,
     DoNothing,
@@ -62,18 +64,20 @@ pub enum Item {
     LocalLog(locallog::Entry),
 }
 
-fn transition_state(old: &mut State, new: State, llog: &mut locallog::LocalLog) {
+fn transition_state(old: &mut State, new: State, ts: &mut Instant, llog: &mut locallog::LocalLog) {
     debug_transition_state!("{}", format!("transition  {} -> {}", old, new));
     llog.push(format!("transition  {} -> {}", old, new));
     *old = new;
+    *ts = Instant::now();
 }
 
-#[derive(Debug)]
+#[derive(Debug, ToSerde)]
+#[to_serde(vis = "pub", serde(tag = "ty", content = "co"))]
 enum State {
     DoNothing,
-    Idle(FutDbg<()>),
+    Idle(#[to_serde(skip)] FutDbg<()>),
     SendReq(StateDirection),
-    WaitRes(FutDbg<()>, StateDirection),
+    WaitRes(#[to_serde(skip)] FutDbg<()>, StateDirection),
     Closing1,
     Done,
 }
@@ -91,21 +95,33 @@ impl fmt::Display for State {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, ToSerde)]
+#[to_serde(vis = "pub")]
 pub struct FetchPolling {
+    #[to_serde(nest)]
     state: State,
+    /// Set by `transition_state`, reported as time-in-state.
+    #[to_serde(elapsed)]
+    ts_state_enter: Instant,
     series: SeriesId,
     sid: Sid,
     scalar_type: ScalarType,
     shape: Shape,
     ca_dbr_ty: CaDbrTy,
+    #[to_serde(serde(with = "serde_helper::serde_Duration_human"))]
     interval: Duration,
+    #[to_serde(skip)]
     poll_next_ts_exact: Instant,
+    #[to_serde(skip)]
     poll_next_ts_jitter: Instant,
+    #[to_serde(len)]
     inp_buf: VecDeque<ProtoRxItem>,
     inp_done: bool,
+    #[to_serde(skip)]
     mett: ChannelHandlerMetrics,
+    #[to_serde(skip)]
     rng: stats::rand_xoshiro::Xoshiro128PlusPlus,
+    #[to_serde(skip)]
     llog: locallog::LocalLog,
 }
 
@@ -114,6 +130,7 @@ impl FetchPolling {
         let tsnow = Instant::now();
         Self {
             state: State::DoNothing,
+            ts_state_enter: tsnow,
             series,
             sid,
             scalar_type,
@@ -165,7 +182,12 @@ impl FetchPolling {
                 let fut = async move {
                     tokio::time::sleep_until(ts.into()).await;
                 };
-                transition_state(&mut self.state, State::Idle(fut.box2()), &mut self.llog);
+                transition_state(
+                    &mut self.state,
+                    State::Idle(fut.box2()),
+                    &mut self.ts_state_enter,
+                    &mut self.llog,
+                );
             }
             State::Idle(..) => {
                 self.llog.push(format!("{selfname}  State::Idle  no change"));
@@ -193,7 +215,12 @@ impl FetchPolling {
             }
             State::Idle(..) => {
                 self.llog.push(format!("{selfname}  State::Idle  goto immediate"));
-                transition_state(&mut self.state, State::DoNothing, &mut self.llog);
+                transition_state(
+                    &mut self.state,
+                    State::DoNothing,
+                    &mut self.ts_state_enter,
+                    &mut self.llog,
+                );
             }
             State::SendReq(stdir) => {
                 self.llog.push(format!("{selfname}  State::Idle  set stdir"));
@@ -217,19 +244,39 @@ impl FetchPolling {
         match &mut self.state {
             State::DoNothing => {
                 self.llog.push(format!("{selfname}  State::DoNothing  goto Closing1"));
-                transition_state(&mut self.state, State::Closing1, &mut self.llog);
+                transition_state(
+                    &mut self.state,
+                    State::Closing1,
+                    &mut self.ts_state_enter,
+                    &mut self.llog,
+                );
             }
             State::Idle(..) => {
                 self.llog.push(format!("{selfname}  State::Idle  goto Closing1"));
-                transition_state(&mut self.state, State::Closing1, &mut self.llog);
+                transition_state(
+                    &mut self.state,
+                    State::Closing1,
+                    &mut self.ts_state_enter,
+                    &mut self.llog,
+                );
             }
             State::SendReq(stdir) => {
                 self.llog.push(format!("{selfname}  State::SendReq  goto Closing1"));
-                transition_state(&mut self.state, State::Closing1, &mut self.llog);
+                transition_state(
+                    &mut self.state,
+                    State::Closing1,
+                    &mut self.ts_state_enter,
+                    &mut self.llog,
+                );
             }
             State::WaitRes(_, stdir) => {
                 self.llog.push(format!("{selfname}  State::Idle  goto Closing1"));
-                transition_state(&mut self.state, State::Closing1, &mut self.llog);
+                transition_state(
+                    &mut self.state,
+                    State::Closing1,
+                    &mut self.ts_state_enter,
+                    &mut self.llog,
+                );
             }
             State::Closing1 => {
                 self.llog.push(format!("{selfname}  State::Idle  no change"));
@@ -298,7 +345,12 @@ impl FetchPolling {
                             let val_f32 = v.value.f32_for_binning();
                             match stdir {
                                 StateDirection::DoNothing => {
-                                    transition_state(&mut self2.state, State::DoNothing, &mut self2.llog);
+                                    transition_state(
+                                        &mut self2.state,
+                                        State::DoNothing,
+                                        &mut self2.ts_state_enter,
+                                        &mut self2.llog,
+                                    );
                                 }
                                 StateDirection::None => {
                                     let fut = {
@@ -307,7 +359,12 @@ impl FetchPolling {
                                             tokio::time::sleep_until(ts.into()).await;
                                         }
                                     };
-                                    transition_state(&mut self2.state, State::Idle(fut.box2()), &mut self2.llog);
+                                    transition_state(
+                                        &mut self2.state,
+                                        State::Idle(fut.box2()),
+                                        &mut self2.ts_state_enter,
+                                        &mut self2.llog,
+                                    );
                                 }
                             }
                             if false {
@@ -347,7 +404,12 @@ impl FetchPolling {
                 Ready(()) => {
                     hpp.mark_progress();
                     trace2!("{selfname}  Idle  Ready");
-                    transition_state(&mut self2.state, State::SendReq(StateDirection::None), &mut self2.llog);
+                    transition_state(
+                        &mut self2.state,
+                        State::SendReq(StateDirection::None),
+                        &mut self2.ts_state_enter,
+                        &mut self2.llog,
+                    );
                 }
                 Pending => {
                     hpp.mark_pending();
@@ -369,7 +431,12 @@ impl FetchPolling {
                 self2.mett.read_notify_send().inc();
                 let fut = async { tokio::time::sleep(Duration::from_millis(3000)).await };
                 let stdir = stdir.clone();
-                transition_state(&mut self2.state, State::WaitRes(fut.box2(), stdir), &mut self2.llog);
+                transition_state(
+                    &mut self2.state,
+                    State::WaitRes(fut.box2(), stdir),
+                    &mut self2.ts_state_enter,
+                    &mut self2.llog,
+                );
                 let ret = Item::ProtoOutIoid(msg, self2.sid.clone(), tsnow);
                 return Ready(Some(Ok(ret)));
             }
@@ -380,14 +447,24 @@ impl FetchPolling {
                     error!("\n\n\n  TODO  FetchPollingState::WaitRes  Timeout  fad6ffb3b  \n\n\n");
                     match stdir {
                         StateDirection::DoNothing => {
-                            transition_state(&mut self2.state, State::DoNothing, &mut self2.llog);
+                            transition_state(
+                                &mut self2.state,
+                                State::DoNothing,
+                                &mut self2.ts_state_enter,
+                                &mut self2.llog,
+                            );
                         }
                         StateDirection::None => {
                             // TODO emit status event on the first timeout only.
                             // TODO choose random increasing backoff.
                             let fut = async { tokio::time::sleep(Duration::from_millis(27427)).await };
                             let stdir = stdir.clone();
-                            transition_state(&mut self2.state, State::WaitRes(fut.box2(), stdir), &mut self2.llog);
+                            transition_state(
+                                &mut self2.state,
+                                State::WaitRes(fut.box2(), stdir),
+                                &mut self2.ts_state_enter,
+                                &mut self2.llog,
+                            );
                         }
                     }
                 }
@@ -399,7 +476,12 @@ impl FetchPolling {
                 hpp.mark_progress();
                 todo_shutdown!("TODO  State::Closing1  emit all writes");
                 self2.inp_done();
-                transition_state(&mut self2.state, State::Done, &mut self2.llog);
+                transition_state(
+                    &mut self2.state,
+                    State::Done,
+                    &mut self2.ts_state_enter,
+                    &mut self2.llog,
+                );
             }
             State::Done => {}
         }

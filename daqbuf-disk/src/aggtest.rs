@@ -1,12 +1,9 @@
-use crate::eventchunker::EventChunkerConf;
-use crate::eventchunkermultifile::EventChunkerMultifile;
 use crate::AggQuerySingleChannel;
 use crate::SfDbChConf;
+use crate::eventchunker::EventChunkerConf;
+use crate::eventchunkermultifile::EventChunkerMultifile;
 use daqbuf_err as err;
 use err::Error;
-use netpod::range::evrange::NanoRange;
-use netpod::test_data_base_path_databuffer;
-use netpod::timeunits::*;
 use netpod::ByteOrder;
 use netpod::ByteSize;
 use netpod::DiskIoTune;
@@ -17,6 +14,9 @@ use netpod::SfChFetchInfo;
 use netpod::SfDatabuffer;
 use netpod::SfDbChannel;
 use netpod::Shape;
+use netpod::range::evrange::NanoRange;
+use netpod::test_data_base_path_databuffer;
+use netpod::timeunits::*;
 
 pub fn make_test_node(id: u32) -> Node {
     Node {

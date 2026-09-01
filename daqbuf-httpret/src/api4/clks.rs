@@ -1,12 +1,12 @@
-use crate::bodystream::response;
 use crate::RetrievalError;
 use crate::ServiceSharedResources;
+use crate::bodystream::response;
 use http::Method;
 use http::StatusCode;
-use httpclient::body_empty;
-use httpclient::body_string;
 use httpclient::Requ;
 use httpclient::StreamResponse;
+use httpclient::body_empty;
+use httpclient::body_string;
 use netpod::NodeConfigCached;
 use netpod::ReqCtx;
 

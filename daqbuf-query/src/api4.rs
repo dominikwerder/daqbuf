@@ -157,10 +157,7 @@ impl FromUrl for AccountingToplistQuery {
                 .ok_or_else(|| Self::Error::MissingBackend)?
                 .to_string(),
             ts: fn1(pairs)?,
-            limit: pairs
-                .get("limit")
-                .map_or(None, |x| x.parse().ok())
-                .unwrap_or(20),
+            limit: pairs.get("limit").map_or(None, |x| x.parse().ok()).unwrap_or(20),
             sort: pairs.get("sort").map(ToString::to_string),
         };
         Ok(ret)

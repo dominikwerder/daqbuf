@@ -70,20 +70,9 @@ impl fmt::Display for BinningggError {
 // }
 
 pub trait BinningggContainerEventsDyn:
-    fmt::Debug
-    + TypeName
-    + Send
-    + AsAnyRef
-    + WithLen
-    + ByteEstimate
-    + MergeableDyn
-    + ToUserFacingApiType
-    + CollectableDyn
+    fmt::Debug + TypeName + Send + AsAnyRef + WithLen + ByteEstimate + MergeableDyn + ToUserFacingApiType + CollectableDyn
 {
-    fn binned_events_timeweight_traitobj(
-        &self,
-        range: BinnedRange<TsNano>,
-    ) -> Box<dyn BinnedEventsTimeweightTrait>;
+    fn binned_events_timeweight_traitobj(&self, range: BinnedRange<TsNano>) -> Box<dyn BinnedEventsTimeweightTrait>;
     fn to_anybox(&mut self) -> Box<dyn std::any::Any>;
     fn clone_dyn(&self) -> Box<dyn BinningggContainerEventsDyn>;
     fn serde_id(&self) -> u32;
@@ -103,15 +92,9 @@ pub trait BinningggContainerBinsDyn:
     fn clone(&self) -> BinsBoxed;
     fn edges_iter(
         &self,
-    ) -> std::iter::Zip<
-        std::collections::vec_deque::Iter<'_, TsNano>,
-        std::collections::vec_deque::Iter<'_, TsNano>,
-    >;
+    ) -> std::iter::Zip<std::collections::vec_deque::Iter<'_, TsNano>, std::collections::vec_deque::Iter<'_, TsNano>>;
     fn drain_into(&mut self, dst: &mut dyn BinningggContainerBinsDyn, range: Range<usize>);
-    fn binned_bins_timeweight_traitobj(
-        &self,
-        range: BinnedRange<TsNano>,
-    ) -> Box<dyn BinnedBinsTimeweightTrait>;
+    fn binned_bins_timeweight_traitobj(&self, range: BinnedRange<TsNano>) -> Box<dyn BinnedBinsTimeweightTrait>;
     fn boxed_into_collectable_box(self: Box<Self>) -> Box<dyn CollectableDyn>;
     fn fix_numerics(&mut self);
 }
@@ -202,11 +185,7 @@ impl crate::merge::MergeableTy for Box<dyn BinningggContainerEventsDyn> {
         self.as_ref().tss_for_testing()
     }
 
-    fn drain_into(
-        &mut self,
-        dst: &mut Self,
-        range: Range<usize>,
-    ) -> crate::merge::DrainIntoDstResult {
+    fn drain_into(&mut self, dst: &mut Self, range: Range<usize>) -> crate::merge::DrainIntoDstResult {
         self.as_mut().drain_into(dst.as_mut(), range)
     }
 

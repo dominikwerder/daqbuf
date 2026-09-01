@@ -15,9 +15,7 @@ pub(super) trait IntoVecDequeU64 {
 
 impl IntoVecDequeU64 for &str {
     fn into_vec_deque_u64(self) -> VecDeque<u64> {
-        self.split_ascii_whitespace()
-            .map(|x| x.parse().unwrap())
-            .collect()
+        self.split_ascii_whitespace().map(|x| x.parse().unwrap()).collect()
     }
 }
 
@@ -27,9 +25,7 @@ pub(super) trait IntoVecDequeF32 {
 
 impl IntoVecDequeF32 for &str {
     fn into_vec_deque_f32(self) -> VecDeque<f32> {
-        self.split_ascii_whitespace()
-            .map(|x| x.parse().unwrap())
-            .collect()
+        self.split_ascii_whitespace().map(|x| x.parse().unwrap()).collect()
     }
 }
 
@@ -49,10 +45,7 @@ fn exp_u64<'a>(
         }
         if let (Some(&val), Some(&exp)) = (a, b) {
             if val != exp {
-                return Err(Error::AssertMsg(format!(
-                    "{tag}  val {}  exp {}  i {}",
-                    val, exp, i
-                )));
+                return Err(Error::AssertMsg(format!("{tag}  val {}  exp {}  i {}", val, exp, i)));
             }
         } else {
             return Err(Error::AssertMsg(format!("{tag} len mismatch")));
@@ -62,11 +55,7 @@ fn exp_u64<'a>(
     Ok(())
 }
 
-fn exp_f32<'a>(
-    vals: impl Iterator<Item = f32>,
-    exps: impl Iterator<Item = f32>,
-    tag: &str,
-) -> Result<(), Error> {
+fn exp_f32<'a>(vals: impl Iterator<Item = f32>, exps: impl Iterator<Item = f32>, tag: &str) -> Result<(), Error> {
     let mut it_a = vals;
     let mut it_b = exps;
     let mut i = 0;
@@ -78,10 +67,7 @@ fn exp_f32<'a>(
         }
         if let (Some(val), Some(exp)) = (a, b) {
             if netpod::f32_close(val, exp) == false {
-                return Err(Error::AssertMsg(format!(
-                    "{tag}  val {}  exp {}  i {}",
-                    val, exp, i
-                )));
+                return Err(Error::AssertMsg(format!("{tag}  val {}  exp {}  i {}", val, exp, i)));
             }
         } else {
             return Err(Error::AssertMsg(format!("{tag} len mismatch")));
@@ -91,10 +77,7 @@ fn exp_f32<'a>(
     Ok(())
 }
 
-pub(super) fn exp_cnts(
-    bins: &ContainerBins<f32, f32>,
-    exps: impl IntoVecDequeU64,
-) -> Result<(), Error> {
+pub(super) fn exp_cnts(bins: &ContainerBins<f32, f32>, exps: impl IntoVecDequeU64) -> Result<(), Error> {
     let exps = exps.into_vec_deque_u64();
     if bins.len() != exps.len() {
         let e = Error::BinLenMismatch(bins.len(), exps.len());
@@ -104,32 +87,15 @@ pub(super) fn exp_cnts(
     }
 }
 
-pub(super) fn exp_mins(
-    bins: &ContainerBins<f32, f32>,
-    exps: impl IntoVecDequeF32,
-) -> Result<(), Error> {
-    exp_f32(
-        bins.mins_iter(),
-        exps.into_vec_deque_f32().into_iter(),
-        "exp_mins",
-    )
+pub(super) fn exp_mins(bins: &ContainerBins<f32, f32>, exps: impl IntoVecDequeF32) -> Result<(), Error> {
+    exp_f32(bins.mins_iter(), exps.into_vec_deque_f32().into_iter(), "exp_mins")
 }
 
-pub(super) fn exp_maxs(
-    bins: &ContainerBins<f32, f32>,
-    exps: impl IntoVecDequeF32,
-) -> Result<(), Error> {
-    exp_f32(
-        bins.maxs_iter(),
-        exps.into_vec_deque_f32().into_iter(),
-        "exp_maxs",
-    )
+pub(super) fn exp_maxs(bins: &ContainerBins<f32, f32>, exps: impl IntoVecDequeF32) -> Result<(), Error> {
+    exp_f32(bins.maxs_iter(), exps.into_vec_deque_f32().into_iter(), "exp_maxs")
 }
 
-pub(super) fn exp_avgs(
-    bins: &ContainerBins<f32, f32>,
-    exps: impl IntoVecDequeF32,
-) -> Result<(), Error> {
+pub(super) fn exp_avgs(bins: &ContainerBins<f32, f32>, exps: impl IntoVecDequeF32) -> Result<(), Error> {
     let exps = exps.into_vec_deque_f32();
     let mut it_a = bins.iter_debug();
     let mut it_b = exps.iter();
@@ -143,10 +109,7 @@ pub(super) fn exp_avgs(
         if let (Some(a), Some(&exp)) = (a, b) {
             let val = a.agg as f32;
             if netpod::f32_close(val, exp) == false {
-                return Err(Error::AssertMsg(format!(
-                    "exp_avgs  val {}  exp {}  i {}",
-                    val, exp, i
-                )));
+                return Err(Error::AssertMsg(format!("exp_avgs  val {}  exp {}  i {}", val, exp, i)));
             }
         } else {
             return Err(Error::AssertMsg(format!(

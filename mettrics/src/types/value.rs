@@ -9,11 +9,7 @@ pub struct ValueU32 {
 
 impl ValueU32 {
     pub fn new() -> Self {
-        Self {
-            inc: 0,
-            dec: 0,
-            lst: 0,
-        }
+        Self { inc: 0, dec: 0, lst: 0 }
     }
 
     #[inline]

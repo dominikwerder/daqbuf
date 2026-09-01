@@ -50,13 +50,11 @@ where
                             RangeCompletableItem::Data(x) => {
                                 let n = 32 - (x.len() as u32).leading_zeros();
                                 self.histo[n as usize] += 1;
-                                Ready(Some(Ok(StreamItem::DataItem(RangeCompletableItem::Data(
-                                    x,
-                                )))))
+                                Ready(Some(Ok(StreamItem::DataItem(RangeCompletableItem::Data(x)))))
                             }
-                            RangeCompletableItem::RangeComplete => Ready(Some(Ok(
-                                StreamItem::DataItem(RangeCompletableItem::RangeComplete),
-                            ))),
+                            RangeCompletableItem::RangeComplete => {
+                                Ready(Some(Ok(StreamItem::DataItem(RangeCompletableItem::RangeComplete))))
+                            }
                         },
                         StreamItem::Log(x) => Ready(Some(Ok(StreamItem::Log(x)))),
                         StreamItem::Stats(x) => Ready(Some(Ok(StreamItem::Stats(x)))),

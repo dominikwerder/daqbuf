@@ -45,13 +45,7 @@ where
                 stream::iter([Ok(Bytes::new()), Ok(Bytes::new()), Ok(Bytes::new())])
             }
         })
-        .filter(|x| {
-            if let Ok(x) = x {
-                ready(x.len() > 0)
-            } else {
-                ready(true)
-            }
-        })
+        .filter(|x| if let Ok(x) = x { ready(x.len() > 0) } else { ready(true) })
 }
 
 // TODO move this, it's also used by binned.
@@ -75,11 +69,5 @@ where
                 stream::iter([Ok(String::new()), Ok(String::new()), Ok(String::new())])
             }
         })
-        .filter(|x| {
-            if let Ok(x) = x {
-                ready(x.len() > 0)
-            } else {
-                ready(true)
-            }
-        })
+        .filter(|x| if let Ok(x) = x { ready(x.len() > 0) } else { ready(true) })
 }

@@ -2,23 +2,23 @@ use daqbuf_err as err;
 use err::Error;
 use futures_util::Stream;
 use futures_util::StreamExt;
+use items_0::WithLen;
 use items_0::scalar_ops::ScalarOps;
 use items_0::streamitem::RangeCompletableItem;
 use items_0::streamitem::Sitemty;
 use items_0::streamitem::StreamItem;
 use items_0::subfr::SubFrId;
 use items_0::timebin::BinningggContainerEventsDyn;
-use items_0::WithLen;
 use items_2::binning::container_events::ContainerEvents;
 use items_2::binning::container_events::EventValueType;
 use items_2::binning::container_events::PulsedVal;
 use items_2::empty::empty_events_pulsed_dyn_ev;
 use items_2::eventfull::EventFull;
-use netpod::log::*;
 use netpod::AggKind;
 use netpod::ScalarType;
 use netpod::Shape;
 use netpod::TsNano;
+use netpod::log::*;
 use std::marker::PhantomData;
 use std::mem;
 use std::pin::Pin;
@@ -123,11 +123,7 @@ impl ScalarValueFromBytes<String> for String {
 impl ScalarValueFromBytes<bool> for bool {
     fn convert(buf: &[u8], _endian: Endian) -> Result<bool, Error> {
         if buf.len() >= 1 {
-            if buf[0] != 0 {
-                Ok(true)
-            } else {
-                Ok(false)
-            }
+            if buf[0] != 0 { Ok(true) } else { Ok(false) }
         } else {
             Ok(false)
         }

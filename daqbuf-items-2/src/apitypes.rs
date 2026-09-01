@@ -46,10 +46,7 @@ where
         let mut ret = self.values.into_user_facing_fields();
         ret.push(("tss".into(), Box::new(tss)));
         // Clients rely on `scalar_type` to create correctly typed HDF5 datasets.
-        ret.push((
-            "scalar_type".into(),
-            Box::new(EVT::scalar_type_name_string()),
-        ));
+        ret.push(("scalar_type".into(), Box::new(EVT::scalar_type_name_string())));
         if self.range_final {
             ret.push(("rangeFinal".into(), Box::new(true)));
         }

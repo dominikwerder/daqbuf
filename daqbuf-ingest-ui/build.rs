@@ -25,11 +25,7 @@ fn collect_files(root: &Path, dir: &Path, out: &mut Vec<(String, PathBuf)>) -> i
         if path.is_dir() {
             collect_files(root, &path, out)?;
         } else if path.is_file() {
-            let rel = path
-                .strip_prefix(root)
-                .unwrap()
-                .to_string_lossy()
-                .replace('\\', "/"); // normalize on Windows
+            let rel = path.strip_prefix(root).unwrap().to_string_lossy().replace('\\', "/"); // normalize on Windows
             out.push((rel, path));
         }
     }
@@ -37,12 +33,7 @@ fn collect_files(root: &Path, dir: &Path, out: &mut Vec<(String, PathBuf)>) -> i
 }
 
 fn guess_mime(path: &str) -> &'static str {
-    match path
-        .rsplit('.')
-        .next()
-        .map(|s| s.to_ascii_lowercase())
-        .as_deref()
-    {
+    match path.rsplit('.').next().map(|s| s.to_ascii_lowercase()).as_deref() {
         Some("html") | Some("htm") => "text/html; charset=utf-8",
         Some("css") => "text/css; charset=utf-8",
         Some("js") => "application/javascript; charset=utf-8",

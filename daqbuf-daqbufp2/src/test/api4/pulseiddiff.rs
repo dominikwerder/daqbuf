@@ -2,8 +2,8 @@ use crate::nodes::require_test_hosts_running;
 use crate::test::api4::common::fetch_events_json;
 use daqbuf_err::Error;
 // use items_0::test::f32_iter_cmp_near;
-use netpod::range::evrange::NanoRange;
 use netpod::SfDbChannel;
+use netpod::range::evrange::NanoRange;
 use query::api4::events::PlainEventsQuery;
 
 const BACKEND: &str = "testbackend-00";

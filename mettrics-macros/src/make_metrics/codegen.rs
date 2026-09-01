@@ -58,19 +58,9 @@ impl MetricsDecl {
     fn agg_find_counters_in_input(&self, inp: &AggregationModItem) -> syn::Result<Vec<String>> {
         // recursion
         // input can be a Metrics or a Aggregation type.
-        if let Some(inp) = self
-            .metrics_mods
-            .iter()
-            .filter(|&x| x.struct_name == inp.input)
-            .next()
-        {
+        if let Some(inp) = self.metrics_mods.iter().filter(|&x| x.struct_name == inp.input).next() {
             self.agg_find_counters_in_input_metrics(inp)
-        } else if let Some(inp) = self
-            .agg_mods
-            .iter()
-            .filter(|&x| x.struct_name == inp.input)
-            .next()
-        {
+        } else if let Some(inp) = self.agg_mods.iter().filter(|&x| x.struct_name == inp.input).next() {
             self.agg_find_counters_in_input(inp)
         } else {
             let e = syn::Error::new(Span::call_site(), format!("can not find input counters"));
@@ -101,27 +91,14 @@ impl MetricsDecl {
     }
 
     fn agg_token_stream(&self, agg: &AggregationModItem) -> syn::Result<TokenStream> {
-        let ts1 = if let Some(inp) = self
-            .metrics_mods
-            .iter()
-            .filter(|&x| x.struct_name == agg.input)
-            .next()
-        {
+        let ts1 = if let Some(inp) = self.metrics_mods.iter().filter(|&x| x.struct_name == agg.input).next() {
             self.agg_from_metrics_token_stream(agg, inp)
-        } else if let Some(inp) = self
-            .agg_mods
-            .iter()
-            .filter(|&x| x.struct_name == agg.input)
-            .next()
-        {
+        } else if let Some(inp) = self.agg_mods.iter().filter(|&x| x.struct_name == agg.input).next() {
             self.agg_from_agg_token_stream(agg, inp)
         } else {
             let e = syn::Error::new(
                 Span::call_site(),
-                format!(
-                    "can not find input decl to aggregation: {}",
-                    agg.input.to_string()
-                ),
+                format!("can not find input decl to aggregation: {}", agg.input.to_string()),
             );
             Err(e)
         };

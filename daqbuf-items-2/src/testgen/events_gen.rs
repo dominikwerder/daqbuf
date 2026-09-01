@@ -28,9 +28,7 @@ pub fn new_events_gen_dim0_f32_v00(range: NanoRange) -> impl Iterator<Item = Con
         .take_while(|c| c.len() != 0)
 }
 
-pub fn new_events_gen_dim1_f32_v00(
-    range: NanoRange,
-) -> impl Iterator<Item = ContainerEvents<Vec<f32>>> {
+pub fn new_events_gen_dim1_f32_v00(range: NanoRange) -> impl Iterator<Item = ContainerEvents<Vec<f32>>> {
     let dt = 1000 * 1000 * 10;
     let beg = range.beg();
     let end = range.end();

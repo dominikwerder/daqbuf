@@ -25,9 +25,9 @@ fn pu(c: &mut ContainerEvents<f32>, ts: TsNano, v: f32) {
 }
 
 fn dataitem(c: ContainerEvents<f32>) -> Sitemty<ChannelEvents> {
-    Ok(StreamItem::DataItem(RangeCompletableItem::Data(
-        ChannelEvents::Events(Box::new(c)),
-    )))
+    Ok(StreamItem::DataItem(RangeCompletableItem::Data(ChannelEvents::Events(
+        Box::new(c),
+    ))))
 }
 
 async fn fetch_into_tss_items<INP>(mut inp: INP) -> VecDeque<VecDeque<TsNano>>

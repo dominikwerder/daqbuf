@@ -1,36 +1,36 @@
+use crate::Requ;
 use crate::body_empty;
 use crate::body_string;
 use crate::cache::Cache;
 use crate::err::Error;
 use crate::response;
-use crate::Requ;
 use bytes::Buf;
 use bytes::BufMut;
 use bytes::BytesMut;
 use chrono::TimeZone;
 use chrono::Utc;
-use futures_util::stream::FuturesOrdered;
-use futures_util::stream::FuturesUnordered;
 use futures_util::FutureExt;
 use futures_util::TryStreamExt;
-use http::header;
+use futures_util::stream::FuturesOrdered;
+use futures_util::stream::FuturesUnordered;
 use http::Method;
 use http::StatusCode;
 use http::Uri;
+use http::header;
+use httpclient::StreamResponse;
 use httpclient::connect_client;
 use httpclient::read_body_bytes;
-use httpclient::StreamResponse;
 use hyper::Request;
-use netpod::log::*;
-use netpod::req_uri_to_url;
-use netpod::timeunits::SEC;
 use netpod::AppendToUrl;
+use netpod::DATETIME_FMT_9MS;
 use netpod::FromUrl;
 use netpod::HasBackend;
 use netpod::HasTimeout;
 use netpod::NodeConfigCached;
 use netpod::ReqCtx;
-use netpod::DATETIME_FMT_9MS;
+use netpod::log::*;
+use netpod::req_uri_to_url;
+use netpod::timeunits::SEC;
 use scyllaconn::scylla;
 use serde::Deserialize;
 use serde::Serialize;
@@ -40,9 +40,9 @@ use std::io::SeekFrom;
 use std::path::Path;
 use std::path::PathBuf;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
-use std::sync::Arc;
 use std::task::Context;
 use std::task::Poll;
 use std::time::Duration;
@@ -1078,11 +1078,7 @@ impl MapPulseLocalHttpFunction {
     ) -> Result<Option<(u64, String)>, Error> {
         trace!(
             "search in  ks {}  sp {}  tb {}  host {}  ch {}",
-            ks,
-            sp,
-            tb,
-            hostname,
-            ch
+            ks, sp, tb, hostname, ch
         );
         if ks == 2 {
             match disk::paths::data_path_tb(ks, &ch, tb, 1000 * 60 * 60 * 24, sp, &node_config.node) {

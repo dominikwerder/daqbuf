@@ -137,13 +137,7 @@ where
     fn handle_item(&mut self, item: ITY) -> Result<Option<ITY>, Error> {
         // TODO count the events before range for metrics.
         if let (Some(min), Some(max)) = (item.ts_min(), item.ts_max()) {
-            trace_inp!(
-                self.trdet,
-                "see event  len {}  min {}  max {}",
-                item.len(),
-                min,
-                max
-            );
+            trace_inp!(self.trdet, "see event  len {}  min {}  max {}", item.len(), min, max);
             if min < self.tsmax {
                 return Err(Error::Unordered);
             }
@@ -236,10 +230,7 @@ where
     INP: Stream<Item = Sitemty<ITY>> + Unpin,
     ITY: MergeableTy,
 {
-    fn poll_next(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context,
-    ) -> Poll<Option<<Self as Stream>::Item>> {
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<<Self as Stream>::Item>> {
         use Poll::*;
         let selfname = Self::type_name();
         loop {
@@ -269,26 +260,23 @@ where
             } else {
                 match self.inp.poll_next_unpin(cx) {
                     Ready(Some(item)) => match item {
-                        Ok(StreamItem::DataItem(RangeCompletableItem::Data(item))) => {
-                            match self.handle_item(item) {
-                                Ok(Some(item)) => {
-                                    trace_emit!(
-                                        self.trdet,
-                                        "emit {}",
-                                        TsNanoVecFmt(MergeableTy::tss_for_testing(&item).iter())
-                                    );
-                                    let item =
-                                        Ok(StreamItem::DataItem(RangeCompletableItem::Data(item)));
-                                    Ready(Some(item))
-                                }
-                                Ok(None) => continue,
-                                Err(e) => {
-                                    error!("sees: {}", e);
-                                    self.inp_done = true;
-                                    Ready(Some(sitem_err_from_string(e)))
-                                }
+                        Ok(StreamItem::DataItem(RangeCompletableItem::Data(item))) => match self.handle_item(item) {
+                            Ok(Some(item)) => {
+                                trace_emit!(
+                                    self.trdet,
+                                    "emit {}",
+                                    TsNanoVecFmt(MergeableTy::tss_for_testing(&item).iter())
+                                );
+                                let item = Ok(StreamItem::DataItem(RangeCompletableItem::Data(item)));
+                                Ready(Some(item))
                             }
-                        }
+                            Ok(None) => continue,
+                            Err(e) => {
+                                error!("sees: {}", e);
+                                self.inp_done = true;
+                                Ready(Some(sitem_err_from_string(e)))
+                            }
+                        },
                         Ok(StreamItem::DataItem(RangeCompletableItem::RangeComplete)) => {
                             self.have_range_complete = true;
                             continue;
@@ -298,9 +286,7 @@ where
                     Ready(None) => {
                         self.inp_done = true;
                         if let Some(sl1) = self.slot1.take() {
-                            Ready(Some(Ok(StreamItem::DataItem(RangeCompletableItem::Data(
-                                sl1,
-                            )))))
+                            Ready(Some(Ok(StreamItem::DataItem(RangeCompletableItem::Data(sl1)))))
                         } else {
                             continue;
                         }

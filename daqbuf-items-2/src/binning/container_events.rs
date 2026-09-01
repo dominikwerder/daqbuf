@@ -57,14 +57,7 @@ autoerr::create_error_v1!(
 );
 
 pub trait Container<EVT>:
-    fmt::Debug
-    + Send
-    + Unpin
-    + Clone
-    + PreviewRange
-    + Serialize
-    + for<'a> Deserialize<'a>
-    + FromIterator<EVT>
+    fmt::Debug + Send + Unpin + Clone + PreviewRange + Serialize + for<'a> Deserialize<'a> + FromIterator<EVT>
 where
     EVT: EventValueType,
 {
@@ -352,8 +345,7 @@ macro_rules! impl_event_value_type_vec {
                 $sctname.to_string()
             }
             fn byte_estimate(&self) -> u32 {
-                self.iter()
-                    .fold(0, |a, x| a + EventValueType::byte_estimate(x))
+                self.iter().fold(0, |a, x| a + EventValueType::byte_estimate(x))
             }
         }
 
@@ -414,8 +406,7 @@ impl EventValueType for Vec<String> {
         "string".to_string()
     }
     fn byte_estimate(&self) -> u32 {
-        self.iter()
-            .fold(0, |a, x| a + EventValueType::byte_estimate(x))
+        self.iter().fold(0, |a, x| a + EventValueType::byte_estimate(x))
     }
 }
 
@@ -438,8 +429,7 @@ impl EventValueType for Vec<EnumVariant> {
         "enum".to_string()
     }
     fn byte_estimate(&self) -> u32 {
-        self.iter()
-            .fold(0, |a, x| a + EventValueType::byte_estimate(x))
+        self.iter().fold(0, |a, x| a + EventValueType::byte_estimate(x))
     }
 }
 
@@ -853,10 +843,7 @@ impl<EVT> ContainerEvents<EVT>
 where
     EVT: EventValueType,
 {
-    pub fn from_constituents(
-        tss: VecDeque<TsNano>,
-        vals: <EVT as EventValueType>::Container,
-    ) -> Self {
+    pub fn from_constituents(tss: VecDeque<TsNano>, vals: <EVT as EventValueType>::Container) -> Self {
         Self {
             tss,
             vals,
@@ -881,12 +868,7 @@ where
     }
 
     pub fn verify(&self) -> Result<(), EventsContainerError> {
-        if self
-            .tss
-            .iter()
-            .zip(self.tss.iter().skip(1))
-            .any(|(&a, &b)| a > b)
-        {
+        if self.tss.iter().zip(self.tss.iter().skip(1)).any(|(&a, &b)| a > b) {
             return Err(EventsContainerError::Unordered);
         }
         Ok(())
@@ -1061,9 +1043,7 @@ where
     pub fn next(&mut self) -> Option<EventSingleRef<'_, EVT>> {
         let evs = &self.evs;
         if self.pos < self.end {
-            if let (Some(&ts), Some(val)) =
-                (evs.tss.get(self.pos), evs.vals.get_iter_ty_1(self.pos))
-            {
+            if let (Some(&ts), Some(val)) = (evs.tss.get(self.pos), evs.vals.get_iter_ty_1(self.pos)) {
                 self.pos += 1;
                 let ev = EventSingleRef { ts, val };
                 Some(ev)
@@ -1202,11 +1182,7 @@ where
         MergeableTy::tss_for_testing(self)
     }
 
-    fn drain_into(
-        &mut self,
-        dst: &mut dyn MergeableDyn,
-        range: Range<usize>,
-    ) -> DrainIntoDstResult {
+    fn drain_into(&mut self, dst: &mut dyn MergeableDyn, range: Range<usize>) -> DrainIntoDstResult {
         if let Some(dst) = dst.as_any_mut().downcast_mut::<Self>() {
             MergeableTy::drain_into(self, dst, range)
         } else {
@@ -1563,13 +1539,7 @@ mod test_serde_opt {
 fn float_cmp_00() {
     use std::cmp::Ordering;
     assert_eq!(f32::INFINITY.partial_cmp(&2.0_f32), Some(Ordering::Greater));
-    assert_eq!(
-        f32::INFINITY.partial_cmp(&f32::NEG_INFINITY),
-        Some(Ordering::Greater)
-    );
-    assert_eq!(
-        f32::INFINITY.partial_cmp(&f32::INFINITY),
-        Some(Ordering::Equal)
-    );
+    assert_eq!(f32::INFINITY.partial_cmp(&f32::NEG_INFINITY), Some(Ordering::Greater));
+    assert_eq!(f32::INFINITY.partial_cmp(&f32::INFINITY), Some(Ordering::Equal));
     assert_eq!(f32::NAN.partial_cmp(&f32::INFINITY), None);
 }

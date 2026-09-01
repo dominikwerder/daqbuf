@@ -76,10 +76,7 @@ where
 
     fn ingest(&mut self, evs: &EventsBoxed) -> Result<IngestReport, BinningggError> {
         match evs.as_any_ref().downcast_ref::<ContainerEvents<EVT>>() {
-            Some(evs) => Ok(self
-                .binner
-                .ingest(evs)
-                .map_err(|e| BinningggError::Dyn(Box::new(e)))?),
+            Some(evs) => Ok(self.binner.ingest(evs).map_err(|e| BinningggError::Dyn(Box::new(e)))?),
             None => {
                 let e = BinningggError::TypeMismatch {
                     have: evs.type_name().into(),
@@ -171,10 +168,7 @@ impl BinnedEventsTimeweightTrait for BinnedEventsTimeweightLazy {
     }
 
     fn output(&mut self) -> Result<Option<BinsBoxed>, BinningggError> {
-        self.binned_events
-            .as_mut()
-            .map(|x| x.output())
-            .unwrap_or(Ok(None))
+        self.binned_events.as_mut().map(|x| x.output()).unwrap_or(Ok(None))
     }
 }
 
@@ -194,10 +188,7 @@ pub struct BinnedEventsTimeweightStream {
 }
 
 impl BinnedEventsTimeweightStream {
-    pub fn new(
-        range: BinnedRange<TsNano>,
-        inp: Pin<Box<dyn Stream<Item = Sitemty<ChannelEvents>> + Send>>,
-    ) -> Self {
+    pub fn new(range: BinnedRange<TsNano>, inp: Pin<Box<dyn Stream<Item = Sitemty<ChannelEvents>> + Send>>) -> Self {
         trace!("stream new");
         Self {
             state: StreamState::Reading,
@@ -257,10 +248,7 @@ impl BinnedEventsTimeweightStream {
         }
     }
 
-    fn handle_buffered(
-        self: Pin<&mut Self>,
-        cx: &mut Context,
-    ) -> ControlFlow<Poll<Option<<Self as Stream>::Item>>> {
+    fn handle_buffered(self: Pin<&mut Self>, cx: &mut Context) -> ControlFlow<Poll<Option<<Self as Stream>::Item>>> {
         use ControlFlow::*;
         use Poll::*;
         let self2 = self.get_mut();
@@ -383,20 +371,13 @@ impl BinnedEventsTimeweightStream {
         Ok(())
     }
 
-    fn handle_remains(
-        mut self: Pin<&mut Self>,
-        _cx: &mut Context,
-    ) -> Poll<Option<<Self as Stream>::Item>> {
+    fn handle_remains(mut self: Pin<&mut Self>, _cx: &mut Context) -> Poll<Option<<Self as Stream>::Item>> {
         debug_input_container!("handle_remains");
         use Poll::*;
         use items_0::streamitem::RangeCompletableItem::*;
         use items_0::streamitem::StreamItem::*;
         debug!("handle_remains  binner {:?}", self.binned_events);
-        match self
-            .binned_events
-            .output()
-            .map_err(err::Error::from_string)?
-        {
+        match self.binned_events.output().map_err(err::Error::from_string)? {
             Some(x) => {
                 // trace_emit!("seeing ready bins {:?}", x);
                 debug!("seeing ready bins {:?}", x);
@@ -411,10 +392,7 @@ impl BinnedEventsTimeweightStream {
         }
     }
 
-    fn handle_main(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context,
-    ) -> ControlFlow<Poll<Option<<Self as Stream>::Item>>> {
+    fn handle_main(mut self: Pin<&mut Self>, cx: &mut Context) -> ControlFlow<Poll<Option<<Self as Stream>::Item>>> {
         trace_input_container!("handle_main");
         use ControlFlow::*;
         use Poll::*;
@@ -445,8 +423,7 @@ impl BinnedEventsTimeweightStream {
         if let Break(Ready(Some(Err(_)))) = ret {
             self.state = StreamState::Done;
         }
-        if let Break(Ready(Some(Ok(StreamItem::DataItem(RangeCompletableItem::Data(item)))))) = &ret
-        {
+        if let Break(Ready(Some(Ok(StreamItem::DataItem(RangeCompletableItem::Data(item)))))) = &ret {
             trace_emit!("emit item len {}", item.len());
         }
         ret

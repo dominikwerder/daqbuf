@@ -156,9 +156,7 @@ async fn timebin_from_layers_00_inner() -> Result<(), Error> {
 #[cfg(target_os = "cuda")]
 #[test]
 fn timebin_from_layers_00() {
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .build()
-        .unwrap();
+    let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
     rt.block_on(timebin_from_layers_00_inner()).unwrap()
 }
 
@@ -223,8 +221,6 @@ async fn timebin_from_layers_1layer_inner() -> Result<(), Error> {
 #[cfg(target_os = "cuda")]
 #[test]
 fn timebin_from_layers_1layer() {
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .build()
-        .unwrap();
+    let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
     rt.block_on(timebin_from_layers_1layer_inner()).unwrap()
 }

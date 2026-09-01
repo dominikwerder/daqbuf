@@ -60,15 +60,12 @@ where
                 match self.inp.poll_next_unpin(cx) {
                     Ready(Some(item)) => match item {
                         Ok(StreamItem::DataItem(RangeCompletableItem::Data(ref item2))) => {
-                            if let Some(ilge) =
-                                MergeableTy::find_lowest_index_ge(item2, self.range.beg_ts())
-                            {
+                            if let Some(ilge) = MergeableTy::find_lowest_index_ge(item2, self.range.beg_ts()) {
                                 self.before_cnt += ilge as u32;
                                 if self.before_cnt > 1 {
                                     self.done = true;
                                     debug!("before_cnt {}  tag {}", self.before_cnt, self.tag);
-                                    let msg =
-                                        format!("before_cnt {}  tag {}", self.before_cnt, self.tag);
+                                    let msg = format!("before_cnt {}  tag {}", self.before_cnt, self.tag);
                                     let x = LogItem::info(msg);
                                     let item = sitem2_log(x);
                                     return Ready(Some(item));
@@ -76,9 +73,7 @@ where
                             }
                             Ready(Some(item))
                         }
-                        Ok(StreamItem::DataItem(RangeCompletableItem::RangeComplete)) => {
-                            Ready(Some(item))
-                        }
+                        Ok(StreamItem::DataItem(RangeCompletableItem::RangeComplete)) => Ready(Some(item)),
                         x => Ready(Some(x)),
                     },
                     Ready(None) => {

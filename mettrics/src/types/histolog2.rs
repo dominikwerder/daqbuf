@@ -90,11 +90,7 @@ impl HistoLog2 {
         let lastix = (self.histo.len() - 1) as u32;
         for (i, &v) in self.histo.iter().enumerate() {
             let i = i as u32;
-            let le = if i == 0 {
-                0
-            } else {
-                u32::MAX >> (u32::BITS - i)
-            };
+            let le = if i == 0 { 0 } else { u32::MAX >> (u32::BITS - i) };
             cnt += v;
             ret.push_str(name);
             ret.push_str("_bucket{le=\"");
@@ -132,11 +128,7 @@ pub struct HistoLog2Display<'a> {
 impl<'a> fmt::Display for HistoLog2Display<'a> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         let histo: Vec<_> = self.inner.histo.iter().map(|&x| x).collect();
-        write!(
-            fmt,
-            "HistoLog2 {{ histo: {:?}, sum: {:?} }}",
-            histo, self.inner.sum
-        )
+        write!(fmt, "HistoLog2 {{ histo: {:?}, sum: {:?} }}", histo, self.inner.sum)
     }
 }
 

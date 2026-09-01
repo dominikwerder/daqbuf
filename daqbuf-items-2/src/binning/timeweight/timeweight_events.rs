@@ -106,11 +106,7 @@ where
     EVT: EventValueType,
 {
     // NOTE that this is also used during bin-cycle.
-    fn ingest_event_with_lst_gt_range_beg_agg(
-        &mut self,
-        ev: EventSingleRef<EVT>,
-        lst: LstRef<EVT>,
-    ) {
+    fn ingest_event_with_lst_gt_range_beg_agg(&mut self, ev: EventSingleRef<EVT>, lst: LstRef<EVT>) {
         let selfname = "ingest_event_with_lst_gt_range_beg_agg";
         trace_ingest_event!("{}  {:?}", selfname, ev);
         if DEBUG_CHECKS {
@@ -132,11 +128,7 @@ where
         self.filled_until = ev.ts;
     }
 
-    fn ingest_event_with_lst_gt_range_beg_2(
-        &mut self,
-        ev: EventSingleRef<EVT>,
-        lst: LstMut<EVT>,
-    ) -> Result<(), Error> {
+    fn ingest_event_with_lst_gt_range_beg_2(&mut self, ev: EventSingleRef<EVT>, lst: LstMut<EVT>) -> Result<(), Error> {
         let selfname = "ingest_event_with_lst_gt_range_beg_2";
         trace_ingest_event!("{}", selfname);
         self.ingest_event_with_lst_gt_range_beg_agg(ev.clone(), LstRef(lst.0));
@@ -321,11 +313,7 @@ where
         Self::apply_min_max(ev, minmax);
     }
 
-    fn ingest_with_lst(
-        &mut self,
-        evs: &mut ContainerEventsTakeUpTo<EVT>,
-        lst: LstMut<EVT>,
-    ) -> Result<(), Error> {
+    fn ingest_with_lst(&mut self, evs: &mut ContainerEventsTakeUpTo<EVT>, lst: LstMut<EVT>) -> Result<(), Error> {
         let selfname = "ingest_with_lst";
         trace_ingest_container!("{}  len {}", selfname, evs.len());
         let b = &mut self.inner_b;
@@ -423,12 +411,7 @@ where
         {
             let filled_width_fraction = b.filled_width.fraction_f32_of(b.active_len);
             let res = b.agg.result_and_reset_for_new_bin(filled_width_fraction);
-            trace_ingest_minmax!(
-                "{}  push out  min {:?}  max {:?}",
-                selfname,
-                minmax.0,
-                minmax.1
-            );
+            trace_ingest_minmax!("{}  push out  min {:?}  max {:?}", selfname, minmax.0, minmax.1);
             out.push_back(
                 b.active_beg,
                 b.active_end,
@@ -505,9 +488,7 @@ where
                     active_len,
                     filled_until: active_beg,
                     filled_width: DtNano::from_ns(0),
-                    agg: <<EVT as EventValueType>::AggregatorTimeWeight as AggregatorTimeWeight<
-                        EVT,
-                    >>::new(),
+                    agg: <<EVT as EventValueType>::AggregatorTimeWeight as AggregatorTimeWeight<EVT>>::new(),
                 },
                 minmax: None,
             },
@@ -623,8 +604,7 @@ where
                             if b.filled_until < b.active_end {
                                 self.inner_a.inner_b.fill_until(b.active_end, lst.clone());
                             }
-                            self.inner_a
-                                .push_out_and_reset(lst.clone(), true, &mut self.out);
+                            self.inner_a.push_out_and_reset(lst.clone(), true, &mut self.out);
                         } else {
                             self.inner_a.inner_b.fill_until(ts, lst.clone());
                         }
@@ -639,8 +619,7 @@ where
                         if b.filled_until < b.active_end {
                             self.inner_a.inner_b.fill_until(b.active_end, lst.clone());
                         }
-                        self.inner_a
-                            .push_out_and_reset(lst.clone(), true, &mut self.out);
+                        self.inner_a.push_out_and_reset(lst.clone(), true, &mut self.out);
                     } else {
                         // TODO should not hit this case. Prove it, assert it.
                         self.inner_a.inner_b.fill_until(ts, lst.clone());
@@ -713,11 +692,7 @@ where
         let mut evs = ContainerEventsTakeUpTo::new(evs);
         loop {
             trace_ingest_container!("+++++++++++++++++++++++++++++++++++++++++++++++++++");
-            trace_ingest_container!(
-                "main-ingest-loop  UNCONSTRAINED  len {}  pos {}",
-                evs.len(),
-                evs.pos()
-            );
+            trace_ingest_container!("main-ingest-loop  UNCONSTRAINED  len {}  pos {}", evs.len(), evs.pos());
             break if let Some(ts) = evs.ts_first() {
                 trace_ingest_event!("ingest  EVENT TIMESTAMP FRONT  {:?}", ts);
                 let b = &mut self.inner_a.inner_b;
@@ -725,12 +700,7 @@ where
                     return Err(Error::EventAfterRange);
                 }
                 if ts >= b.active_end {
-                    assert!(
-                        b.filled_until < b.active_end,
-                        "{} < {}",
-                        b.filled_until,
-                        b.active_end
-                    );
+                    assert!(b.filled_until < b.active_end, "{} < {}", b.filled_until, b.active_end);
                     self.cycle_01(ts);
                     if self.out.len() > OUT_LEN_MAX {
                         // TODO collect for metrics
@@ -743,11 +713,7 @@ where
                 // But inner must still communicate back how much was consumed.
                 evs.constrain_up_to_ts(self.inner_a.inner_b.active_end);
                 {
-                    trace_ingest_container!(
-                        "main-ingest-loop    CONSTRAINED  len {}  pos {}",
-                        evs.len(),
-                        evs.pos()
-                    );
+                    trace_ingest_container!("main-ingest-loop    CONSTRAINED  len {}  pos {}", evs.len(), evs.pos());
                     if let Some(lst) = self.lst.as_ref() {
                         if ts < lst.ts {
                             return Err(Error::Unordered);

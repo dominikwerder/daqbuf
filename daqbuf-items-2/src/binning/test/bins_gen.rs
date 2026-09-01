@@ -16,8 +16,7 @@ where
     Box::pin(inp)
 }
 
-pub(super) fn bins_gen_dim0_f32_v00(
-) -> impl Stream<Item = Sitemty<Box<dyn BinningggContainerBinsDyn>>> {
+pub(super) fn bins_gen_dim0_f32_v00() -> impl Stream<Item = Sitemty<Box<dyn BinningggContainerBinsDyn>>> {
     futures_util::stream::iter((9u64..100).into_iter())
         .map(|x| {
             let mut c = ContainerBins::<f32, f32>::new();

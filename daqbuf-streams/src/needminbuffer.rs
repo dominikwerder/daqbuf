@@ -25,9 +25,7 @@ pub struct NeedMinBuffer {
 
 impl NeedMinBuffer {
     pub fn new(
-        inp: Pin<
-            Box<dyn Stream<Item = Result<FileChunkRead, items_0::streamitem::SitemErrTy>> + Send>,
-        >,
+        inp: Pin<Box<dyn Stream<Item = Result<FileChunkRead, items_0::streamitem::SitemErrTy>> + Send>>,
     ) -> Self {
         Self {
             inp,
@@ -52,10 +50,7 @@ impl NeedMinBuffer {
 // TODO collect somewhere else
 impl Drop for NeedMinBuffer {
     fn drop(&mut self) {
-        debug!(
-            "NeedMinBuffer-drop {{ buf_len_histo: {:?} }}",
-            self.buf_len_histo
-        );
+        debug!("NeedMinBuffer-drop {{ buf_len_histo: {:?} }}", self.buf_len_histo);
     }
 }
 

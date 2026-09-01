@@ -129,11 +129,7 @@ impl CacheReadProvider for DummyCacheReadProvider {
     }
 }
 
-pub fn test_bins_gen_dim0_f32_v00(
-    bin_len: DtMs,
-    msp: u64,
-    offs: Range<u32>,
-) -> ContainerBins<f32, f32> {
+pub fn test_bins_gen_dim0_f32_v00(bin_len: DtMs, msp: u64, offs: Range<u32>) -> ContainerBins<f32, f32> {
     trace!("test_bins_gen_dim0_f32_v00");
     let partt = PrebinnedPartitioning::try_from(bin_len).unwrap();
     let mut off = offs.start;

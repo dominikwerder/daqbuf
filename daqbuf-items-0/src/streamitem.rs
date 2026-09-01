@@ -151,8 +151,7 @@ pub type Sitemty3<T, E> = Result<StreamItem<T>, E>;
 #[macro_export]
 macro_rules! on_sitemty_range_complete {
     ($item:expr, $ex:expr) => {
-        if let Ok($crate::StreamItem::DataItem($crate::RangeCompletableItem::RangeComplete)) = $item
-        {
+        if let Ok($crate::StreamItem::DataItem($crate::RangeCompletableItem::RangeComplete)) = $item {
             $ex
         }
     };
@@ -161,9 +160,8 @@ macro_rules! on_sitemty_range_complete {
 #[macro_export]
 macro_rules! on_sitemty_data_old {
     ($item:expr, $ex:expr) => {
-        if let Ok($crate::streamitem::StreamItem::DataItem(
-            $crate::streamitem::RangeCompletableItem::Data(item),
-        )) = $item
+        if let Ok($crate::streamitem::StreamItem::DataItem($crate::streamitem::RangeCompletableItem::Data(item))) =
+            $item
         {
             $ex(item)
         } else {
@@ -286,9 +284,7 @@ mod timestamp {
         {
             let ret = time::UtcDateTime::parse(
                 val,
-                time::macros::format_description!(
-                    "[year]-[month]-[day]T[hour]:[minute]:[second].[subsecond digits:6]"
-                ),
+                time::macros::format_description!("[year]-[month]-[day]T[hour]:[minute]:[second].[subsecond digits:6]"),
             );
             ret.map_err(|e| E::custom(format!("{e}")))
         }

@@ -1,7 +1,7 @@
+use crate::Error;
 use crate::binning::container_events::ContainerEvents;
 use crate::binning::container_events::PulsedVal;
 use crate::log::*;
-use crate::Error;
 use daqbuf_err as err;
 use items_0::timebin::BinningggContainerEventsDyn;
 use netpod::EnumVariant;

@@ -1,8 +1,6 @@
 use dbconn::worker::PgQueue;
 use httpclient::url::Url;
-use netpod::log::*;
-use netpod::range::evrange::NanoRange;
-use netpod::timeunits::DAY;
+use netpod::APP_JSON;
 use netpod::AppendToUrl;
 use netpod::ByteOrder;
 use netpod::ChConf;
@@ -16,7 +14,9 @@ use netpod::ScalarType;
 use netpod::SfChFetchInfo;
 use netpod::SfDbChannel;
 use netpod::Shape;
-use netpod::APP_JSON;
+use netpod::log::*;
+use netpod::range::evrange::NanoRange;
+use netpod::timeunits::DAY;
 use scyllaconn::SeriesId;
 use serde::Serialize;
 

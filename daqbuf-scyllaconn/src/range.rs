@@ -1,6 +1,6 @@
 use core::fmt;
-use netpod::range::evrange::SeriesRange;
 use netpod::TsNano;
+use netpod::range::evrange::SeriesRange;
 
 #[derive(Clone)]
 pub struct ScyllaSeriesRange {

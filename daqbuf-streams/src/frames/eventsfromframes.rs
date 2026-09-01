@@ -58,51 +58,43 @@ where
                         StreamItem::Log(item) => Ready(Some(Ok(StreamItem::Log(item)))),
                         StreamItem::Stats(item) => Ready(Some(Ok(StreamItem::Stats(item)))),
                         StreamItem::DataItem(x) => match x {
-                            RangeCompletableItem::Data(frame) => {
-                                match decode_frame::<Sitemty<O>>(&frame) {
+                            RangeCompletableItem::Data(frame) => match decode_frame::<Sitemty<O>>(&frame) {
+                                Ok(item) => match item {
                                     Ok(item) => match item {
-                                        Ok(item) => match item {
-                                            StreamItem::DataItem(item2) => match item2 {
-                                                RangeCompletableItem::Data(item3) => {
-                                                    Ready(Some(Ok(StreamItem::DataItem(
-                                                        RangeCompletableItem::Data(item3),
-                                                    ))))
-                                                }
-                                                RangeCompletableItem::RangeComplete => {
-                                                    debug!("EventsFromFrames  RangeComplete");
-                                                    Ready(Some(Ok(StreamItem::DataItem(
-                                                        RangeCompletableItem::RangeComplete,
-                                                    ))))
-                                                }
-                                            },
-                                            StreamItem::Log(k) => {
-                                                Ready(Some(Ok(StreamItem::Log(k))))
+                                        StreamItem::DataItem(item2) => match item2 {
+                                            RangeCompletableItem::Data(item3) => {
+                                                Ready(Some(Ok(StreamItem::DataItem(RangeCompletableItem::Data(item3)))))
                                             }
-                                            StreamItem::Stats(k) => {
-                                                Ready(Some(Ok(StreamItem::Stats(k))))
+                                            RangeCompletableItem::RangeComplete => {
+                                                debug!("EventsFromFrames  RangeComplete");
+                                                Ready(Some(Ok(StreamItem::DataItem(
+                                                    RangeCompletableItem::RangeComplete,
+                                                ))))
                                             }
                                         },
-                                        Err(e) => {
-                                            error!("rcvd err: {}", e);
-                                            self.errored = true;
-                                            Ready(Some(Err(e)))
-                                        }
+                                        StreamItem::Log(k) => Ready(Some(Ok(StreamItem::Log(k)))),
+                                        StreamItem::Stats(k) => Ready(Some(Ok(StreamItem::Stats(k)))),
                                     },
                                     Err(e) => {
-                                        error!(
-                                            "frame payload  len {}  tyid {:04x}  {}",
-                                            frame.buf().len(),
-                                            frame.tyid(),
-                                            e
-                                        );
+                                        error!("rcvd err: {}", e);
                                         self.errored = true;
-                                        Ready(Some(sitem_err_from_string(e)))
+                                        Ready(Some(Err(e)))
                                     }
+                                },
+                                Err(e) => {
+                                    error!(
+                                        "frame payload  len {}  tyid {:04x}  {}",
+                                        frame.buf().len(),
+                                        frame.tyid(),
+                                        e
+                                    );
+                                    self.errored = true;
+                                    Ready(Some(sitem_err_from_string(e)))
                                 }
+                            },
+                            RangeCompletableItem::RangeComplete => {
+                                Ready(Some(Ok(StreamItem::DataItem(RangeCompletableItem::RangeComplete))))
                             }
-                            RangeCompletableItem::RangeComplete => Ready(Some(Ok(
-                                StreamItem::DataItem(RangeCompletableItem::RangeComplete),
-                            ))),
                         },
                     },
                     Ready(Some(Err(e))) => {

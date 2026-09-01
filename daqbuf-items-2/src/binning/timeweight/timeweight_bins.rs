@@ -162,10 +162,7 @@ where
     }
 
     fn ingest_bins(&mut self, bins: &ContainerBins<EVT, BVT>) -> Result<(), BinningggError> {
-        trace_ingest_bin!(
-            "\n\n+++++++++++++\n\ningest_bins  active_beg {}",
-            self.active_beg
-        );
+        trace_ingest_bin!("\n\n+++++++++++++\n\ningest_bins  active_beg {}", self.active_beg);
         for (((((((&ts1, &ts2), &cnt), min), max), agg), lst), &fnl) in bins.zip_iter() {
             let binlen = self.range.bin_len_dt_ns();
             trace_ingest_bin!(

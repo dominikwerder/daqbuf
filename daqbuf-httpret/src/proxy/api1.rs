@@ -1,27 +1,27 @@
 pub mod reqstatus;
 
+use crate::ReqCtx;
 use crate::bodystream::response;
 use crate::err::Error;
-use crate::ReqCtx;
-use http::header;
 use http::HeaderValue;
 use http::Method;
 use http::Request;
 use http::StatusCode;
 use http::Uri;
+use http::header;
+use httpclient::Requ;
+use httpclient::StreamIncoming;
+use httpclient::StreamResponse;
 use httpclient::body_bytes;
 use httpclient::body_empty;
 use httpclient::body_stream;
 use httpclient::connect_client;
 use httpclient::read_body_bytes;
-use httpclient::Requ;
-use httpclient::StreamIncoming;
-use httpclient::StreamResponse;
+use netpod::ACCEPT_ALL;
+use netpod::ProxyConfig;
+use netpod::X_DAQBUF_REQID;
 use netpod::log::*;
 use netpod::query::api1::Api1Query;
-use netpod::ProxyConfig;
-use netpod::ACCEPT_ALL;
-use netpod::X_DAQBUF_REQID;
 
 pub struct PythonDataApi1Query {}
 

@@ -1,12 +1,12 @@
 #![allow(unused_macros)]
 
-use crate::bodystream::response;
 use crate::ReqCtx;
+use crate::bodystream::response;
 use http::StatusCode;
-use httpclient::body_bytes;
-use httpclient::body_empty;
 use httpclient::Requ;
 use httpclient::StreamResponse;
+use httpclient::body_bytes;
+use httpclient::body_empty;
 use netpod::ProxyConfig;
 use serde_json::json;
 use std::collections::BTreeMap;

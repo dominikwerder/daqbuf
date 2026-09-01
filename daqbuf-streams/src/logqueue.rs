@@ -27,9 +27,7 @@ pub struct RequestLogItemBuffer {
 
 impl RequestLogItemBuffer {
     pub fn new() -> Self {
-        Self {
-            buf: VecDeque::new(),
-        }
+        Self { buf: VecDeque::new() }
     }
 
     pub fn push_back(&mut self, item: LogItem) -> Result<(), PushError> {

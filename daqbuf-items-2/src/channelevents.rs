@@ -61,11 +61,7 @@ pub struct ConnStatusEvent {
 impl ConnStatusEvent {
     pub fn new(ts: TsNano, status: ConnStatus) -> Self {
         let datetime = SystemTime::UNIX_EPOCH + Duration::from_millis(ts.ms());
-        Self {
-            ts,
-            datetime,
-            status,
-        }
+        Self { ts, datetime, status }
     }
 }
 
@@ -138,11 +134,7 @@ pub struct ChannelStatusEvent {
 impl ChannelStatusEvent {
     pub fn new(ts: u64, status: ChannelStatusPubApi) -> Self {
         let datetime = SystemTime::UNIX_EPOCH + Duration::from_millis(ts / 1000000);
-        Self {
-            ts,
-            datetime,
-            status,
-        }
+        Self { ts, datetime, status }
     }
 }
 
@@ -410,12 +402,8 @@ mod serde_channel_events {
             A: de::SeqAccess<'de>,
         {
             trace_serde!("EvBoxVis::visit_seq");
-            let cty: u32 = seq
-                .next_element()?
-                .ok_or_else(|| de::Error::missing_field("[0] cty"))?;
-            let nty: u16 = seq
-                .next_element()?
-                .ok_or_else(|| de::Error::missing_field("[1] nty"))?;
+            let cty: u32 = seq.next_element()?.ok_or_else(|| de::Error::missing_field("[0] cty"))?;
+            let nty: u16 = seq.next_element()?.ok_or_else(|| de::Error::missing_field("[1] nty"))?;
             let seq = &mut seq;
             trace_serde!("EvBoxVis::visit_seq  cty 0x{:x}  nty 0x{:x}", cty, nty);
             let ret = if is_container_events(cty) {
@@ -519,10 +507,7 @@ mod serde_channel_events {
             } else if val == vars[1] {
                 Ok(VarId::Status)
             } else {
-                Err(de::Error::unknown_variant(
-                    val,
-                    ChannelEventsVis::allowed_variants(),
-                ))
+                Err(de::Error::unknown_variant(val, ChannelEventsVis::allowed_variants()))
             }
         }
     }
@@ -822,9 +807,7 @@ impl MergeableTy for ChannelEvents {
         match self {
             ChannelEvents::Events(k) => match MergeableTy::drain_into_new(k, range) {
                 DrainIntoNewResult::Done(x) => DrainIntoNewResult::Done(ChannelEvents::Events(x)),
-                DrainIntoNewResult::Partial(x) => {
-                    DrainIntoNewResult::Partial(ChannelEvents::Events(x))
-                }
+                DrainIntoNewResult::Partial(x) => DrainIntoNewResult::Partial(ChannelEvents::Events(x)),
                 DrainIntoNewResult::NotCompatible => DrainIntoNewResult::NotCompatible,
             },
             ChannelEvents::Status(k) => DrainIntoNewResult::Done(ChannelEvents::Status(k.clone())),

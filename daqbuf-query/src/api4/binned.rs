@@ -55,10 +55,7 @@ mod serde_option_vec_duration {
         match val {
             Some(vec) => {
                 // humantime_serde::serialize(&t, ser)
-                let t: Vec<_> = vec
-                    .iter()
-                    .map(|&x| HumantimeDuration { inner: x })
-                    .collect();
+                let t: Vec<_> = vec.iter().map(|&x| HumantimeDuration { inner: x }).collect();
                 serde::Serialize::serialize(&t, ser)
             }
             None => ser.serialize_none(),
@@ -89,11 +86,7 @@ pub struct BinnedQuery {
     range: SeriesRange,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     bin_count: Option<u32>,
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        with = "humantime_serde"
-    )]
+    #[serde(default, skip_serializing_if = "Option::is_none", with = "humantime_serde")]
     bin_width: Option<Duration>,
     #[serde(
         default = "TransformQuery::default_time_binned",
@@ -102,11 +95,7 @@ pub struct BinnedQuery {
     transform: TransformQuery,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     cache_usage: Option<CacheUsage>,
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        with = "serde_option_vec_duration"
-    )]
+    #[serde(default, skip_serializing_if = "Option::is_none", with = "serde_option_vec_duration")]
     subgrids: Option<Vec<Duration>>,
     #[serde(
         default,
@@ -391,9 +380,7 @@ impl FromUrl for BinnedQuery {
             channel: SfDbChannel::from_pairs(&pairs)?,
             range: SeriesRange::from_pairs(pairs)?,
             bin_count: pairs.get("binCount").and_then(|x| x.parse().ok()),
-            bin_width: pairs
-                .get("binWidth")
-                .and_then(|x| humantime::parse_duration(x).ok()),
+            bin_width: pairs.get("binWidth").and_then(|x| humantime::parse_duration(x).ok()),
             transform: TransformQuery::from_pairs(pairs)?,
             cache_usage: CacheUsage::from_pairs(&pairs)?,
             buf_len_disk_io: pairs
@@ -407,11 +394,9 @@ impl FromUrl for BinnedQuery {
             timeout_content: pairs
                 .get("contentTimeout")
                 .and_then(|x| humantime::parse_duration(x).ok()),
-            subgrids: pairs.get("subgrids").map(|x| {
-                x.split(",")
-                    .filter_map(|x| humantime::parse_duration(x).ok())
-                    .collect()
-            }),
+            subgrids: pairs
+                .get("subgrids")
+                .map(|x| x.split(",").filter_map(|x| humantime::parse_duration(x).ok()).collect()),
             merger_out_len_max: pairs
                 .get("mergerOutLenMax")
                 .map_or(Ok(None), |k| k.parse().map(|k| Some(k)))?,
@@ -422,18 +407,12 @@ impl FromUrl for BinnedQuery {
             log_level: pairs.get("log_level").map_or(String::new(), String::from),
             log_items: pairs.get("log_items").map_or(String::new(), String::from),
             stats_items: pairs.get("stats_items").and_then(|x| x.parse().ok()),
-            use_rt: pairs.get("useRt").map_or(Ok(None), |k| {
-                k.parse().map(Some).map_err(|_| Error::BadUseRt)
-            })?,
-            allow_from_events: pairs
-                .get("allow_from_events")
-                .and_then(|x| x.parse::<bool>().ok()),
-            allow_from_prebinned: pairs
-                .get("allow_from_prebinned")
-                .and_then(|x| x.parse::<bool>().ok()),
-            allow_rebin: pairs
-                .get("allow_rebin")
-                .and_then(|x| x.parse::<bool>().ok()),
+            use_rt: pairs
+                .get("useRt")
+                .map_or(Ok(None), |k| k.parse().map(Some).map_err(|_| Error::BadUseRt))?,
+            allow_from_events: pairs.get("allow_from_events").and_then(|x| x.parse::<bool>().ok()),
+            allow_from_prebinned: pairs.get("allow_from_prebinned").and_then(|x| x.parse::<bool>().ok()),
+            allow_rebin: pairs.get("allow_rebin").and_then(|x| x.parse::<bool>().ok()),
             datahub_bin_as_waveform: pairs
                 .get("private_datahub_bin_as_waveform")
                 .and_then(|x| x.parse::<bool>().ok()),
@@ -442,9 +421,7 @@ impl FromUrl for BinnedQuery {
                 .get("pbd_rts_pbp_block")
                 .and_then(|x| serde_json::from_str(x).ok()),
             pbd_evs: pairs.get("pbd_evs").and_then(|x| x.parse().ok()),
-            pbp1: pairs
-                .get("pbp1")
-                .and_then(|x| PrebinnedPartitioning::from_str(x).ok()),
+            pbp1: pairs.get("pbp1").and_then(|x| PrebinnedPartitioning::from_str(x).ok()),
             use_pbp: pairs
                 .get("usePbp")
                 .and_then(|x| PrebinnedPartitioning::from_str(x).ok()),
@@ -488,16 +465,16 @@ impl AppendToUrl for BinnedQuery {
             g.append_pair("contentTimeout", &format!("{:.0}ms", 1e3 * x.as_secs_f64()));
         }
         if let Some(x) = &self.subgrids {
-            let s: String = x
-                .iter()
-                .map(|&x| humantime::format_duration(x).to_string())
-                .fold(String::new(), |mut a, x| {
-                    if a.len() != 0 {
-                        a.push_str(",");
-                    }
-                    a.push_str(&x);
-                    a
-                });
+            let s: String =
+                x.iter()
+                    .map(|&x| humantime::format_duration(x).to_string())
+                    .fold(String::new(), |mut a, x| {
+                        if a.len() != 0 {
+                            a.push_str(",");
+                        }
+                        a.push_str(&x);
+                        a
+                    });
             g.append_pair("subgrids", &s);
         }
         if let Some(x) = self.buf_len_disk_io {
@@ -621,9 +598,7 @@ impl FromUrl for BinWriteIndexQuery {
                 .and_then(|x| x.parse().ok())
                 .and_then(|x| PrebinnedPartitioning::from_db_ix(x).ok())
                 .unwrap_or(PrebinnedPartitioning::Day1),
-            use_scylla6_workarounds: pairs
-                .get("use_scylla6_workarounds")
-                .and_then(|x| x.parse().ok()),
+            use_scylla6_workarounds: pairs.get("use_scylla6_workarounds").and_then(|x| x.parse().ok()),
         };
         let selfname = std::any::type_name::<Self>();
         debug!("{}::from_pairs  {:?}", selfname, ret);

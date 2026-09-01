@@ -2,9 +2,9 @@ use daqbuf_err as err;
 use err::Error;
 use futures_util::Future;
 use futures_util::TryFutureExt;
-use http::header;
 use http::Method;
 use http::Request;
+use http::header;
 use httpclient::body_bytes;
 use httpclient::http;
 use httpclient::hyper::StatusCode;
@@ -12,15 +12,15 @@ use httpclient::hyper::Uri;
 use items_0::streamitem::sitem_data;
 // use items_0::streamitem::sitem_err2_from_string;
 use items_2::framable::Framable;
-use netpod::log::*;
+use netpod::APP_OCTET;
 use netpod::Cluster;
 use netpod::ReqCtx;
-use netpod::APP_OCTET;
+use netpod::log::*;
 use query::api4::events::EventsSubQuery;
 use std::pin::Pin;
 use streams::frames::inmem::BoxedBytesStream;
-use streams::tcprawclient::make_node_command_frame;
 use streams::tcprawclient::OpenBoxedBytesStreams;
+use streams::tcprawclient::make_node_command_frame;
 
 async fn open_bytes_data_streams_http(
     subq: EventsSubQuery,

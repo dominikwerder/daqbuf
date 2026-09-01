@@ -18,18 +18,9 @@ use url::Url;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum TimeRange {
-    Time {
-        beg: DateTime<Utc>,
-        end: DateTime<Utc>,
-    },
-    Pulse {
-        beg: u64,
-        end: u64,
-    },
-    Nano {
-        beg: u64,
-        end: u64,
-    },
+    Time { beg: DateTime<Utc>, end: DateTime<Utc> },
+    Pulse { beg: u64, end: u64 },
+    Nano { beg: u64, end: u64 },
 }
 
 #[derive(Clone, Serialize, Deserialize, PartialEq)]
@@ -43,12 +34,7 @@ impl fmt::Debug for NanoRange {
         if true {
             let beg = TsNano(self.beg);
             let end = TsNano(self.end);
-            write!(
-                fmt,
-                "NanoRange {{ beg: {}, end: {} }}",
-                beg.fmt(),
-                end.fmt()
-            )
+            write!(fmt, "NanoRange {{ beg: {}, end: {} }}", beg.fmt(), end.fmt())
         } else if false {
             let beg = TsNano(self.beg);
             let end = TsNano(self.end);
@@ -64,10 +50,7 @@ impl fmt::Debug for NanoRange {
                 .timestamp_opt((self.end / SEC) as i64, (self.end % SEC) as u32)
                 .earliest();
             if let (Some(a), Some(b)) = (beg, end) {
-                fmt.debug_struct("NanoRange")
-                    .field("beg", &a)
-                    .field("end", &b)
-                    .finish()
+                fmt.debug_struct("NanoRange").field("beg", &a).field("end", &b).finish()
             } else {
                 fmt.debug_struct("NanoRange")
                     .field("beg", &beg)

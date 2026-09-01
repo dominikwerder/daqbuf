@@ -1,11 +1,11 @@
-use crate::bodystream::response;
 use crate::ReqCtx;
 use crate::RetrievalError as Error;
 use crate::ServiceSharedResources;
+use crate::bodystream::response;
 use http::StatusCode;
-use httpclient::body_bytes;
 use httpclient::Requ;
 use httpclient::StreamResponse;
+use httpclient::body_bytes;
 use netpod::NodeConfigCached;
 use serde_json::json;
 use std::collections::BTreeMap;

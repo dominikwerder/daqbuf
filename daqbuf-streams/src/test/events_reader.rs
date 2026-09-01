@@ -59,10 +59,7 @@ impl EventsReadProvider for TestEventsReadProvider {
     fn read(&self, evq: EventsSubQuery) -> EventsReading {
         let range: NanoRange = evq.range().try_into().unwrap();
         if evq.ch_conf().series() == Some(123) && evq.name() == "test-reader-dim0-f32-00" {
-            let gen = TestEventsReaderTy::new(
-                range,
-                items_2::testgen::events_gen::new_events_gen_dim0_f32_v00,
-            );
+            let gen = TestEventsReaderTy::new(range, items_2::testgen::events_gen::new_events_gen_dim0_f32_v00);
             gen.read(evq)
         } else {
             panic!()

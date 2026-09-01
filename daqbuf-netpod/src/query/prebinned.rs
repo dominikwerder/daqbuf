@@ -1,6 +1,6 @@
+use super::CacheUsage;
 use super::agg_kind_from_binning_scheme;
 use super::binning_scheme_append_to_url;
-use super::CacheUsage;
 use crate::AggKind;
 use crate::AppendToUrl;
 use crate::ByteSize;
@@ -109,9 +109,7 @@ impl PreBinnedQuery {
     }
 
     pub fn cache_usage(&self) -> CacheUsage {
-        self.cache_usage
-            .as_ref()
-            .map_or(CacheUsage::Use, |x| x.clone())
+        self.cache_usage.as_ref().map_or(CacheUsage::Use, |x| x.clone())
     }
 
     pub fn buf_len_disk_io(&self) -> usize {

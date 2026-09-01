@@ -86,13 +86,7 @@ where
                     Ready(Ok(x.len()))
                 }
                 Err(e) => {
-                    log::error!(
-                        "{}  {:?}  inp len {}  need_min {}",
-                        e,
-                        self.buf,
-                        x.len(),
-                        self.need_min
-                    );
+                    log::error!("{}  {:?}  inp len {}  need_min {}", e, self.buf, x.len(), self.need_min);
                     Ready(Err(e.into()))
                 }
             },
@@ -181,12 +175,7 @@ where
                         }
                     }
                     Ready(Err(e)) => {
-                        log::error!(
-                            "poll_upstream  need_min {}  buf {:?}  {:?}",
-                            self.need_min,
-                            self.buf,
-                            e
-                        );
+                        log::error!("poll_upstream  need_min {}  buf {:?}  {:?}", self.need_min, self.buf, e);
                         self.done = true;
                         Ready(Some(Err(sitem_err2_from_string(e))))
                     }

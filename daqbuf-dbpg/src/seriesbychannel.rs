@@ -66,7 +66,7 @@ impl CanSendChannelInfoResult for async_channel::Sender<Result<ChannelInfoResult
     }
 
     fn is_closed(&self) -> bool {
-        self.is_closed()
+        Self::is_closed(self)
     }
 }
 

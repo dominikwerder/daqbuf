@@ -3,8 +3,8 @@ use async_channel::Sender;
 use futures_util::Stream;
 use futures_util::StreamExt;
 use pin_project_lite::pin_project;
-use std::pin::pin;
 use std::pin::Pin;
+use std::pin::pin;
 use std::task::Context;
 use std::task::Poll;
 
@@ -32,10 +32,7 @@ where
 {
     pub fn new(a: Receiver<T>, b: Receiver<T>) -> Receiver<T> {
         let capdef = 10;
-        let cap = a
-            .capacity()
-            .unwrap_or(capdef)
-            .max(b.capacity().unwrap_or(capdef));
+        let cap = a.capacity().unwrap_or(capdef).max(b.capacity().unwrap_or(capdef));
         let (tx, rx) = async_channel::bounded(cap);
         tokio::spawn(Self::run(Self::inner_new(a, b, tx)));
         rx

@@ -4,22 +4,22 @@ use daqbuf_err as err;
 use err::Error;
 use futures_util::Stream;
 use futures_util::StreamExt;
+use items_0::Empty;
+use items_0::WithLen;
 use items_0::streamitem::LogItem;
 use items_0::streamitem::RangeCompletableItem;
 use items_0::streamitem::StatsItem;
 use items_0::streamitem::StreamItem;
-use items_0::Empty;
-use items_0::WithLen;
 use items_2::eventfull::EventFull;
-use netpod::histo::HistoLog2;
-use netpod::log::*;
-use netpod::range::evrange::NanoRange;
-use netpod::timeunits::SEC;
 use netpod::ByteSize;
 use netpod::EventDataReadStats;
 use netpod::ScalarType;
 use netpod::SfChFetchInfo;
 use netpod::Shape;
+use netpod::histo::HistoLog2;
+use netpod::log::*;
+use netpod::range::evrange::NanoRange;
+use netpod::timeunits::SEC;
 use parse::channelconfig::CompressionMethod;
 use std::collections::VecDeque;
 use std::io::Cursor;
@@ -208,8 +208,8 @@ impl EventChunker {
     }
 
     fn parse_buf_inner(&mut self, buf: &mut BytesMut) -> Result<(ParseResult, Vec<LogItem>), DataParseError> {
-        use byteorder::ReadBytesExt;
         use byteorder::BE;
+        use byteorder::ReadBytesExt;
         trace_parse_buf!("parse_buf_inner  buf len {}", buf.len());
         let mut ret = EventFull::empty();
         let mut log_items = Vec::new();
@@ -260,13 +260,13 @@ impl EventChunker {
                     let shape = self.fetch_info.shape();
                     match shape {
                         Shape::Scalar if len > 1024 * 64 => {
-                            return Err(DataParseError::EventTooLong(shape.clone(), len as _))
+                            return Err(DataParseError::EventTooLong(shape.clone(), len as _));
                         }
                         Shape::Wave(_) if len > 1024 * 1024 * 32 => {
-                            return Err(DataParseError::EventTooLong(shape.clone(), len as _))
+                            return Err(DataParseError::EventTooLong(shape.clone(), len as _));
                         }
                         Shape::Image(_, _) if len > 1024 * 1024 * 200 => {
-                            return Err(DataParseError::EventTooLong(shape.clone(), len as _))
+                            return Err(DataParseError::EventTooLong(shape.clone(), len as _));
                         }
                         _ => {}
                     }

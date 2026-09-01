@@ -42,10 +42,7 @@ where
         self.timeout_fut = self.timeout_provider.timeout_intervals(ivl)
     }
 
-    fn handle_timeout(
-        self: Pin<&mut Self>,
-        cx: &mut Context,
-    ) -> Poll<Option<<Self as Stream>::Item>> {
+    fn handle_timeout(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<<Self as Stream>::Item>> {
         use Poll::*;
         let tsnow = Instant::now();
         if self.last_seen + self.ivl < tsnow {
@@ -60,10 +57,7 @@ where
         }
     }
 
-    fn handle_inp_pending(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context,
-    ) -> Poll<Option<<Self as Stream>::Item>> {
+    fn handle_inp_pending(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<<Self as Stream>::Item>> {
         use Poll::*;
         match self.timeout_fut.poll_unpin(cx) {
             Ready(()) => self.handle_timeout(cx),

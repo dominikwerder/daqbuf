@@ -54,8 +54,7 @@ where
             E: de::Error,
         {
             let val = value.trim();
-            let (num, unit) =
-                val.split_at(val.find(|c: char| !c.is_digit(10)).unwrap_or(val.len()));
+            let (num, unit) = val.split_at(val.find(|c: char| !c.is_digit(10)).unwrap_or(val.len()));
             let num: u32 = num
                 .trim()
                 .parse()

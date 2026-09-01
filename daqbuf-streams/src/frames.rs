@@ -19,9 +19,5 @@ where
     S: Stream<Item = T>,
     T: Framable,
 {
-    stream.map(|x| {
-        x.make_frame_dyn()
-            .map(BytesMut::freeze)
-            .map_err(|e| e.into())
-    })
+    stream.map(|x| x.make_frame_dyn().map(BytesMut::freeze).map_err(|e| e.into()))
 }

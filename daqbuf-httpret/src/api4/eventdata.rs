@@ -1,19 +1,19 @@
-use crate::response;
 use crate::ReqCtx;
 use crate::ServiceSharedResources;
+use crate::response;
 use daqbuf_err as err;
 use err::PublicError;
 use err::ToPublicError;
 use http::Method;
 use http::StatusCode;
+use httpclient::Requ;
+use httpclient::StreamResponse;
 use httpclient::body_empty;
 use httpclient::body_stream;
 use httpclient::error_response;
 use httpclient::read_body_bytes;
-use httpclient::Requ;
-use httpclient::StreamResponse;
-use netpod::log::*;
 use netpod::NodeConfigCached;
+use netpod::log::*;
 use std::sync::Arc;
 use streams::instrument::InstrumentStream;
 

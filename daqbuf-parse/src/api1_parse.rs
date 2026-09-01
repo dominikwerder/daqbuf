@@ -134,11 +134,7 @@ pub struct Api1ChannelHeader {
     byte_order: Api1ByteOrder,
     #[serde(default)]
     shape: Vec<u32>,
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        with = "serde_compression_method"
-    )]
+    #[serde(default, skip_serializing_if = "Option::is_none", with = "serde_compression_method")]
     compression: Option<CompressionMethod>,
 }
 
@@ -207,10 +203,7 @@ mod serde_compression_method {
             match v {
                 0 => Ok(None),
                 1 => Ok(Some(CompressionMethod::BitshuffleLZ4)),
-                _ => Err(de::Error::unknown_variant(
-                    "compression variant index",
-                    &["0"],
-                )),
+                _ => Err(de::Error::unknown_variant("compression variant index", &["0"])),
             }
         }
     }
@@ -273,12 +266,7 @@ fn basic_header_ser_01() {
     };
     let js = serde_json::to_string(&h).unwrap();
     let vals = serde_json::from_str::<serde_json::Value>(&js).unwrap();
-    let x = vals
-        .as_object()
-        .unwrap()
-        .get("compression")
-        .unwrap()
-        .as_i64();
+    let x = vals.as_object().unwrap().get("compression").unwrap().as_i64();
     assert_eq!(x, Some(1))
 }
 
@@ -298,16 +286,14 @@ fn basic_header_deser_01() {
 
 #[test]
 fn basic_header_deser_02() {
-    let js =
-        r#"{ "name": "ch1", "type": "float64", "byteOrder": "LITTLE_ENDIAN", "compression": 0 }"#;
+    let js = r#"{ "name": "ch1", "type": "float64", "byteOrder": "LITTLE_ENDIAN", "compression": 0 }"#;
     let h: Api1ChannelHeader = serde_json::from_str(js).unwrap();
     assert!(h.compression.is_none());
 }
 
 #[test]
 fn basic_header_deser_03() {
-    let js =
-        r#"{ "name": "ch1", "type": "float64", "byteOrder": "LITTLE_ENDIAN", "compression": 1 }"#;
+    let js = r#"{ "name": "ch1", "type": "float64", "byteOrder": "LITTLE_ENDIAN", "compression": 1 }"#;
     let h: Api1ChannelHeader = serde_json::from_str(js).unwrap();
     assert!(h.compression.is_some());
     assert_eq!(h.compression, Some(CompressionMethod::BitshuffleLZ4));
@@ -315,8 +301,7 @@ fn basic_header_deser_03() {
 
 #[test]
 fn basic_header_deser_04() {
-    let js =
-        r#"{ "name": "ch1", "type": "float64", "byteOrder": "LITTLE_ENDIAN", "compression": 2 }"#;
+    let js = r#"{ "name": "ch1", "type": "float64", "byteOrder": "LITTLE_ENDIAN", "compression": 2 }"#;
     let res = serde_json::from_str::<Api1ChannelHeader>(js);
     assert!(res.is_err());
 }
@@ -402,9 +387,7 @@ where
     E: ParseError<&'a [u8]>,
 {
     if inp.len() < 16 {
-        IResult::Err(Err::Incomplete(Needed::Size(
-            NonZeroUsize::new(16).unwrap(),
-        )))
+        IResult::Err(Err::Incomplete(Needed::Size(NonZeroUsize::new(16).unwrap())))
     } else {
         let (inp, ts) = be_u64(inp)?;
         let (inp, pulse) = be_u64(inp)?;
@@ -449,10 +432,7 @@ where
     let inp_orig = inp;
     let (inp, len) = be_u32(inp)?;
     if len < 1 {
-        IResult::Err(Err::Failure(ParseError::from_error_kind(
-            inp,
-            ErrorKind::Fail,
-        )))
+        IResult::Err(Err::Failure(ParseError::from_error_kind(inp, ErrorKind::Fail)))
     } else {
         if inp.len() < len as usize + 4 {
             let e = Err::Incomplete(Needed::Size(NonZeroUsize::new(len as _).unwrap()));
@@ -461,10 +441,7 @@ where
             let (inp, payload) = nom::bytes::complete::take(len)(inp)?;
             let (inp, len2) = be_u32(inp)?;
             if len != len2 {
-                IResult::Err(Err::Failure(ParseError::from_error_kind(
-                    inp_orig,
-                    ErrorKind::Fail,
-                )))
+                IResult::Err(Err::Failure(ParseError::from_error_kind(inp_orig, ErrorKind::Fail)))
             } else {
                 let (left, res) = api1_frame_complete(payload)?;
                 if left.len() != 0 {

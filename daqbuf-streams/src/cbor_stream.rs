@@ -194,14 +194,10 @@ impl<S> FramedBytesToChannelEventsStream<S> {
             return Ok(None);
         }
         let buf = &self.buf[FRAME_HEAD_LEN..frame_len];
-        let val: ciborium::Value =
-            ciborium::from_reader(std::io::Cursor::new(buf)).map_err(ErrMsg)?;
+        let val: ciborium::Value = ciborium::from_reader(std::io::Cursor::new(buf)).map_err(ErrMsg)?;
         debug!("decoded ciborium value {val:?}");
         let item = if let Some(map) = val.as_map() {
-            let keys: Vec<&str> = map
-                .iter()
-                .map(|k| k.0.as_text().unwrap_or("(none)"))
-                .collect();
+            let keys: Vec<&str> = map.iter().map(|k| k.0.as_text().unwrap_or("(none)")).collect();
             debug!("keys {keys:?}");
             if let Some(x) = map.get(0) {
                 if let Some(y) = x.0.as_text() {
@@ -272,10 +268,7 @@ where
                     },
                     Ready(None) => {
                         if self.buf.len() > 0 {
-                            warn!(
-                                "remaining bytes in input buffer, input closed  len {}",
-                                self.buf.len()
-                            );
+                            warn!("remaining bytes in input buffer, input closed  len {}", self.buf.len());
                         }
                         Ready(None)
                     }

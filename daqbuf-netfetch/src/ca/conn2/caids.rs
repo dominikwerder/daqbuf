@@ -174,7 +174,7 @@ impl fmt::Display for Ioid {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize)]
 pub struct CaDbrTy(u16);
 
 impl fmt::Debug for CaDbrTy {

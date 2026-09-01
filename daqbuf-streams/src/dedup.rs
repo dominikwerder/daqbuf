@@ -57,9 +57,9 @@ where
                             let x = RangeCompletableItem::Data(item);
                             Ready(Some(Ok(StreamItem::DataItem(x))))
                         }
-                        RangeCompletableItem::RangeComplete => Ready(Some(Ok(
-                            StreamItem::DataItem(RangeCompletableItem::RangeComplete),
-                        ))),
+                        RangeCompletableItem::RangeComplete => {
+                            Ready(Some(Ok(StreamItem::DataItem(RangeCompletableItem::RangeComplete))))
+                        }
                     },
                     StreamItem::Log(x) => Ready(Some(Ok(StreamItem::Log(x)))),
                     StreamItem::Stats(x) => Ready(Some(Ok(StreamItem::Stats(x)))),

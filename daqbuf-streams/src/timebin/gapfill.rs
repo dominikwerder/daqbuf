@@ -97,15 +97,11 @@ impl GapFill {
         debug_init!("new  dbgname {}", dbgname);
         let inp = if binning_opts.cache_usage().is_cache_read() {
             let series = ch_conf.series().expect("series id for cache read");
-            let stream = super::cached::reader::CachedReader::new(
-                series,
-                range.clone(),
-                cache_read_provider.clone(),
-            )?
-            .map(|x| match x {
-                Ok(x) => Ok(StreamItem::DataItem(RangeCompletableItem::Data(x))),
-                Err(e) => sitem_err_from_string(e),
-            });
+            let stream = super::cached::reader::CachedReader::new(series, range.clone(), cache_read_provider.clone())?
+                .map(|x| match x {
+                    Ok(x) => Ok(StreamItem::DataItem(RangeCompletableItem::Data(x))),
+                    Err(e) => sitem_err_from_string(e),
+                });
             Box::pin(stream) as Pin<Box<dyn Stream<Item = Sitemty<BinsBoxed>> + Send>>
         } else {
             let stream = futures_util::stream::empty();
@@ -160,9 +156,7 @@ impl GapFill {
         }
         if bins.len() != 0 {
             let mut bins2 = bins.clone();
-            let dst = self
-                .bins_for_cache_write
-                .get_or_insert_with(|| bins.empty());
+            let dst = self.bins_for_cache_write.get_or_insert_with(|| bins.empty());
             bins2.drain_into(dst.as_mut(), 0..bins2.len());
         }
         if self.binning_opts.cache_usage().is_cache_write() {
@@ -182,10 +176,7 @@ impl GapFill {
         Ok(())
     }
 
-    fn handle_bins(
-        mut self: Pin<&mut Self>,
-        bins: BinsBoxed,
-    ) -> Result<(BinsBoxed, BinsBoxed), Error> {
+    fn handle_bins(mut self: Pin<&mut Self>, bins: BinsBoxed) -> Result<(BinsBoxed, BinsBoxed), Error> {
         trace_handle!("{}  handle_bins  {}", self.dbgname, bins);
         // TODO could use an interface to iterate over opaque bin items that only expose
         // edge and count information with all remaining values opaque.
@@ -198,12 +189,7 @@ impl GapFill {
             }
             if let Some(last) = self.last_bin_ts2 {
                 if ts1 != last {
-                    trace_handle!(
-                        "{}  detect a gap  BETWEEN  last {}  ts1 {}",
-                        self.dbgname,
-                        last,
-                        ts1
-                    );
+                    trace_handle!("{}  detect a gap  BETWEEN  last {}  ts1 {}", self.dbgname, last, ts1);
                     let mut ret = bins.empty();
                     let mut bins = bins;
                     bins.drain_into(ret.as_mut(), 0..i);
@@ -237,19 +223,14 @@ impl GapFill {
         Ok((empty, bins))
     }
 
-    fn setup_inp_finer(
-        mut self: Pin<&mut Self>,
-        range: NanoRange,
-        inp_finer_fills_gap: bool,
-    ) -> Result<(), Error> {
+    fn setup_inp_finer(mut self: Pin<&mut Self>, range: NanoRange, inp_finer_fills_gap: bool) -> Result<(), Error> {
         self.inp_finer_range_final = false;
         self.inp_finer_range_final_max += 1;
         self.inp_finer_fills_gap = inp_finer_fills_gap;
         self.exp_finer_range = range.clone();
-        if let Some(bin_len_finer) = super::grid::find_next_finer_bin_len(
-            self.range.bin_len.to_dt_ms(),
-            &self.bin_len_layers,
-        ) {
+        if let Some(bin_len_finer) =
+            super::grid::find_next_finer_bin_len(self.range.bin_len.to_dt_ms(), &self.bin_len_layers)
+        {
             debug_setup!(
                 "{}  setup_inp_finer  next finer from bins  {}  {}  from {}",
                 self.dbgname,
@@ -274,10 +255,7 @@ impl GapFill {
                 self.events_read_provider.clone(),
             )?;
             let stream = Box::pin(inp_finer);
-            let range = BinnedRange::from_nano_range(
-                range_finer.full_range(),
-                self.range.bin_len.to_dt_ms(),
-            );
+            let range = BinnedRange::from_nano_range(range_finer.full_range(), self.range.bin_len.to_dt_ms());
             let stream = if self.do_time_weight {
                 BinnedBinsTimeweightStream::new(range, stream)
             } else {
@@ -285,11 +263,7 @@ impl GapFill {
             };
             self.inp_finer = Some(Box::pin(stream));
         } else if self.binning_opts.allow_from_events() {
-            debug_setup!(
-                "{}  setup_inp_finer  next finer from events  {}",
-                self.dbgname,
-                range
-            );
+            debug_setup!("{}  setup_inp_finer  next finer from events  {}", self.dbgname, range);
             let series_range = SeriesRange::TimeRange(range.clone());
             let one_before_range = true;
             let select = EventsSubQuerySelect::new(
@@ -305,12 +279,7 @@ impl GapFill {
                 self.log_level.clone(),
             );
             let range = BinnedRange::from_nano_range(range.clone(), self.range.bin_len.to_dt_ms());
-            let inp = BinnedFromEvents::new(
-                range,
-                evq,
-                self.do_time_weight,
-                self.events_read_provider.clone(),
-            )?;
+            let inp = BinnedFromEvents::new(range, evq, self.do_time_weight, self.events_read_provider.clone())?;
             self.inp_finer = Some(Box::pin(inp));
         } else {
             let stream = futures_util::stream::iter([]);
@@ -368,9 +337,7 @@ impl Stream for GapFill {
                     Ready(Some(Ok(x))) => match x {
                         StreamItem::DataItem(RangeCompletableItem::Data(x)) => {
                             match self.as_mut().handle_bins_finer(x) {
-                                Ok(x) => Ready(Some(Ok(StreamItem::DataItem(
-                                    RangeCompletableItem::Data(x),
-                                )))),
+                                Ok(x) => Ready(Some(Ok(StreamItem::DataItem(RangeCompletableItem::Data(x))))),
                                 Err(e) => Ready(Some(sitem_err_from_string(e))),
                             }
                         }
@@ -397,10 +364,8 @@ impl Stream for GapFill {
                             self.dbgname,
                             self.last_bin_ts2
                         );
-                        let exp_finer_range = ::core::mem::replace(
-                            &mut self.exp_finer_range,
-                            NanoRange { beg: 0, end: 0 },
-                        );
+                        let exp_finer_range =
+                            ::core::mem::replace(&mut self.exp_finer_range, NanoRange { beg: 0, end: 0 });
                         self.inp_finer = None;
                         if let Some(j) = self.last_bin_ts2 {
                             if j.ns() < exp_finer_range.end() {
@@ -411,9 +376,7 @@ impl Stream for GapFill {
                                     exp_finer_range
                                 );
                                 if self.inp_finer_fills_gap {
-                                    Ready(Some(sitem_err_from_string(
-                                        "finer input didn't deliver to the end",
-                                    )))
+                                    Ready(Some(sitem_err_from_string("finer input didn't deliver to the end")))
                                 } else {
                                     log::warn!(
                                         "{}  inp_finer  Ready(None)  last_bin_ts2 {:?}  not delivered to the end, but maybe in the future",
@@ -427,9 +390,7 @@ impl Stream for GapFill {
                                 continue;
                             }
                         } else {
-                            log::warn!(
-                                "-----------------------------------------------------------------"
-                            );
+                            log::warn!("-----------------------------------------------------------------");
                             log::warn!(
                                 "{}  inp_finer  Ready(None)  last_bin_ts2 {:?}",
                                 self.dbgname,
@@ -438,7 +399,9 @@ impl Stream for GapFill {
                             if self.inp_finer_fills_gap {
                                 log::error!(
                                     "{}  inp_finer  Ready(None)  last_bin_ts2 {:?}  inp_finer_fills_gap {}",
-                                    self.dbgname, self.last_bin_ts2,self.inp_finer_fills_gap
+                                    self.dbgname,
+                                    self.last_bin_ts2,
+                                    self.inp_finer_fills_gap
                                 );
                                 Ready(Some(sitem_err_from_string(
                                     "finer input delivered nothing, received nothing at all so far",
@@ -495,7 +458,10 @@ impl Stream for GapFill {
                                 };
                                 debug_setup!(
                                     "{}  received something but not all, setup rest from finer  {}  {}  {}",
-                                    self.dbgname, self.range, j, range
+                                    self.dbgname,
+                                    self.range,
+                                    j,
+                                    range
                                 );
                                 match self.as_mut().setup_inp_finer(range, false) {
                                     Ok(()) => {
@@ -529,9 +495,7 @@ impl Stream for GapFill {
                 self.done = true;
                 if self.inp_finer_range_final_cnt == self.inp_finer_range_final_max {
                     trace_handle!("{}  range finale  all", self.dbgname);
-                    Ready(Some(Ok(StreamItem::DataItem(
-                        RangeCompletableItem::RangeComplete,
-                    ))))
+                    Ready(Some(Ok(StreamItem::DataItem(RangeCompletableItem::RangeComplete))))
                 } else {
                     trace_handle!("{}  substreams not final", self.dbgname);
                     continue;

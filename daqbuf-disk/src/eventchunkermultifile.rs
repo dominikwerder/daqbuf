@@ -1,27 +1,27 @@
+use crate::dataopen::OpenedFileSet;
 use crate::dataopen::open_expanded_files;
 use crate::dataopen::open_files;
-use crate::dataopen::OpenedFileSet;
 use crate::eventchunker::EventChunker;
 use crate::eventchunker::EventChunkerConf;
 use daqbuf_err as err;
 use err::Error;
 use futures_util::Stream;
 use futures_util::StreamExt;
+use items_0::WithLen;
 use items_0::streamitem::LogItem;
 use items_0::streamitem::RangeCompletableItem;
 use items_0::streamitem::Sitemty;
 use items_0::streamitem::StreamItem;
-use items_0::WithLen;
 use items_2::eventfull::EventFull;
 use items_2::merger::Merger;
-use netpod::log::*;
-use netpod::range::evrange::NanoRange;
-use netpod::timeunits::SEC;
 use netpod::DiskIoTune;
 use netpod::Node;
 use netpod::OneBeforeFlag;
 use netpod::ReqCtxArc;
 use netpod::SfChFetchInfo;
+use netpod::log::*;
+use netpod::range::evrange::NanoRange;
+use netpod::timeunits::SEC;
 use std::collections::VecDeque;
 use std::pin::Pin;
 use std::task::Context;
@@ -281,21 +281,21 @@ impl Stream for EventChunkerMultifile {
 #[cfg(feature = "DISABLED")]
 #[cfg(test)]
 mod test {
+    use crate::SfDbChConf;
     use crate::eventchunker::EventChunkerConf;
     use crate::eventchunkermultifile::EventChunkerMultifile;
-    use crate::SfDbChConf;
     use err::Error;
     use futures_util::StreamExt;
+    use items_0::WithLen;
     use items_0::streamitem::RangeCompletableItem;
     use items_0::streamitem::StreamItem;
-    use items_0::WithLen;
+    use netpod::ByteSize;
+    use netpod::DiskIoTune;
+    use netpod::TsNano;
     use netpod::log::*;
     use netpod::range::evrange::NanoRange;
     use netpod::timeunits::DAY;
     use netpod::timeunits::MS;
-    use netpod::ByteSize;
-    use netpod::DiskIoTune;
-    use netpod::TsNano;
     use streams::rangefilter2::RangeFilter2;
 
     const BACKEND: &str = "testbackend-00";

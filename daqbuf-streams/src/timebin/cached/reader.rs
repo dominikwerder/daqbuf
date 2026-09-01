@@ -95,11 +95,7 @@ pub struct CacheWriting {
 }
 
 impl CacheWriting {
-    pub fn new(
-        fut: Pin<
-            Box<dyn Future<Output = Result<(), streams::timebin::cached::reader::Error>> + Send>,
-        >,
-    ) -> Self {
+    pub fn new(fut: Pin<Box<dyn Future<Output = Result<(), streams::timebin::cached::reader::Error>> + Send>>) -> Self {
         Self { fut }
     }
 }
@@ -185,9 +181,7 @@ impl Stream for CachedReader {
                             let off2 = partt.patch_len().min(off2 as u32);
                             self.ts1next = TsNano::from_ns(binlen * off2 as u64 + div * msp);
                             let offs = off1 as u32..off2 as u32;
-                            let fut =
-                                self.cache_read_provider
-                                    .read(self.series, self.bin_len, msp, offs);
+                            let fut = self.cache_read_provider.read(self.series, self.bin_len, msp, offs);
                             self.reading = Some(Box::pin(fut));
                             continue;
                         }

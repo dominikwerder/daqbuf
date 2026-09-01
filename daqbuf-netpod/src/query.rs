@@ -128,8 +128,7 @@ fn parse_time(v: &str) -> Result<DateTime<Utc>, Error> {
         Ok(x)
     } else {
         if v.ends_with("ago") {
-            let d =
-                humantime::parse_duration(&v[..v.len() - 3]).map_err(|_| Error::BadTimerange)?;
+            let d = humantime::parse_duration(&v[..v.len() - 3]).map_err(|_| Error::BadTimerange)?;
             Ok(Utc::now() - d)
         } else {
             Err(Error::BadTimerange)
@@ -174,15 +173,11 @@ impl AppendToUrl for TimeRangeQuery {
         let mut g = url.query_pairs_mut();
         g.append_pair(
             "begDate",
-            &Utc.timestamp_nanos(self.range.beg as i64)
-                .format(date_fmt)
-                .to_string(),
+            &Utc.timestamp_nanos(self.range.beg as i64).format(date_fmt).to_string(),
         );
         g.append_pair(
             "endDate",
-            &Utc.timestamp_nanos(self.range.end as i64)
-                .format(date_fmt)
-                .to_string(),
+            &Utc.timestamp_nanos(self.range.end as i64).format(date_fmt).to_string(),
         );
     }
 }
@@ -199,10 +194,7 @@ impl From<TimeRangeQuery> for NanoRange {
 impl From<&NanoRange> for TimeRangeQuery {
     fn from(k: &NanoRange) -> Self {
         Self {
-            range: NanoRange {
-                beg: k.beg,
-                end: k.end,
-            },
+            range: NanoRange { beg: k.beg, end: k.end },
         }
     }
 }
@@ -210,10 +202,7 @@ impl From<&NanoRange> for TimeRangeQuery {
 impl From<&PulseRange> for PulseRangeQuery {
     fn from(k: &PulseRange) -> Self {
         Self {
-            range: PulseRange {
-                beg: k.beg,
-                end: k.end,
-            },
+            range: PulseRange { beg: k.beg, end: k.end },
         }
     }
 }
@@ -289,9 +278,7 @@ pub fn binning_scheme_append_to_url(agg_kind: &AggKind, url: &mut Url) {
 }
 
 // Absent AggKind is not considered an error.
-pub fn agg_kind_from_binning_scheme(
-    pairs: &BTreeMap<String, String>,
-) -> Result<Option<AggKind>, Error> {
+pub fn agg_kind_from_binning_scheme(pairs: &BTreeMap<String, String>) -> Result<Option<AggKind>, Error> {
     let key = "binningScheme";
     if let Some(s) = pairs.get(key) {
         let ret = if s == "eventBlobs" {
@@ -365,12 +352,8 @@ impl FromUrl for ChannelStateEventsQuery {
     }
 
     fn from_pairs(pairs: &BTreeMap<String, String>) -> Result<Self, Self::Error> {
-        let beg_date = pairs
-            .get("begDate")
-            .ok_or_else(|| Error::MissingTimerange)?;
-        let end_date = pairs
-            .get("endDate")
-            .ok_or_else(|| Error::MissingTimerange)?;
+        let beg_date = pairs.get("begDate").ok_or_else(|| Error::MissingTimerange)?;
+        let end_date = pairs.get("endDate").ok_or_else(|| Error::MissingTimerange)?;
         let ret = Self {
             channel: SfDbChannel::from_pairs(&pairs)?,
             range: NanoRange {

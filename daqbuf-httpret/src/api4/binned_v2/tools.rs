@@ -1,18 +1,18 @@
 use crate::channelconfig::ch_conf_from_binned;
 use daqbuf_err as err;
 use dbconn::worker::PgQueue;
-use netpod::log;
 use netpod::ChannelTypeConfigGen;
 use netpod::NodeConfigCached;
 use netpod::ReqCtx;
+use netpod::log;
 use nodenet::client::OpenBoxedBytesViaHttp;
 use query::api4::binned::BinnedQuery;
 use query::api4::scyllaopts::ScyllaOptsQuery;
 use scyllaconn::worker::ScyllaQueue;
 use std::sync::Arc;
 use streams::streamtimeout::StreamTimeout2;
-use streams::timebin::cached::reader::EventsReadProvider;
 use streams::timebin::CacheReadProvider;
+use streams::timebin::cached::reader::EventsReadProvider;
 use tracing::Span;
 use url::Url;
 

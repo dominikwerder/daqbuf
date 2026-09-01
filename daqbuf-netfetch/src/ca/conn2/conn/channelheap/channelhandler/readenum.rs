@@ -15,6 +15,7 @@ use dbpg::seriesbychannel::ChannelInfoResult;
 use futures::Stream;
 use netpod::ScalarType;
 use netpod::Shape;
+use serde_helper::ToSerde;
 use stats::mett::ChannelHandlerMetrics;
 use std::collections::VecDeque;
 use std::pin::Pin;
@@ -57,10 +58,11 @@ pub enum ReadEnumItem {
     EnumStringSet(Sid, ScalarType, Shape, CaDbrTy, ChannelInfoResult, Vec<String>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, ToSerde)]
+#[to_serde(vis = "pub", serde(tag = "ty", content = "co"))]
 enum State {
     SendMsg(),
-    WaitMsg(Instant),
+    WaitMsg(#[to_serde(elapsed)] Instant),
     Done,
 }
 
@@ -74,9 +76,14 @@ impl State {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, ToSerde)]
+#[to_serde(vis = "pub")]
 pub struct ReadEnum {
+    #[to_serde(nest)]
     state: State,
+    /// Set by `transition_state`, reported as time-in-state.
+    #[to_serde(elapsed)]
+    ts_state_enter: Instant,
     cid: Cid,
     sid: Sid,
     scalar_type: ScalarType,
@@ -85,13 +92,22 @@ pub struct ReadEnum {
     chi: ChannelInfoResult,
     removing: bool,
     chan_close_ack: bool,
+    #[to_serde(len)]
     outbuf: VecDeque<CaMsg>,
+    #[to_serde(len)]
     inp_buf: VecDeque<ProtoRxItem>,
     inp_done: bool,
+    #[to_serde(skip)]
     mett: ChannelHandlerMetrics,
 }
 
 impl ReadEnum {
+    /// Single choke point for state changes so the time-in-state stamp can not drift.
+    fn transition_state(&mut self, new: State) {
+        self.state = new;
+        self.ts_state_enter = Instant::now();
+    }
+
     pub fn new(
         cid: Cid,
         sid: Sid,
@@ -103,6 +119,7 @@ impl ReadEnum {
     ) -> Self {
         Self {
             state: State::SendMsg(),
+            ts_state_enter: Instant::now(),
             cid,
             sid,
             scalar_type,
@@ -233,14 +250,14 @@ impl Stream for ReadEnum {
                             Ok(Some(x)) => break Ready(Some(Ok(x))),
                             Err(e) => {
                                 error!("TODO handle error {e}");
-                                self.state = State::Done;
+                                self.transition_state(State::Done);
                             }
                         }
                     }
                     Ready(None) => {
                         error!("TODO even on input abort, continue with clean shutdown");
                         hpp.mark_progress();
-                        self.state = State::Done;
+                        self.transition_state(State::Done);
                     }
                     Pending => {
                         hpp.mark_pending();
@@ -261,7 +278,7 @@ impl Stream for ReadEnum {
                         }),
                         tsnow,
                     );
-                    self2.state = State::WaitMsg(tsnow);
+                    self2.transition_state(State::WaitMsg(tsnow));
                     break Ready(Some(Ok(ReadEnumItem::CaMsgOutIoid(msg, self2.sid.clone(), tsnow))));
                 }
                 State::WaitMsg(..) => {

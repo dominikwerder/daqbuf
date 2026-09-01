@@ -2,10 +2,10 @@ use crate::SfDbChConf;
 use daqbuf_err as err;
 use err::Error;
 use futures_util::StreamExt;
-use netpod::timeunits::MS;
 use netpod::Node;
 use netpod::SfChFetchInfo;
 use netpod::TsNano;
+use netpod::timeunits::MS;
 use std::path::PathBuf;
 use taskrun::tokio;
 

@@ -1,22 +1,22 @@
 #![allow(unused_macros)]
 
+use crate::ReqCtx;
 use crate::bodystream::response;
 use crate::err::Error;
-use crate::ReqCtx;
 use bytes::BytesMut;
 use futures_util::TryStreamExt;
-use http::header;
 use http::Method;
 use http::Request;
 use http::Response;
 use http::StatusCode;
 use http::Uri;
-use httpclient::body_empty;
-use httpclient::body_stream;
-use httpclient::connect_client;
+use http::header;
 use httpclient::Requ;
 use httpclient::StreamIncoming;
 use httpclient::StreamResponse;
+use httpclient::body_empty;
+use httpclient::body_stream;
+use httpclient::connect_client;
 use netpod::ProxyConfig;
 use serde::Deserialize;
 

@@ -363,13 +363,7 @@ fn decompress(databuf: &[u8], type_size: u32) -> Result<Vec<u8>, DecompError> {
     unsafe {
         decomp.set_len(decomp.capacity());
     }
-    match bitshuffle::bitshuffle_decompress(
-        &databuf[12..],
-        &mut decomp,
-        ele_count as _,
-        type_size as _,
-        0,
-    ) {
+    match bitshuffle::bitshuffle_decompress(&databuf[12..], &mut decomp, ele_count as _, type_size as _, 0) {
         Ok(c1) => {
             if 12 + c1 != databuf.len() {
                 Err(DecompError::UnusedBytes)

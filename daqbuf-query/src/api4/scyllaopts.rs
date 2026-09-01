@@ -53,43 +53,23 @@ impl ScyllaOptsQuery {
     }
 
     pub fn msp_cache_bypass(&self) -> Option<CacheBypass> {
-        self.msp_cache_bypass.map(|x| {
-            if x {
-                CacheBypass::Bypass
-            } else {
-                CacheBypass::Cache
-            }
-        })
+        self.msp_cache_bypass
+            .map(|x| if x { CacheBypass::Bypass } else { CacheBypass::Cache })
     }
 
     pub fn lsp_asc_cache_bypass(&self) -> Option<CacheBypass> {
-        self.order_asc_cache_bypass.map(|x| {
-            if x {
-                CacheBypass::Bypass
-            } else {
-                CacheBypass::Cache
-            }
-        })
+        self.order_asc_cache_bypass
+            .map(|x| if x { CacheBypass::Bypass } else { CacheBypass::Cache })
     }
 
     pub fn lsp_desc_cache_bypass(&self) -> Option<CacheBypass> {
-        self.order_desc_cache_bypass.map(|x| {
-            if x {
-                CacheBypass::Bypass
-            } else {
-                CacheBypass::Cache
-            }
-        })
+        self.order_desc_cache_bypass
+            .map(|x| if x { CacheBypass::Bypass } else { CacheBypass::Cache })
     }
 
     pub fn bins_fwd_cache_bypass(&self) -> Option<CacheBypass> {
-        self.bins_fwd_cache_bypass.map(|x| {
-            if x {
-                CacheBypass::Bypass
-            } else {
-                CacheBypass::Cache
-            }
-        })
+        self.bins_fwd_cache_bypass
+            .map(|x| if x { CacheBypass::Bypass } else { CacheBypass::Cache })
     }
 }
 

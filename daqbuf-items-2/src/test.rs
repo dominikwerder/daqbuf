@@ -3,6 +3,9 @@ pub mod eventsdim0;
 #[cfg(test)]
 pub mod eventsdim1;
 
+use crate::ChannelEvents;
+use crate::Error;
+use crate::Events;
 use crate::channelevents::ConnStatus;
 use crate::channelevents::ConnStatusEvent;
 use crate::eventsdim0::EventsDim0;
@@ -12,22 +15,19 @@ use crate::runfut;
 use crate::streams::TransformerExt;
 use crate::streams::VecStream;
 use crate::testgen::make_some_boxed_d0_f32;
-use crate::ChannelEvents;
-use crate::Error;
-use crate::Events;
-use futures_util::stream;
 use futures_util::StreamExt;
-use items_0::streamitem::sitem_data;
-use items_0::streamitem::RangeCompletableItem;
-use items_0::streamitem::Sitemty;
-use items_0::streamitem::StreamItem;
+use futures_util::stream;
 use items_0::Appendable;
 use items_0::Empty;
 use items_0::WithLen;
+use items_0::streamitem::RangeCompletableItem;
+use items_0::streamitem::Sitemty;
+use items_0::streamitem::StreamItem;
+use items_0::streamitem::sitem_data;
+use netpod::BinnedRangeEnum;
 use netpod::log::*;
 use netpod::range::evrange::NanoRange;
 use netpod::timeunits::*;
-use netpod::BinnedRangeEnum;
 use std::time::Duration;
 use std::time::Instant;
 
@@ -104,18 +104,11 @@ fn items_merge_01() {
         let v0 = ChannelEvents::Events(evs0);
         let v1 = ChannelEvents::Events(evs1);
         let v2 = ChannelEvents::Status(Some(ConnStatusEvent::new(MS * 100, ConnStatus::Connect)));
-        let v3 = ChannelEvents::Status(Some(ConnStatusEvent::new(
-            MS * 2300,
-            ConnStatus::Disconnect,
-        )));
+        let v3 = ChannelEvents::Status(Some(ConnStatusEvent::new(MS * 2300, ConnStatus::Disconnect)));
         let v4 = ChannelEvents::Status(Some(ConnStatusEvent::new(MS * 2800, ConnStatus::Connect)));
         let stream0 = Box::pin(stream::iter(vec![sitem_data(v0)]));
         let stream1 = Box::pin(stream::iter(vec![sitem_data(v1)]));
-        let stream2 = Box::pin(stream::iter(vec![
-            sitem_data(v2),
-            sitem_data(v3),
-            sitem_data(v4),
-        ]));
+        let stream2 = Box::pin(stream::iter(vec![sitem_data(v2), sitem_data(v3), sitem_data(v4)]));
         let mut merger = Merger::new(vec![stream0, stream1, stream2], Some(8));
         let mut total_event_count = 0;
         while let Some(item) = merger.next().await {
@@ -146,18 +139,11 @@ fn items_merge_02() {
         let v0 = ChannelEvents::Events(evs0);
         let v1 = ChannelEvents::Events(evs1);
         let v2 = ChannelEvents::Status(Some(ConnStatusEvent::new(MS * 100, ConnStatus::Connect)));
-        let v3 = ChannelEvents::Status(Some(ConnStatusEvent::new(
-            MS * 2300,
-            ConnStatus::Disconnect,
-        )));
+        let v3 = ChannelEvents::Status(Some(ConnStatusEvent::new(MS * 2300, ConnStatus::Disconnect)));
         let v4 = ChannelEvents::Status(Some(ConnStatusEvent::new(MS * 2800, ConnStatus::Connect)));
         let stream0 = Box::pin(stream::iter(vec![sitem_data(v0)]));
         let stream1 = Box::pin(stream::iter(vec![sitem_data(v1)]));
-        let stream2 = Box::pin(stream::iter(vec![
-            sitem_data(v2),
-            sitem_data(v3),
-            sitem_data(v4),
-        ]));
+        let stream2 = Box::pin(stream::iter(vec![sitem_data(v2), sitem_data(v3), sitem_data(v4)]));
         let mut merger = Merger::new(vec![stream0, stream1, stream2], Some(8));
         let mut total_event_count = 0;
         while let Some(item) = merger.next().await {
@@ -313,9 +299,9 @@ fn merge_02() {
                 datetime: std::time::SystemTime::UNIX_EPOCH,
                 status: ConnStatus::Disconnect,
             };
-            let item: Sitemty<ChannelEvents> = Ok(StreamItem::DataItem(
-                RangeCompletableItem::Data(ChannelEvents::Status(Some(ev))),
-            ));
+            let item: Sitemty<ChannelEvents> = Ok(StreamItem::DataItem(RangeCompletableItem::Data(
+                ChannelEvents::Status(Some(ev)),
+            )));
             vec![item]
         };
 
@@ -325,9 +311,9 @@ fn merge_02() {
                 datetime: std::time::SystemTime::UNIX_EPOCH,
                 status: ConnStatus::Disconnect,
             };
-            let item: Sitemty<ChannelEvents> = Ok(StreamItem::DataItem(
-                RangeCompletableItem::Data(ChannelEvents::Status(Some(ev))),
-            ));
+            let item: Sitemty<ChannelEvents> = Ok(StreamItem::DataItem(RangeCompletableItem::Data(
+                ChannelEvents::Status(Some(ev)),
+            )));
             vec![item]
         };
 
@@ -380,9 +366,7 @@ fn bin_01() {
             let cev = ChannelEvents::Events(Box::new(events));
             events_vec1.push(Ok(StreamItem::DataItem(RangeCompletableItem::Data(cev))));
         }
-        events_vec1.push(Ok(StreamItem::DataItem(
-            RangeCompletableItem::RangeComplete,
-        )));
+        events_vec1.push(Ok(StreamItem::DataItem(RangeCompletableItem::RangeComplete)));
         let inp1 = events_vec1;
         let inp1 = futures_util::stream::iter(inp1);
         let inp1 = Box::pin(inp1);
@@ -439,9 +423,7 @@ fn binned_timeout_00() {
             let cev = ChannelEvents::Events(Box::new(events));
             events_vec1.push(Ok(StreamItem::DataItem(RangeCompletableItem::Data(cev))));
         }
-        events_vec1.push(Ok(StreamItem::DataItem(
-            RangeCompletableItem::RangeComplete,
-        )));
+        events_vec1.push(Ok(StreamItem::DataItem(RangeCompletableItem::RangeComplete)));
         let inp1 = VecStream::new(events_vec1.into_iter().collect());
         let inp1 = inp1.enumerate2().then2(|(i, k)| async move {
             if i == 5 {
@@ -449,10 +431,7 @@ fn binned_timeout_00() {
             }
             k
         });
-        let edges: Vec<_> = (0..10)
-            .into_iter()
-            .map(|x| TSBASE + SEC * (1 + x))
-            .collect();
+        let edges: Vec<_> = (0..10).into_iter().map(|x| TSBASE + SEC * (1 + x)).collect();
         let range = NanoRange {
             beg: TSBASE + SEC * 1,
             end: TSBASE + SEC * 10,

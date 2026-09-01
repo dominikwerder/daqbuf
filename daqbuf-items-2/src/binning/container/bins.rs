@@ -34,9 +34,7 @@ where
     fn drain_into(&mut self, dst: &mut Self, range: Range<usize>);
 }
 
-pub trait BinAggedType:
-    fmt::Debug + Clone + PartialOrd + Send + 'static + Serialize + for<'a> Deserialize<'a>
-{
+pub trait BinAggedType: fmt::Debug + Clone + PartialOrd + Send + 'static + Serialize + for<'a> Deserialize<'a> {
     type Container: BinAggedContainer<Self>;
     type AggregatorTw: AggBinValTw<Self>;
     type IterTy1<'a>: fmt::Debug + Clone + PartialOrdEvtA<Self> + Into<Self>;
@@ -61,10 +59,7 @@ macro_rules! impl_bin_agged_cont_simple_copyable {
                 self.iter().map(|&x| x)
             }
 
-            fn get_iter_ty_1<'a>(
-                &'a self,
-                pos: usize,
-            ) -> Option<<$evt as BinAggedType>::IterTy1<'a>> {
+            fn get_iter_ty_1<'a>(&'a self, pos: usize) -> Option<<$evt as BinAggedType>::IterTy1<'a>> {
                 self.get(pos).map(|&x| x)
             }
 
@@ -109,12 +104,7 @@ impl AggBinValTw<f32> for AggBinValTwF32 {
     fn ingest(&mut self, dt: DtNano, val: f32) {
         type FT = f32;
         let f = dt.ns() as FT / self.binlen.ns() as FT;
-        trace_ingest!(
-            "ingest  dt {} s  val {:.4}  f {:.4}",
-            dt.ms_u64() / 1000,
-            val,
-            f
-        );
+        trace_ingest!("ingest  dt {} s  val {:.4}  f {:.4}", dt.ms_u64() / 1000, val, f);
         self.filled = self.filled.add(dt);
         self.sum += f * val;
     }
@@ -156,12 +146,7 @@ impl AggBinValTw<f64> for AggBinValTwF64 {
     fn ingest(&mut self, dt: DtNano, val: f64) {
         type FT = f64;
         let f = dt.ns() as FT / self.binlen.ns() as FT;
-        trace_ingest!(
-            "ingest  dt {} s  val {:.4}  f {:.4}",
-            dt.ms_u64() / 1000,
-            val,
-            f
-        );
+        trace_ingest!("ingest  dt {} s  val {:.4}  f {:.4}", dt.ms_u64() / 1000, val, f);
         self.filled = self.filled.add(dt);
         self.sum += f * val;
     }

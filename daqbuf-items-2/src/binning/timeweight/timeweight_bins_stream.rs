@@ -99,23 +99,16 @@ impl BinnedBinsTimeweightStream {
         }
     }
 
-    fn handle_eos(
-        mut self: Pin<&mut Self>,
-        _cx: &mut Context,
-    ) -> Poll<Option<<Self as Stream>::Item>> {
+    fn handle_eos(mut self: Pin<&mut Self>, _cx: &mut Context) -> Poll<Option<<Self as Stream>::Item>> {
         trace_input_container!("handle_eos");
         use Poll::*;
         use items_0::streamitem::RangeCompletableItem::*;
         use items_0::streamitem::StreamItem::*;
         self.state = StreamState::Done;
         if self.range_complete {
-            self.binned
-                .input_done_range_final()
-                .map_err(sitem_err2_from_string)?;
+            self.binned.input_done_range_final().map_err(sitem_err2_from_string)?;
         } else {
-            self.binned
-                .input_done_range_open()
-                .map_err(sitem_err2_from_string)?;
+            self.binned.input_done_range_open().map_err(sitem_err2_from_string)?;
         }
         match self.binned.output().map_err(sitem_err2_from_string)? {
             Some(x) => {
@@ -130,10 +123,7 @@ impl BinnedBinsTimeweightStream {
         }
     }
 
-    fn handle_main(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context,
-    ) -> ControlFlow<Poll<Option<<Self as Stream>::Item>>> {
+    fn handle_main(mut self: Pin<&mut Self>, cx: &mut Context) -> ControlFlow<Poll<Option<<Self as Stream>::Item>>> {
         use ControlFlow::*;
         use Poll::*;
         let ret = match &self.state {

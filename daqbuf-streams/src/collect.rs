@@ -79,8 +79,7 @@ where
             collector: None,
             range_final: false,
             timeout: false,
-            timer: timeout_provider
-                .timeout_intervals(deadline.saturating_duration_since(Instant::now())),
+            timer: timeout_provider.timeout_intervals(deadline.saturating_duration_since(Instant::now())),
             done_input: false,
         }
     }
@@ -107,11 +106,7 @@ where
                             self.done_input = true;
                         }
                         if coll.byte_estimate() as u64 >= self.bytes_max {
-                            info!(
-                                "reached bytes_max {} / {}",
-                                coll.byte_estimate(),
-                                self.events_max
-                            );
+                            info!("reached bytes_max {} / {}", coll.byte_estimate(), self.events_max);
                             self.done_input = true;
                         }
                         Ok(())

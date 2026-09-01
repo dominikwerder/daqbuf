@@ -5,11 +5,11 @@ use super::compare::exp_mins;
 use crate::binning::container_events::ContainerEvents;
 use crate::binning::timeweight::timeweight_events::BinnedEventsTimeweight;
 use crate::log::*;
-use netpod::range::evrange::NanoRange;
 use netpod::BinnedRange;
 use netpod::DtMs;
 use netpod::EnumVariant;
 use netpod::TsNano;
+use netpod::range::evrange::NanoRange;
 
 autoerr::create_error_v1!(
     name(Error, "Error"),
@@ -283,8 +283,7 @@ fn test_bin_events_f32_small_intermittent_silence_range_final() -> Result<(), Er
 }
 
 #[test]
-fn test_bin_events_f32_small_intermittent_silence_minmax_no_edge_range_final() -> Result<(), Error>
-{
+fn test_bin_events_f32_small_intermittent_silence_minmax_no_edge_range_final() -> Result<(), Error> {
     let beg = TsNano::from_ms(110);
     let end = TsNano::from_ms(120);
     let nano_range = NanoRange {

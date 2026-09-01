@@ -32,6 +32,7 @@ use futures::StreamExt;
 use hashbrown::HashMap;
 use netpod::channelstatus::ChannelStatus;
 use serde::Serialize;
+use serde_helper::ToSerde;
 use serieswriter::binwriter::BinWriter;
 use stats::mett::ChannelHandlerMetrics;
 use std::collections::VecDeque;
@@ -94,27 +95,31 @@ pub enum ClosingReason {
 #[derive(Debug)]
 struct Init {}
 
-#[derive(Debug)]
+#[derive(Debug, ToSerde)]
+#[to_serde(vis = "pub")]
 struct Closing1 {
     chan_close_ack: bool,
+    #[to_serde(skip)]
     fut: Option<FutDbg<Result<(), Error>>>,
+    #[to_serde(skip)]
     to: FutDbg<()>,
 }
 
 #[derive(Debug)]
 struct Closing2 {}
 
-#[derive(Debug)]
+#[derive(Debug, ToSerde)]
+#[to_serde(vis = "pub", serde(tag = "ty", content = "co"))]
 enum State {
-    Init(Instant, Init),
-    Creating(Instant, Creating),
-    ReadEnum(Instant, readenum::ReadEnum),
-    Running(Instant, Running),
-    Closing1(Instant, Closing1),
-    Closing2(Instant, Closing2),
-    Done1(Instant),
-    Done(Instant),
-    Dummy(Instant),
+    Init(#[to_serde(elapsed)] Instant, #[to_serde(skip)] Init),
+    Creating(#[to_serde(elapsed)] Instant, #[to_serde(nest)] Creating),
+    ReadEnum(#[to_serde(elapsed)] Instant, #[to_serde(nest)] readenum::ReadEnum),
+    Running(#[to_serde(elapsed)] Instant, #[to_serde(nest)] Running),
+    Closing1(#[to_serde(elapsed)] Instant, #[to_serde(nest)] Closing1),
+    Closing2(#[to_serde(elapsed)] Instant, #[to_serde(skip)] Closing2),
+    Done1(#[to_serde(elapsed)] Instant),
+    Done(#[to_serde(elapsed)] Instant),
+    Dummy(#[to_serde(elapsed)] Instant),
 }
 
 impl State {
@@ -135,37 +140,6 @@ impl State {
             State::Done1(..) => "Done1",
             State::Done(..) => "Done",
             State::Dummy(..) => "Dummy",
-        }
-    }
-}
-
-#[derive(Debug, Serialize)]
-#[serde(tag = "ty", content = "co")]
-enum StateSerde {
-    Init(Duration),
-    Creating(Duration, create::StateSerde),
-    ReadEnum(Duration),
-    Running(Duration),
-    Closing1(Duration),
-    Closing2(Duration),
-    Done1(Duration),
-    Done(Duration),
-    Dummy(Duration),
-}
-
-impl From<&State> for StateSerde {
-    fn from(value: &State) -> Self {
-        match value {
-            State::Init(ts, st) => StateSerde::Init(ts.elapsed()),
-            State::Creating(ts, st) => todo!(),
-            State::ReadEnum(ts, st) => todo!(),
-            State::Running(ts, st) => todo!(),
-            State::Closing1(ts, st) => todo!(),
-            State::Closing2(ts, st) => todo!(),
-            State::Done1(ts) => todo!(),
-            State::Done(ts) => todo!(),
-            State::Dummy(ts) => todo!(),
-            // State::Done(ts) => StateSerde::Done(ts.elapsed()),
         }
     }
 }
@@ -221,22 +195,34 @@ pub enum Cmd {
     ChannelHandlerStatus(ChannelHandlerStatusRequest),
 }
 
-#[derive(Debug)]
+#[derive(Debug, ToSerde)]
+#[to_serde(vis = "pub")]
+#[to_serde(extra(cid: Cid = self.cid.to_cid()))]
 pub struct ChannelHandler {
+    #[to_serde(nest)]
     state: State,
+    #[to_serde(skip)]
     removing: Option<asynchan::Sender<u32>>,
+    #[to_serde(skip)]
     cid: CidOwned,
     backend: String,
     conf: ChannelConfig,
     enum_variants: Option<Vec<String>>,
+    #[to_serde(len)]
     proto_inp_buf: VecDeque<ProtoRxItem>,
     proto_inp_done: bool,
     counters: Counters,
+    #[to_serde(skip)]
     cmd_tx: asynchan::Sender<Cmd>,
+    #[to_serde(skip)]
     cmd_rx: asynchan::Receiver<Cmd>,
+    #[to_serde(len)]
     outbuf: VecDeque<ChannelHandlerItem>,
+    #[to_serde(skip)]
     mett: ChannelHandlerMetrics,
+    #[to_serde(skip)]
     waker_1: Option<Waker>,
+    #[to_serde(skip)]
     waker_2: Option<Waker>,
 }
 
@@ -246,7 +232,7 @@ impl ChannelHandler {
         trace!("ChannelHandler::new  {cid:?}  {conf:?}");
         let (cmd_tx, cmd_rx) = asynchan::bounded(16, "ChannelHandler-cmd");
         Self {
-            state: State::Init(Init {}),
+            state: State::Init(Instant::now(), Init {}),
             removing: None,
             cid,
             backend,
@@ -270,24 +256,24 @@ impl ChannelHandler {
         }
     }
 
-    pub fn state_serde(&self) -> StateSerde {
-        (&self.state).into()
+    pub fn state_serde(&self) -> <State as ToSerde>::Serde {
+        self.state.to_serde()
     }
 
     pub fn handle_dyn_cmd_v03(&mut self, cmd: serde_json::Value) -> impl Future<Output = serde_json::Value> + use<> {
         use futures::future::ready;
         use serde_json::json;
-        let x = json!({
-            "DUMMY": "continue-here",
-        });
-        let v = match &mut self.state {
-            // State::Running(st) => st.handle_channel_handler_cmd(cmd),
-            _ => json!({
+        let v = match serde_json::to_value(self.to_serde()) {
+            Ok(x) => json!({
                 "state": {
                     "type": "ChannelHandler",
-                    "state_dbg": format!("{:?}", self.state),
-                    "config": serde_json::to_value(&self.conf).unwrap(),
-                    "enum_variants": self.enum_variants,
+                    "handler": x,
+                },
+            }),
+            Err(e) => json!({
+                "state": {
+                    "type": "ChannelHandler",
+                    "error": e.to_string(),
                 },
             }),
         };
@@ -328,15 +314,15 @@ impl ChannelHandler {
 
     pub fn sid(&self) -> Option<Sid> {
         match &self.state {
-            State::Init(_) => None,
-            State::Creating(_) => None,
-            State::ReadEnum(st) => Some(st.sid()),
-            State::Running(st) => Some(st.sid()),
-            State::Closing1(_) => None,
-            State::Closing2(_) => None,
-            State::Done1 => None,
-            State::Done => None,
-            State::Dummy => None,
+            State::Init(..) => None,
+            State::Creating(..) => None,
+            State::ReadEnum(_, st) => Some(st.sid()),
+            State::Running(_, st) => Some(st.sid()),
+            State::Closing1(..) => None,
+            State::Closing2(..) => None,
+            State::Done1(..) => None,
+            State::Done(..) => None,
+            State::Dummy(..) => None,
         }
     }
 
@@ -349,41 +335,42 @@ impl ChannelHandler {
         debug!("{selfname}");
         self.removing = Some(done_tx);
         match &mut self.state {
-            State::Init(_st2) => {
-                self.state = State::Done1;
+            State::Init(..) => {
+                self.state = State::Done1(Instant::now());
             }
-            State::Creating(_) => {
-                let Creating { .. } = if let State::Creating(st2) = std::mem::replace(&mut self.state, State::Dummy) {
-                    st2
-                } else {
-                    panic!()
-                };
+            State::Creating(..) => {
+                let Creating { .. } =
+                    if let State::Creating(_, st2) = std::mem::replace(&mut self.state, State::Dummy(Instant::now())) {
+                        st2
+                    } else {
+                        panic!()
+                    };
                 error!("TODO impl Cmd::Remove for State::Creating");
                 panic!("TODO impl Cmd::Remove for State::Creating");
                 // TODO add flags to Creating so that we now what proto messages we still expect
                 // TODO add timeout to Creating (anyways!)
             }
-            State::ReadEnum(st2) => {
+            State::ReadEnum(_, st2) => {
                 st2.trigger_remove();
             }
-            State::Running(st2) => {
+            State::Running(_, st2) => {
                 st2.trigger_remove();
             }
-            State::Closing1(st2) => {
+            State::Closing1(..) => {
                 error!("{selfname} received Remove in State::Closing1");
             }
-            State::Closing2(st2) => {
+            State::Closing2(..) => {
                 error!("{selfname} received Remove in State::Closing2");
             }
-            State::Done1 => {
+            State::Done1(..) => {
                 error!("{selfname} received Remove in State::Done1");
                 panic!()
             }
-            State::Done => {
+            State::Done(..) => {
                 error!("{selfname} received Remove in State::Done");
                 panic!()
             }
-            State::Dummy => panic!(),
+            State::Dummy(..) => panic!(),
         }
         // TODO send proto msg to cancel monitors.
         // TODO check if we have some open IO, and wait for some timeout.
@@ -488,15 +475,15 @@ impl ChannelHandler {
     pub fn inp_done(&mut self) {
         self.proto_inp_done = true;
         match &mut self.state {
-            State::Init(_) => {}
-            State::Creating(st) => st.inp_done(),
-            State::ReadEnum(st) => st.inp_done(),
-            State::Running(st) => st.inp_done(),
-            State::Closing1(st) => todo!(),
-            State::Closing2(st) => todo!(),
-            State::Done1 => {}
-            State::Done => {}
-            State::Dummy => {}
+            State::Init(..) => {}
+            State::Creating(_, st) => st.inp_done(),
+            State::ReadEnum(_, st) => st.inp_done(),
+            State::Running(_, st) => st.inp_done(),
+            State::Closing1(..) => todo!(),
+            State::Closing2(..) => todo!(),
+            State::Done1(..) => {}
+            State::Done(..) => {}
+            State::Dummy(..) => {}
         }
     }
 }
@@ -519,7 +506,7 @@ impl Stream for ChannelHandler {
                 Ready(Some(x)) => {
                     hpp.mark_progress();
                     match &mut self2.state {
-                        State::Done => {
+                        State::Done(..) => {
                             warn!("ignore command in Done");
                         }
                         _ => {
@@ -533,16 +520,15 @@ impl Stream for ChannelHandler {
                 }
             }
             match &mut self2.state {
-                State::Init(st2) => {
+                State::Init(..) => {
                     trace!("ChannelHandler:Init");
-                    self2.state = State::Creating(Creating::new(
-                        self2.cid.to_cid(),
-                        self2.conf.name().into(),
-                        self2.backend.clone(),
-                    ));
+                    self2.state = State::Creating(
+                        tsloop,
+                        Creating::new(self2.cid.to_cid(), self2.conf.name().into(), self2.backend.clone()),
+                    );
                     hpp.mark_progress();
                 }
-                State::Creating(st1) => {
+                State::Creating(_, st1) => {
                     trace!("ChannelHandler:Creating");
                     match Self::poll_proto_rx_creating(
                         Pin::new(st1),
@@ -559,7 +545,7 @@ impl Stream for ChannelHandler {
                                 }
                                 Err(e) => {
                                     warn!("ChannelHandler:Creating:Proto:Ready:Err {e}");
-                                    self2.state = State::Done1;
+                                    self2.state = State::Done1(tsloop);
                                     break Ready(Some(Err(e.into())));
                                 }
                             }
@@ -598,25 +584,31 @@ impl Stream for ChannelHandler {
                                             )),
                                         });
                                         if let netpod::ScalarType::Enum = scalar_type {
-                                            self2.state = State::ReadEnum(readenum::ReadEnum::new(
-                                                self2.cid(),
-                                                sid,
-                                                scalar_type,
-                                                shape,
-                                                ca_dbr_ty,
-                                                chi,
-                                                self2.conf.clone(),
-                                            ));
+                                            self2.state = State::ReadEnum(
+                                                tsloop,
+                                                readenum::ReadEnum::new(
+                                                    self2.cid(),
+                                                    sid,
+                                                    scalar_type,
+                                                    shape,
+                                                    ca_dbr_ty,
+                                                    chi,
+                                                    self2.conf.clone(),
+                                                ),
+                                            );
                                         } else {
-                                            self2.state = State::Running(Running::new(
-                                                self2.cid(),
-                                                sid,
-                                                scalar_type,
-                                                shape,
-                                                ca_dbr_ty,
-                                                chi,
-                                                self2.conf.clone(),
-                                            ));
+                                            self2.state = State::Running(
+                                                tsloop,
+                                                Running::new(
+                                                    self2.cid(),
+                                                    sid,
+                                                    scalar_type,
+                                                    shape,
+                                                    ca_dbr_ty,
+                                                    chi,
+                                                    self2.conf.clone(),
+                                                ),
+                                            );
                                         }
                                     }
                                 },
@@ -641,7 +633,7 @@ impl Stream for ChannelHandler {
                         }
                     }
                 }
-                State::ReadEnum(st2) => {
+                State::ReadEnum(_, st2) => {
                     let vi = &mut self2.proto_inp_buf;
                     while let Some(item) = vi.pop_front() {
                         match st2.inp_push_try(item) {
@@ -686,20 +678,23 @@ impl Stream for ChannelHandler {
                                         vars,
                                     ) => {
                                         trace!("EnumStringSet  {vars:?}");
-                                        self2.state = State::Running(Running::new(
-                                            self2.cid(),
-                                            sid,
-                                            scalar_type,
-                                            shape,
-                                            ca_dbr_ty,
-                                            chi,
-                                            self2.conf.clone(),
-                                        ));
+                                        self2.state = State::Running(
+                                            tsloop,
+                                            Running::new(
+                                                self2.cid(),
+                                                sid,
+                                                scalar_type,
+                                                shape,
+                                                ca_dbr_ty,
+                                                chi,
+                                                self2.conf.clone(),
+                                            ),
+                                        );
                                     }
                                 },
                                 Err(e) => {
                                     info!("ChannelHandler:Running:Ready:Err {e}");
-                                    self2.state = State::Done1;
+                                    self2.state = State::Done1(tsloop);
                                     break Ready(Some(Err(e.into())));
                                 }
                             }
@@ -729,13 +724,16 @@ impl Stream for ChannelHandler {
                                 None
                             };
                             let fut = async move { Ok(()) };
-                            self2.state = State::Closing1(Closing1 {
-                                // TODO channel close may be also already received from server in Running state.
-                                // TODO handle the remove done tx in better way.
-                                chan_close_ack: false,
-                                fut: Some(fut.box2()),
-                                to: tokio::time::sleep(Duration::from_millis(2000)).box2(),
-                            });
+                            self2.state = State::Closing1(
+                                tsloop,
+                                Closing1 {
+                                    // TODO channel close may be also already received from server in Running state.
+                                    // TODO handle the remove done tx in better way.
+                                    chan_close_ack: false,
+                                    fut: Some(fut.box2()),
+                                    to: tokio::time::sleep(Duration::from_millis(2000)).box2(),
+                                },
+                            );
                             if let Some(item) = item {
                                 break Ready(Some(Ok(item)));
                             }
@@ -745,7 +743,7 @@ impl Stream for ChannelHandler {
                         }
                     }
                 }
-                State::Running(st2) => {
+                State::Running(_, st2) => {
                     let vi = &mut self2.proto_inp_buf;
                     while let Some(item) = vi.pop_front() {
                         match st2.inp_push_try(item) {
@@ -821,7 +819,7 @@ impl Stream for ChannelHandler {
                                 },
                                 Err(e) => {
                                     info!("ChannelHandler:Running:Ready:Err {e}");
-                                    self2.state = State::Done1;
+                                    self2.state = State::Done1(tsloop);
                                     break Ready(Some(Err(e.into())));
                                 }
                             }
@@ -851,13 +849,16 @@ impl Stream for ChannelHandler {
                                 None
                             };
                             let fut = async move { Ok(()) };
-                            self2.state = State::Closing1(Closing1 {
-                                // TODO channel close may be also already received from server in Running state.
-                                // TODO handle the remove done tx in better way.
-                                chan_close_ack: false,
-                                fut: Some(fut.box2()),
-                                to: tokio::time::sleep(Duration::from_millis(2000)).box2(),
-                            });
+                            self2.state = State::Closing1(
+                                tsloop,
+                                Closing1 {
+                                    // TODO channel close may be also already received from server in Running state.
+                                    // TODO handle the remove done tx in better way.
+                                    chan_close_ack: false,
+                                    fut: Some(fut.box2()),
+                                    to: tokio::time::sleep(Duration::from_millis(2000)).box2(),
+                                },
+                            );
                             if let Some(item) = item {
                                 break Ready(Some(Ok(item)));
                             }
@@ -867,7 +868,7 @@ impl Stream for ChannelHandler {
                         }
                     }
                 }
-                State::Closing1(st2) => {
+                State::Closing1(_, st2) => {
                     if let Some(item) = self2.proto_inp_buf.pop_front() {
                         hpp.mark_progress();
                         match item.msg.ty {
@@ -911,13 +912,13 @@ impl Stream for ChannelHandler {
                     if st2.chan_close_ack && st2.fut.is_none() {
                         hpp.mark_progress();
                         trace2!("Closing1 done");
-                        self2.state = State::Closing2(Closing2 {});
+                        self2.state = State::Closing2(tsloop, Closing2 {});
                     } else {
                         match st2.to.poll_unpin(cx) {
                             Ready(()) => {
                                 hpp.mark_progress();
                                 warn!("channel close timeout");
-                                self2.state = State::Closing2(Closing2 {});
+                                self2.state = State::Closing2(tsloop, Closing2 {});
                             }
                             Pending => {
                                 hpp.mark_pending();
@@ -925,20 +926,20 @@ impl Stream for ChannelHandler {
                         }
                     }
                 }
-                State::Closing2(st2) => {
+                State::Closing2(..) => {
                     hpp.mark_progress();
-                    self.state = State::Done1;
+                    self.state = State::Done1(tsloop);
                 }
-                State::Done1 => {
+                State::Done1(..) => {
                     trace!("ChannelHandler:Done1");
                     if let Some(tx) = self.removing.as_mut() {
                         let _ = tx.try_send(0);
                     }
-                    self.state = State::Done;
+                    self.state = State::Done(tsloop);
                     hpp.mark_progress();
                 }
-                State::Done => {}
-                State::Dummy => break Ready(Some(Err(Error::Logic))),
+                State::Done(..) => {}
+                State::Dummy(..) => break Ready(Some(Err(Error::Logic))),
             }
             break if hpp.have_progress() {
                 trace!("HPP:Progress");
@@ -952,5 +953,53 @@ impl Stream for ChannelHandler {
                 Ready(None)
             };
         }
+    }
+}
+
+#[cfg(test)]
+mod test_state_serde {
+    use super::*;
+
+    /// The snapshot that `dyn_cmd_v03` returns for a channel handler: structured state
+    /// with time-in-state, buffer fill and the nested child component, and no trace of the
+    /// non-serializable payloads (futures, wakers, channel handles).
+    #[test]
+    fn channel_handler_snapshot_shape() {
+        let conf = ChannelConfig::st_monitor("SOME:CHANNEL", "test.hcl");
+        let mut ch = ChannelHandler::new("testbackend".into(), conf);
+        let v = serde_json::to_value(ch.to_serde()).unwrap();
+
+        assert_eq!(v["state"]["ty"], "Init");
+        assert_eq!(v["backend"], "testbackend");
+        assert_eq!(v["conf"]["name"], "SOME:CHANNEL");
+        assert_eq!(v["proto_inp_buf"]["cap"], INP_BUF_CAP);
+        assert_eq!(v["proto_inp_buf"]["len"], 0);
+        assert_eq!(v["counters"]["event_add_res_cnt"], 0);
+        // derived on snapshot, present in no field of ChannelHandler
+        assert!(v["cid"].is_number(), "cid missing in {v}");
+        // non-serializable internals must not leak
+        for k in ["cmd_tx", "cmd_rx", "mett", "waker_1", "waker_2", "removing"] {
+            assert!(v.get(k).is_none(), "{k} leaked into {v}");
+        }
+
+        // the state machine advances into Creating, which nests its own state.
+        // Creating::new arms a timeout future, so it needs a reactor.
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap();
+        let _g = rt.enter();
+        ch.state = State::Creating(
+            Instant::now(),
+            Creating::new(ch.cid.to_cid(), "SOME:CHANNEL".into(), "testbackend".into()),
+        );
+        let v = serde_json::to_value(ch.state_serde()).unwrap();
+        assert_eq!(v["ty"], "Creating");
+        assert_eq!(v["co"][1]["state"]["ty"], "CreateChanSend");
+        // time-in-state, rendered by the existing human duration helper
+        assert!(v["co"][0].is_string(), "no time-in-state in {v}");
+        assert!(v["co"][1]["state"]["co"][0].is_string());
+        // the outgoing CreateChan message is reported as buffer fill, not content
+        assert_eq!(v["co"][1]["state"]["co"][1]["len"], 1);
     }
 }

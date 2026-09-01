@@ -64,8 +64,7 @@ pub trait MergeableDyn: fmt::Debug + WithLen + ByteEstimate + Unpin + AsAnyMut {
     fn find_highest_index_lt(&self, ts: TsNano) -> Option<usize>;
     fn find_pp_le(&self, ts: TsNano) -> usize;
     fn tss_for_testing(&self) -> VecDeque<TsNano>;
-    fn drain_into(&mut self, dst: &mut dyn MergeableDyn, range: Range<usize>)
-    -> DrainIntoDstResult;
+    fn drain_into(&mut self, dst: &mut dyn MergeableDyn, range: Range<usize>) -> DrainIntoDstResult;
     fn drain_into_new(&mut self, range: Range<usize>) -> DrainIntoNewDynResult;
     fn is_monotonic(&self) -> bool;
     fn is_consistent(&self) -> bool;

@@ -1,10 +1,10 @@
-use crate::apitypes::ToUserFacingApiType;
-use crate::container::ByteEstimate;
-use crate::log::*;
 use crate::AsAnyMut;
 use crate::AsAnyRef;
 use crate::TypeName;
 use crate::WithLen;
+use crate::apitypes::ToUserFacingApiType;
+use crate::container::ByteEstimate;
+use crate::log::*;
 use daqbuf_err as err;
 use err::Error;
 use std::any;
@@ -73,17 +73,9 @@ where
         if let Some(src) = src.as_any_mut().downcast_mut::<<T as CollectorTy>::Input>() {
             let s1 = any::type_name::<T>();
             let s2 = any::type_name::<<T as CollectorTy>::Input>();
-            trace!(
-                "sees incoming &mut ref  len {}  t1 {}  t2 {}",
-                src.len(),
-                s1,
-                s2
-            );
+            trace!("sees incoming &mut ref  len {}  t1 {}  t2 {}", src.len(), s1, s2);
             T::ingest(self, src)
-        } else if let Some(src) = src
-            .as_any_mut()
-            .downcast_mut::<Box<<T as CollectorTy>::Input>>()
-        {
+        } else if let Some(src) = src.as_any_mut().downcast_mut::<Box<<T as CollectorTy>::Input>>() {
             trace!("sees incoming &mut Box");
             T::ingest(self, src)
         } else {

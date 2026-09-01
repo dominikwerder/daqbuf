@@ -102,10 +102,7 @@ where
         .ok_or_else(|| Error::NoResultNoCollector)?
         .result(range, binrange)
         .map_err(ErrMsg)?;
-    info!(
-        "collect_in_span  stats total duration: {:?}",
-        total_duration
-    );
+    info!("collect_in_span  stats total duration: {:?}", total_duration);
     Ok(res)
 }
 

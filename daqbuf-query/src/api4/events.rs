@@ -60,11 +60,7 @@ pub struct PlainEventsQuery {
     bytes_max: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     allow_large_result: Option<bool>,
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        with = "humantime_serde"
-    )]
+    #[serde(default, skip_serializing_if = "Option::is_none", with = "humantime_serde")]
     event_delay: Option<Duration>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     stream_batch_len: Option<usize>,
@@ -311,13 +307,9 @@ impl FromUrl for PlainEventsQuery {
                 .and_then(|x| humantime::parse_duration(x).ok()),
             events_max: pairs.get("eventsMax").map_or(None, |k| k.parse().ok()),
             bytes_max: pairs.get("bytesMax").map_or(None, |k| k.parse().ok()),
-            allow_large_result: pairs
-                .get("allowLargeResult")
-                .map_or(None, |x| x.parse().ok()),
+            allow_large_result: pairs.get("allowLargeResult").map_or(None, |x| x.parse().ok()),
             event_delay: pairs.get("eventDelay").map_or(Ok(None), |k| {
-                k.parse::<u64>()
-                    .map(|x| Duration::from_millis(x))
-                    .map(|k| Some(k))
+                k.parse::<u64>().map(|x| Duration::from_millis(x)).map(|k| Some(k))
             })?,
             stream_batch_len: pairs
                 .get("streamBatchLen")
@@ -352,12 +344,10 @@ impl FromUrl for PlainEventsQuery {
                 .map(|x| x.split(",").map(|x| x.to_string()).collect())
                 .unwrap_or(Vec::new()),
             log_level: pairs.get("log_level").map_or(String::new(), String::from),
-            use_rt: pairs.get("useRt").map_or(Ok(None), |k| {
-                k.parse().map(Some).map_err(|_| Error::BadQuery)
-            })?,
-            querymarker: pairs
-                .get("querymarker")
-                .map_or(String::new(), |x| x.to_string()),
+            use_rt: pairs
+                .get("useRt")
+                .map_or(Ok(None), |k| k.parse().map(Some).map_err(|_| Error::BadQuery))?,
+            querymarker: pairs.get("querymarker").map_or(String::new(), |x| x.to_string()),
             scylla_opts: ScyllaOptsQuery::from_pairs(pairs)?,
             extra_opts: ExtraOptsQuery::from_pairs(pairs)?,
         };
@@ -631,9 +621,7 @@ impl EventsSubQuery {
     }
 
     pub fn timeout(&self) -> Duration {
-        self.settings
-            .timeout
-            .unwrap_or(Duration::from_millis(10000))
+        self.settings.timeout.unwrap_or(Duration::from_millis(10000))
     }
 
     pub fn events_max(&self) -> u64 {

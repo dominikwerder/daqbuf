@@ -60,21 +60,11 @@ async fn merged_events_inner() -> Result<(), Error> {
     let open_bytes = StreamOpener::new();
     let open_bytes = Arc::pin(open_bytes);
     let timeout_provider = crate::todoval();
-    let stream = plain_events_cbor_stream(
-        &evq,
-        ch_conf.clone().into(),
-        &ctx,
-        open_bytes,
-        timeout_provider,
-    )
-    .await
-    .unwrap();
+    let stream = plain_events_cbor_stream(&evq, ch_conf.clone().into(), &ctx, open_bytes, timeout_provider)
+        .await
+        .unwrap();
     let stream = lenframed::length_framed(stream);
-    let stream = FramedBytesToChannelEventsStream::new(
-        stream,
-        ch_conf.scalar_type().clone(),
-        ch_conf.shape().clone(),
-    );
+    let stream = FramedBytesToChannelEventsStream::new(stream, ch_conf.scalar_type().clone(), ch_conf.shape().clone());
     let stream = only_first_err(stream);
     stream
         .for_each(|item| {
@@ -98,9 +88,7 @@ impl OpenBoxedBytesStreams for StreamOpener {
         &self,
         subq: EventsSubQuery,
         _ctx: ReqCtx,
-    ) -> Pin<
-        Box<dyn Future<Output = Result<Vec<BoxedBytesStream>, crate::tcprawclient::Error>> + Send>,
-    > {
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<BoxedBytesStream>, crate::tcprawclient::Error>> + Send>> {
         Box::pin(stream_opener(subq).map_err(|e| crate::tcprawclient::Error::Msg(format!("{e}"))))
     }
 }

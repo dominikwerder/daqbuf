@@ -549,10 +549,7 @@ mod test {
 
     #[test]
     fn error_handle_a_00() {
-        assert_eq!(
-            format!("{}", SomeErrorEnumA::BadCase),
-            "SomeErrorEnumA::BadCase"
-        );
+        assert_eq!(format!("{}", SomeErrorEnumA::BadCase), "SomeErrorEnumA::BadCase");
     }
 
     #[test]

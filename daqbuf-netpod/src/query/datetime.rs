@@ -1,9 +1,9 @@
 use crate::Error;
 use chrono::DateTime;
 use chrono::FixedOffset;
-use serde::de::Visitor;
 use serde::Deserialize;
 use serde::Serialize;
+use serde::de::Visitor;
 use std::fmt;
 use std::ops;
 

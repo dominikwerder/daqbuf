@@ -169,20 +169,10 @@ where
     }
 
     pub fn verify(&self) -> Result<(), ContainerBinsError> {
-        if self
-            .ts1s
-            .iter()
-            .zip(self.ts1s.iter().skip(1))
-            .any(|(&a, &b)| a > b)
-        {
+        if self.ts1s.iter().zip(self.ts1s.iter().skip(1)).any(|(&a, &b)| a > b) {
             return Err(ContainerBinsError::Unordered);
         }
-        if self
-            .ts2s
-            .iter()
-            .zip(self.ts2s.iter().skip(1))
-            .any(|(&a, &b)| a > b)
-        {
+        if self.ts2s.iter().zip(self.ts2s.iter().skip(1)).any(|(&a, &b)| a > b) {
             return Err(ContainerBinsError::Unordered);
         }
         Ok(())
@@ -291,21 +281,14 @@ where
 
     pub fn edges_iter(
         &self,
-    ) -> std::iter::Zip<
-        std::collections::vec_deque::Iter<'_, TsNano>,
-        std::collections::vec_deque::Iter<'_, TsNano>,
-    > {
+    ) -> std::iter::Zip<std::collections::vec_deque::Iter<'_, TsNano>, std::collections::vec_deque::Iter<'_, TsNano>>
+    {
         self.ts1s.iter().zip(self.ts2s.iter())
     }
 
     pub fn len_before(&self, end: TsNano) -> usize {
         let pp = self.ts2s.partition_point(|&x| x <= end);
-        assert!(
-            pp <= self.len(),
-            "len_before  pp {}  len {}",
-            pp,
-            self.len()
-        );
+        assert!(pp <= self.len(), "len_before  pp {}  len {}", pp, self.len());
         pp
     }
 
@@ -318,17 +301,7 @@ where
         }
     }
 
-    pub fn push_back(
-        &mut self,
-        ts1: TsNano,
-        ts2: TsNano,
-        cnt: u64,
-        min: EVT,
-        max: EVT,
-        agg: BVT,
-        lst: EVT,
-        fnl: bool,
-    ) {
+    pub fn push_back(&mut self, ts1: TsNano, ts2: TsNano, cnt: u64, min: EVT, max: EVT, agg: BVT, lst: EVT, fnl: bool) {
         self.ts1s.push_back(ts1);
         self.ts2s.push_back(ts2);
         self.cnts.push_back(cnt);
@@ -656,18 +629,12 @@ where
 
     fn edges_iter(
         &self,
-    ) -> std::iter::Zip<
-        std::collections::vec_deque::Iter<'_, TsNano>,
-        std::collections::vec_deque::Iter<'_, TsNano>,
-    > {
+    ) -> std::iter::Zip<std::collections::vec_deque::Iter<'_, TsNano>, std::collections::vec_deque::Iter<'_, TsNano>>
+    {
         self.ts1s.iter().zip(self.ts2s.iter())
     }
 
-    fn drain_into(
-        &mut self,
-        dst: &mut dyn BinningggContainerBinsDyn,
-        range: std::ops::Range<usize>,
-    ) {
+    fn drain_into(&mut self, dst: &mut dyn BinningggContainerBinsDyn, range: std::ops::Range<usize>) {
         let obj = dst.as_any_mut();
         if let Some(dst) = obj.downcast_mut::<Self>() {
             dst.ts1s.extend(self.ts1s.drain(range.clone()));
@@ -688,10 +655,8 @@ where
         &self,
         range: netpod::BinnedRange<TsNano>,
     ) -> Box<dyn items_0::timebin::BinnedBinsTimeweightTrait> {
-        let ret = super::timeweight::timeweight_bins::BinnedBinsTimeweight::<
-            EVT,
-            EVT::AggTimeWeightOutputAvg,
-        >::new(range);
+        let ret =
+            super::timeweight::timeweight_bins::BinnedBinsTimeweight::<EVT, EVT::AggTimeWeightOutputAvg>::new(range);
         Box::new(ret)
     }
 
@@ -701,12 +666,7 @@ where
 
     fn fix_numerics(&mut self) {
         if let Some(bins) = self.as_any_mut().downcast_mut::<ContainerBins<f32, f32>>() {
-            for ((min, max), agg) in bins
-                .mins
-                .iter_mut()
-                .zip(bins.maxs.iter_mut())
-                .zip(bins.aggs.iter_mut())
-            {
+            for ((min, max), agg) in bins.mins.iter_mut().zip(bins.maxs.iter_mut()).zip(bins.aggs.iter_mut()) {
                 *agg = agg.min(*max).max(*min)
             }
         }
@@ -749,11 +709,7 @@ where
         self.ts1s.clone()
     }
 
-    fn drain_into(
-        &mut self,
-        dst: &mut Self,
-        range: std::ops::Range<usize>,
-    ) -> items_0::merge::DrainIntoDstResult {
+    fn drain_into(&mut self, dst: &mut Self, range: std::ops::Range<usize>) -> items_0::merge::DrainIntoDstResult {
         dst.ts1s.extend(self.ts1s.drain(range.clone()));
         dst.ts2s.extend(self.ts2s.drain(range.clone()));
         dst.cnts.extend(self.cnts.drain(range.clone()));
@@ -765,10 +721,7 @@ where
         DrainIntoDstResult::Done
     }
 
-    fn drain_into_new(
-        &mut self,
-        range: std::ops::Range<usize>,
-    ) -> items_0::merge::DrainIntoNewResult<Self> {
+    fn drain_into_new(&mut self, range: std::ops::Range<usize>) -> items_0::merge::DrainIntoNewResult<Self> {
         let mut dst = Self::new();
         MergeableTy::drain_into(self, &mut dst, range);
         DrainIntoNewResult::Done(dst)

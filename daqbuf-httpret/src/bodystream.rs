@@ -3,11 +3,11 @@ use daqbuf_err as err;
 use err::ToPublicError;
 use http::Response;
 use http::StatusCode;
+use httpclient::StreamResponse;
 use httpclient::body_empty;
 use httpclient::body_string;
-use httpclient::StreamResponse;
-use netpod::log::*;
 use netpod::APP_JSON;
+use netpod::log::*;
 
 pub fn response<T>(status: T) -> http::response::Builder
 where

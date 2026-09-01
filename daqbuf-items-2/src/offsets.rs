@@ -3,10 +3,7 @@ use netpod::timeunits::MS;
 use netpod::timeunits::SEC;
 use std::collections::VecDeque;
 
-pub fn ts_offs_from_abs_with_anchor(
-    ts_anchor_sec: u64,
-    tss: &VecDeque<TsNano>,
-) -> (VecDeque<u64>, VecDeque<u64>) {
+pub fn ts_offs_from_abs_with_anchor(ts_anchor_sec: u64, tss: &VecDeque<TsNano>) -> (VecDeque<u64>, VecDeque<u64>) {
     let ts_anchor_ns = ts_anchor_sec * SEC;
     let ts_off_ms: VecDeque<_> = tss.iter().map(|&k| (k.ns() - ts_anchor_ns) / MS).collect();
     let ts_off_ns = tss

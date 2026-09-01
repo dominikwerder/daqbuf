@@ -1,7 +1,5 @@
 use crate::channelconfig::http_get_channel_config;
 use dbconn::worker::PgQueue;
-use netpod::log::*;
-use netpod::range::evrange::SeriesRange;
 use netpod::ChConf;
 use netpod::ChannelConfigQuery;
 use netpod::ChannelConfigResponse;
@@ -11,6 +9,8 @@ use netpod::NodeConfigCached;
 use netpod::ReqCtx;
 use netpod::SfChFetchInfo;
 use netpod::SfDbChannel;
+use netpod::log::*;
+use netpod::range::evrange::SeriesRange;
 use std::collections::BTreeMap;
 use std::time::Duration;
 use taskrun::tokio;

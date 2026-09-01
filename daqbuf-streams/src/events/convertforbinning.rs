@@ -46,10 +46,7 @@ where
                     ChannelEvents::Events(evs) => {
                         if DO_TRACE_PERIODIC {
                             let tss = evs.dbg_to_tss();
-                            trace_event_periodic!(
-                                "ConvertForBinning  container len {n}",
-                                n = tss.len()
-                            );
+                            trace_event_periodic!("ConvertForBinning  container len {n}", n = tss.len());
                             for ts in tss {
                                 let g = &mut self.dbg_print_next;
                                 if ts >= *g {
@@ -163,14 +160,7 @@ impl Stream for ConvertForTesting {
                                 let mut dst = Cont::new();
                                 for (ts, val) in evs.iter_zip() {
                                     let buf = val.to_ne_bytes();
-                                    let h = buf[0]
-                                        ^ buf[1]
-                                        ^ buf[2]
-                                        ^ buf[3]
-                                        ^ buf[4]
-                                        ^ buf[5]
-                                        ^ buf[6]
-                                        ^ buf[7];
+                                    let h = buf[0] ^ buf[1] ^ buf[2] ^ buf[3] ^ buf[4] ^ buf[5] ^ buf[6] ^ buf[7];
                                     let val = EnumVariant::new(h as i16, h.to_string());
                                     dst.push_back(ts, val);
                                 }

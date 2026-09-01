@@ -1,11 +1,11 @@
 use chrono::Utc;
 use daqbuf_err::Error;
-use netpod::log::*;
+use netpod::APP_JSON;
 use netpod::AppendToUrl;
 use netpod::Cluster;
 use netpod::HostPort;
 use netpod::ReqCtx;
-use netpod::APP_JSON;
+use netpod::log::*;
 use query::api4::binned::BinnedQuery;
 use query::api4::events::PlainEventsQuery;
 use serde_json::Value as JsonValue;

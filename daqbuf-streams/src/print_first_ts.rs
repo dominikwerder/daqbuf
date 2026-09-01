@@ -57,8 +57,7 @@ where
                     Ready(Some(item)) => match item {
                         Ok(StreamItem::DataItem(RangeCompletableItem::Data(ref item2))) => {
                             if !self.printed {
-                                if let Some(ts) = MergeableTy::tss_for_testing(item2).iter().next()
-                                {
+                                if let Some(ts) = MergeableTy::tss_for_testing(item2).iter().next() {
                                     TsNanoVecFmt(MergeableTy::tss_for_testing(item2).iter());
                                     self.printed = true;
                                     debug!("{}  {}", self.tag, ts);
@@ -66,9 +65,7 @@ where
                             }
                             Ready(Some(item))
                         }
-                        Ok(StreamItem::DataItem(RangeCompletableItem::RangeComplete)) => {
-                            Ready(Some(item))
-                        }
+                        Ok(StreamItem::DataItem(RangeCompletableItem::RangeComplete)) => Ready(Some(item)),
                         x => Ready(Some(x)),
                     },
                     Ready(None) => {

@@ -1,29 +1,29 @@
+use crate::ReqCtx;
+use crate::ServiceSharedResources;
 use crate::bodystream::response;
 use crate::err::Error;
 use crate::requests::accepts_json_or_all;
-use crate::ReqCtx;
-use crate::ServiceSharedResources;
 use futures_util::StreamExt;
 use http::Method;
 use http::StatusCode;
-use httpclient::body_empty;
-use httpclient::body_string;
-use httpclient::error_status_response;
 use httpclient::IntoBody;
 use httpclient::Requ;
 use httpclient::StreamResponse;
 use httpclient::ToJsonBody;
+use httpclient::body_empty;
+use httpclient::body_string;
+use httpclient::error_status_response;
 use items_0::Empty;
 use items_0::Extendable;
 use items_2::channelevents::ChannelStatusEvents;
 use items_2::channelevents::ConnStatusEvent;
+use netpod::ACCEPT_ALL;
+use netpod::APP_JSON;
+use netpod::FromUrl;
+use netpod::NodeConfigCached;
 use netpod::log::*;
 use netpod::query::ChannelStateEventsQuery;
 use netpod::req_uri_to_url;
-use netpod::FromUrl;
-use netpod::NodeConfigCached;
-use netpod::ACCEPT_ALL;
-use netpod::APP_JSON;
 
 pub struct ConnectionStatusEvents {}
 

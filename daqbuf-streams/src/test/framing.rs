@@ -26,8 +26,7 @@ async fn framing_00_inner() -> Result<(), Box<dyn std::error::Error>> {
     });
     let stream = Box::pin(stream);
     let bufcap = ByteSize(1024 * 1024);
-    let mut stream =
-        container_stream_from_bytes_stream::<ChannelEvents>(stream, bufcap, "test".into())?;
+    let mut stream = container_stream_from_bytes_stream::<ChannelEvents>(stream, bufcap, "test".into())?;
     let mut n = 0;
     while let Some(x) = stream.try_next().await? {
         if false {

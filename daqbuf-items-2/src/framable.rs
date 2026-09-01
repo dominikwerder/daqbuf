@@ -198,6 +198,5 @@ fn test_frame_error() {
         panic!("bad tyid");
     }
     eprintln!("buf len {}  len {}", buf.len(), len);
-    let _item2: items_0::streamitem::SitemErrTy =
-        json_from_slice(&buf[20..20 + len as usize]).unwrap();
+    let _item2: items_0::streamitem::SitemErrTy = json_from_slice(&buf[20..20 + len as usize]).unwrap();
 }
