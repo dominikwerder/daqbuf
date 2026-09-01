@@ -82,7 +82,7 @@ enum State {
 
 #[derive(Debug, Serialize)]
 #[serde(tag = "type")]
-enum StateSerde {
+pub enum StateSerde {
     CreateChanSend(Duration),
     CreateChanRecv(Duration),
     SeriesIdRecv(Duration),
@@ -138,12 +138,8 @@ impl Creating {
         }
     }
 
-    pub fn name_short(&self) -> &str {
-        if self.removing {
-            "Creating { removing: true }"
-        } else {
-            "Creating { }"
-        }
+    pub fn state_serde(&self) -> StateSerde {
+        (&self.state).into()
     }
 
     pub fn set_removing(&mut self) {

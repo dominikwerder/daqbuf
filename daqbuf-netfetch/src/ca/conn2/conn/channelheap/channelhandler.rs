@@ -106,15 +106,15 @@ struct Closing2 {}
 
 #[derive(Debug)]
 enum State {
-    Init(Init),
-    Creating(Creating),
-    ReadEnum(readenum::ReadEnum),
-    Running(Running),
-    Closing1(Closing1),
-    Closing2(Closing2),
-    Done1,
-    Done,
-    Dummy,
+    Init(Instant, Init),
+    Creating(Instant, Creating),
+    ReadEnum(Instant, readenum::ReadEnum),
+    Running(Instant, Running),
+    Closing1(Instant, Closing1),
+    Closing2(Instant, Closing2),
+    Done1(Instant),
+    Done(Instant),
+    Dummy(Instant),
 }
 
 impl State {
@@ -127,14 +127,45 @@ impl State {
     fn name_short(&self) -> &str {
         match self {
             State::Init(..) => "Init",
-            State::Creating(st) => st.name_short(),
+            State::Creating(..) => "Creating",
             State::ReadEnum(..) => "ReadEnum",
             State::Running(..) => "Running",
             State::Closing1(..) => "Closing1",
             State::Closing2(..) => "Closing2",
-            State::Done1 => "Done1",
-            State::Done => "Done",
-            State::Dummy => "Dummy",
+            State::Done1(..) => "Done1",
+            State::Done(..) => "Done",
+            State::Dummy(..) => "Dummy",
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(tag = "ty", content = "co")]
+enum StateSerde {
+    Init(Duration),
+    Creating(Duration, create::StateSerde),
+    ReadEnum(Duration),
+    Running(Duration),
+    Closing1(Duration),
+    Closing2(Duration),
+    Done1(Duration),
+    Done(Duration),
+    Dummy(Duration),
+}
+
+impl From<&State> for StateSerde {
+    fn from(value: &State) -> Self {
+        match value {
+            State::Init(ts, st) => StateSerde::Init(ts.elapsed()),
+            State::Creating(ts, st) => todo!(),
+            State::ReadEnum(ts, st) => todo!(),
+            State::Running(ts, st) => todo!(),
+            State::Closing1(ts, st) => todo!(),
+            State::Closing2(ts, st) => todo!(),
+            State::Done1(ts) => todo!(),
+            State::Done(ts) => todo!(),
+            State::Dummy(ts) => todo!(),
+            // State::Done(ts) => StateSerde::Done(ts.elapsed()),
         }
     }
 }
@@ -237,6 +268,10 @@ impl ChannelHandler {
         StatusInfo {
             counters: self.counters.clone(),
         }
+    }
+
+    pub fn state_serde(&self) -> StateSerde {
+        (&self.state).into()
     }
 
     pub fn handle_dyn_cmd_v03(&mut self, cmd: serde_json::Value) -> impl Future<Output = serde_json::Value> + use<> {
