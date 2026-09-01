@@ -181,3 +181,99 @@ fn elapsed_is_human_and_with_is_applied() {
     assert_eq!(v["ts"], "2s500ms");
     assert_eq!(v["payload"], "opaque");
 }
+
+// ---- dwell-warn-score: constant per-variant, and runtime-context-supplied ----
+
+#[derive(ToSerde)]
+#[to_serde(crate = serde_helper, serde(tag = "ty", content = "co"), dwell_ctx = Duration)]
+enum DwellState {
+    DoNothing,
+    #[to_serde(dwell = *ctx)]
+    Idle(#[to_serde(skip)] Opaque),
+    #[to_serde(dwell_ms = 3000)]
+    WaitRes(#[to_serde(skip)] Opaque),
+    Closing1,
+}
+
+#[test]
+fn dwell_typical_constant_and_ctx() {
+    let interval = Duration::from_millis(2000);
+    assert_eq!(DwellState::DoNothing.dwell_typical(&interval), None);
+    assert_eq!(DwellState::Idle(Opaque).dwell_typical(&interval), Some(interval));
+    assert_eq!(
+        DwellState::WaitRes(Opaque).dwell_typical(&interval),
+        Some(Duration::from_millis(3000))
+    );
+    assert_eq!(DwellState::Closing1.dwell_typical(&interval), None);
+}
+
+/// Mirrors the split-timestamp shape used across the ca/conn2 state machines: the entry
+/// `Instant` lives on the parent, `DwellState` lives alongside it, and the typical dwell for
+/// `Idle` is a runtime parameter (`interval`) rather than a compile-time constant.
+#[derive(ToSerde)]
+#[to_serde(crate = serde_helper)]
+struct DwellHolder {
+    #[to_serde(nest)]
+    state: DwellState,
+    #[to_serde(elapsed_ms, dwell = self.state.dwell_typical(&self.interval))]
+    ts_state_enter: Instant,
+    #[to_serde(serde(with = "serde_helper::serde_Duration_human"))]
+    interval: Duration,
+}
+
+#[test]
+fn dwell_score_present_for_variant_with_dwell() {
+    let h = DwellHolder {
+        state: DwellState::Idle(Opaque),
+        ts_state_enter: Instant::now() - Duration::from_millis(3000),
+        interval: Duration::from_millis(2000),
+    };
+    let v = serde_json::to_value(h.to_serde()).unwrap();
+    let score = v["ts_state_enter_dwell_score"].as_f64().unwrap();
+    // 3000ms elapsed / 2000ms typical = 1.5
+    assert!((1.4..1.6).contains(&score), "score was {score}");
+}
+
+#[test]
+fn dwell_score_absent_for_variant_without_dwell() {
+    let h = DwellHolder {
+        state: DwellState::DoNothing,
+        ts_state_enter: Instant::now(),
+        interval: Duration::from_millis(2000),
+    };
+    let v = serde_json::to_value(h.to_serde()).unwrap();
+    assert!(v["ts_state_enter_dwell_score"].is_null(), "{v}");
+}
+
+#[test]
+fn dwell_score_uses_hardcoded_constant() {
+    let h = DwellHolder {
+        state: DwellState::WaitRes(Opaque),
+        ts_state_enter: Instant::now() - Duration::from_millis(1500),
+        interval: Duration::from_millis(2000), // irrelevant for the constant-dwell variant
+    };
+    let v = serde_json::to_value(h.to_serde()).unwrap();
+    let score = v["ts_state_enter_dwell_score"].as_f64().unwrap();
+    // 1500ms elapsed / 3000ms constant = 0.5
+    assert!((0.4..0.6).contains(&score), "score was {score}");
+}
+
+/// Embedded pattern (create.rs's SeriesIdRecv): elapsed and dwell live in the same variant,
+/// no cross-referencing needed.
+#[derive(ToSerde)]
+#[to_serde(crate = serde_helper, serde(tag = "ty", content = "co"))]
+enum EmbeddedDwellState {
+    Waiting(
+        #[to_serde(elapsed_ms, dwell_ms = 1000)] Instant,
+        #[to_serde(skip)] Opaque,
+    ),
+}
+
+#[test]
+fn embedded_dwell_score_sibling_in_same_variant() {
+    let st = EmbeddedDwellState::Waiting(Instant::now() - Duration::from_millis(800), Opaque);
+    let v = serde_json::to_value(st.to_serde()).unwrap();
+    assert_eq!(v["ty"], "Waiting");
+    let score = v["co"][1].as_f64().unwrap();
+    assert!((0.7..0.9).contains(&score), "score was {score}");
+}

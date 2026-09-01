@@ -48,7 +48,7 @@ autoerr::create_error_v1!(
 );
 
 #[derive(Debug, Clone, Serialize)]
-enum StateDirection {
+pub enum StateDirection {
     None,
     DoNothing,
 }
@@ -72,11 +72,17 @@ fn transition_state(old: &mut State, new: State, ts: &mut Instant, llog: &mut lo
 }
 
 #[derive(Debug, ToSerde)]
-#[to_serde(vis = "pub", serde(tag = "ty", content = "co"))]
+#[to_serde(vis = "pub", serde(tag = "ty", content = "co"), dwell_ctx = Duration)]
 enum State {
     DoNothing,
+    /// Typical dwell is the poll interval itself, supplied at snapshot time by the parent
+    /// `FetchPolling` (its `interval` is runtime-configurable, so there is no compile-time
+    /// constant to give here).
+    #[to_serde(dwell = *ctx)]
     Idle(#[to_serde(skip)] FutDbg<()>),
     SendReq(StateDirection),
+    /// Matches the fixed 3s response timeout used when arming this state below.
+    #[to_serde(dwell_ms = 3000)]
     WaitRes(#[to_serde(skip)] FutDbg<()>, StateDirection),
     Closing1,
     Done,
@@ -100,8 +106,9 @@ impl fmt::Display for State {
 pub struct FetchPolling {
     #[to_serde(nest)]
     state: State,
-    /// Set by `transition_state`, reported as time-in-state.
-    #[to_serde(elapsed)]
+    /// Set by `transition_state`, reported as time-in-state, alongside a dwell-warn score
+    /// derived from `State::dwell_typical` (the poll `interval` below is its runtime context).
+    #[to_serde(elapsed, dwell = self.state.dwell_typical(&self.interval))]
     ts_state_enter: Instant,
     series: SeriesId,
     sid: Sid,
@@ -495,5 +502,45 @@ impl FetchPolling {
             trace!("{selfname}  HPP:Done");
             Ready(None)
         }
+    }
+}
+
+#[cfg(test)]
+mod test_dwell {
+    use super::*;
+    use serde_helper::ToSerde as _;
+
+    #[test]
+    fn idle_dwell_score_uses_runtime_interval() {
+        let mut fp = FetchPolling::new(
+            SeriesId::new(1),
+            Sid::new(1),
+            ScalarType::F64,
+            Shape::Scalar,
+            CaDbrTy::new(6),
+        );
+        fp.interval = Duration::from_millis(1000);
+        fp.state = State::Idle(async {}.box2());
+        fp.ts_state_enter = Instant::now() - Duration::from_millis(1500);
+
+        let v = serde_json::to_value(fp.to_serde()).unwrap();
+        assert_eq!(v["state"]["ty"], "Idle");
+        let score = v["ts_state_enter_dwell_score"].as_f64().unwrap();
+        // 1500ms elapsed / 1000ms interval (the runtime dwell) = 1.5
+        assert!((1.4..1.6).contains(&score), "score was {score} in {v}");
+    }
+
+    #[test]
+    fn do_nothing_has_no_dwell_score() {
+        let fp = FetchPolling::new(
+            SeriesId::new(1),
+            Sid::new(1),
+            ScalarType::F64,
+            Shape::Scalar,
+            CaDbrTy::new(6),
+        );
+        let v = serde_json::to_value(fp.to_serde()).unwrap();
+        assert_eq!(v["state"]["ty"], "DoNothing");
+        assert!(v["ts_state_enter_dwell_score"].is_null(), "{v}");
     }
 }

@@ -72,8 +72,9 @@ enum State {
         #[to_serde(skip)] FutDbg<()>,
     ),
     CreateChanRecv(#[to_serde(elapsed)] Instant, #[to_serde(skip)] FutDbg<()>),
+    /// Series lookup is a DB round-trip; anything past ~1s is worth a second look.
     SeriesIdRecv(
-        #[to_serde(elapsed)] Instant,
+        #[to_serde(elapsed, dwell_ms = 1000)] Instant,
         #[to_serde(skip)]
         FutDbg<(
             Result<Result<dbpg::seriesbychannel::ChannelInfoResult, dbpg::seriesbychannel::Error>, Error>,

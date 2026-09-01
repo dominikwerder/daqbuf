@@ -1,4 +1,5 @@
 use crate::attrs::ContainerAttrs;
+use crate::attrs::DwellSpec;
 use crate::attrs::ExtraField;
 use crate::attrs::FieldAttrs;
 use crate::attrs::FieldMode;
@@ -97,6 +98,39 @@ fn serde_attr(attrs: &[TokenStream2]) -> TokenStream2 {
     }
 }
 
+/// Variant-level dwell arm body: always `Some(Duration)`, since presence/absence of the
+/// dwell expectation itself is what `None` vs `Some` on the surrounding match arm encodes.
+fn dwell_variant_arm_expr(dwell: &DwellSpec) -> TokenStream2 {
+    match dwell {
+        DwellSpec::Ms(e) => quote!(::core::option::Option::Some(::core::time::Duration::from_millis((#e) as u64))),
+        DwellSpec::Expr(e) => quote!(::core::option::Option::Some(#e)),
+    }
+}
+
+/// Field-level dwell: `Ms` is self-contained, `Expr` is assumed to already be
+/// `Option<Duration>` (typically a call into a nested `dwell_typical`).
+fn dwell_field_opt_expr(dwell: &DwellSpec) -> TokenStream2 {
+    match dwell {
+        DwellSpec::Ms(e) => quote!(::core::option::Option::Some(::core::time::Duration::from_millis((#e) as u64))),
+        DwellSpec::Expr(e) => quote!(#e),
+    }
+}
+
+/// `access` must evaluate to something `.elapsed()`-able (an `&Instant`/`Instant`). Produces
+/// an `Option<f32>` block: `elapsed / typical`, or `None` when no typical dwell applies.
+fn dwell_score_block(access: &TokenStream2, dwell: &DwellSpec) -> TokenStream2 {
+    let dwell_opt = dwell_field_opt_expr(dwell);
+    quote! {
+        {
+            let __to_serde_elapsed = (#access).elapsed();
+            let __to_serde_dwell: ::core::option::Option<::core::time::Duration> = #dwell_opt;
+            __to_serde_dwell.map(|d| {
+                (__to_serde_elapsed.as_secs_f64() / d.as_secs_f64().max(f64::EPSILON)) as f32
+            })
+        }
+    }
+}
+
 /// `#[derive(Debug, Serialize, ..)]` plus any forwarded `#[serde(..)]` for the generated type.
 fn head(ca: &ContainerAttrs) -> TokenStream2 {
     let extra_derives = &ca.derives;
@@ -157,12 +191,28 @@ fn expand_enum(inp: &syn::DeriveInput, ca: &ContainerAttrs, data: &syn::DataEnum
     let mut bounds = Vec::new();
     let mut var_defs = Vec::new();
     let mut arms = Vec::new();
+    let mut dwell_arms = Vec::new();
+    let mut has_variant_dwell = false;
 
     for v in &data.variants {
         let va = parse_variant_attrs(&v.attrs)?;
         let vname = &v.ident;
         let vserde = serde_attr(&va.serde);
         let extras = &va.extra;
+
+        let dwell_pat = match &v.fields {
+            syn::Fields::Named(_) => quote!(#src::#vname { .. }),
+            syn::Fields::Unnamed(_) => quote!(#src::#vname(..)),
+            syn::Fields::Unit => quote!(#src::#vname),
+        };
+        let dwell_arm_expr = match &va.dwell {
+            Some(d) => {
+                has_variant_dwell = true;
+                dwell_variant_arm_expr(d)
+            }
+            None => quote!(::core::option::Option::None),
+        };
+        dwell_arms.push(quote!(#dwell_pat => #dwell_arm_expr));
 
         match &v.fields {
             syn::Fields::Named(fs) => {
@@ -184,6 +234,12 @@ fn expand_enum(inp: &syn::DeriveInput, ca: &ContainerAttrs, data: &syn::DataEnum
                     let (ty, expr, sa) = (m.ty, m.expr, serde_attr(&m.serde_attrs));
                     defs.push(quote!(#sa #name: #ty));
                     inits.push(quote!(#name: #expr));
+                    if let Some(d) = &fa.dwell {
+                        let score_name = format_ident!("{}_dwell_score", name);
+                        let score_expr = dwell_score_block(&quote!(#name), d);
+                        defs.push(quote!(#score_name: ::core::option::Option<f32>));
+                        inits.push(quote!(#score_name: #score_expr));
+                    }
                 }
                 for ExtraField { name, ty, expr } in extras {
                     defs.push(quote!(#name: #ty));
@@ -206,6 +262,11 @@ fn expand_enum(inp: &syn::DeriveInput, ca: &ContainerAttrs, data: &syn::DataEnum
                     let (ty, expr, sa) = (m.ty, m.expr, serde_attr(&m.serde_attrs));
                     defs.push(quote!(#sa #ty));
                     inits.push(expr);
+                    if let Some(d) = &fa.dwell {
+                        let score_expr = dwell_score_block(&quote!(#b), d);
+                        defs.push(quote!(::core::option::Option<f32>));
+                        inits.push(score_expr);
+                    }
                 }
                 for ExtraField { ty, expr, .. } in extras {
                     defs.push(quote!(#ty));
@@ -234,6 +295,25 @@ fn expand_enum(inp: &syn::DeriveInput, ca: &ContainerAttrs, data: &syn::DataEnum
     }
 
     let where_c = where_clause(inp, bounds);
+
+    let dwell_impl = if has_variant_dwell || ca.dwell_ctx.is_some() {
+        let ctx_param = ca.dwell_ctx.as_ref().map(|t| quote!(, ctx: &#t));
+        quote! {
+            impl #impl_g #src #ty_g #where_c {
+                /// This state's typical time-in-state, or `None` if none was declared.
+                /// Generated because a variant declared `#[to_serde(dwell_ms/dwell = ..)]`.
+                #[allow(dead_code, unused_variables)]
+                fn dwell_typical(&self #ctx_param) -> ::core::option::Option<::core::time::Duration> {
+                    match self {
+                        #(#dwell_arms),*
+                    }
+                }
+            }
+        }
+    } else {
+        quote!()
+    };
+
     let ts = quote! {
         #head
         #vis enum #dst #generics #where_c {
@@ -250,6 +330,8 @@ fn expand_enum(inp: &syn::DeriveInput, ca: &ContainerAttrs, data: &syn::DataEnum
                 }
             }
         }
+
+        #dwell_impl
     };
     Ok(ts)
 }
@@ -280,6 +362,12 @@ fn expand_struct(inp: &syn::DeriveInput, ca: &ContainerAttrs, data: &syn::DataSt
                 let (ty, expr, sa) = (m.ty, m.expr, serde_attr(&m.serde_attrs));
                 defs.push(quote!(#sa pub #name: #ty));
                 inits.push(quote!(#name: #expr));
+                if let Some(d) = &fa.dwell {
+                    let score_name = format_ident!("{}_dwell_score", name);
+                    let score_expr = dwell_score_block(&quote!(&self.#name), d);
+                    defs.push(quote!(pub #score_name: ::core::option::Option<f32>));
+                    inits.push(quote!(#score_name: #score_expr));
+                }
             }
             for ExtraField { name, ty, expr } in &ca.extra {
                 defs.push(quote!(pub #name: #ty));
@@ -313,6 +401,11 @@ fn expand_struct(inp: &syn::DeriveInput, ca: &ContainerAttrs, data: &syn::DataSt
                 let (ty, expr, sa) = (m.ty, m.expr, serde_attr(&m.serde_attrs));
                 defs.push(quote!(#sa pub #ty));
                 inits.push(expr);
+                if let Some(d) = &fa.dwell {
+                    let score_expr = dwell_score_block(&quote!(&self.#idx), d);
+                    defs.push(quote!(pub ::core::option::Option<f32>));
+                    inits.push(score_expr);
+                }
             }
             for ExtraField { ty, expr, .. } in &ca.extra {
                 defs.push(quote!(pub #ty));
