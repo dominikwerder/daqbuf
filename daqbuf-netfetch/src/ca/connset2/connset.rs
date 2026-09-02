@@ -1449,14 +1449,12 @@ impl Stream for ConnSet {
                     );
                 }
                 State::Shutdown2 => {
-                    // TODO wait until all channels are gone.
-                    // How do we wait for that?
-                    // In state Shutdown1, we should have achieved already that all ConnSet channels started
-                    // to remove themselves.
                     poll_a!(self.as_mut().poll_common(cx), hpp);
-                    // trace2!("Shutdown2 --> Done");
-                    // hpp.mark_progress();
-                    // self.state = State::Done;
+                    if !hpp.have_progress() && !hpp.have_pending() {
+                        trace2!("Shutdown2 --> Done");
+                        hpp.mark_progress();
+                        self.state = State::Done;
+                    }
                 }
                 State::Done => {}
             }

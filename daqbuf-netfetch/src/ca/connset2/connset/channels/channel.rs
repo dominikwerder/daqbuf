@@ -277,7 +277,14 @@ impl Channel {
 
     pub fn signal_ca_conn_down(&mut self, dbg_addr: SocketAddrV4, dbg_chn: &str) {
         let selfname = "signal_ca_conn_down";
-        self.state = State::Init;
+        match &self.state {
+            State::Removing0(..) | State::Removing1(..) | State::Removing2(..) | State::Removed | State::Done => {
+                todo_shutdown!("{selfname}  already tearing down/done, not resurrecting  {dbg_addr}  {dbg_chn}");
+            }
+            _ => {
+                self.state = State::Init;
+            }
+        }
         if let Some(waker) = self.waker.take() {
             todo_shutdown!("{selfname}  wake  {dbg_addr}  {dbg_chn}");
             waker.wake();

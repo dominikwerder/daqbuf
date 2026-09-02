@@ -240,7 +240,10 @@ impl FetchMonitoring {
         debug_shutdown!("{selfname}");
         self.llog.push(format!("{selfname}  {}", self.state));
         match &mut self.state {
-            State::DoNothing() => {}
+            State::DoNothing() => {
+                self.llog.push(format!("{selfname}  State::DoNothing  goto Closing1"));
+                transition_state(&mut self.state, State::Closing1, &mut self.ts_state_enter, &mut self.llog);
+            }
             State::CreateMonitorSend(stdir) => {
                 *stdir = StateDirection::Closing;
             }
