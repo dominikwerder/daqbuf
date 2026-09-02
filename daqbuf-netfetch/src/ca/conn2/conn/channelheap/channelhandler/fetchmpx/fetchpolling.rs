@@ -31,7 +31,7 @@ macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
 macro_rules! warn { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
 macro_rules! info { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
 macro_rules! debug { ($($arg:tt)*) => { if true { log::debug!($($arg)*); } }; }
-macro_rules! trace { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
+macro_rules! trace { ($($arg:tt)*) => { if true { log::trace!($($arg)*); } }; }
 macro_rules! trace2 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
 macro_rules! trace3 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
 macro_rules! trace4 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
@@ -162,20 +162,20 @@ impl FetchPolling {
         let tsnow = Instant::now();
         self.poll_next_ts_exact = self.poll_next_ts_exact + self.interval;
         if self.poll_next_ts_exact < tsnow {
-            let r = self.rng_next() & 0xff;
-            let a = 1024;
-            let b = a - (a / 8) + r;
-            // TODO avoid div
-            let dd = (b * self.interval) / a;
-            self.poll_next_ts_exact = tsnow + dd;
+            let z = (tsnow - self.poll_next_ts_exact).div_duration_f32(self.interval) + 1.4;
+            self.poll_next_ts_exact += self.interval * (z as u32);
+        }
+        if self.poll_next_ts_exact < tsnow {
+            self.poll_next_ts_exact = tsnow + self.interval;
         }
         let r = self.rng_next() & 0xff;
-        let a = 1024;
-        let b = a - 128 + r;
-        // TODO avoid div
+        let a = 2048;
+        let g = 128;
+        let b = a + r - g;
         let dd = (b * self.interval) / a;
-        info!("jittered poll interval: {:.2} sec", (self.interval + dd).as_secs_f32());
-        self.poll_next_ts_jitter = self.poll_next_ts_exact + dd;
+        info!("dd {:.2} sec", dd.as_secs_f32());
+        trace!("dd {:.2} sec", dd.as_secs_f32());
+        self.poll_next_ts_jitter = self.poll_next_ts_exact + dd - self.interval;
         self.poll_next_ts_jitter
     }
 
