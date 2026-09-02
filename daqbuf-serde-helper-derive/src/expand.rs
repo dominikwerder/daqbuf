@@ -117,7 +117,11 @@ fn dwell_field_opt_expr(dwell: &DwellSpec) -> TokenStream2 {
 }
 
 /// `access` must evaluate to something `.elapsed()`-able (an `&Instant`/`Instant`). Produces
-/// an `Option<f32>` block: `elapsed / typical`, or `None` when no typical dwell applies.
+/// an `Option<u32>` block: `elapsed / typical` in per-mille (`1000` == a ratio of `1.0`), or
+/// `None` when no typical dwell applies. Per-mille as an integer, rather than a float, so the
+/// value survives a `serde_json::Value` round-trip byte-for-byte (`Value::Number` has no f32
+/// variant, so any f32 gets widened to f64 and prints with the f32 rounding error exposed as
+/// a long decimal tail).
 fn dwell_score_block(access: &TokenStream2, dwell: &DwellSpec) -> TokenStream2 {
     let dwell_opt = dwell_field_opt_expr(dwell);
     quote! {
@@ -126,7 +130,7 @@ fn dwell_score_block(access: &TokenStream2, dwell: &DwellSpec) -> TokenStream2 {
             let __to_serde_dwell: ::core::option::Option<::core::time::Duration> = #dwell_opt;
             __to_serde_dwell.map(|d| {
                 let __to_serde_ratio: f32 = __to_serde_elapsed.as_secs_f32() / d.as_secs_f32().max(f32::EPSILON);
-                (__to_serde_ratio * 1000.0).round() / 1000.0
+                (__to_serde_ratio * 1000.0).round() as u32
             })
         }
     }
@@ -238,7 +242,7 @@ fn expand_enum(inp: &syn::DeriveInput, ca: &ContainerAttrs, data: &syn::DataEnum
                     if let Some(d) = &fa.dwell {
                         let score_name = format_ident!("dwell_score");
                         let score_expr = dwell_score_block(&quote!(#name), d);
-                        defs.push(quote!(#score_name: ::core::option::Option<f32>));
+                        defs.push(quote!(#score_name: ::core::option::Option<u32>));
                         inits.push(quote!(#score_name: #score_expr));
                     }
                 }
@@ -265,7 +269,7 @@ fn expand_enum(inp: &syn::DeriveInput, ca: &ContainerAttrs, data: &syn::DataEnum
                     inits.push(expr);
                     if let Some(d) = &fa.dwell {
                         let score_expr = dwell_score_block(&quote!(#b), d);
-                        defs.push(quote!(::core::option::Option<f32>));
+                        defs.push(quote!(::core::option::Option<u32>));
                         inits.push(score_expr);
                     }
                 }
@@ -366,7 +370,7 @@ fn expand_struct(inp: &syn::DeriveInput, ca: &ContainerAttrs, data: &syn::DataSt
                 if let Some(d) = &fa.dwell {
                     let score_name = format_ident!("dwell_score");
                     let score_expr = dwell_score_block(&quote!(&self.#name), d);
-                    defs.push(quote!(pub #score_name: ::core::option::Option<f32>));
+                    defs.push(quote!(pub #score_name: ::core::option::Option<u32>));
                     inits.push(quote!(#score_name: #score_expr));
                 }
             }
@@ -404,7 +408,7 @@ fn expand_struct(inp: &syn::DeriveInput, ca: &ContainerAttrs, data: &syn::DataSt
                 inits.push(expr);
                 if let Some(d) = &fa.dwell {
                     let score_expr = dwell_score_block(&quote!(&self.#idx), d);
-                    defs.push(quote!(pub ::core::option::Option<f32>));
+                    defs.push(quote!(pub ::core::option::Option<u32>));
                     inits.push(score_expr);
                 }
             }

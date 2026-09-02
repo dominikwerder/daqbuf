@@ -67,14 +67,17 @@ pub enum CreatingItem {
 #[to_serde(vis = "pub", serde(tag = "ty", content = "co"))]
 enum State {
     CreateChanSend(
-        #[to_serde(elapsed)] Instant,
+        #[to_serde(elapsed, dwell_ms = 2000)] Instant,
         #[to_serde(len)] VecDeque<CaMsg>,
         #[to_serde(skip)] FutDbg<()>,
     ),
-    CreateChanRecv(#[to_serde(elapsed)] Instant, #[to_serde(skip)] FutDbg<()>),
-    /// Series lookup is a DB round-trip; anything past ~1s is worth a second look.
+    CreateChanRecv(
+        #[to_serde(elapsed, dwell_ms = 2000)] Instant,
+        #[to_serde(skip)] FutDbg<()>,
+    ),
+    /// Series lookup is a DB round-trip; anything past ~4s is worth a second look.
     SeriesIdRecv(
-        #[to_serde(elapsed, dwell_ms = 1000)] Instant,
+        #[to_serde(elapsed, dwell_ms = 4000)] Instant,
         #[to_serde(skip)]
         FutDbg<(
             Result<Result<dbpg::seriesbychannel::ChannelInfoResult, dbpg::seriesbychannel::Error>, Error>,

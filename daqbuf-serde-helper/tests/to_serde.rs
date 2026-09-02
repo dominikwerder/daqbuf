@@ -229,9 +229,9 @@ fn dwell_score_present_for_variant_with_dwell() {
         interval: Duration::from_millis(2000),
     };
     let v = serde_json::to_value(h.to_serde()).unwrap();
-    let score = v["dwell_score"].as_f64().unwrap();
-    // 3000ms elapsed / 2000ms typical = 1.5
-    assert!((1.4..1.6).contains(&score), "score was {score}");
+    let score = v["dwell_score"].as_u64().unwrap();
+    // 3000ms elapsed / 2000ms typical = 1.5 -> 1500 per-mille
+    assert!((1400..1600).contains(&score), "score was {score}");
 }
 
 #[test]
@@ -253,27 +253,25 @@ fn dwell_score_uses_hardcoded_constant() {
         interval: Duration::from_millis(2000), // irrelevant for the constant-dwell variant
     };
     let v = serde_json::to_value(h.to_serde()).unwrap();
-    let score = v["dwell_score"].as_f64().unwrap();
-    // 1500ms elapsed / 3000ms constant = 0.5
-    assert!((0.4..0.6).contains(&score), "score was {score}");
+    let score = v["dwell_score"].as_u64().unwrap();
+    // 1500ms elapsed / 3000ms constant = 0.5 -> 500 per-mille
+    assert!((400..600).contains(&score), "score was {score}");
 }
 
 #[test]
-fn dwell_score_is_f32_rounded_to_1e3() {
+fn dwell_score_survives_value_roundtrip_as_clean_integer() {
     let h = DwellHolder {
         state: DwellState::WaitRes(Opaque),
-        state_dt: Instant::now() - Duration::from_millis(777),
+        state_dt: Instant::now() - Duration::from_millis(652),
         interval: Duration::from_millis(2000), // irrelevant for the constant-dwell variant
     };
     let v = serde_json::to_value(h.to_serde()).unwrap();
-    // serde_json represents f32 losslessly as f64, so the value read back must already sit
-    // on a multiple of 0.001 if the derive rounded it as an f32 before serializing.
-    let score = v["dwell_score"].as_f64().unwrap() as f32;
-    let scaled = score * 1000.0;
-    assert!(
-        (scaled - scaled.round()).abs() < 1e-3,
-        "dwell_score {score} is not rounded to 1e-3"
-    );
+    // A u32 per-mille value can't pick up the f32->f64 widening artifact that
+    // serde_json::Value's f64-only Number type exposes for float fields (e.g.
+    // "0.6520000100135803" instead of "0.652") -- it must serialize as a clean integer.
+    assert!(v["dwell_score"].is_u64(), "expected an integer, got {v}");
+    let text = serde_json::to_string(&v["dwell_score"]).unwrap();
+    assert!(!text.contains('.'), "dwell_score serialized with a decimal point: {text}");
 }
 
 /// Embedded pattern (create.rs's SeriesIdRecv): elapsed and dwell live in the same variant,
@@ -292,6 +290,7 @@ fn embedded_dwell_score_sibling_in_same_variant() {
     let st = EmbeddedDwellState::Waiting(Instant::now() - Duration::from_millis(800), Opaque);
     let v = serde_json::to_value(st.to_serde()).unwrap();
     assert_eq!(v["ty"], "Waiting");
-    let score = v["co"][1].as_f64().unwrap();
-    assert!((0.7..0.9).contains(&score), "score was {score}");
+    let score = v["co"][1].as_u64().unwrap();
+    // 800ms elapsed / 1000ms constant = 0.8 -> 800 per-mille
+    assert!((700..900).contains(&score), "score was {score}");
 }

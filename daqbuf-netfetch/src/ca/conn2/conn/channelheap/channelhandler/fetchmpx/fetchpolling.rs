@@ -525,9 +525,9 @@ mod test_dwell {
 
         let v = serde_json::to_value(fp.to_serde()).unwrap();
         assert_eq!(v["state"]["ty"], "Idle");
-        let score = v["dwell_score"].as_f64().unwrap();
-        // 1500ms elapsed / 1000ms interval (the runtime dwell) = 1.5
-        assert!((1.4..1.6).contains(&score), "score was {score} in {v}");
+        let score = v["dwell_score"].as_u64().unwrap();
+        // 1500ms elapsed / 1000ms interval (the runtime dwell) = 1.5 -> 1500 per-mille
+        assert!((1400..1600).contains(&score), "score was {score} in {v}");
     }
 
     #[test]

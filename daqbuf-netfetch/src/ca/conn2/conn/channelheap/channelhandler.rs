@@ -999,7 +999,9 @@ mod test_state_serde {
         // time-in-state, rendered by the existing human duration helper
         assert!(v["co"][0].is_string(), "no time-in-state in {v}");
         assert!(v["co"][1]["state"]["co"][0].is_string());
+        // CreateChanSend now declares a dwell time, so co[1] is the dwell_score sibling
+        assert!(v["co"][1]["state"]["co"][1].is_number());
         // the outgoing CreateChan message is reported as buffer fill, not content
-        assert_eq!(v["co"][1]["state"]["co"][1]["len"], 1);
+        assert_eq!(v["co"][1]["state"]["co"][2]["len"], 1);
     }
 }

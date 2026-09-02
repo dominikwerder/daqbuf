@@ -158,8 +158,9 @@ pub struct FieldAttrs {
     pub ty: Option<syn::Type>,
     pub serde: Vec<TokenStream2>,
     pub span: proc_macro2::Span,
-    /// Only valid on `elapsed`/`elapsed_ms` fields. Produces an `Option<f32>` sibling
-    /// (`elapsed / typical`) right after this field. `Ms` is a self-contained constant;
+    /// Only valid on `elapsed`/`elapsed_ms` fields. Produces an `Option<u32>` sibling
+    /// (`elapsed / typical` in per-mille, `1000` == a ratio of `1.0`) right after this field.
+    /// `Ms` is a self-contained constant;
     /// `Expr` must already evaluate to `Option<Duration>` (typically a call into a nested
     /// component's derive-generated `dwell_typical`, e.g. `self.state.dwell_typical(&self.interval)`).
     pub dwell: Option<DwellSpec>,
