@@ -125,7 +125,8 @@ fn dwell_score_block(access: &TokenStream2, dwell: &DwellSpec) -> TokenStream2 {
             let __to_serde_elapsed = (#access).elapsed();
             let __to_serde_dwell: ::core::option::Option<::core::time::Duration> = #dwell_opt;
             __to_serde_dwell.map(|d| {
-                (__to_serde_elapsed.as_secs_f64() / d.as_secs_f64().max(f64::EPSILON)) as f32
+                let __to_serde_ratio: f32 = __to_serde_elapsed.as_secs_f32() / d.as_secs_f32().max(f32::EPSILON);
+                (__to_serde_ratio * 1000.0).round() / 1000.0
             })
         }
     }
@@ -235,7 +236,7 @@ fn expand_enum(inp: &syn::DeriveInput, ca: &ContainerAttrs, data: &syn::DataEnum
                     defs.push(quote!(#sa #name: #ty));
                     inits.push(quote!(#name: #expr));
                     if let Some(d) = &fa.dwell {
-                        let score_name = format_ident!("{}_dwell_score", name);
+                        let score_name = format_ident!("dwell_score");
                         let score_expr = dwell_score_block(&quote!(#name), d);
                         defs.push(quote!(#score_name: ::core::option::Option<f32>));
                         inits.push(quote!(#score_name: #score_expr));
@@ -363,7 +364,7 @@ fn expand_struct(inp: &syn::DeriveInput, ca: &ContainerAttrs, data: &syn::DataSt
                 defs.push(quote!(#sa pub #name: #ty));
                 inits.push(quote!(#name: #expr));
                 if let Some(d) = &fa.dwell {
-                    let score_name = format_ident!("{}_dwell_score", name);
+                    let score_name = format_ident!("dwell_score");
                     let score_expr = dwell_score_block(&quote!(&self.#name), d);
                     defs.push(quote!(pub #score_name: ::core::option::Option<f32>));
                     inits.push(quote!(#score_name: #score_expr));

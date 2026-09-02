@@ -216,7 +216,7 @@ struct DwellHolder {
     #[to_serde(nest)]
     state: DwellState,
     #[to_serde(elapsed_ms, dwell = self.state.dwell_typical(&self.interval))]
-    ts_state_enter: Instant,
+    state_dt: Instant,
     #[to_serde(serde(with = "serde_helper::serde_Duration_human"))]
     interval: Duration,
 }
@@ -225,11 +225,11 @@ struct DwellHolder {
 fn dwell_score_present_for_variant_with_dwell() {
     let h = DwellHolder {
         state: DwellState::Idle(Opaque),
-        ts_state_enter: Instant::now() - Duration::from_millis(3000),
+        state_dt: Instant::now() - Duration::from_millis(3000),
         interval: Duration::from_millis(2000),
     };
     let v = serde_json::to_value(h.to_serde()).unwrap();
-    let score = v["ts_state_enter_dwell_score"].as_f64().unwrap();
+    let score = v["dwell_score"].as_f64().unwrap();
     // 3000ms elapsed / 2000ms typical = 1.5
     assert!((1.4..1.6).contains(&score), "score was {score}");
 }
@@ -238,24 +238,42 @@ fn dwell_score_present_for_variant_with_dwell() {
 fn dwell_score_absent_for_variant_without_dwell() {
     let h = DwellHolder {
         state: DwellState::DoNothing,
-        ts_state_enter: Instant::now(),
+        state_dt: Instant::now(),
         interval: Duration::from_millis(2000),
     };
     let v = serde_json::to_value(h.to_serde()).unwrap();
-    assert!(v["ts_state_enter_dwell_score"].is_null(), "{v}");
+    assert!(v["dwell_score"].is_null(), "{v}");
 }
 
 #[test]
 fn dwell_score_uses_hardcoded_constant() {
     let h = DwellHolder {
         state: DwellState::WaitRes(Opaque),
-        ts_state_enter: Instant::now() - Duration::from_millis(1500),
+        state_dt: Instant::now() - Duration::from_millis(1500),
         interval: Duration::from_millis(2000), // irrelevant for the constant-dwell variant
     };
     let v = serde_json::to_value(h.to_serde()).unwrap();
-    let score = v["ts_state_enter_dwell_score"].as_f64().unwrap();
+    let score = v["dwell_score"].as_f64().unwrap();
     // 1500ms elapsed / 3000ms constant = 0.5
     assert!((0.4..0.6).contains(&score), "score was {score}");
+}
+
+#[test]
+fn dwell_score_is_f32_rounded_to_1e3() {
+    let h = DwellHolder {
+        state: DwellState::WaitRes(Opaque),
+        state_dt: Instant::now() - Duration::from_millis(777),
+        interval: Duration::from_millis(2000), // irrelevant for the constant-dwell variant
+    };
+    let v = serde_json::to_value(h.to_serde()).unwrap();
+    // serde_json represents f32 losslessly as f64, so the value read back must already sit
+    // on a multiple of 0.001 if the derive rounded it as an f32 before serializing.
+    let score = v["dwell_score"].as_f64().unwrap() as f32;
+    let scaled = score * 1000.0;
+    assert!(
+        (scaled - scaled.round()).abs() < 1e-3,
+        "dwell_score {score} is not rounded to 1e-3"
+    );
 }
 
 /// Embedded pattern (create.rs's SeriesIdRecv): elapsed and dwell live in the same variant,

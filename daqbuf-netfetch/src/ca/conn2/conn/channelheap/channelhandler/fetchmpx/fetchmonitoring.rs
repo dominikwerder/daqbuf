@@ -118,7 +118,7 @@ pub struct FetchMonitoring {
     state: State,
     /// Set by `transition_state`, reported as time-in-state.
     #[to_serde(elapsed)]
-    ts_state_enter: Instant,
+    state_dt: Instant,
     series: SeriesId,
     cid: Cid,
     sid: Sid,
@@ -147,7 +147,7 @@ impl FetchMonitoring {
     ) -> Self {
         Self {
             state: State::DoNothing(),
-            ts_state_enter: Instant::now(),
+            state_dt: Instant::now(),
             series,
             cid,
             sid,
@@ -182,7 +182,7 @@ impl FetchMonitoring {
                 transition_state(
                     &mut self.state,
                     State::CreateMonitorSend(StateDirection::Enable),
-                    &mut self.ts_state_enter,
+                    &mut self.state_dt,
                     &mut self.llog,
                 );
             }
@@ -242,7 +242,7 @@ impl FetchMonitoring {
         match &mut self.state {
             State::DoNothing() => {
                 self.llog.push(format!("{selfname}  State::DoNothing  goto Closing1"));
-                transition_state(&mut self.state, State::Closing1, &mut self.ts_state_enter, &mut self.llog);
+                transition_state(&mut self.state, State::Closing1, &mut self.state_dt, &mut self.llog);
             }
             State::CreateMonitorSend(stdir) => {
                 *stdir = StateDirection::Closing;
@@ -344,7 +344,7 @@ impl FetchMonitoring {
                     transition_state(
                         &mut self2.state,
                         State::Monitoring(fut, stdir),
-                        &mut self2.ts_state_enter,
+                        &mut self2.state_dt,
                         &mut self2.llog,
                     );
                     ret
@@ -363,7 +363,7 @@ impl FetchMonitoring {
                         CaMsgTy::EventAddResEmpty(..) | CaMsgTy::EventCancelRes(..) => {
                             let stdir = stdir.clone();
                             let stn = State::RemoveSubidSend(stdir);
-                            transition_state(&mut self2.state, stn, &mut self2.ts_state_enter, &mut self2.llog);
+                            transition_state(&mut self2.state, stn, &mut self2.state_dt, &mut self2.llog);
                         }
                         CaMsgTy::EventAddRes(..) => {}
                         _ => {
@@ -443,7 +443,7 @@ impl FetchMonitoring {
                     transition_state(
                         &mut self2.state,
                         State::CreateMonitorRecv(fut, stdir),
-                        &mut self2.ts_state_enter,
+                        &mut self2.state_dt,
                         &mut self2.llog,
                     );
                     let ret = MonitoringItem::ProtoOutSubid(msg, tsnow);
@@ -459,7 +459,7 @@ impl FetchMonitoring {
                         transition_state(
                             &mut self2.state,
                             State::DoNothing(),
-                            &mut self2.ts_state_enter,
+                            &mut self2.state_dt,
                             &mut self2.llog,
                         );
                     }
@@ -473,7 +473,7 @@ impl FetchMonitoring {
                         let stdir = stdir.clone();
                         let stn = State::RemoveMonitorSend(stdir);
                         debug_shutdown!("State::Monitoring  go to {stn:?}");
-                        transition_state(&mut self2.state, stn, &mut self2.ts_state_enter, &mut self2.llog);
+                        transition_state(&mut self2.state, stn, &mut self2.state_dt, &mut self2.llog);
                     }
                     StateDirection::Enable => match to.poll_unpin(cx) {
                         Ready(()) => {
@@ -485,7 +485,7 @@ impl FetchMonitoring {
                             transition_state(
                                 &mut self2.state,
                                 State::Monitoring(fut, stdir),
-                                &mut self2.ts_state_enter,
+                                &mut self2.state_dt,
                                 &mut self2.llog,
                             );
                         }
@@ -514,7 +514,7 @@ impl FetchMonitoring {
                     transition_state(
                         &mut self2.state,
                         State::RemoveMonitorRecv(fut, stdir),
-                        &mut self2.ts_state_enter,
+                        &mut self2.state_dt,
                         &mut self2.llog,
                     );
                     let ret = MonitoringItem::ProtoOutSubid(msg, tsnow);
@@ -530,7 +530,7 @@ impl FetchMonitoring {
                             transition_state(
                                 &mut self2.state,
                                 State::DoNothing(),
-                                &mut self2.ts_state_enter,
+                                &mut self2.state_dt,
                                 &mut self2.llog,
                             );
                         }
@@ -546,22 +546,22 @@ impl FetchMonitoring {
                             // TODO RemoveMonitorRecv should actually not accommodate StateDirection::None
                             debug_shutdown!("{selfname}  State::RemoveMonitorRecv  dir None");
                             let stn = State::DoNothing();
-                            transition_state(&mut self2.state, stn, &mut self2.ts_state_enter, &mut self2.llog);
+                            transition_state(&mut self2.state, stn, &mut self2.state_dt, &mut self2.llog);
                         }
                         StateDirection::Disable => {
                             debug_shutdown!("{selfname}  State::RemoveMonitorRecv  dir Disable");
                             let stn = State::DoNothing();
-                            transition_state(&mut self2.state, stn, &mut self2.ts_state_enter, &mut self2.llog);
+                            transition_state(&mut self2.state, stn, &mut self2.state_dt, &mut self2.llog);
                         }
                         StateDirection::Enable => {
                             debug_shutdown!("{selfname}  State::RemoveMonitorRecv  dir Enable");
                             let stdir = stdir.clone();
                             let stn = State::CreateMonitorSend(stdir);
-                            transition_state(&mut self2.state, stn, &mut self2.ts_state_enter, &mut self2.llog);
+                            transition_state(&mut self2.state, stn, &mut self2.state_dt, &mut self2.llog);
                         }
                         StateDirection::Closing => {
                             let stn = State::Closing1;
-                            transition_state(&mut self2.state, stn, &mut self2.ts_state_enter, &mut self2.llog);
+                            transition_state(&mut self2.state, stn, &mut self2.state_dt, &mut self2.llog);
                         }
                     }
                     let ret = MonitoringItem::SubidRemove(self2.cid.clone());
@@ -571,7 +571,7 @@ impl FetchMonitoring {
                     todo_shutdown!("TODO  emit all writes for shutdown");
                     hpp.mark_progress();
                     self.inp_done();
-                    transition_state(&mut self.state, State::Done, &mut self.ts_state_enter, &mut self.llog);
+                    transition_state(&mut self.state, State::Done, &mut self.state_dt, &mut self.llog);
                 }
                 State::Done => {}
             }

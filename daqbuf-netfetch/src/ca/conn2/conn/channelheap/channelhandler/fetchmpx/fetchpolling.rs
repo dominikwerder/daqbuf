@@ -109,7 +109,7 @@ pub struct FetchPolling {
     /// Set by `transition_state`, reported as time-in-state, alongside a dwell-warn score
     /// derived from `State::dwell_typical` (the poll `interval` below is its runtime context).
     #[to_serde(elapsed, dwell = self.state.dwell_typical(&self.interval))]
-    ts_state_enter: Instant,
+    state_dt: Instant,
     series: SeriesId,
     sid: Sid,
     scalar_type: ScalarType,
@@ -137,7 +137,7 @@ impl FetchPolling {
         let tsnow = Instant::now();
         Self {
             state: State::DoNothing,
-            ts_state_enter: tsnow,
+            state_dt: tsnow,
             series,
             sid,
             scalar_type,
@@ -192,7 +192,7 @@ impl FetchPolling {
                 transition_state(
                     &mut self.state,
                     State::Idle(fut.box2()),
-                    &mut self.ts_state_enter,
+                    &mut self.state_dt,
                     &mut self.llog,
                 );
             }
@@ -225,7 +225,7 @@ impl FetchPolling {
                 transition_state(
                     &mut self.state,
                     State::DoNothing,
-                    &mut self.ts_state_enter,
+                    &mut self.state_dt,
                     &mut self.llog,
                 );
             }
@@ -254,7 +254,7 @@ impl FetchPolling {
                 transition_state(
                     &mut self.state,
                     State::Closing1,
-                    &mut self.ts_state_enter,
+                    &mut self.state_dt,
                     &mut self.llog,
                 );
             }
@@ -263,7 +263,7 @@ impl FetchPolling {
                 transition_state(
                     &mut self.state,
                     State::Closing1,
-                    &mut self.ts_state_enter,
+                    &mut self.state_dt,
                     &mut self.llog,
                 );
             }
@@ -272,7 +272,7 @@ impl FetchPolling {
                 transition_state(
                     &mut self.state,
                     State::Closing1,
-                    &mut self.ts_state_enter,
+                    &mut self.state_dt,
                     &mut self.llog,
                 );
             }
@@ -281,7 +281,7 @@ impl FetchPolling {
                 transition_state(
                     &mut self.state,
                     State::Closing1,
-                    &mut self.ts_state_enter,
+                    &mut self.state_dt,
                     &mut self.llog,
                 );
             }
@@ -355,7 +355,7 @@ impl FetchPolling {
                                     transition_state(
                                         &mut self2.state,
                                         State::DoNothing,
-                                        &mut self2.ts_state_enter,
+                                        &mut self2.state_dt,
                                         &mut self2.llog,
                                     );
                                 }
@@ -369,7 +369,7 @@ impl FetchPolling {
                                     transition_state(
                                         &mut self2.state,
                                         State::Idle(fut.box2()),
-                                        &mut self2.ts_state_enter,
+                                        &mut self2.state_dt,
                                         &mut self2.llog,
                                     );
                                 }
@@ -414,7 +414,7 @@ impl FetchPolling {
                     transition_state(
                         &mut self2.state,
                         State::SendReq(StateDirection::None),
-                        &mut self2.ts_state_enter,
+                        &mut self2.state_dt,
                         &mut self2.llog,
                     );
                 }
@@ -441,7 +441,7 @@ impl FetchPolling {
                 transition_state(
                     &mut self2.state,
                     State::WaitRes(fut.box2(), stdir),
-                    &mut self2.ts_state_enter,
+                    &mut self2.state_dt,
                     &mut self2.llog,
                 );
                 let ret = Item::ProtoOutIoid(msg, self2.sid.clone(), tsnow);
@@ -457,7 +457,7 @@ impl FetchPolling {
                             transition_state(
                                 &mut self2.state,
                                 State::DoNothing,
-                                &mut self2.ts_state_enter,
+                                &mut self2.state_dt,
                                 &mut self2.llog,
                             );
                         }
@@ -469,7 +469,7 @@ impl FetchPolling {
                             transition_state(
                                 &mut self2.state,
                                 State::WaitRes(fut.box2(), stdir),
-                                &mut self2.ts_state_enter,
+                                &mut self2.state_dt,
                                 &mut self2.llog,
                             );
                         }
@@ -486,7 +486,7 @@ impl FetchPolling {
                 transition_state(
                     &mut self2.state,
                     State::Done,
-                    &mut self2.ts_state_enter,
+                    &mut self2.state_dt,
                     &mut self2.llog,
                 );
             }
@@ -521,11 +521,11 @@ mod test_dwell {
         );
         fp.interval = Duration::from_millis(1000);
         fp.state = State::Idle(async {}.box2());
-        fp.ts_state_enter = Instant::now() - Duration::from_millis(1500);
+        fp.state_dt = Instant::now() - Duration::from_millis(1500);
 
         let v = serde_json::to_value(fp.to_serde()).unwrap();
         assert_eq!(v["state"]["ty"], "Idle");
-        let score = v["ts_state_enter_dwell_score"].as_f64().unwrap();
+        let score = v["dwell_score"].as_f64().unwrap();
         // 1500ms elapsed / 1000ms interval (the runtime dwell) = 1.5
         assert!((1.4..1.6).contains(&score), "score was {score} in {v}");
     }
@@ -541,6 +541,6 @@ mod test_dwell {
         );
         let v = serde_json::to_value(fp.to_serde()).unwrap();
         assert_eq!(v["state"]["ty"], "DoNothing");
-        assert!(v["ts_state_enter_dwell_score"].is_null(), "{v}");
+        assert!(v["dwell_score"].is_null(), "{v}");
     }
 }

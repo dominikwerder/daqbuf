@@ -131,7 +131,7 @@ pub struct Fetchmpx {
     state: State,
     /// Set by `transition_state`, reported as time-in-state.
     #[to_serde(elapsed)]
-    ts_state_enter: Instant,
+    state_dt: Instant,
     series: SeriesId,
     cid: Cid,
     sid: Sid,
@@ -152,7 +152,7 @@ impl Fetchmpx {
     /// Single choke point for state changes so the time-in-state stamp can not drift.
     fn transition_state(&mut self, new: State) {
         self.state = new;
-        self.ts_state_enter = Instant::now();
+        self.state_dt = Instant::now();
     }
 
     pub fn new(
@@ -186,7 +186,7 @@ impl Fetchmpx {
         }
         Self {
             state: State::Normal,
-            ts_state_enter: Instant::now(),
+            state_dt: Instant::now(),
             series,
             cid,
             sid,

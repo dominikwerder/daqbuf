@@ -83,7 +83,7 @@ pub struct ReadEnum {
     state: State,
     /// Set by `transition_state`, reported as time-in-state.
     #[to_serde(elapsed)]
-    ts_state_enter: Instant,
+    state_dt: Instant,
     cid: Cid,
     sid: Sid,
     scalar_type: ScalarType,
@@ -105,7 +105,7 @@ impl ReadEnum {
     /// Single choke point for state changes so the time-in-state stamp can not drift.
     fn transition_state(&mut self, new: State) {
         self.state = new;
-        self.ts_state_enter = Instant::now();
+        self.state_dt = Instant::now();
     }
 
     pub fn new(
@@ -119,7 +119,7 @@ impl ReadEnum {
     ) -> Self {
         Self {
             state: State::SendMsg(),
-            ts_state_enter: Instant::now(),
+            state_dt: Instant::now(),
             cid,
             sid,
             scalar_type,
