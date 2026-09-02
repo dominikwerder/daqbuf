@@ -3,7 +3,6 @@ use crate::ca::conn2::ChannelEventValue;
 use crate::ca::conn2::caids::CaDbrTy;
 use crate::ca::conn2::caids::Sid;
 use crate::ca::conn2::conn::channelheap::ProtoRxItem;
-use crate::ca::conn2::conn::channelheap::channelhandler::fetchmpx::fetchmonitoring::MonitoringItem;
 use crate::ca::conn2::locallog;
 use crate::ca::progpend::HaveProgressPending;
 use crate::futwrap::FutDbg;
@@ -26,6 +25,8 @@ use std::time::Duration;
 use std::time::Instant;
 use std::time::SystemTime;
 use taskrun::tokio;
+
+const TIMEOUT_WAIT_RES: u32 = 3000;
 
 macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
 macro_rules! warn { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
@@ -82,7 +83,7 @@ enum State {
     Idle(#[to_serde(skip)] FutDbg<()>),
     SendReq(StateDirection),
     /// Matches the fixed 3s response timeout used when arming this state below.
-    #[to_serde(dwell_ms = 3000)]
+    #[to_serde(dwell_ms = TIMEOUT_WAIT_RES)]
     WaitRes(#[to_serde(skip)] FutDbg<()>, StateDirection),
     Closing1,
     Done,
@@ -133,7 +134,14 @@ pub struct FetchPolling {
 }
 
 impl FetchPolling {
-    pub fn new(series: SeriesId, sid: Sid, scalar_type: ScalarType, shape: Shape, ca_dbr_ty: CaDbrTy) -> Self {
+    pub fn new(
+        series: SeriesId,
+        sid: Sid,
+        scalar_type: ScalarType,
+        shape: Shape,
+        ca_dbr_ty: CaDbrTy,
+        interval: Duration,
+    ) -> Self {
         let tsnow = Instant::now();
         Self {
             state: State::DoNothing,
@@ -143,7 +151,7 @@ impl FetchPolling {
             scalar_type,
             shape,
             ca_dbr_ty,
-            interval: Duration::from_millis(3000),
+            interval,
             poll_next_ts_exact: tsnow,
             poll_next_ts_jitter: tsnow,
             inp_buf: VecDeque::with_capacity(16),
@@ -222,12 +230,7 @@ impl FetchPolling {
             }
             State::Idle(..) => {
                 self.llog.push(format!("{selfname}  State::Idle  goto immediate"));
-                transition_state(
-                    &mut self.state,
-                    State::DoNothing,
-                    &mut self.state_dt,
-                    &mut self.llog,
-                );
+                transition_state(&mut self.state, State::DoNothing, &mut self.state_dt, &mut self.llog);
             }
             State::SendReq(stdir) => {
                 self.llog.push(format!("{selfname}  State::Idle  set stdir"));
@@ -251,39 +254,19 @@ impl FetchPolling {
         match &mut self.state {
             State::DoNothing => {
                 self.llog.push(format!("{selfname}  State::DoNothing  goto Closing1"));
-                transition_state(
-                    &mut self.state,
-                    State::Closing1,
-                    &mut self.state_dt,
-                    &mut self.llog,
-                );
+                transition_state(&mut self.state, State::Closing1, &mut self.state_dt, &mut self.llog);
             }
             State::Idle(..) => {
                 self.llog.push(format!("{selfname}  State::Idle  goto Closing1"));
-                transition_state(
-                    &mut self.state,
-                    State::Closing1,
-                    &mut self.state_dt,
-                    &mut self.llog,
-                );
+                transition_state(&mut self.state, State::Closing1, &mut self.state_dt, &mut self.llog);
             }
             State::SendReq(stdir) => {
                 self.llog.push(format!("{selfname}  State::SendReq  goto Closing1"));
-                transition_state(
-                    &mut self.state,
-                    State::Closing1,
-                    &mut self.state_dt,
-                    &mut self.llog,
-                );
+                transition_state(&mut self.state, State::Closing1, &mut self.state_dt, &mut self.llog);
             }
             State::WaitRes(_, stdir) => {
                 self.llog.push(format!("{selfname}  State::Idle  goto Closing1"));
-                transition_state(
-                    &mut self.state,
-                    State::Closing1,
-                    &mut self.state_dt,
-                    &mut self.llog,
-                );
+                transition_state(&mut self.state, State::Closing1, &mut self.state_dt, &mut self.llog);
             }
             State::Closing1 => {
                 self.llog.push(format!("{selfname}  State::Idle  no change"));
@@ -436,7 +419,7 @@ impl FetchPolling {
                     tsnow,
                 );
                 self2.mett.read_notify_send().inc();
-                let fut = async { tokio::time::sleep(Duration::from_millis(3000)).await };
+                let fut = async { tokio::time::sleep(Duration::from_millis(TIMEOUT_WAIT_RES.into())).await };
                 let stdir = stdir.clone();
                 transition_state(
                     &mut self2.state,
@@ -454,12 +437,7 @@ impl FetchPolling {
                     error!("\n\n\n  TODO  FetchPollingState::WaitRes  Timeout  fad6ffb3b  \n\n\n");
                     match stdir {
                         StateDirection::DoNothing => {
-                            transition_state(
-                                &mut self2.state,
-                                State::DoNothing,
-                                &mut self2.state_dt,
-                                &mut self2.llog,
-                            );
+                            transition_state(&mut self2.state, State::DoNothing, &mut self2.state_dt, &mut self2.llog);
                         }
                         StateDirection::None => {
                             // TODO emit status event on the first timeout only.
@@ -483,12 +461,7 @@ impl FetchPolling {
                 hpp.mark_progress();
                 todo_shutdown!("TODO  State::Closing1  emit all writes");
                 self2.inp_done();
-                transition_state(
-                    &mut self2.state,
-                    State::Done,
-                    &mut self2.state_dt,
-                    &mut self2.llog,
-                );
+                transition_state(&mut self2.state, State::Done, &mut self2.state_dt, &mut self2.llog);
             }
             State::Done => {}
         }
@@ -518,8 +491,8 @@ mod test_dwell {
             ScalarType::F64,
             Shape::Scalar,
             CaDbrTy::new(6),
+            Duration::from_millis(1000),
         );
-        fp.interval = Duration::from_millis(1000);
         fp.state = State::Idle(async {}.box2());
         fp.state_dt = Instant::now() - Duration::from_millis(1500);
 
@@ -538,6 +511,7 @@ mod test_dwell {
             ScalarType::F64,
             Shape::Scalar,
             CaDbrTy::new(6),
+            Duration::from_millis(3000),
         );
         let v = serde_json::to_value(fp.to_serde()).unwrap();
         assert_eq!(v["state"]["ty"], "DoNothing");

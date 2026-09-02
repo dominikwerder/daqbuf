@@ -61,8 +61,14 @@ pub enum ReadEnumItem {
 #[derive(Debug, ToSerde)]
 #[to_serde(vis = "pub", serde(tag = "ty", content = "co"))]
 enum State {
+    /// Buffers the enum-read request and advances on the same poll.
+    #[to_serde(dwell_ms = 4000)]
     SendMsg(),
+    /// Waits for the IOC to answer with the enum variants. No timeout arms this state, so
+    /// the dwell score is the only signal that the answer never came.
+    #[to_serde(dwell_ms = 4000)]
     WaitMsg(#[to_serde(elapsed)] Instant),
+    /// Terminal resting state.
     Done,
 }
 
@@ -81,8 +87,9 @@ impl State {
 pub struct ReadEnum {
     #[to_serde(nest)]
     state: State,
-    /// Set by `transition_state`, reported as time-in-state.
-    #[to_serde(elapsed)]
+    /// Set by `transition_state`, reported as time-in-state, alongside a dwell-warn score
+    /// derived from `State::dwell_typical`.
+    #[to_serde(elapsed, dwell = self.state.dwell_typical())]
     state_dt: Instant,
     cid: Cid,
     sid: Sid,

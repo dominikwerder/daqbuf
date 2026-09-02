@@ -28,6 +28,7 @@ use std::collections::VecDeque;
 use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
+use std::time::Duration;
 use std::time::Instant;
 
 macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
@@ -107,8 +108,12 @@ pub enum FetchmpxItem {
 #[derive(Debug, ToSerde)]
 #[to_serde(vis = "pub", serde(tag = "ty", content = "co"))]
 enum State {
+    /// Steady state: the multiplexer sits here for the life of the channel.
     Normal,
+    /// Shutdown step: drains both children until they report done.
+    #[to_serde(dwell_ms = 4000)]
     Closing1,
+    /// Terminal resting states.
     Done,
     Done2,
 }
@@ -129,8 +134,9 @@ impl State {
 pub struct Fetchmpx {
     #[to_serde(nest)]
     state: State,
-    /// Set by `transition_state`, reported as time-in-state.
-    #[to_serde(elapsed)]
+    /// Set by `transition_state`, reported as time-in-state, alongside a dwell-warn score
+    /// derived from `State::dwell_typical`.
+    #[to_serde(elapsed, dwell = self.state.dwell_typical())]
     state_dt: Instant,
     series: SeriesId,
     cid: Cid,
@@ -164,12 +170,14 @@ impl Fetchmpx {
         ca_dbr_ty: CaDbrTy,
         chconf: ChannelConfig,
     ) -> Self {
+        let interval = Duration::from_millis(chconf.poll_conf().map_or(1000 * 60, |(ms,)| ms));
         let mut polling = FetchPolling::new(
             series.clone(),
             sid.clone(),
             scalar_type.clone(),
             shape.clone(),
             ca_dbr_ty.clone(),
+            interval,
         );
         let mut monitoring = FetchMonitoring::new(
             series.clone(),

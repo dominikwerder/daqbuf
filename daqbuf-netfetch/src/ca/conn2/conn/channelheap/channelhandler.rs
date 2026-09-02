@@ -111,13 +111,36 @@ struct Closing2 {}
 #[derive(Debug, ToSerde)]
 #[to_serde(vis = "pub", serde(tag = "ty", content = "co"))]
 enum State {
-    Init(#[to_serde(elapsed)] Instant, #[to_serde(skip)] Init),
-    Creating(#[to_serde(elapsed)] Instant, #[to_serde(nest)] Creating),
-    ReadEnum(#[to_serde(elapsed)] Instant, #[to_serde(nest)] readenum::ReadEnum),
+    /// Advances to `Creating` on the very next poll; a dwell here means the handler is not
+    /// getting polled, not that anything downstream is slow.
+    Init(#[to_serde(elapsed, dwell_ms = 4000)] Instant, #[to_serde(skip)] Init),
+    /// Matches the 8s overall budget `Creating::new` arms for the create round-trip plus
+    /// series lookup. The inner `Creating` state scores its own steps more tightly.
+    Creating(
+        #[to_serde(elapsed, dwell_ms = 8000)] Instant,
+        #[to_serde(nest)] Creating,
+    ),
+    /// One enum-metadata round-trip to the IOC; no timeout arms this, so the dwell is the
+    /// only signal that it stalled.
+    ReadEnum(
+        #[to_serde(elapsed, dwell_ms = 4000)] Instant,
+        #[to_serde(nest)] readenum::ReadEnum,
+    ),
+    /// Steady state: a long dwell here is a healthy channel, so no dwell expectation.
     Running(#[to_serde(elapsed)] Instant, #[to_serde(nest)] Running),
-    Closing1(#[to_serde(elapsed)] Instant, #[to_serde(nest)] Closing1),
-    Closing2(#[to_serde(elapsed)] Instant, #[to_serde(skip)] Closing2),
-    Done1(#[to_serde(elapsed)] Instant),
+    /// Matches the fixed 2s channel-close-ack timeout armed alongside `Closing1` below.
+    Closing1(
+        #[to_serde(elapsed, dwell_ms = 2000)] Instant,
+        #[to_serde(nest)] Closing1,
+    ),
+    /// Pass-through shutdown step, advances on the next poll.
+    Closing2(
+        #[to_serde(elapsed, dwell_ms = 4000)] Instant,
+        #[to_serde(skip)] Closing2,
+    ),
+    /// Pass-through shutdown step: notifies the remover, then advances on the next poll.
+    Done1(#[to_serde(elapsed, dwell_ms = 4000)] Instant),
+    /// Terminal resting states: they are meant to be dwelled in until reaped, so no score.
     Done(#[to_serde(elapsed)] Instant),
     Dummy(#[to_serde(elapsed)] Instant),
 }
@@ -995,13 +1018,16 @@ mod test_state_serde {
         );
         let v = serde_json::to_value(ch.state_serde()).unwrap();
         assert_eq!(v["ty"], "Creating");
-        assert_eq!(v["co"][1]["state"]["ty"], "CreateChanSend");
         // time-in-state, rendered by the existing human duration helper
         assert!(v["co"][0].is_string(), "no time-in-state in {v}");
-        assert!(v["co"][1]["state"]["co"][0].is_string());
-        // CreateChanSend now declares a dwell time, so co[1] is the dwell_score sibling
-        assert!(v["co"][1]["state"]["co"][1].is_number());
+        // Creating declares a dwell time, so co[1] is its dwell_score sibling and the
+        // nested child moves to co[2]
+        assert!(v["co"][1].is_number(), "no dwell_score in {v}");
+        assert_eq!(v["co"][2]["state"]["ty"], "CreateChanSend");
+        assert!(v["co"][2]["state"]["co"][0].is_string());
+        // CreateChanSend also declares a dwell time, so co[1] is the dwell_score sibling
+        assert!(v["co"][2]["state"]["co"][1].is_number());
         // the outgoing CreateChan message is reported as buffer fill, not content
-        assert_eq!(v["co"][1]["state"]["co"][2]["len"], 1);
+        assert_eq!(v["co"][2]["state"]["co"][2]["len"], 1);
     }
 }

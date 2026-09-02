@@ -84,14 +84,28 @@ fn transition_state(old: &mut State, new: State, ts: &mut Instant, llog: &mut lo
 #[derive(Debug, ToSerde)]
 #[to_serde(vis = "pub", serde(tag = "ty", content = "co"))]
 enum State {
+    /// Parked: this channel is polled instead of monitored, so it rests here indefinitely.
     DoNothing(),
+    /// Buffers the create-monitor message and advances; only executor starvation dwells here.
+    #[to_serde(dwell_ms = 4000)]
     CreateMonitorSend(StateDirection),
+    /// Matches `CREATE_SEND_TIMEOUT`, the timeout actually armed when entering this state.
+    #[to_serde(dwell = CREATE_SEND_TIMEOUT)]
     CreateMonitorRecv(#[to_serde(skip)] FutDbg<()>, StateDirection),
+    /// Steady state: dwelling here is the whole point, so no dwell expectation.
     Monitoring(#[to_serde(skip)] FutDbg<()>, StateDirection),
+    /// Buffers the remove-monitor message and advances.
+    #[to_serde(dwell_ms = 4000)]
     RemoveMonitorSend(StateDirection),
+    /// Matches `CREATE_SEND_TIMEOUT`, the timeout actually armed when entering this state.
+    #[to_serde(dwell = CREATE_SEND_TIMEOUT)]
     RemoveMonitorRecv(#[to_serde(skip)] FutDbg<()>, StateDirection),
+    /// Buffers the subid-remove message and advances.
+    #[to_serde(dwell_ms = 4000)]
     RemoveSubidSend(StateDirection),
+    #[to_serde(dwell_ms = 4000)]
     Closing1,
+    /// Terminal resting state.
     Done,
 }
 
@@ -116,8 +130,9 @@ impl fmt::Display for State {
 pub struct FetchMonitoring {
     #[to_serde(nest)]
     state: State,
-    /// Set by `transition_state`, reported as time-in-state.
-    #[to_serde(elapsed)]
+    /// Set by `transition_state`, reported as time-in-state, alongside a dwell-warn score
+    /// derived from `State::dwell_typical`.
+    #[to_serde(elapsed, dwell = self.state.dwell_typical())]
     state_dt: Instant,
     series: SeriesId,
     cid: Cid,
