@@ -697,7 +697,11 @@ impl ChannelHeap {
                                 channelhandler::ItemInner::ProtoOutIoid(mut msg, sid, tscmd) => {
                                     {
                                         let dt = 1e3 * tscmd.elapsed().as_secs_f32();
-                                        trace!("seeing channelhandler::ItemInner::ProtoOutIoid  {dt:0} ms  {msg:?}");
+                                        if dt > 0.005 {
+                                            trace!(
+                                                "seeing slow channelhandler::ItemInner::ProtoOutIoid  {dt:0} ms  {msg:?}"
+                                            );
+                                        }
                                     }
                                     if let Some(sid2) = handler.sid() {
                                         if sid2 != sid {
@@ -717,7 +721,11 @@ impl ChannelHeap {
                                 channelhandler::ItemInner::ProtoOutSubid(mut msg, tscmd) => {
                                     {
                                         let dt = 1e3 * tscmd.elapsed().as_secs_f32();
-                                        trace!("seeing channelhandler::ItemInner::ProtoOutSubid  {dt:0} ms  {msg:?}");
+                                        if dt > 0.005 {
+                                            trace!(
+                                                "seeing slow channelhandler::ItemInner::ProtoOutSubid  {dt:0} ms  {msg:?}"
+                                            );
+                                        }
                                     }
                                     let subid = subid_reg.register(cid, tsnow);
                                     msg.overwrite_subid(subid.to_u32());
@@ -794,11 +802,11 @@ impl ChannelHeap {
                     trace!("{selfname}  resolved via cid");
                     Some((Cid::new(cid), tsnow, tsnow))
                 } else if let Some(subid) = item.subid() {
-                    if let Some((cid, tsreg)) = self2.subid_reg.lookup(Subid::new(subid)) {
-                        trace!("{selfname}  resolved via subid");
+                    if let Some((cid, _tsreg)) = self2.subid_reg.lookup(Subid::new(subid)) {
+                        trace2!("{selfname}  resolved via subid");
                         Some((cid.clone(), tsnow, tsnow))
                     } else {
-                        trace!("{selfname}  TODO  msg has unknown subid");
+                        debug!("{selfname}  TODO  msg has unknown subid");
                         None
                     }
                 } else if let Some(ioid) = item.ioid() {
@@ -809,7 +817,7 @@ impl ChannelHeap {
                             let dtcmd = 1e3 * dt.as_secs_f32();
                             let dt = Instant::now().duration_since(tsreg);
                             let dtreg = 1e3 * dt.as_secs_f32();
-                            debug!("resolve incoming Ioid  dtcmd {:.3} ms  dtreg {:.3} ms", dtcmd, dtreg);
+                            trace!("resolve incoming Ioid  dtcmd {:.3} ms  dtreg {:.3} ms", dtcmd, dtreg);
                         }
                         Some((cid, tscmd, tsreg))
                     } else {
@@ -1027,7 +1035,7 @@ impl ChannelHeap {
             }
         };
         for cid in add_wakeup {
-            trace!("add for wakeup  {cid}");
+            trace3!("add for wakeup  {cid}");
             self2.wakeup_cids.insert(cid, ());
         }
         match &loopres {
@@ -1314,7 +1322,7 @@ impl ChannelHeap {
                     match self.as_mut().poll_all_handler(cx) {
                         Ready(Some(x)) => {
                             hpp.mark_progress();
-                            trace!("after ChannelHeap::poll_all_handler");
+                            trace2!("after ChannelHeap::poll_all_handler");
                             match x {
                                 Ok(x) => match x {
                                     PollHandlerItem::None => {}

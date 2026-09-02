@@ -181,8 +181,7 @@ impl FetchPolling {
         let g = 128;
         let b = a + r - g;
         let dd = (b * self.interval) / a;
-        info!("dd {:.2} sec", dd.as_secs_f32());
-        trace!("dd {:.2} sec", dd.as_secs_f32());
+        trace2!("dd {:.2} sec", dd.as_secs_f32());
         self.poll_next_ts_jitter = self.poll_next_ts_exact + dd - self.interval;
         self.poll_next_ts_jitter
     }

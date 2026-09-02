@@ -308,7 +308,7 @@ impl FetchMonitoring {
         use Poll::*;
         match item.msg.ty {
             CaMsgTy::EventAddRes(v) => {
-                trace!("received {v:?}");
+                trace2!("received EventAddRes {v:?}");
                 let tsnow = Instant::now();
                 let dttrig = Duration::ZERO;
                 let dtcmd = tsnow.saturating_duration_since(item.tscmd);

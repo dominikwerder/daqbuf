@@ -354,11 +354,11 @@ impl Stream for Connected {
                                     hpp.mark_progress();
                                     match x {
                                         CaItem::Msg(x) => {
-                                            trace!("{selfname}  PROTOWRAP  Msg");
+                                            trace4!("{selfname}  PROTOWRAP  Msg");
                                             self2.inp_buf.push_back_force(x);
                                         }
                                         CaItem::Empty => {
-                                            trace!("{selfname}  PROTOWRAP  Empty");
+                                            trace2!("{selfname}  PROTOWRAP  Empty");
                                         }
                                     }
                                 }

@@ -318,6 +318,20 @@ pub async fn test_01(cfgfn: String) {
         let fut = async move {
             if channels_config
                 .as_ref()
+                .map(|x| x.channels().iter().any(|ch| ch.name() == "testset-00"))
+                .unwrap_or(false)
+            {
+                for j in 10..12 {
+                    let g = 1000 * j;
+                    let h = 10 + g;
+                    for i in g..h {
+                        let chname = format!("TEST:SLOW:SCALAR:F32:{i:06}");
+                        let conf = crate::conf::ChannelConfig::st_monitor(chname, "TEST");
+                        cmder.channel_add(conf).await.unwrap();
+                    }
+                }
+            } else if channels_config
+                .as_ref()
                 .map(|x| x.channels().iter().any(|ch| ch.name() == "testset-01"))
                 .unwrap_or(false)
             {
