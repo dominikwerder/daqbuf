@@ -260,6 +260,24 @@ impl Connected {
         }
     }
 
+    pub fn scatter_gather_v1(&mut self, cmd: super::ScatterGatherV1) -> serde_json::Value {
+        match &mut self.state {
+            State::Init() => serde_json::json!({
+                "state": "Init",
+            }),
+            State::Handshake(st) => serde_json::json!({
+                "state": "Handshake",
+            }),
+            State::ActiveCa(st) => serde_json::json!({
+                "state": "ActiveCa",
+                "response": st.scatter_gather_v1(cmd),
+            }),
+            State::Done => serde_json::json!({
+                "state": "Done",
+            }),
+        }
+    }
+
     pub(super) fn check_flow_state(&self) {
         match &self.state {
             State::Init(..) => {}

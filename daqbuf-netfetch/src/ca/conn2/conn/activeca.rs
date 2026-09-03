@@ -206,6 +206,12 @@ impl Running {
         }
     }
 
+    pub fn scatter_gather_v1(&mut self, cmd: super::ScatterGatherV1) -> serde_json::Value {
+        serde_json::json!({
+            "state": "TODO Running/PingPong",
+        })
+    }
+
     pub(super) fn dump_state_poll(&self) -> serde_json::Value {
         use serde_json::json;
         let js = json!({
@@ -348,6 +354,19 @@ impl ActiveCa {
             "ts_mark_proto_rx": &self.ts_mark_proto_rx,
         });
         js
+    }
+
+    pub fn scatter_gather_v1(&mut self, cmd: super::ScatterGatherV1) -> serde_json::Value {
+        match &mut self.state {
+            State::Running(st) => serde_json::json!({
+                "state": "Running",
+                "Running": st.scatter_gather_v1(cmd.clone()),
+                "ChannelHeap": self.chanheap.scatter_gather_v1(cmd),
+            }),
+            State::Done => serde_json::json!({
+                "state": "Done",
+            }),
+        }
     }
 
     pub fn handle_dyn_cmd_v03(&mut self, cmd: serde_json::Value) -> impl Future<Output = serde_json::Value> + use<> {

@@ -31,6 +31,7 @@ use futures::future::ready;
 use hashbrown::HashMap;
 use serde::Serialize;
 use stats::mett::CaConnConnectedMetrics;
+use std::collections::BTreeMap;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task;
@@ -448,6 +449,37 @@ impl ChannelHeap {
             "wakeup_cids": self.wakeup_cids.iter().map(|x|x.key().clone()).collect::<Vec<_>>(),
         });
         js
+    }
+
+    pub fn scatter_gather_v1(&mut self, cmd: super::ScatterGatherV1) -> serde_json::Value {
+        let chs: BTreeMap<_, _> = self
+            .by_cid
+            .iter()
+            .filter(|(cid, e)| cmd.channel_regex.is_match(&e.name))
+            .map(|(cid, e)| {
+                let chn = e.name.clone();
+                let val = match &e.ch_handler {
+                    ChHandler::ChHandlerActive(st) => {
+                        let st2 = st.handler.state_json_value();
+                        serde_json::json!({
+                            "state": "ChHandlerActive",
+                            "inner": st2,
+                        })
+                    }
+                    ChHandler::Done => serde_json::json!({
+                        "state": "Done",
+                    }),
+                };
+                (chn, val)
+            })
+            .collect();
+        serde_json::json!({
+            "state": match &self.state {
+                State::Running => "Running",
+                State::Done => "Done",
+            },
+            "channels": chs,
+        })
     }
 
     pub fn handle_dyn_cmd_v03(&mut self, cmd: serde_json::Value) -> impl Future<Output = serde_json::Value> + use<> {

@@ -35,7 +35,9 @@ use futures::Stream;
 use futures::StreamExt;
 use futures::TryFutureExt;
 use futures::future::ready;
+use regex::Regex;
 use scywr::insertqueues::InsertQueuesTx;
+use serde::Serialize;
 use std::collections::BTreeMap;
 use std::collections::VecDeque;
 use std::fmt;
@@ -113,6 +115,25 @@ impl ChannelRemove {
     }
 }
 
+#[derive(Debug, Serialize)]
+pub struct ScatterGatherV1ResConnset {
+    pub channels: BTreeMap<String, serde_json::Value>,
+    pub connections: BTreeMap<SocketAddrV4, serde_json::Value>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ScatterGatherV1Response {
+    pub connset: ScatterGatherV1ResConnset,
+    pub conns: BTreeMap<SocketAddrV4, conn2::conn::ScatterGatherV1ResConn>,
+}
+
+#[derive(Debug)]
+pub struct ScatterGatherV1 {
+    channel_regex: Regex,
+    addr_regex: Regex,
+    cmd: serde_json::Value,
+}
+
 #[derive(Debug)]
 enum ConnSetCmdKind {
     ChannelAdd(ChannelAdd),
@@ -126,6 +147,7 @@ enum ConnSetCmdKind {
         asynchan::Sender<crate::metrics::ChannelsForAddrInfoV2>,
     ),
     CmdDynV1(String, asynchan::Sender<serde_json::Value>),
+    ScatterGatherV1(ScatterGatherV1, asynchan::Sender<ScatterGatherV1Response>),
 }
 
 #[derive(Debug)]
@@ -853,7 +875,9 @@ impl ConnSet {
                             e.name = y.to_string();
                         }
                     }
-                    let _ = tx.send(ret).await;
+                    if tx.send(ret).await.is_err() {
+                        error!("could not send response");
+                    }
                     Ok(())
                 };
                 // TODO maybe better return the future from here and let caller place it.
@@ -874,7 +898,37 @@ impl ConnSet {
                             a.channels.push(x);
                         }
                     }
-                    let _ = tx.send(a).await;
+                    if tx.send(a).await.is_err() {
+                        error!("could not send response");
+                    }
+                    Ok(())
+                };
+                // TODO maybe better return the future from here and let caller place it.
+                self.cmder_cmd_fut = Some(fut.box2());
+            }
+            ConnSetCmdKind::ScatterGatherV1(cmd, mut tx) => {
+                let cmdtxs: Vec<_> = self
+                    .ca_conns
+                    .iter()
+                    .filter(|x| cmd.addr_regex.is_match(x.0.to_string().as_str()))
+                    .map(|x| (x.0.clone(), x.1.comm.clone()))
+                    .collect();
+                let fut = async move {
+                    let mut res = ScatterGatherV1Response {
+                        connset: ScatterGatherV1ResConnset {
+                            channels: BTreeMap::new(),
+                            connections: BTreeMap::new(),
+                        },
+                        conns: BTreeMap::new(),
+                    };
+                    for (addr, mut cmdtx) in cmdtxs {
+                        let cmd = conn2::conn::ScatterGatherV1::new(cmd.channel_regex.clone(), cmd.cmd.clone());
+                        let x = cmdtx.scatter_gather_v1(cmd).await;
+                        res.conns.insert(addr, x);
+                    }
+                    if tx.send(res).await.is_err() {
+                        error!("could not send response");
+                    }
                     Ok(())
                 };
                 // TODO maybe better return the future from here and let caller place it.
@@ -895,7 +949,9 @@ impl ConnSet {
                             a.channels.push(x);
                         }
                     }
-                    let _ = tx.send(a).await;
+                    if tx.send(a).await.is_err() {
+                        error!("could not send response");
+                    }
                     Ok(())
                 };
                 // TODO maybe better return the future from here and let caller place it.

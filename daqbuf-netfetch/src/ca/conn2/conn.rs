@@ -29,8 +29,10 @@ use futures::FutureExt;
 use futures::Stream;
 use futures::StreamExt;
 use futures::TryFutureExt;
+use regex::Regex;
 use serde::Serialize;
 use stats::rand_xoshiro::Xoshiro128PlusPlus;
+use std::collections::BTreeMap;
 use std::collections::VecDeque;
 use std::fmt;
 use std::io::Write;
@@ -239,6 +241,24 @@ pub struct ChannelHandlerCmd {
     tx: asynchan::Sender<serde_json::Value>,
 }
 
+#[derive(Debug, Serialize)]
+pub struct ScatterGatherV1ResConn {
+    pub conn: serde_json::Value,
+    pub channels: BTreeMap<String, serde_json::Value>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ScatterGatherV1 {
+    channel_regex: Regex,
+    cmd: serde_json::Value,
+}
+
+impl ScatterGatherV1 {
+    pub fn new(channel_regex: Regex, cmd: serde_json::Value) -> Self {
+        Self { channel_regex, cmd }
+    }
+}
+
 #[derive(Debug)]
 enum CaConnCmdKind {
     ChannelAdd(ChannelConfig, asynchan::Sender<u32>),
@@ -248,6 +268,7 @@ enum CaConnCmdKind {
     ChannelsForAddrInfoV2(String, asynchan::Sender<crate::metrics::ChannelsForAddrInfoV2>),
     ChannelsByRegexV1(String, String, asynchan::Sender<Vec<serde_json::Value>>),
     DynCmdV03(serde_json::Value, asynchan::Sender<serde_json::Value>),
+    ScatterGatherV1(ScatterGatherV1, asynchan::Sender<ScatterGatherV1ResConn>),
 }
 
 #[derive(Debug)]
@@ -340,6 +361,31 @@ impl CaConnComm {
                         "error": "can not receive result",
                     })
                 }
+            }
+        }
+    }
+
+    pub async fn scatter_gather_v1(&mut self, cmd: ScatterGatherV1) -> ScatterGatherV1ResConn {
+        let (tx, mut rx) = asynchan::bounded(1, "CaConnComm-scatter_gather_v1");
+        let cmd = CaConnCmd {
+            kind: CaConnCmdKind::ScatterGatherV1(cmd, tx),
+        };
+        if self.cmd_tx.send(cmd).await.is_err() {
+            ScatterGatherV1ResConn {
+                conn: serde_json::json!({
+                    "error": "can not send command",
+                }),
+                channels: BTreeMap::new(),
+            }
+        } else {
+            match rx.recv().await {
+                Ok(x) => x,
+                Err(_) => ScatterGatherV1ResConn {
+                    conn: serde_json::json!({
+                        "error": "can not recv response",
+                    }),
+                    channels: BTreeMap::new(),
+                },
             }
         }
     }
@@ -525,6 +571,39 @@ impl CaConn {
             State::Connecting(..) => Vec::new(),
             State::Connected(st) => st.channels_by_regex_v1(kind, reg),
             State::Done => Vec::new(),
+        }
+    }
+
+    fn scatter_gather_v1(&mut self, cmd: ScatterGatherV1) -> ScatterGatherV1ResConn {
+        match &mut self.state {
+            State::Connecting(..) => ScatterGatherV1ResConn {
+                conn: serde_json::json!({
+                    "state": self.state.display_short().to_string(),
+                }),
+                channels: BTreeMap::new(),
+            },
+            State::Connected(st) => {
+                if cmd.cmd.eq(&serde_json::json!("state_full_v1")) {
+                    ScatterGatherV1ResConn {
+                        conn: serde_json::json!({
+                            "state": "Connected",
+                            "response": st.scatter_gather_v1(cmd),
+                        }),
+                        channels: BTreeMap::new(),
+                    }
+                } else {
+                    ScatterGatherV1ResConn {
+                        conn: serde_json::json!({
+                            "state": self.state.display_short().to_string(),
+                        }),
+                        channels: BTreeMap::new(),
+                    }
+                }
+            }
+            State::Done => ScatterGatherV1ResConn {
+                conn: serde_json::json!(null),
+                channels: BTreeMap::new(),
+            },
         }
     }
 
@@ -787,6 +866,17 @@ impl Stream for CaConn {
                                 let ret = self2.channels_by_regex_v1(kind, reg);
                                 let fut = async move {
                                     tx.send(ret).await?;
+                                    Ok(())
+                                };
+                                self2.ca_cmd_tx_fut = Some(fut.box2());
+                            }
+                            CaConnCmdKind::ScatterGatherV1(cmd, mut tx) => {
+                                trace!("{selfname}:Received:ScatterGatherV1");
+                                let ret = self2.scatter_gather_v1(cmd);
+                                let fut = async move {
+                                    if tx.send(ret).await.is_err() {
+                                        error!("could not send response");
+                                    }
                                     Ok(())
                                 };
                                 self2.ca_cmd_tx_fut = Some(fut.box2());

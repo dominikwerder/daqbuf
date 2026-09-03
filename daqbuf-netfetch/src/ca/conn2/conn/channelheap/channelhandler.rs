@@ -283,6 +283,11 @@ impl ChannelHandler {
         self.state.to_serde()
     }
 
+    pub fn state_json_value(&self) -> serde_json::Value {
+        serde_json::to_value(self.state.to_serde())
+            .unwrap_or_else(|e| serde_json::json!({"error":format!("serde: {e}")}))
+    }
+
     pub fn handle_dyn_cmd_v03(&mut self, cmd: serde_json::Value) -> impl Future<Output = serde_json::Value> + use<> {
         use futures::future::ready;
         use serde_json::json;
