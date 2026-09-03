@@ -180,6 +180,13 @@ pub trait Conn2Ctrls: Send + Sync {
         &self,
         name: String,
     ) -> Pin<Box<dyn Future<Output = Result<(), Box<dyn std::error::Error>>> + Send>>;
+
+    fn scatter_gather_v1(
+        &self,
+        channel_regex: String,
+        addr_regex: String,
+        cmd: serde_json::Value,
+    ) -> Pin<Box<dyn Future<Output = Result<serde_json::Value, Box<dyn std::error::Error>>> + Send>>;
 }
 
 pub trait CaIngestCtrls: Send + Sync {
@@ -722,6 +729,39 @@ fn make_routes_conn2(ca_ingest_ctrls: Arc<dyn CaIngestCtrls>) -> axum::Router {
                             }
                         } else {
                             axum::Json(json!({"error": "cmd is not a json object"}))
+                        }
+                    } else {
+                        axum::Json(json!({"error": "no ctrl"}))
+                    }
+                }
+            }),
+        )
+        .route(
+            "/scatter_gather_v1",
+            post({
+                let ca_ingest_ctrls = ca_ingest_ctrls.clone();
+                |Query(params): Query<HashMap<String, String>>,
+                 axum::extract::Json(mut cmd): axum::extract::Json<serde_json::Value>| async move {
+                    info!("scatter_gather_v1  {cmd:?}");
+                    if let Some(c2) = ca_ingest_ctrls.conn2_ctrls().await {
+                        #[derive(Deserialize)]
+                        struct CmdTmp {
+                            channel_regex: String,
+                            addr_regex: String,
+                            cmd: serde_json::Value,
+                        }
+                        if let Ok(cmd_tmp) = serde_json::from_value::<CmdTmp>(cmd) {
+                            match c2
+                                .scatter_gather_v1(cmd_tmp.channel_regex, cmd_tmp.addr_regex, cmd_tmp.cmd)
+                                .await
+                            {
+                                Ok(x) => axum::Json(x),
+                                Err(e) => axum::Json(json!({
+                                    "error": e.to_string(),
+                                })),
+                            }
+                        } else {
+                            axum::Json(json!({"error": "not a command"}))
                         }
                     } else {
                         axum::Json(json!({"error": "no ctrl"}))

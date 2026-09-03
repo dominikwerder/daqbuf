@@ -133,6 +133,20 @@ impl ConnSetCmder {
         Ok(ret)
     }
 
+    pub async fn scatter_gather_v1(
+        &self,
+        cmd: super::ScatterGatherV1,
+    ) -> Result<super::ScatterGatherV1Response, Error> {
+        let mut dtx = self.tx.clone();
+        let (tx, mut rx) = asynchan::bounded(2, "ScatterGatherV1");
+        let cmd = ConnSetCmd {
+            kind: ConnSetCmdKind::ScatterGatherV1(cmd, tx),
+        };
+        let _ = dtx.send(cmd).await?;
+        let ret = rx.recv().await?;
+        Ok(ret)
+    }
+
     pub async fn channel_add_v1(&self, name: String) -> Result<(), Error> {
         self.channel_add(ChannelConfig::polled_2_20_120(name, "web-api")).await
     }

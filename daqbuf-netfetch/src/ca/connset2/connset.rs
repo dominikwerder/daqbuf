@@ -134,6 +134,16 @@ pub struct ScatterGatherV1 {
     cmd: serde_json::Value,
 }
 
+impl ScatterGatherV1 {
+    pub fn new(channel_regex: Regex, addr_regex: Regex, cmd: serde_json::Value) -> Self {
+        Self {
+            channel_regex,
+            addr_regex,
+            cmd,
+        }
+    }
+}
+
 #[derive(Debug)]
 enum ConnSetCmdKind {
     ChannelAdd(ChannelAdd),

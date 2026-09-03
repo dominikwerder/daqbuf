@@ -3,10 +3,12 @@ use crate as netfetch;
 use crate::asynchan;
 use crate::ca::connset2;
 use crate::ca::connset2::connset::ConnSet;
+use crate::ca::connset2::connset::ScatterGatherV1;
 use crate::conf::ChannelConfig;
 use crate::daemon_common::ChannelName;
 use core::panic;
 use futures::StreamExt;
+use regex::Regex;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::RwLock;
@@ -130,6 +132,22 @@ impl netfetch::metrics::Conn2Ctrls for Conn2Ctrls {
         let cmder = self.cmder.clone();
         let fut = async move {
             let ret = cmder.channel_remove_v1(name).await?;
+            Ok(ret)
+        };
+        Box::pin(fut)
+    }
+
+    fn scatter_gather_v1(
+        &self,
+        channel_regex: String,
+        addr_regex: String,
+        cmd: serde_json::Value,
+    ) -> Pin<Box<dyn Future<Output = Result<serde_json::Value, Box<dyn std::error::Error>>> + Send>> {
+        let cmder = self.cmder.clone();
+        let fut = async move {
+            let cmd = ScatterGatherV1::new(Regex::new(&channel_regex)?, Regex::new(&addr_regex)?, cmd);
+            let ret = cmder.scatter_gather_v1(cmd).await?;
+            let ret = serde_json::to_value(&ret)?;
             Ok(ret)
         };
         Box::pin(fut)
