@@ -126,9 +126,12 @@ async fn main_run_inner(opts: DaqIngestOpts) -> Result<(), Error> {
             ChannelAccess::CaIngestV2(k) => {
                 info!("daqingest version {} {}", clap::crate_version!(), buildmark);
                 let (conf, channels_config) = parse_config_v2(k.config).await.map_err(Error::from_string)?;
-                let _daemon = daqingest::daemon2::Daemon::new(conf, channels_config).await?;
-                // TODO: drive the daemon2 event loop / metrics service (not yet implemented).
-                todo!()
+                daqingest::daemon2::Daemon::new(conf, channels_config)
+                    .await
+                    .map_err(Error::from_string)?
+                    .run()
+                    .await
+                    .map_err(Error::from_string)?;
             }
         },
         #[cfg(feature = "bsread")]

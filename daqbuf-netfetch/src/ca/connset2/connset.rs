@@ -15,7 +15,6 @@ use crate::ca::connset2::connset::channels::pollcstm::PollCstm;
 use crate::ca::connset2::connset::channels::pollcstm::PollRess;
 use crate::ca::finder::FinderHandleV02;
 use crate::ca::progpend::HaveProgressPending;
-use crate::conf::CaIngestOptsV2;
 use crate::conf::ChannelConfig;
 use crate::futwrap::FutDbg;
 use crate::futwrap::FutDbgBox;
@@ -259,20 +258,16 @@ pub struct ConnSet {
 }
 
 impl ConnSet {
-    pub async fn new(backend: String, local_epics_hostname: String, ingest_opts: CaIngestOptsV2) -> Result<Self, Error> {
-        let (finder_handle, finder_jh) = crate::ca::finder::start_finder_handle_v02(
-            backend.clone(),
-            ingest_opts.postgresql_config().clone(),
-            ingest_opts.search().clone(),
-            ingest_opts.search_blacklist().clone(),
-        );
+    /// The channel-info lookup workers and the ioc finder are owned by the caller, see
+    /// `daqingest::daemon2::Daemon` which starts them and keeps their join handles.
+    pub async fn new(
+        backend: String,
+        local_epics_hostname: String,
+        ch_info_tx: ChannelInfoQuerySender,
+        finder_handle: FinderHandleV02,
+    ) -> Result<Self, Error> {
         let (cmd_tx, cmd_rx) = asynchan::bounded(100, "ConnSetCmder");
         let cmder = ConnSetCmder::new(cmd_tx);
-        let ch_info_tx = {
-            let start = dbpg::seriesbychannel::start_lookup_workers::<dbpg::seriesbychannel::SalterRandom>;
-            let (tx, jhs, jh) = start(2, ingest_opts.postgresql_config()).await?;
-            ChannelInfoQuerySender::new(tx)
-        };
         let ret = ConnSet {
             backend,
             local_epics_hostname,

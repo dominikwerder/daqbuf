@@ -162,6 +162,13 @@ impl ScyllaInsertSet {
         self.input_tx.clone()
     }
 
+    /// The per-cluster queues which the sorter feeds from the input.
+    ///
+    /// Handed out for components which want to write into one specific cluster directly.
+    pub fn sinks(&self) -> &[InsertQueuesTx] {
+        &self.sinks
+    }
+
     /// Metrics emitted by the insert workers of all clusters.
     pub fn output(&self) -> &Receiver<InsertWorkerOutputItem> {
         &self.out_rx

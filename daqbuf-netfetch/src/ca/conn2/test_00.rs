@@ -3,12 +3,11 @@ use crate as netfetch;
 use crate::asynchan;
 use crate::ca::connset2;
 use crate::ca::connset2::connset::ConnSet;
-use crate::ca::connset2::connset::ScatterGatherV1;
+use crate::ca::connset2::ctrls::ConnSetConn2Ctrls;
 use crate::conf::ChannelConfig;
 use crate::daemon_common::ChannelName;
 use core::panic;
 use futures::StreamExt;
-use regex::Regex;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::RwLock;
@@ -50,116 +49,12 @@ fn handler_sigint(_: libc::c_int, _: *const libc::siginfo_t, _: *const libc::c_v
     }
 }
 
-#[derive(Clone)]
-struct Conn2Ctrls {
-    cmder: crate::ca::connset2::connset::ConnSetCmder,
-}
-
-impl Conn2Ctrls {
-    fn new(cmder: crate::ca::connset2::connset::ConnSetCmder) -> Self {
-        Self { cmder }
-    }
-}
-
-impl netfetch::metrics::Conn2Ctrls for Conn2Ctrls {
-    fn connection_list_get_v1(
-        &self,
-    ) -> Pin<Box<dyn Future<Output = Result<crate::metrics::ConnectionListV1, Box<dyn std::error::Error>>> + Send>>
-    {
-        let cmder = self.cmder.clone();
-        let fut = async move {
-            let ret = cmder.connection_list_get_v1().await?;
-            Ok(ret)
-        };
-        Box::pin(fut)
-    }
-
-    fn channels_for_addr_v1(
-        &self,
-        addr: std::net::SocketAddrV4,
-    ) -> Pin<Box<dyn Future<Output = Result<crate::metrics::ChannelsForAddrInfoV1, Box<dyn std::error::Error>>> + Send>>
-    {
-        let cmder = self.cmder.clone();
-        let fut = async move {
-            let ret = cmder.channels_for_addr_v1(addr).await?;
-            Ok(ret)
-        };
-        Box::pin(fut)
-    }
-
-    fn channels_for_addr_v2(
-        &self,
-        addr: std::net::SocketAddrV4,
-        name: String,
-    ) -> Pin<Box<dyn Future<Output = Result<crate::metrics::ChannelsForAddrInfoV2, Box<dyn std::error::Error>>> + Send>>
-    {
-        let cmder = self.cmder.clone();
-        let fut = async move {
-            let ret = cmder.channels_for_addr_v2(addr, name).await?;
-            Ok(ret)
-        };
-        Box::pin(fut)
-    }
-
-    fn cmd_dyn_v1(
-        &self,
-        cmd: String,
-    ) -> Pin<Box<dyn Future<Output = Result<serde_json::Value, Box<dyn std::error::Error>>> + Send>> {
-        let cmder = self.cmder.clone();
-        let fut = async move {
-            let ret = cmder.cmd_dyn_v1(cmd).await?;
-            Ok(ret)
-        };
-        Box::pin(fut)
-    }
-
-    fn channel_add_v1(
-        &self,
-        name: String,
-    ) -> Pin<Box<dyn Future<Output = Result<(), Box<dyn std::error::Error>>> + Send>> {
-        let cmder = self.cmder.clone();
-        let fut = async move {
-            let ret = cmder.channel_add_v1(name).await?;
-            Ok(ret)
-        };
-        Box::pin(fut)
-    }
-
-    fn channel_remove_v1(
-        &self,
-        name: String,
-    ) -> Pin<Box<dyn Future<Output = Result<(), Box<dyn std::error::Error>>> + Send>> {
-        let cmder = self.cmder.clone();
-        let fut = async move {
-            let ret = cmder.channel_remove_v1(name).await?;
-            Ok(ret)
-        };
-        Box::pin(fut)
-    }
-
-    fn scatter_gather_v1(
-        &self,
-        channel_regex: String,
-        addr_regex: String,
-        cmd: serde_json::Value,
-    ) -> Pin<Box<dyn Future<Output = Result<serde_json::Value, Box<dyn std::error::Error>>> + Send>> {
-        let cmder = self.cmder.clone();
-        let fut = async move {
-            let cmd = ScatterGatherV1::new(Regex::new(&channel_regex)?, Regex::new(&addr_regex)?, cmd);
-            let ret = cmder.scatter_gather_v1(cmd).await?;
-            let ret = serde_json::to_value(&ret)?;
-            Ok(ret)
-        };
-        Box::pin(fut)
-    }
-}
-
 struct CaIngestCtrls {
-    conn2_ctrls: Conn2Ctrls,
+    conn2_ctrls: ConnSetConn2Ctrls,
 }
 
 impl CaIngestCtrls {
-    fn new(conn2_ctrls: Conn2Ctrls) -> Self {
+    fn new(conn2_ctrls: ConnSetConn2Ctrls) -> Self {
         Self { conn2_ctrls }
     }
 }
@@ -311,11 +206,22 @@ pub async fn test_01(cfgfn: String) {
             let ingest_opts: crate::conf::CaIngestOpts = serde_yaml::from_slice(&buf).unwrap();
         }
         let (ingest_opts, channels_config) = crate::conf::parse_config_v2(&cfgfn).await.unwrap();
-        let mut connset = ConnSet::new(ingest_opts.backend().into(), "".into(), ingest_opts.clone())
+        let (finder_handle, _finder_jh) = crate::ca::finder::start_finder_handle_v02(
+            ingest_opts.backend().into(),
+            ingest_opts.postgresql_config().clone(),
+            ingest_opts.search().clone(),
+            ingest_opts.search_blacklist().clone(),
+        );
+        let ch_info_tx = {
+            let start = dbpg::seriesbychannel::start_lookup_workers::<dbpg::seriesbychannel::SalterRandom>;
+            let (tx, _jhs, _jh) = start(2, ingest_opts.postgresql_config()).await.unwrap();
+            dbpg::seriesbychannel::ChannelInfoQuerySender::new(tx)
+        };
+        let mut connset = ConnSet::new(ingest_opts.backend().into(), "".into(), ch_info_tx, finder_handle)
             .await
             .unwrap();
         let cmder = connset.cmder().clone();
-        let conn2_ctrls = Conn2Ctrls::new(cmder.clone());
+        let conn2_ctrls = ConnSetConn2Ctrls::new(cmder.clone());
         let (metrics_shutdown_tx, metrics_shutdown_rx) = async_channel::bounded(16);
         let metrics_jh = {
             let fut = netfetch::metrics::metrics_service(
