@@ -149,29 +149,38 @@ impl FinderHandleV02 {
 
 pub fn start_finder_handle_v02(
     backend: String,
-    opts: CaIngestOpts,
+    pgconf: Database,
+    search_list: Vec<String>,
+    search_blacklist: Vec<String>,
 ) -> (FinderHandleV02, JoinHandle<Result<(), Error>>) {
     info!("start_finder_handle_v02");
     let (qtx, qrx) = async_channel::bounded(CURRENT_SEARCH_PENDING_MAX);
-    // old:
-    // qtx -> qrx -> rtx -> rrx -> job-tx
-    // new:
-    // qtx -> qrx -> job-tx
-    // let (rtx, rrx) = async_channel::bounded(CURRENT_SEARCH_PENDING_MAX);
-    let jh = taskrun::spawn(finder_full(qrx, backend, opts));
+    let jh = taskrun::spawn(finder_full(qrx, backend, pgconf, search_list, search_blacklist));
     let fh = FinderHandleV02 { qtx };
     (fh, jh)
 }
 
-async fn finder_full<S>(qrx: S, backend: String, opts: CaIngestOpts) -> Result<(), Error>
+async fn finder_full<S>(
+    qrx: S,
+    backend: String,
+    pgconf: Database,
+    search_list: Vec<String>,
+    search_blacklist: Vec<String>,
+) -> Result<(), Error>
 where
     S: Stream<Item = IocAddrQuery> + Send + 'static,
 {
     let selfname = "finder_full";
     let (tx1, rx1) = async_channel::bounded(20);
     let (tx2, rx2) = async_channel::bounded(20);
-    let jh1 = taskrun::spawn(finder_worker(qrx, tx1, backend, opts.postgresql_config().clone()));
-    let jh2 = taskrun::spawn(finder_network_if_not_found(rx2, opts.clone()));
+    let jh1 = taskrun::spawn(finder_worker(qrx, tx1, backend.clone(), pgconf.clone()));
+    let jh2 = taskrun::spawn(finder_network_if_not_found(
+        rx2,
+        backend.clone(),
+        pgconf.clone(),
+        search_list.clone(),
+        search_blacklist.clone(),
+    ));
     let jh3 = {
         let fut = async move {
             loop {
@@ -384,10 +393,16 @@ async fn send_not_found_requests(
     Ok(())
 }
 
-async fn finder_network_if_not_found(rx: Receiver<VecDeque<IocAddrQuery>>, opts: CaIngestOpts) -> Result<(), Error> {
+async fn finder_network_if_not_found(
+    rx: Receiver<VecDeque<IocAddrQuery>>,
+    backend: String,
+    pgconf: Database,
+    search_list: Vec<String>,
+    search_blacklist: Vec<String>,
+) -> Result<(), Error> {
     let selfname = "finder_network_if_not_found";
-    let (mut net_tx, net_rx, jh_ca_search) = ca_search_workers_start(&opts).await?;
-    let jh2 = taskrun::spawn(process_net_result(net_rx, opts.clone()));
+    let (mut net_tx, net_rx, jh_ca_search) = ca_search_workers_start(&search_list, &search_blacklist).await?;
+    let jh2 = taskrun::spawn(process_net_result(net_rx, backend, pgconf.clone()));
     while let Ok(item) = rx.recv().await {
         send_not_found_requests(item, &mut net_tx).await?;
     }
@@ -402,8 +417,8 @@ async fn finder_network_if_not_found(rx: Receiver<VecDeque<IocAddrQuery>>, opts:
 
 async fn process_net_result(
     net_rx: Receiver<Result<VecDeque<(FindIocRes, asynchan::Sender<FindIocRes>)>, crate::ca::findioc::Error>>,
-    // tx: Sender<VecDeque<FindIocRes>>,
-    opts: CaIngestOpts,
+    backend: String,
+    pgconf: Database,
 ) -> Result<(), Error> {
     let selfname = "process_net_result";
     const IOC_SEARCH_INDEX_WORKER_COUNT: usize = 1;
@@ -411,8 +426,8 @@ async fn process_net_result(
     let mut ioc_search_index_worker_jhs = Vec::new();
     let mut index_worker_pg_jh = Vec::new();
     for _ in 0..IOC_SEARCH_INDEX_WORKER_COUNT {
-        let backend = opts.backend().into();
-        let (pg, jh) = dbpg::conn::make_pg_client(opts.postgresql_config()).await?;
+        let backend = backend.clone();
+        let (pg, jh) = dbpg::conn::make_pg_client(&pgconf).await?;
         index_worker_pg_jh.push(jh);
         let worker = IocSearchIndexWorker::prepare(dbrx.clone(), backend, pg).await?;
         let jh = tokio::spawn(async move { worker.worker().await });

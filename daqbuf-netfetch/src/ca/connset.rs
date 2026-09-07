@@ -429,7 +429,12 @@ impl CaConnSet {
         let (ca_conn_res_tx, ca_conn_res_rx) = async_channel::bounded(200);
         let (connset_inp_tx, connset_inp_rx) = async_channel::bounded(200);
         let (connset_out_tx, connset_out_rx) = async_channel::bounded(200);
-        let (find_ioc_query_tx, ioc_finder_jh) = start_finder_handle_v02(backend.clone(), ingest_opts);
+        let (find_ioc_query_tx, ioc_finder_jh) = start_finder_handle_v02(
+            ingest_opts.backend().into(),
+            ingest_opts.postgresql_config().clone(),
+            ingest_opts.search().clone(),
+            ingest_opts.search_blacklist().clone(),
+        );
         let (channel_info_res_tx, channel_info_res_rx) = async_channel::bounded(400);
         let connset = Self {
             ticker: Self::new_self_ticker(),

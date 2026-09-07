@@ -127,7 +127,7 @@ async fn main_run_inner(opts: DaqIngestOpts) -> Result<(), Error> {
                 info!("daqingest version {} {}", clap::crate_version!(), buildmark);
                 let (conf, channels_config) = parse_config_v2(k.config).await.map_err(Error::from_string)?;
                 let daemon = daqingest::daemon2::Daemon::new(conf, channels_config);
-                tood!()
+                todo!()
             }
         },
         #[cfg(feature = "bsread")]

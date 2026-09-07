@@ -259,21 +259,13 @@ pub struct ConnSet {
 }
 
 impl ConnSet {
-    pub async fn new(
-        backend: String,
-        local_epics_hostname: String,
-        // iqtx: InsertQueuesTx,
-        // TODO this used async channel Sender before. Rework into specialized type?
-        // This seems to be for when I already know the type and shape. But what about the status series?
-        // channel_info_query_tx: ChannelInfoQuerySender,
-        ingest_opts: CaIngestOpts,
-    ) -> Result<Self, Error> {
-        // streamtask::run_in_task();
-        // let (find_ioc_res_tx, find_ioc_res_rx) = async_channel::bounded(400);
-        // let (find_ioc_query_tx, ioc_finder_jh) =
-        //     crate::ca::finder::start_finder(find_ioc_res_tx.clone(), backend.clone(), ingest_opts).unwrap();
-        let (finder_handle, finder_jh) =
-            crate::ca::finder::start_finder_handle_v02(backend.clone(), ingest_opts.clone());
+    pub async fn new(backend: String, local_epics_hostname: String, ingest_opts: CaIngestOpts) -> Result<Self, Error> {
+        let (finder_handle, finder_jh) = crate::ca::finder::start_finder_handle_v02(
+            backend.clone(),
+            ingest_opts.postgresql_config().clone(),
+            ingest_opts.search().clone(),
+            ingest_opts.search_blacklist().clone(),
+        );
         let (cmd_tx, cmd_rx) = asynchan::bounded(100, "ConnSetCmder");
         let cmder = ConnSetCmder::new(cmd_tx);
         let ch_info_tx = {

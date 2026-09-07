@@ -1,6 +1,5 @@
 use crate::asynchan;
 use crate::ca::findioc::FindIocStream;
-use crate::conf::CaIngestOpts;
 use async_channel::Receiver;
 use async_channel::Sender;
 use futures::StreamExt;
@@ -61,7 +60,8 @@ async fn resolve_address(addr_str: &str) -> Result<SocketAddr, Error> {
 }
 
 pub async fn ca_search_workers_start(
-    opts: &CaIngestOpts,
+    search_list: &Vec<String>,
+    search_blacklist: &Vec<String>,
 ) -> Result<
     (
         Sender<(String, asynchan::Sender<crate::ca::findioc::FindIocRes>)>,
@@ -78,7 +78,7 @@ pub async fn ca_search_workers_start(
     ),
     Error,
 > {
-    let (search_tgts, blacklist) = search_tgts_from_opts(&opts).await?;
+    let (search_tgts, blacklist) = search_tgts_from_opts(search_list, search_blacklist).await?;
     let search_timeout = Duration::from_millis(1000 * 10);
     let batch_len_max = 8;
     let (inp_tx, inp_rx) = async_channel::bounded(10 * batch_len_max);
@@ -88,9 +88,12 @@ pub async fn ca_search_workers_start(
     Ok((inp_tx, out_rx, jh))
 }
 
-async fn search_tgts_from_opts(opts: &CaIngestOpts) -> Result<(Vec<SocketAddrV4>, Vec<SocketAddrV4>), Error> {
+async fn search_tgts_from_opts(
+    search_list: &Vec<String>,
+    search_blacklist: &Vec<String>,
+) -> Result<(Vec<SocketAddrV4>, Vec<SocketAddrV4>), Error> {
     let mut addrs = Vec::new();
-    for s in opts.search() {
+    for s in search_list {
         match resolve_address(s).await {
             Ok(addr) => {
                 trace!("resolved {} as {}", s, addr);
@@ -110,7 +113,7 @@ async fn search_tgts_from_opts(opts: &CaIngestOpts) -> Result<(Vec<SocketAddrV4>
     }
     let blacklist = {
         let mut addrs = Vec::new();
-        for s in opts.search_blacklist() {
+        for s in search_blacklist {
             match resolve_address(s).await {
                 Ok(addr) => {
                     trace!("resolved {} as {}", s, addr);
