@@ -5,6 +5,7 @@ use err::Error;
 use log::*;
 use netfetch::conf::CaIngestOpts;
 use netfetch::conf::parse_config;
+use netfetch::conf::parse_config_v2;
 use netpod::Database;
 use netpod::ttl::RetentionTime;
 use scywr::config::ScyllaIngestConfig;
@@ -121,6 +122,12 @@ async fn main_run_inner(opts: DaqIngestOpts) -> Result<(), Error> {
                 // info!("daqingest version {}", clap::crate_version!());
                 // let (conf, channels) = parse_config(k.config.into()).await?;
                 // netfetch::ca::search::ca_search(conf, &channels).await?
+            }
+            ChannelAccess::CaIngestV2(k) => {
+                info!("daqingest version {} {}", clap::crate_version!(), buildmark);
+                let (conf, channels_config) = parse_config_v2(k.config).await.map_err(Error::from_string)?;
+                let daemon = daqingest::daemon2::Daemon::new(conf, channels_config);
+                tood!()
             }
         },
         #[cfg(feature = "bsread")]

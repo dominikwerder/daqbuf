@@ -266,6 +266,74 @@ struct ScyllaConfigBlockV2MainHosts {
     hosts: Vec<String>,
 }
 
+#[derive(Clone, Debug, Deserialize)]
+pub struct CaIngestOptsV2 {
+    backend: String,
+    channels: Option<PathBuf>,
+    api_bind: String,
+    // udp_broadcast_bind: Option<String>,
+    #[serde(default)]
+    search: Vec<String>,
+    #[serde(default)]
+    search_blacklist: Vec<String>,
+    #[allow(unused)]
+    postgresql: Database,
+    scylla_1st: Option<ScyllaConfigBlockV2>,
+    scylla_2nd: Option<ScyllaConfigBlockV2>,
+    // insert_worker_count: Option<usize>,
+    // insert_worker_concurrency: Option<usize>,
+    // insert_scylla_sessions: Option<usize>,
+    // insert_item_queue_cap: Option<usize>,
+    // store_workers_rate: Option<u64>,
+    // insert_frac: Option<u64>,
+    // use_rate_limit_queue: Option<bool>,
+    // test_bsread_addr: Option<String>,
+}
+
+impl CaIngestOptsV2 {
+    pub fn backend(&self) -> &str {
+        &self.backend
+    }
+
+    pub fn api_bind(&self) -> String {
+        self.api_bind.clone()
+    }
+
+    pub fn channels(&self) -> Option<PathBuf> {
+        self.channels.clone()
+    }
+
+    pub fn postgresql_config(&self) -> &Database {
+        &self.postgresql
+    }
+
+    pub fn scylla_insert_set_conf_1st(&self) -> Option<ScyllaInsertsetConf> {
+        self.scylla_1st.as_ref().map(|cc| ScyllaInsertsetConf {
+            st_rf1: cc.scylla_config_st_rf1(),
+            st_rf3: cc.scylla_config_st(),
+            mt_rf3: cc.scylla_config_mt(),
+            lt_rf3: cc.scylla_config_lt(),
+        })
+    }
+
+    pub fn scylla_insert_set_conf_2nd(&self) -> Option<ScyllaInsertsetConf> {
+        self.scylla_2nd.as_ref().map(|cc| ScyllaInsertsetConf {
+            st_rf1: cc.scylla_config_st_rf1(),
+            st_rf3: cc.scylla_config_st(),
+            mt_rf3: cc.scylla_config_mt(),
+            lt_rf3: cc.scylla_config_lt(),
+        })
+    }
+
+    pub fn search(&self) -> &Vec<String> {
+        &self.search
+    }
+
+    pub fn search_blacklist(&self) -> &Vec<String> {
+        &self.search_blacklist
+    }
+}
+
 #[test]
 fn parse_config_minimal() {
     let conf = r###"
@@ -574,6 +642,20 @@ pub async fn parse_config<P: Into<PathBuf>>(config: P) -> Result<(CaIngestOpts, 
     }
     // let re_p = regex::Regex::new(&conf.whitelist.clone().unwrap_or("--nothing-ur9nc23ur98c--".into()))?;
     // let re_n = regex::Regex::new(&conf.blacklist.clone().unwrap_or("--nothing-ksm2u98rcm28--".into()))?;
+    let channels = parse_channels(conf.channels.clone()).await?;
+    Ok((conf, channels))
+}
+
+pub async fn parse_config_v2<P: Into<PathBuf>>(
+    config: P,
+) -> Result<(CaIngestOptsV2, Option<ChannelsConfig>), ConfError> {
+    let config = config.into();
+    let mut buf = Vec::new();
+    {
+        let mut file = OpenOptions::new().read(true).open(config).await?;
+        file.read_to_end(&mut buf).await?;
+    }
+    let conf: CaIngestOptsV2 = serde_yaml::from_slice(&buf)?;
     let channels = parse_channels(conf.channels.clone()).await?;
     Ok((conf, channels))
 }

@@ -131,7 +131,11 @@ pub async fn spawn_scylla_insert_workers(
         }
         for worker_ix in 0..insert_worker_count {
             let data_store = data_stores[worker_ix * data_stores.len() / insert_worker_count].clone();
-            let wid = InsertWorkerId::new(rett.clone(), scyconf.clone(), worker_ix);
+            let wid = InsertWorkerId::new(
+                rett.clone(),
+                worker_ix,
+                format!("worker-{}-{}", scyconf.keyspace(), worker_ix),
+            );
             let jh = tokio::spawn(worker_streamed(
                 worker_ix,
                 insert_worker_concurrency,
@@ -158,11 +162,7 @@ pub async fn spawn_scylla_insert_workers_dummy(
     let mut jhs = Vec::new();
     for worker_ix in 0..insert_worker_count {
         let data_store = None;
-        let wid = InsertWorkerId::new(
-            RetentionTime::Short,
-            ScyllaIngestConfig::new(["dummy"], "dummy", RetentionTime::Short),
-            worker_ix,
-        );
+        let wid = InsertWorkerId::new(RetentionTime::Short, worker_ix, format!("dummy-{worker_ix}"));
         let jh = tokio::spawn(worker_streamed(
             worker_ix,
             insert_worker_concurrency,
@@ -223,20 +223,14 @@ where
 #[derive(Debug, Clone)]
 pub struct InsertWorkerId {
     rt: RetentionTime,
-    conf: ScyllaIngestConfig,
     id: usize,
     short_name: String,
 }
 
 impl InsertWorkerId {
-    pub fn new(rt: RetentionTime, conf: ScyllaIngestConfig, id: usize) -> Self {
-        let short_name = format!("{} {} {}", conf.hosts()[0], rt.debug_tag(), id);
-        Self {
-            rt,
-            conf,
-            id,
-            short_name,
-        }
+    pub fn new(rt: RetentionTime, id: usize, worker_name: String) -> Self {
+        let short_name = format!("{} {} {}", worker_name, rt.debug_tag(), id);
+        Self { rt, id, short_name }
     }
 
     pub fn short_name(&self) -> &str {
@@ -246,7 +240,6 @@ impl InsertWorkerId {
     #[allow(unused)]
     fn _dummy(&self) {
         let _ = &self.rt;
-        let _ = &self.conf;
         let _ = &self.id;
     }
 }

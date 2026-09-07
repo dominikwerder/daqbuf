@@ -789,7 +789,7 @@ pub async fn migrate_scylla_data_schema_all_rt(
         .zip(chsa.iter_mut())
         .zip(rfs.iter().map(|&x| x))
     {
-        chs.set_name(scyconf.short_name(rt.clone()));
+        chs.set_name(scyconf.short_name());
         migrate_scylla_data_schema(scyconf, rt, rf, chs).await?;
     }
     let todo = chsa.iter().any(|x| x.has_to_do());

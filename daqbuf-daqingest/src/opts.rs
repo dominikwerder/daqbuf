@@ -89,6 +89,7 @@ pub struct BsreadDump {
 pub enum ChannelAccess {
     CaIngest(CaConfig),
     CaSearch(CaSearch),
+    CaIngestV2(CaIngestV2),
 }
 
 #[derive(Debug, clap::Parser)]
@@ -103,6 +104,11 @@ pub struct CaSearch {
 
 #[derive(Debug, clap::Parser)]
 pub struct CaConfig {
+    pub config: String,
+}
+
+#[derive(Debug, clap::Parser)]
+pub struct CaIngestV2 {
     pub config: String,
 }
 

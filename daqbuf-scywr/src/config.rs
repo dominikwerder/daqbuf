@@ -30,7 +30,12 @@ impl ScyllaIngestConfig {
         &self.hosts
     }
 
-    pub fn short_name(&self, rt: RetentionTime) -> String {
-        format!("Scyconf {{ {:?}, {:?}, {:?} }}", self.hosts.get(0), self.keyspace, rt)
+    pub fn short_name(&self) -> String {
+        format!(
+            "ScyllaIngestConfig {{ {:?}, {:?}, {:?} }}",
+            self.hosts.get(0),
+            self.keyspace,
+            self.rt
+        )
     }
 }
