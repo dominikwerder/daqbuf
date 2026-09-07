@@ -310,7 +310,7 @@ pub async fn test_01(cfgfn: String) {
             let buf = std::fs::read(&cfgfn).unwrap();
             let ingest_opts: crate::conf::CaIngestOpts = serde_yaml::from_slice(&buf).unwrap();
         }
-        let (ingest_opts, channels_config) = crate::conf::parse_config(&cfgfn).await.unwrap();
+        let (ingest_opts, channels_config) = crate::conf::parse_config_v2(&cfgfn).await.unwrap();
         let mut connset = ConnSet::new(ingest_opts.backend().into(), "".into(), ingest_opts.clone())
             .await
             .unwrap();

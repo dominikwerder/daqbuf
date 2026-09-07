@@ -15,7 +15,7 @@ use crate::ca::connset2::connset::channels::pollcstm::PollCstm;
 use crate::ca::connset2::connset::channels::pollcstm::PollRess;
 use crate::ca::finder::FinderHandleV02;
 use crate::ca::progpend::HaveProgressPending;
-use crate::conf::CaIngestOpts;
+use crate::conf::CaIngestOptsV2;
 use crate::conf::ChannelConfig;
 use crate::futwrap::FutDbg;
 use crate::futwrap::FutDbgBox;
@@ -259,7 +259,7 @@ pub struct ConnSet {
 }
 
 impl ConnSet {
-    pub async fn new(backend: String, local_epics_hostname: String, ingest_opts: CaIngestOpts) -> Result<Self, Error> {
+    pub async fn new(backend: String, local_epics_hostname: String, ingest_opts: CaIngestOptsV2) -> Result<Self, Error> {
         let (finder_handle, finder_jh) = crate::ca::finder::start_finder_handle_v02(
             backend.clone(),
             ingest_opts.postgresql_config().clone(),
