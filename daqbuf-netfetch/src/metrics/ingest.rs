@@ -25,6 +25,7 @@ use netpod::ttl::RetentionTime;
 use scywr::insertqueues::InsertDeques;
 use scywr::iteminsertqueue::ArrayValue;
 use scywr::iteminsertqueue::DataValue;
+use scywr::iteminsertqueue::InsertTarget;
 use scywr::iteminsertqueue::QueryItem;
 use scywr::iteminsertqueue::ScalarValue;
 use serde::Deserialize;
@@ -172,7 +173,11 @@ async fn post_v01_try(
     rres.worker_tx.send(qu).await.unwrap();
     let chinfo = rx.recv().await.unwrap().unwrap();
     let msp_split = MspSplitDyn::new(1024 * 64, 1024 * 1024 * 10, rt.clone());
-    let mut writer = SeriesWriter::new(chinfo.series.to_series(), msp_split)?;
+    let mut writer = SeriesWriter::new(
+        chinfo.series.to_series(),
+        InsertTarget::from_rt(rt.clone(), false),
+        msp_split,
+    )?;
     debug_setup!("series writer established");
     let mut iqdqs = InsertDeques::new();
     let mut iqtx = rres.iqtx.clone();

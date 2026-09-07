@@ -7,6 +7,7 @@ use netpod::Shape;
 use netpod::TsNano;
 use netpod::ttl::RetentionTime;
 use scywr::insertqueues::InsertDeques;
+use scywr::iteminsertqueue::InsertTarget;
 use scywr::iteminsertqueue::QueryItem;
 use serde::Serialize;
 use series::SeriesId;
@@ -226,6 +227,7 @@ where
         let state_st = {
             let writer = RateLimitWriter::new(
                 series,
+                InsertTarget::from_rt(RetentionTime::Short, do_st_rf1),
                 min_quiets.st,
                 is_polled,
                 emit_state_new(),
@@ -237,6 +239,7 @@ where
         let state_mt = {
             let writer = RateLimitWriter::new(
                 series,
+                InsertTarget::MtRf3,
                 min_quiets.mt,
                 is_polled,
                 emit_state_new(),
@@ -248,6 +251,7 @@ where
         let state_lt = {
             let writer = RateLimitWriter::new(
                 series,
+                InsertTarget::LtRf3,
                 min_quiets.lt,
                 is_polled,
                 emit_state_new(),

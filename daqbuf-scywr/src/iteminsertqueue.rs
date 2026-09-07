@@ -18,6 +18,7 @@ use netpod::TsMs;
 use netpod::TsNano;
 use netpod::channelstatus::ChannelStatus;
 use netpod::channelstatus::ChannelStatusClosedReason;
+use netpod::ttl::RetentionTime;
 use scylla::errors::DbError;
 use scylla::response::query_result::QueryResult;
 use scylla::serialize::row::SerializeRow;
@@ -505,14 +506,24 @@ impl ChannelStatusItem {
 
 #[derive(Debug, Clone)]
 pub struct MspItem {
+    target: InsertTarget,
     series: SeriesId,
     ts_msp: TsMs,
     ts_net: Instant,
 }
 
 impl MspItem {
-    pub fn new(series: SeriesId, ts_msp: TsMs, ts_net: Instant) -> Self {
-        Self { series, ts_msp, ts_net }
+    pub fn new(target: InsertTarget, series: SeriesId, ts_msp: TsMs, ts_net: Instant) -> Self {
+        Self {
+            target,
+            series,
+            ts_msp,
+            ts_net,
+        }
+    }
+
+    pub fn target(&self) -> InsertTarget {
+        self.target
     }
 
     pub fn string_short(&self) -> String {
@@ -534,6 +545,7 @@ impl MspItem {
 
 #[derive(Debug, Clone)]
 pub struct InsertItem {
+    pub target: InsertTarget,
     pub series: SeriesId,
     pub ts_msp: TsMs,
     pub ts_lsp: DtNano,
@@ -555,6 +567,7 @@ impl InsertItem {
 
 #[derive(Debug, Clone)]
 pub struct TimeBinSimpleF32V02 {
+    pub target: InsertTarget,
     pub series: SeriesId,
     pub binlen: i32,
     pub msp: i64,
@@ -569,6 +582,7 @@ pub struct TimeBinSimpleF32V02 {
 
 #[derive(Debug, Clone)]
 pub struct BinWriteIndexV04 {
+    pub target: InsertTarget,
     pub series: i64,
     pub pbp: i16,
     pub msp: i32,
@@ -576,7 +590,63 @@ pub struct BinWriteIndexV04 {
     pub binlen: i32,
 }
 
-// Needs to be Clone to send it to multiple retention times if required.
+/// Selects the scylla keyspace and table prefix that an item belongs to.
+///
+/// The keyspace comes from the matching member of the configured insert set, the table prefix from
+/// [`RetentionTime`]. `RetentionTime` alone can not express the distinction between the rf1 and the
+/// rf3 short-term store, therefore this separate type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub enum InsertTarget {
+    StRf1,
+    StRf3,
+    MtRf3,
+    LtRf3,
+}
+
+impl InsertTarget {
+    pub fn retention_time(&self) -> RetentionTime {
+        use InsertTarget::*;
+        match self {
+            StRf1 => RetentionTime::Short,
+            StRf3 => RetentionTime::Short,
+            MtRf3 => RetentionTime::Medium,
+            LtRf3 => RetentionTime::Long,
+        }
+    }
+
+    pub fn from_rt(rt: RetentionTime, rf1: bool) -> Self {
+        use InsertTarget::*;
+        match rt {
+            RetentionTime::Short => {
+                if rf1 {
+                    StRf1
+                } else {
+                    StRf3
+                }
+            }
+            RetentionTime::Medium => MtRf3,
+            RetentionTime::Long => LtRf3,
+        }
+    }
+
+    /// Short tag for logs and metrics.
+    pub fn debug_tag(&self) -> &'static str {
+        use InsertTarget::*;
+        match self {
+            StRf1 => "st_rf1",
+            StRf3 => "st_rf3",
+            MtRf3 => "mt_rf3",
+            LtRf3 => "lt_rf3",
+        }
+    }
+}
+
+impl fmt::Display for InsertTarget {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        fmt.write_str(self.debug_tag())
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum QueryItem {
     Insert(InsertItem),
@@ -587,8 +657,23 @@ pub enum QueryItem {
     AccountingRecv(AccountingRecv),
 }
 
+impl QueryItem {
+    pub fn target(&self) -> InsertTarget {
+        use QueryItem::*;
+        match self {
+            Insert(x) => x.target,
+            Msp(x) => x.target,
+            TimeBinSimpleF32V02(x) => x.target,
+            BinWriteIndexV04(x) => x.target,
+            Accounting(x) => x.target,
+            AccountingRecv(x) => x.target,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Accounting {
+    pub target: InsertTarget,
     pub part: i32,
     pub ts: TsMs,
     pub series: SeriesId,
@@ -598,6 +683,7 @@ pub struct Accounting {
 
 #[derive(Debug, Clone)]
 pub struct AccountingRecv {
+    pub target: InsertTarget,
     pub part: i32,
     pub ts: TsMs,
     pub series: SeriesId,

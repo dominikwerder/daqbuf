@@ -5,6 +5,7 @@ use core::fmt;
 use netpod::DtNano;
 use netpod::TsNano;
 use netpod::log;
+use scywr::iteminsertqueue::InsertTarget;
 use scywr::iteminsertqueue::QueryItem;
 use serde::Serialize;
 use series::SeriesId;
@@ -61,13 +62,14 @@ where
 {
     pub fn new(
         series: SeriesId,
+        target: InsertTarget,
         min_quiet: Duration,
         is_polled: bool,
         emit_state: <ET as EmittableType>::State,
         dbgname: String,
         spl: SPL,
     ) -> Result<Self, Error> {
-        let writer = SeriesWriter::new(series, spl)?;
+        let writer = SeriesWriter::new(series, target, spl)?;
         let ret = Self {
             series,
             min_quiet,

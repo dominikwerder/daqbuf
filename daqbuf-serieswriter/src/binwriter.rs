@@ -16,6 +16,7 @@ use netpod::Shape;
 use netpod::TsNano;
 use netpod::ttl::RetentionTime;
 use scywr::insertqueues::InsertDeques;
+use scywr::iteminsertqueue::InsertTarget;
 use scywr::iteminsertqueue::BinWriteIndexV04;
 use scywr::iteminsertqueue::QueryItem;
 use scywr::iteminsertqueue::TimeBinSimpleF32V02;
@@ -536,6 +537,7 @@ impl BinWriter {
                     {
                         let (msp, lsp) = pbp.msp_lsp(ts1.to_ts_ms());
                         let item = QueryItem::TimeBinSimpleF32V02(TimeBinSimpleF32V02 {
+                            target: InsertTarget::from_rt(rt.clone(), false),
                             series,
                             binlen: bin_len.ms() as i32,
                             msp: msp.to_db_i32() as i64,
@@ -570,6 +572,7 @@ impl BinWriter {
                         if iw.should_write(msp.to_u32(), lsp.to_u32()) {
                             iw.mark_written(msp.to_u32(), lsp.to_u32());
                             let item = BinWriteIndexV04 {
+                                target: InsertTarget::from_rt(rt.clone(), false),
                                 series: series.id() as i64,
                                 pbp: pbp_ix.db_ix() as i16,
                                 msp: msp.to_db_i32(),
@@ -596,6 +599,7 @@ impl BinWriter {
                         if iw1.should_write(msp.to_u32(), lsp.to_u32()) {
                             iw1.mark_written(msp.to_u32(), lsp.to_u32());
                             let item = BinWriteIndexV04 {
+                                target: InsertTarget::from_rt(rt.clone(), false),
                                 series: series.id() as i64,
                                 pbp: pbp_ix.db_ix() as i16,
                                 msp: msp.to_db_i32(),

@@ -11,6 +11,7 @@ use std::time::Instant;
 use crate::msptool::MspSplit;
 use netpod::ByteSize;
 use netpod::ttl::RetentionTime;
+use scywr::iteminsertqueue::InsertTarget;
 use scywr::iteminsertqueue::MspItem;
 pub use smallvec::SmallVec;
 use std::time::Duration;
@@ -76,6 +77,7 @@ pub struct OnCloseRes {
 #[derive(Debug, Serialize)]
 pub struct SeriesWriter<ET, SPL> {
     series: SeriesId,
+    target: InsertTarget,
     msp_split: SPL,
     evts_on_msp_write: TsNano,
     evts_latest: TsNano,
@@ -92,9 +94,10 @@ where
     ET: EmittableType,
     SPL: MspSplit,
 {
-    pub fn new(series: SeriesId, spl: SPL) -> Result<Self, Error> {
+    pub fn new(series: SeriesId, target: InsertTarget, spl: SPL) -> Result<Self, Error> {
         let res = Self {
             series,
+            target,
             msp_split: spl,
             evts_on_msp_write: TsNano::from_ns(0),
             evts_latest: TsNano::from_ns(0),
@@ -114,6 +117,10 @@ where
         self.msp_split.rt()
     }
 
+    pub fn target(&self) -> InsertTarget {
+        self.target
+    }
+
     pub fn write(
         &mut self,
         item: ET,
@@ -128,17 +135,18 @@ where
         let mut msp_rewrite = 0;
         let (ts_msp, ts_lsp, ts_msp_chg, ts_msp_retired) = self.msp_split.split(tsev, res.bytes.bytes());
         if let Some(msp) = ts_msp_retired {
-            let item = MspItem::new(self.series.clone(), msp.to_ts_ms(), ts_net);
+            let item = MspItem::new(self.target, self.series.clone(), msp.to_ts_ms(), ts_net);
             deque.push_back(QueryItem::Msp(item));
             msp_rewrite += 1;
         }
         if ts_msp_chg {
-            let item = MspItem::new(self.series.clone(), ts_msp.to_ts_ms(), ts_net);
+            let item = MspItem::new(self.target, self.series.clone(), ts_msp.to_ts_ms(), ts_net);
             deque.push_back(QueryItem::Msp(item));
             self.evts_on_msp_write = tsev;
             self.ts_ts_msp_put_last = Some(Instant::now());
         }
         let item = scywr::iteminsertqueue::InsertItem {
+            target: self.target,
             series: self.series.clone(),
             ts_msp: ts_msp.to_ts_ms(),
             ts_lsp,
@@ -160,7 +168,7 @@ where
 
     pub fn on_close(&mut self, deque: &mut VecDeque<QueryItem>) -> Result<OnCloseRes, Error> {
         if let Some(msp) = self.msp_split.ts_msp_current() {
-            let item = MspItem::new(self.series.clone(), msp.to_ts_ms(), Instant::now());
+            let item = MspItem::new(self.target, self.series.clone(), msp.to_ts_ms(), Instant::now());
             deque.push_back(QueryItem::Msp(item));
         }
         let ret = OnCloseRes { ts_msp_reput: 1 };
@@ -178,7 +186,7 @@ where
                         if let Some(msp) = self.msp_split.ts_msp_current() {
                             self.ts_ts_msp_put_last = Some(tsnow);
                             self.evts_on_msp_write = self.evts_latest;
-                            let item = MspItem::new(self.series.clone(), msp.to_ts_ms(), tsnow);
+                            let item = MspItem::new(self.target, self.series.clone(), msp.to_ts_ms(), tsnow);
                             deque.push_back(QueryItem::Msp(item));
                             ts_msp_reput += 1;
                         } else {

@@ -39,6 +39,7 @@ use netpod::Shape;
 use netpod::TsNano;
 use scywr::insertqueues::InsertQueuesTx;
 use scywr::iteminsertqueue::ChannelStatusItem;
+use scywr::iteminsertqueue::InsertTarget;
 use scywr::iteminsertqueue::QueryItem;
 use scywr::senderpolling::SenderPolling;
 use serde::Serialize;
@@ -759,6 +760,7 @@ impl CaConnSet {
                     }
                     let mut writer_status = serieswriter::writer::SeriesWriter::new(
                         SeriesId::new(cmd.cssid.id()),
+                        InsertTarget::LtRf3,
                         MspSplitFixGrid::for_channel_status(),
                     )?;
                     {

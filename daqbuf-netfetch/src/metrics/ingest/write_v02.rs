@@ -27,6 +27,7 @@ use scywr::insertqueues::InsertDeques;
 use scywr::insertqueues::InsertQueuesTx;
 use scywr::iteminsertqueue::ArrayValue;
 use scywr::iteminsertqueue::DataValue;
+use scywr::iteminsertqueue::InsertTarget;
 use scywr::iteminsertqueue::QueryItem;
 use scywr::iteminsertqueue::ScalarValue;
 use serde::Deserialize;
@@ -487,7 +488,11 @@ async fn write_with_fresh_msps_inner(
         .map_err(|_| Error::ConfigLookup)?
         .map_err(|_| Error::ConfigLookup)?;
     let msp_split = MspSplitDyn::new(1024 * 64, 1024 * 1024 * 10, rt.clone());
-    let mut writer = SeriesWriter::new(chinfo.series.to_series(), msp_split)?;
+    let mut writer = SeriesWriter::new(
+        chinfo.series.to_series(),
+        InsertTarget::from_rt(rt.clone(), false),
+        msp_split,
+    )?;
     let mut binwriter = None;
     debug_setup!("series writer established");
     let mut iqdqs = InsertDeques::new();
@@ -615,7 +620,7 @@ async fn write_events_exact_2(
     debug_setup!("write_events_exact  {:?}  {:?}", conf, rt);
     let series = SeriesId::new(conf.series);
     let msp_split = MspSplitDyn::new(1024 * 64, 1024 * 1024 * 10, rt.clone());
-    let mut writer = SeriesWriter::new(series, msp_split)?;
+    let mut writer = SeriesWriter::new(series, InsertTarget::from_rt(rt.clone(), false), msp_split)?;
     let mut binwriter = None;
     debug_setup!("series writer established");
     let mut iqdqs = InsertDeques::new();

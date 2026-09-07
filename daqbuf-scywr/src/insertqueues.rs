@@ -1,6 +1,7 @@
 #![allow(mismatched_lifetime_syntaxes)]
 use crate::iteminsertqueue::Accounting;
 use crate::iteminsertqueue::AccountingRecv;
+use crate::iteminsertqueue::InsertTarget;
 use crate::iteminsertqueue::QueryItem;
 use crate::senderpolling::SenderPolling;
 use async_channel::Receiver;
@@ -20,11 +21,16 @@ autoerr::create_error_v1!(
 );
 
 pub fn make_pair() -> (InsertQueuesTx, InsertQueuesRx) {
-    let (st_rf1_tx, st_rf1_rx) = async_channel::bounded(128);
-    let (st_rf3_tx, st_rf3_rx) = async_channel::bounded(128);
-    let (mt_rf3_tx, mt_rf3_rx) = async_channel::bounded(128);
-    let (lt_rf3_tx, lt_rf3_rx) = async_channel::bounded(128);
-    let (lt_rf3_lat5_tx, lt_rf3_lat5_rx) = async_channel::bounded(128);
+    make_pair_cap(128)
+}
+
+/// Same as [`make_pair`] but with an explicit capacity for each of the queues.
+pub fn make_pair_cap(cap: usize) -> (InsertQueuesTx, InsertQueuesRx) {
+    let (st_rf1_tx, st_rf1_rx) = async_channel::bounded(cap);
+    let (st_rf3_tx, st_rf3_rx) = async_channel::bounded(cap);
+    let (mt_rf3_tx, mt_rf3_rx) = async_channel::bounded(cap);
+    let (lt_rf3_tx, lt_rf3_rx) = async_channel::bounded(cap);
+    let (lt_rf3_lat5_tx, lt_rf3_lat5_rx) = async_channel::bounded(cap);
     let iqtx = InsertQueuesTx {
         st_rf1_tx,
         st_rf3_tx,
@@ -120,6 +126,15 @@ impl InsertQueuesTx {
         Ok(())
     }
 
+    pub fn sender_for_target(&self, target: InsertTarget) -> &Sender<VecDeque<QueryItem>> {
+        match target {
+            InsertTarget::StRf1 => &self.st_rf1_tx,
+            InsertTarget::StRf3 => &self.st_rf3_tx,
+            InsertTarget::MtRf3 => &self.mt_rf3_tx,
+            InsertTarget::LtRf3 => &self.lt_rf3_tx,
+        }
+    }
+
     pub fn close_all(&self) {
         self.st_rf1_tx.close();
         self.st_rf3_tx.close();
@@ -176,6 +191,15 @@ pub struct InsertQueuesRx {
 }
 
 impl InsertQueuesRx {
+    pub fn receiver_for_target(&self, target: InsertTarget) -> &Receiver<VecDeque<QueryItem>> {
+        match target {
+            InsertTarget::StRf1 => &self.st_rf1_rx,
+            InsertTarget::StRf3 => &self.st_rf3_rx,
+            InsertTarget::MtRf3 => &self.mt_rf3_rx,
+            InsertTarget::LtRf3 => &self.lt_rf3_rx,
+        }
+    }
+
     pub fn clone_2(self) -> (Self, Self) {
         async fn feed(
             rx: Receiver<VecDeque<QueryItem>>,
@@ -276,15 +300,15 @@ impl InsertDeques {
 
     // Should be used only for connection and channel status items.
     // It encapsulates the decision to which queue(s) we want to send these kind of items.
-    pub fn emit_accounting_item(&mut self, rt: RetentionTime, item: Accounting) -> Result<(), Error> {
-        self.deque(rt).push_back(QueryItem::Accounting(item));
+    pub fn emit_accounting_item(&mut self, item: Accounting) -> Result<(), Error> {
+        self.deque_for_target(item.target).push_back(QueryItem::Accounting(item));
         Ok(())
     }
 
     // Should be used only for connection and channel status items.
     // It encapsulates the decision to which queue(s) we want to send these kind of items.
     pub fn emit_accounting_recv(&mut self, item: AccountingRecv) -> Result<(), Error> {
-        self.deque(RetentionTime::Short)
+        self.deque_for_target(item.target)
             .push_back(QueryItem::AccountingRecv(item));
         Ok(())
     }
@@ -294,6 +318,15 @@ impl InsertDeques {
             RetentionTime::Short => &mut self.st_rf3_qu,
             RetentionTime::Medium => &mut self.mt_rf3_qu,
             RetentionTime::Long => &mut self.lt_rf3_qu,
+        }
+    }
+
+    pub fn deque_for_target(&mut self, target: InsertTarget) -> &mut VecDeque<QueryItem> {
+        match target {
+            InsertTarget::StRf1 => &mut self.st_rf1_qu,
+            InsertTarget::StRf3 => &mut self.st_rf3_qu,
+            InsertTarget::MtRf3 => &mut self.mt_rf3_qu,
+            InsertTarget::LtRf3 => &mut self.lt_rf3_qu,
         }
     }
 

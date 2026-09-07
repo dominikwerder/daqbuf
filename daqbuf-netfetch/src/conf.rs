@@ -1214,4 +1214,13 @@ impl ScyllaInsertsetConf {
     pub fn lt_rf3(&self) -> &ScyllaIngestConfig {
         &self.lt_rf3
     }
+
+    pub fn to_insert_set_config(&self) -> scywr::config::ScyllaInsertSetConfig {
+        scywr::config::ScyllaInsertSetConfig::new(
+            self.st_rf1.clone(),
+            self.st_rf3.clone(),
+            self.mt_rf3.clone(),
+            self.lt_rf3.clone(),
+        )
+    }
 }

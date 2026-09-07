@@ -4,6 +4,7 @@ pub mod futbatch;
 pub mod futbatchgen;
 pub mod futinsert;
 pub mod insertqueues;
+pub mod insertset;
 pub mod insertworker;
 pub mod iteminsertqueue;
 pub mod ratelimit;

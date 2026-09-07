@@ -43,6 +43,7 @@ use scywr::iteminsertqueue as scywriiq;
 use scywr::senderpolling::SenderPolling;
 use scywriiq::Accounting;
 use scywriiq::AccountingRecv;
+use scywriiq::InsertTarget;
 use scywriiq::ChannelStatusItem;
 use scywriiq::ConnectionStatus;
 use scywriiq::ConnectionStatusItem;
@@ -599,6 +600,7 @@ impl ChannelConf {
             wrst: WriterStatus {
                 writer_status: serieswriter::writer::SeriesWriter::new(
                     SeriesId::new(cssid.id()),
+                    InsertTarget::LtRf3,
                     MspSplitFixGrid::for_channel_status(),
                 )
                 .unwrap(),
@@ -3687,13 +3689,14 @@ impl CaConn {
                             if acc.usage().count() != 0 {
                                 let series = st1.writer.series();
                                 let item = Accounting {
+                                    target: InsertTarget::from_rt(rt, false),
                                     part: (series.id() & 0xff) as i32,
                                     ts: acc.beg,
                                     series,
                                     count: acc.usage().count() as _,
                                     bytes: acc.usage().bytes() as _,
                                 };
-                                self.iqdqs.emit_accounting_item(rt, item)?;
+                                self.iqdqs.emit_accounting_item(item)?;
                             }
                             acc.reset(msp);
                         }
@@ -3704,6 +3707,7 @@ impl CaConn {
                             if acc.usage().count() != 0 {
                                 let series = st1.writer.series();
                                 let item = AccountingRecv {
+                                    target: InsertTarget::StRf3,
                                     part: (series.id() & 0xff) as i32,
                                     ts: acc.beg,
                                     series,
