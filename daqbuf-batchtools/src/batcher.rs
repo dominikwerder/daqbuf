@@ -157,3 +157,51 @@ where
         }
     }
 }
+
+#[cfg(test)]
+mod test {
+    use super::batch;
+    use std::time::Duration;
+    use taskrun::tokio;
+
+    /// The batcher task must end when the input is closed, otherwise the consumers of the
+    /// batch output never see the end of stream either.
+    #[test]
+    fn ends_on_input_closed() {
+        let rt = taskrun::get_runtime();
+        rt.block_on(async {
+            let (tx, rx) = async_channel::bounded::<u32>(8);
+            let (batch_rx, jh) = batch(4, Duration::from_millis(20), 4, rx);
+            tx.send(1).await.unwrap();
+            // A clone stays alive, so only the explicit close can end the batcher.
+            let tx2 = tx.clone();
+            tx.close();
+            let mut seen = 0;
+            while let Ok(b) = batch_rx.recv().await {
+                seen += b.len();
+            }
+            assert_eq!(seen, 1);
+            tokio::time::timeout(Duration::from_millis(2000), jh)
+                .await
+                .expect("batcher did not end")
+                .unwrap();
+            drop(tx2);
+        });
+    }
+
+    /// Same, but the input closes because all senders got dropped.
+    #[test]
+    fn ends_on_senders_dropped() {
+        let rt = taskrun::get_runtime();
+        rt.block_on(async {
+            let (tx, rx) = async_channel::bounded::<u32>(8);
+            let (batch_rx, jh) = batch(4, Duration::from_millis(20), 4, rx);
+            drop(tx);
+            while let Ok(_) = batch_rx.recv().await {}
+            tokio::time::timeout(Duration::from_millis(2000), jh)
+                .await
+                .expect("batcher did not end")
+                .unwrap();
+        });
+    }
+}

@@ -427,18 +427,42 @@ impl Daemon {
     }
 
     async fn shutdown(self) -> Result<(), Error> {
+        // Bind every field by name.  A `..` rest-pattern would keep the unnamed fields alive
+        // until the end of this function body, and some of them are channel endpoints which the
+        // workers we join below wait on.
         let Self {
+            ingest_opts,
             connset,
+            cmder,
+            cmd_tx,
+            cmd_rx,
+            signals,
+            signals_done: _,
+            cmd_done: _,
+            insert_out_done: _,
             insert_set,
-            metrics_shutdown_tx,
-            metrics_jh,
+            insert_out_rx,
+            insert_input,
+            ch_info_query_tx,
             pg_lookup_jhs,
             pg_batcher_jh,
             finder_jh,
-            signals,
-            ..
+            metrics_shutdown_tx,
+            metrics_shutdown_rx,
+            metrics_jh,
+            channels_config: _,
+            channel_names: _,
+            metrics: _,
+            state: _,
         } = self;
+        drop(ingest_opts);
+        // Our own command endpoints, nothing else waits on them.
+        drop(cmder);
+        drop(cmd_tx);
+        drop(cmd_rx);
         debug!("shutdown  insert set");
+        drop(insert_input);
+        drop(insert_out_rx);
         if let Err(e) = insert_set.shutdown().await {
             error!("shutdown  insert set  {e}");
         }
@@ -453,11 +477,18 @@ impl Daemon {
                 Err(e) => error!("shutdown  metrics service join error  {e}"),
             }
         }
+        drop(metrics_shutdown_tx);
+        drop(metrics_shutdown_rx);
         // Drops the finder handle and the channel-info sender which the connset holds.
         drop(connset);
         debug!("shutdown  ioc finder");
         Self::join_res("ioc finder", finder_jh).await;
+        // The batcher ends when the query channel is closed, and the lookup workers end when the
+        // batcher drops its output.  Close explicitly instead of relying on all clones of the
+        // sender being dropped by now.
         debug!("shutdown  postgres workers");
+        ch_info_query_tx.close();
+        drop(ch_info_query_tx);
         Self::join_unit("pg batcher", pg_batcher_jh).await;
         for jh in pg_lookup_jhs {
             Self::join_res("pg lookup worker", jh).await;
