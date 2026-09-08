@@ -43,10 +43,10 @@ use scywr::iteminsertqueue as scywriiq;
 use scywr::senderpolling::SenderPolling;
 use scywriiq::Accounting;
 use scywriiq::AccountingRecv;
-use scywriiq::InsertTarget;
 use scywriiq::ChannelStatusItem;
 use scywriiq::ConnectionStatus;
 use scywriiq::ConnectionStatusItem;
+use scywriiq::InsertTarget;
 use scywriiq::QueryItem;
 use scywriiq::ShutdownReason;
 use serde::Serialize;
@@ -604,6 +604,12 @@ impl ChannelConf {
                     MspSplitFixGrid::for_channel_status(),
                 )
                 .unwrap(),
+                writer_status_pingpong: serieswriter::writer::SeriesWriter::new(
+                    SeriesId::new(cssid.id()),
+                    InsertTarget::MtRf3,
+                    MspSplitFixGrid::for_channel_status(),
+                )
+                .unwrap(),
             },
         }
     }
@@ -769,6 +775,7 @@ impl ChannelState {
 #[derive(Debug)]
 struct WriterStatus {
     writer_status: ChannelStatusSeriesWriter,
+    writer_status_pingpong: ChannelStatusSeriesWriter,
 }
 
 impl WriterStatus {
@@ -781,6 +788,25 @@ impl WriterStatus {
         let tsev = TsNano::from_system_time(SystemTime::now());
         let (ts, val) = item.to_ts_val();
         self.writer_status.write(
+            serieswriter::fixgridwriter::ChannelStatusWriteValue::new(ts, val),
+            &mut (),
+            Instant::now(),
+            tsev,
+            deque,
+        )?;
+        mett.emit_channel_status_item().inc();
+        Ok(())
+    }
+
+    fn emit_channel_status_item_pingpong(
+        &mut self,
+        item: ChannelStatusItem,
+        deque: &mut VecDeque<QueryItem>,
+        mett: &mut stats::mett::CaConnMetrics,
+    ) -> Result<(), Error> {
+        let tsev = TsNano::from_system_time(SystemTime::now());
+        let (ts, val) = item.to_ts_val();
+        self.writer_status_pingpong.write(
             serieswriter::fixgridwriter::ChannelStatusWriteValue::new(ts, val),
             &mut (),
             Instant::now(),
@@ -1546,6 +1572,10 @@ impl CaConn {
 
     fn channel_status_qu(iqdqs: &mut InsertDeques) -> &mut VecDeque<QueryItem> {
         &mut iqdqs.lt_rf3_qu
+    }
+
+    fn channel_status_qu_pingpong(iqdqs: &mut InsertDeques) -> &mut VecDeque<QueryItem> {
+        &mut iqdqs.mt_rf3_qu
     }
 
     pub fn conn_command_tx(&self) -> Sender<ConnCommand> {
@@ -2953,9 +2983,9 @@ impl CaConn {
                                 cssid: st2.channel.cssid.clone(),
                                 status: ChannelStatus::PongTimeout,
                             };
-                            ch_conf.wrst.emit_channel_status_item(
+                            ch_conf.wrst.emit_channel_status_item_pingpong(
                                 item,
-                                Self::channel_status_qu(&mut self.iqdqs),
+                                Self::channel_status_qu_pingpong(&mut self.iqdqs),
                                 &mut self.mett,
                             )?;
                         }
@@ -2982,9 +3012,9 @@ impl CaConn {
                                     cssid: st2.channel.cssid.clone(),
                                     status: ChannelStatus::Ping,
                                 };
-                                ch_conf.wrst.emit_channel_status_item(
+                                ch_conf.wrst.emit_channel_status_item_pingpong(
                                     item,
-                                    Self::channel_status_qu(&mut self.iqdqs),
+                                    Self::channel_status_qu_pingpong(&mut self.iqdqs),
                                     &mut self.mett,
                                 )?;
                             }
@@ -3745,11 +3775,15 @@ impl CaConn {
                         .saturating_duration_since(self.ts_channel_status_pong_last);
                     let qu = if dt >= CHANNEL_STATUS_PONG_QUIET {
                         self.ts_channel_status_pong_last = self.poll_tsnow;
-                        Self::channel_status_qu(&mut self.iqdqs)
+                        Self::channel_status_qu_pingpong(&mut self.iqdqs)
                     } else {
-                        Self::channel_status_qu(&mut self.iqdqs)
+                        Self::channel_status_qu_pingpong(&mut self.iqdqs)
                     };
-                    if ch.wrst.emit_channel_status_item(item, qu, &mut self.mett).is_err() {
+                    if ch
+                        .wrst
+                        .emit_channel_status_item_pingpong(item, qu, &mut self.mett)
+                        .is_err()
+                    {
                         self.mett.logic_error().inc();
                     }
                 }
