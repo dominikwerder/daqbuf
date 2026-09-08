@@ -262,3 +262,93 @@ mod Metrics {
         iqtx_len_lt_rf3_lat5,
     }
 }
+
+// ----------------------------------------------------------------------------
+// Metrics for the v2 ingest code path (netfetch::ca::conn2 and
+// netfetch::ca::connset2).
+// These are declared separately from the v1 (ca::conn, ca::connset) metrics on
+// purpose: the two code paths have different internal structure and we do not
+// want to change the metrics which the production v1 path emits.
+// ----------------------------------------------------------------------------
+
+mod Metrics {
+    type StructName = CaConn2Metrics;
+    enum counters {
+        metrics_emit,
+        poll_fn_begin,
+        poll_reloop,
+        poll_pending,
+        poll_no_progress_no_pending,
+        ticker_fired,
+        status_info_emit,
+        status_info_out_queue_full,
+        health_check_fail,
+        cmd_recv,
+        cmd_channel_add,
+        cmd_channel_remove,
+        cmd_disconnect_on_idle,
+        cmd_dyn_v03,
+        cmd_channels_for_addr_v1,
+        cmd_channels_for_addr_v2,
+        cmd_channels_by_regex_v1,
+        cmd_send_err,
+        cmd_res_send_err,
+        tcp_connected,
+        connect_error,
+        connected_error,
+        connected_end_of_stream,
+        item_channel_info_query,
+        item_test_value,
+        item_local_log,
+        item_channel_event_value,
+    }
+    enum values {
+        out_buf_len,
+    }
+    enum histolog2s {
+        poll_all_dt,
+    }
+    mod Compose {
+        type Input = CaConnConnectedMetrics;
+        type Name = connected;
+    }
+}
+
+mod Metrics {
+    type StructName = ConnSet2Metrics;
+    enum counters {
+        metrics_emit,
+        metrics_request,
+        conn_item_recv,
+        conn_metrics_recv,
+        conn_status_info,
+        conn_channel_info_query,
+        conn_channel_info_query_send_err,
+        conn_test_value,
+        conn_local_log,
+        conn_channel_event_value,
+        conn_recv_error,
+        conn_done,
+        conn_done_not_in_registry,
+        conn_error_not_in_registry,
+        ca_conn_create,
+        cmd_channel_add,
+        cmd_channel_add_exists,
+        cmd_channel_remove,
+        cmd_shutdown,
+        cmd_connection_list_v1,
+        cmd_channels_for_addr_v1,
+        cmd_channels_for_addr_v2,
+        cmd_dyn_v1,
+        channel_idle_disconnect_trigger,
+        channel_idle_disconnect_err,
+    }
+    enum values {
+        ca_conn_count,
+        channel_count,
+    }
+    mod Compose {
+        type Input = CaConn2Metrics;
+        type Name = ca_conn;
+    }
+}

@@ -187,6 +187,11 @@ pub trait Conn2Ctrls: Send + Sync {
         addr_regex: String,
         cmd: serde_json::Value,
     ) -> Pin<Box<dyn Future<Output = Result<serde_json::Value, Box<dyn std::error::Error>>> + Send>>;
+
+    /// Metrics of the v2 ingest code path, ready to be handed to prometheus.
+    fn get_metrics(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = Result<MetricsPrometheusShort, Box<dyn std::error::Error>>> + Send>>;
 }
 
 pub trait CaIngestCtrls: Send + Sync {
@@ -309,11 +314,22 @@ async fn config_reload(ca_ingest_ctrls: Arc<dyn CaIngestCtrls>) -> Result<axum::
 }
 
 async fn metrics2(ca_ingest_ctrls: Arc<dyn CaIngestCtrls>) -> Result<String, Response> {
-    let x = ca_ingest_ctrls.get_metrics().await.map_err(|_| {
+    let mut x = ca_ingest_ctrls.get_metrics().await.map_err(|_| {
         Error::with_public_msg_no_trace("metrics2 fail")
             .to_public_err_msg()
             .into_response()
     })?;
+    // The v2 code path keeps its metrics in the ConnSet. If this daemon runs
+    // the v2 path, add them to the same scrape. The v1 path has no conn2 ctrls
+    // and is therefore not affected.
+    if let Some(c2) = ca_ingest_ctrls.conn2_ctrls().await {
+        match c2.get_metrics().await {
+            Ok(m) => x.append(m),
+            Err(e) => {
+                error!("can not get conn2 metrics  {e}");
+            }
+        }
+    }
     let ret = x.prometheus();
     Ok(ret)
 }
@@ -518,11 +534,31 @@ fn make_routes_daqingest_private(
         )
 }
 
+async fn metrics_conn2(ca_ingest_ctrls: Arc<dyn CaIngestCtrls>) -> Result<String, Response> {
+    if let Some(c2) = ca_ingest_ctrls.conn2_ctrls().await {
+        let x = c2.get_metrics().await.map_err(|e| {
+            Error::with_public_msg_no_trace(format!("conn2 metrics fail {e}"))
+                .to_public_err_msg()
+                .into_response()
+        })?;
+        Ok(x.prometheus())
+    } else {
+        Ok(String::new())
+    }
+}
+
 fn make_routes_conn2(ca_ingest_ctrls: Arc<dyn CaIngestCtrls>) -> axum::Router {
     use axum::Router;
     use axum::extract;
     use axum::routing::{get, post};
     Router::new()
+        .route(
+            "/metrics",
+            get({
+                let ca_ingest_ctrls = ca_ingest_ctrls.clone();
+                || metrics_conn2(ca_ingest_ctrls)
+            }),
+        )
         .route(
             "/connections",
             get({

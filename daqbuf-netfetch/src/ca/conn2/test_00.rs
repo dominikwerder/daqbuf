@@ -72,7 +72,12 @@ impl netfetch::metrics::CaIngestCtrls for CaIngestCtrls {
                 + Send,
         >,
     > {
-        todo!()
+        // The v2 code path has no separate daemon-level metrics yet, the
+        // ConnSet is the root of the metrics tree.
+        use netfetch::metrics::Conn2Ctrls;
+        let ctrls = self.conn2_ctrls.clone();
+        let fut = async move { ctrls.get_metrics().await };
+        Box::pin(fut)
     }
 
     fn channel_add(

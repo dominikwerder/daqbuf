@@ -555,6 +555,7 @@ pub(super) fn make_metrics(ts: proc_macro::TokenStream) -> proc_macro::TokenStre
     let ts3 = ts.clone();
     let rel_path = syn::parse_macro_input!(ts3 as syn::LitStr);
     let full_path = std::path::Path::new(&manifest_dir).join(rel_path.value());
+    let full_path_2 = full_path.clone();
     log("---------------------------------------------------------");
     log(&format!("read from {}", full_path.display()));
     let buf = std::fs::read(full_path).unwrap();
@@ -573,7 +574,12 @@ pub(super) fn make_metrics(ts: proc_macro::TokenStream) -> proc_macro::TokenStre
     let ts_out = decls_file.to_code().unwrap();
     let fmtd = prettyplease::unparse(&syn::parse2::<syn::File>(ts_out.clone()).unwrap());
     let s2 = fmtd;
+    // Make rustc/cargo aware that the generated code depends on the declaration
+    // file, otherwise a changed declaration file does not trigger a rebuild and
+    // the crate keeps the stale metrics types.
+    let decl_path_lit = syn::LitStr::new(&full_path_2.to_string_lossy(), Span::call_site());
     quote::quote! {
+        const _METTRICS_DECL_FILE_DEP: &str = include_str!(#decl_path_lit);
         pub fn tmp_metrics_s1() -> String {
             let ret = #s1;
             ret.into()

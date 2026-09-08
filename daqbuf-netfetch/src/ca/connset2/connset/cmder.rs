@@ -122,6 +122,19 @@ impl ConnSetCmder {
         Ok(ret)
     }
 
+    /// Get the metrics of the ConnSet and of all CaConn below it, already
+    /// rendered for prometheus.
+    pub async fn metrics_get_v1(&self) -> Result<crate::metrics::types::MetricsPrometheusShort, Error> {
+        let mut dtx = self.tx.clone();
+        let (tx, mut rx) = asynchan::bounded(2, "MetricsGetV1");
+        let cmd = ConnSetCmd {
+            kind: ConnSetCmdKind::MetricsGetV1(tx),
+        };
+        let _ = dtx.send(cmd).await?;
+        let ret = rx.recv().await?;
+        Ok(ret)
+    }
+
     pub async fn cmd_dyn_v1(&self, cmd: String) -> Result<serde_json::Value, Error> {
         let mut dtx = self.tx.clone();
         let (tx, mut rx) = asynchan::bounded(2, "CmdDynV1");

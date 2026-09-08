@@ -416,6 +416,7 @@ pub enum CaConnItem {
     ChannelEventValue(ChannelEventValue),
     ChannelWriteItems(VecDeque<QueryItem>),
     ChannelTrace(ChannelTraceL2Item),
+    Metrics(stats::mett::CaConn2Metrics),
 }
 
 #[derive(Debug)]
@@ -427,7 +428,7 @@ pub struct CaConn {
     write_batch: VecDeque<QueryItem>,
     ticker: JitterTicker,
     write_flush_ticker: JitterTicker,
-    mett: stats::mett::CaConnConnectedMetrics,
+    mett: stats::mett::CaConn2Metrics,
     cmd_tx: asynchan::Sender<CaConnCmd>,
     cmd_rx: asynchan::Receiver<CaConnCmd>,
     ca_cmd_tx: asynchan::Sender<activeca::CaCommand>,
@@ -455,7 +456,7 @@ impl CaConn {
             write_batch: VecDeque::new(),
             ticker: JitterTicker::new(Duration::from_millis(2000)),
             write_flush_ticker: JitterTicker::new(Duration::from_millis(200)),
-            mett: stats::mett::CaConnConnectedMetrics::new(),
+            mett: stats::mett::CaConn2Metrics::new(),
             cmd_tx,
             cmd_rx,
             ca_cmd_tx,
@@ -500,7 +501,10 @@ impl CaConn {
 
     fn on_ticker_fired(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<()>> {
         use Poll::*;
-        self.health_check();
+        self.mett.ticker_fired().inc();
+        if !self.health_check() {
+            self.mett.health_check_fail().inc();
+        }
         if true {
             match &mut self.state {
                 State::Connecting(st) => {
@@ -508,23 +512,35 @@ impl CaConn {
                 }
                 State::Connected(st) => {
                     let m = st.mett_take();
-                    self.mett.ingest(m);
+                    self.mett.connected().ingest(m);
                 }
                 State::Done => {
                     // TODO
                 }
             }
         }
+        self.as_mut().metrics_emit();
         if self.out_buf.len() < OUT_QUEUE_LEN_MAX {
             trace!("TODO  poll_own_ticker  emit status info");
             let v = self.as_mut().status_info();
             let item = CaConnItem::StatusInfo(v);
             self.out_buf.push_back_force(item);
+            self.mett.status_info_emit().inc();
             Ready(Some(()))
         } else {
-            // TODO count in stats
+            self.mett.status_info_out_queue_full().inc();
             Ready(None)
         }
+    }
+
+    /// Hand the metrics which accumulated since the last call over to the
+    /// consumer of our item stream (the ConnSet).
+    fn metrics_emit(mut self: Pin<&mut Self>) {
+        let n = self.out_buf.len() as u32;
+        self.mett.out_buf_len().set(n);
+        self.mett.metrics_emit().inc();
+        let m = self.mett.take_and_reset();
+        self.out_buf.push_back_force(CaConnItem::Metrics(m));
     }
 
     fn poll_own_ticker(mut self: Pin<&mut Self>, cx: &mut Context) -> Result<HaveProgressPending, Error> {
@@ -789,6 +805,8 @@ impl Stream for CaConn {
             atomic::Ordering::Release,
         );
         let mut durs = DurationMeasureSteps::new();
+        let ts_poll_begin = Instant::now();
+        self.mett.poll_fn_begin().inc();
         let ret = loop {
             let self2 = self.as_mut().get_mut();
             trace4!("{selfname}  loop  state {}", self2.state.display_short());
@@ -823,8 +841,10 @@ impl Stream for CaConn {
                 match self2.cmd_rx.poll_next_unpin(cx) {
                     Ready(Some(cmd)) => {
                         hpp.mark_progress();
+                        self2.mett.cmd_recv().inc();
                         match cmd.kind {
                             CaConnCmdKind::ChannelAdd(conf, done_tx) => {
+                                self2.mett.cmd_channel_add().inc();
                                 trace!("{selfname}:Received:ChannelAdd  {conf:?}");
                                 let cmd = activeca::CaCommand::channel_add(conf, done_tx);
                                 let mut tx = self2.ca_cmd_tx.clone();
@@ -836,6 +856,7 @@ impl Stream for CaConn {
                                 self2.ca_cmd_tx_fut = Some(fut.box2());
                             }
                             CaConnCmdKind::ChannelRemove(conf, done_tx) => {
+                                self2.mett.cmd_channel_remove().inc();
                                 trace!("{selfname}:Received:ChannelRemove  {conf:?}");
                                 let cmd = activeca::CaCommand::channel_remove(conf.name(), done_tx);
                                 let mut tx = self2.ca_cmd_tx.clone();
@@ -847,6 +868,7 @@ impl Stream for CaConn {
                                 self2.ca_cmd_tx_fut = Some(fut.box2());
                             }
                             CaConnCmdKind::DisconnectOnIdle(done_tx) => {
+                                self2.mett.cmd_disconnect_on_idle().inc();
                                 trace!("{selfname}:Received:DisconnectOnIdle");
                                 let cmd = activeca::CaCommand::disconnect_on_idle(done_tx);
                                 let mut tx = self2.ca_cmd_tx.clone();
@@ -858,11 +880,13 @@ impl Stream for CaConn {
                                 self2.ca_cmd_tx_fut = Some(fut.box2());
                             }
                             CaConnCmdKind::DynCmdV03(cmd, tx) => {
+                                self2.mett.cmd_dyn_v03().inc();
                                 trace!("{selfname}:Received:DynCmd  {cmd:?}");
                                 let fut = self2.handle_dyn_cmd_v03(cmd, tx);
                                 self2.ca_cmd_tx_fut = Some(fut.box2());
                             }
                             CaConnCmdKind::ChannelsForAddrInfoV1(mut tx) => {
+                                self2.mett.cmd_channels_for_addr_v1().inc();
                                 trace!("{selfname}:Received:ChannelsForAddrInfoV1");
                                 let ret = self2.channel_info_v1();
                                 let fut = async move {
@@ -872,6 +896,7 @@ impl Stream for CaConn {
                                 self2.ca_cmd_tx_fut = Some(fut.box2());
                             }
                             CaConnCmdKind::ChannelsForAddrInfoV2(name, mut tx) => {
+                                self2.mett.cmd_channels_for_addr_v2().inc();
                                 trace!("{selfname}:Received:ChannelsForAddrInfoV2");
                                 let ret = self2.channel_info_v2(name);
                                 let fut = async move {
@@ -881,6 +906,7 @@ impl Stream for CaConn {
                                 self2.ca_cmd_tx_fut = Some(fut.box2());
                             }
                             CaConnCmdKind::ChannelsByRegexV1(kind, reg, mut tx) => {
+                                self2.mett.cmd_channels_by_regex_v1().inc();
                                 trace!("{selfname}:Received:ChannelsByRegexV1");
                                 let ret = self2.channels_by_regex_v1(kind, reg);
                                 let fut = async move {
@@ -913,6 +939,7 @@ impl Stream for CaConn {
                     State::Connecting(st1) => match st1.poll_unpin(cx) {
                         Ready(Ok(x)) => {
                             trace!("{selfname}:Connecting:Ready");
+                            self2.mett.tcp_connected().inc();
                             // ok, we replace the full state
                             let stn = Connected::new(self2.backend.clone(), x, self.remote_addr, tsloop);
                             self.state = State::Connected(stn);
@@ -920,6 +947,7 @@ impl Stream for CaConn {
                         }
                         Ready(Err(e)) => {
                             trace!("{selfname}:Connecting:Err:{e}");
+                            self.mett.connect_error().inc();
                             self.state = State::Done;
                             hpp.mark_progress();
                             break Ready(Some(Err(e)));
@@ -961,19 +989,23 @@ impl Stream for CaConn {
                                         for item in items {
                                             match item.inner {
                                                 connected::ItemInner::ChannelInfoQuery(item) => {
+                                                    self2.mett.item_channel_info_query().inc();
                                                     let item = CaConnItem::ChannelInfoQuery(item);
                                                     self2.out_buf.push_back_force(item);
                                                 }
                                                 connected::ItemInner::TestValue(x) => {
+                                                    self2.mett.item_test_value().inc();
                                                     info!("{selfname}  sees  connected::ItemInner::TestValue  {x:?}");
                                                     let item = CaConnItem::TestValue(x);
                                                     self2.out_buf.push_back_force(item);
                                                 }
                                                 connected::ItemInner::LocalLog(x) => {
+                                                    self2.mett.item_local_log().inc();
                                                     let item = CaConnItem::LocalLog(x);
                                                     self2.out_buf.push_back_force(item);
                                                 }
                                                 connected::ItemInner::ChannelEventValue(x) => {
+                                                    self2.mett.item_channel_event_value().inc();
                                                     let item = CaConnItem::ChannelEventValue(x);
                                                     self2.out_buf.push_back_force(item);
                                                 }
@@ -990,6 +1022,7 @@ impl Stream for CaConn {
                                     }
                                     Err(e) => {
                                         error!("{selfname}:Connected:Err  TODO handle error more elegant?  {e}");
+                                        self.mett.connected_error().inc();
                                         self.dump_state_poll();
                                         self.state = State::Done;
                                         break Ready(Some(Err(e.into())));
@@ -998,6 +1031,7 @@ impl Stream for CaConn {
                             }
                             Ready(None) => {
                                 error!("{selfname}:Connected:Done  TODO handle shutdown");
+                                self2.mett.connected_end_of_stream().inc();
                                 self2.state = State::Done;
                                 hpp.mark_progress();
                             }
@@ -1142,17 +1176,21 @@ impl Stream for CaConn {
 
             break if hpp.have_progress() {
                 trace4!("HPP:Progress");
+                self.mett.poll_reloop().inc();
                 continue;
             } else if hpp.have_pending() {
                 trace_pending!("HPP");
+                self.mett.poll_pending().inc();
                 Pending
             } else {
                 trace3!("HPP:Done");
+                self.mett.poll_no_progress_no_pending().inc();
                 Ready(None)
             };
         };
 
         durs.step();
+        self.mett.poll_all_dt().push_dur_10us(ts_poll_begin.elapsed());
         // if self.trace_channel_poll {
         //     self.stats.poll_all_dt().ingest_dur_dms(dt);
         //     if dt >= Duration::from_millis(10) {

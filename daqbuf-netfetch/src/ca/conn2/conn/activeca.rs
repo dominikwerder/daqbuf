@@ -327,7 +327,9 @@ impl ActiveCa {
     }
 
     pub fn mett_take(&mut self) -> CaConnConnectedMetrics {
-        self.chanheap.mett_take()
+        let mut ret = std::mem::replace(&mut self.mett, CaConnConnectedMetrics::new());
+        ret.ingest(self.chanheap.mett_take());
+        ret
     }
 
     pub(super) fn check_flow_state(&self) {

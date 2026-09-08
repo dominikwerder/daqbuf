@@ -319,8 +319,19 @@ impl ChannelHandler {
         }
     }
 
+    /// Harvest the metrics of this handler and of the current state.
     pub fn mett_take(&mut self) -> ChannelHandlerMetrics {
-        std::mem::replace(&mut self.mett, ChannelHandlerMetrics::new())
+        let mut ret = std::mem::replace(&mut self.mett, ChannelHandlerMetrics::new());
+        match &mut self.state {
+            State::ReadEnum(_, st) => {
+                ret.ingest(st.mett_take());
+            }
+            State::Running(_, st) => {
+                ret.ingest(st.mett_take());
+            }
+            _ => {}
+        }
+        ret
     }
 
     pub fn channel_config(&self) -> &ChannelConfig {

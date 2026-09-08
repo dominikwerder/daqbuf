@@ -169,23 +169,20 @@ impl Connected {
         }
     }
 
+    /// Harvest the metrics of this state, of the CA protocol layer and of the
+    /// currently active sub-state.
     pub fn mett_take(&mut self) -> CaConnConnectedMetrics {
-        // std::mem::replace(&mut self.mett, CaConnConnectedMetrics::new())
+        let mut ret = std::mem::replace(&mut self.mett, CaConnConnectedMetrics::new());
+        ret.proto().ingest(self.protowrap.mett_take());
         match &mut self.state {
-            State::Init(..) => {
-                // TODO
-                CaConnConnectedMetrics::new()
+            State::Init(..) => {}
+            State::Handshake(..) => {}
+            State::ActiveCa(st) => {
+                ret.ingest(st.mett_take());
             }
-            State::Handshake(..) => {
-                // TODO
-                CaConnConnectedMetrics::new()
-            }
-            State::ActiveCa(st) => st.mett_take(),
-            State::Done => {
-                // TODO
-                CaConnConnectedMetrics::new()
-            }
+            State::Done => {}
         }
+        ret
     }
 
     pub fn addr(&self) -> SocketAddrV4 {

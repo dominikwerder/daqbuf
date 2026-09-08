@@ -5,6 +5,7 @@ use crate::ca::connset2::connset::ScatterGatherV1;
 use crate::metrics::ChannelsForAddrInfoV1;
 use crate::metrics::ChannelsForAddrInfoV2;
 use crate::metrics::ConnectionListV1;
+use crate::metrics::types::MetricsPrometheusShort;
 use regex::Regex;
 use std::net::SocketAddrV4;
 use std::pin::Pin;
@@ -74,6 +75,15 @@ impl crate::metrics::Conn2Ctrls for ConnSetConn2Ctrls {
         let cmder = self.cmder.clone();
         let fut = async move {
             let ret = cmder.channel_remove_v1(name).await?;
+            Ok(ret)
+        };
+        Box::pin(fut)
+    }
+
+    fn get_metrics(&self) -> FutBox<MetricsPrometheusShort> {
+        let cmder = self.cmder.clone();
+        let fut = async move {
+            let ret = cmder.metrics_get_v1().await?;
             Ok(ret)
         };
         Box::pin(fut)

@@ -219,6 +219,15 @@ impl Fetchmpx {
         }
     }
 
+    /// Harvest the metrics of this multiplexer and of the polling and
+    /// monitoring sub-states.
+    pub fn mett_take(&mut self) -> ChannelHandlerMetrics {
+        let mut ret = std::mem::replace(&mut self.mett, ChannelHandlerMetrics::new());
+        ret.ingest(self.polling.mett_take());
+        ret.ingest(self.monitoring.mett_take());
+        ret
+    }
+
     fn trigger_closing(&mut self, reason: channelhandler::ClosingReason) {
         let selfname = "trigger_closing";
         todo_shutdown!("{selfname}  {}  reason {:?}", self.sid, reason);

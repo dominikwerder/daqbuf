@@ -161,6 +161,7 @@ enum ConnSetCmdKind {
     ),
     CmdDynV1(String, asynchan::Sender<serde_json::Value>),
     ScatterGatherV1(ScatterGatherV1, asynchan::Sender<ScatterGatherV1Response>),
+    MetricsGetV1(asynchan::Sender<crate::metrics::types::MetricsPrometheusShort>),
 }
 
 #[derive(Debug)]
@@ -261,6 +262,10 @@ pub struct ConnSet {
     chtrace: channeltrace::ChannelTraceStash,
     write_staging: VecDeque<QueryItem>,
     write_sender: Pin<Box<SenderPolling<VecDeque<QueryItem>>>>,
+    /// Accumulates the metrics of this ConnSet and of all CaConn below it.
+    /// This is the root of the v2 metrics tree, so it is never reset: the
+    /// counters are handed out to prometheus as cumulative counters.
+    mett: stats::mett::ConnSet2Metrics,
 }
 
 impl ConnSet {
@@ -293,6 +298,7 @@ impl ConnSet {
             chtrace: channeltrace::ChannelTraceStash::new(),
             write_staging: VecDeque::new(),
             write_sender: Box::pin(SenderPolling::new(insert_input)),
+            mett: stats::mett::ConnSet2Metrics::new(),
         };
         Ok(ret)
     }
@@ -371,6 +377,7 @@ impl ConnSet {
                                                 break Ready(Ok(Some((fut.box2(),))));
                                             }
                                         } else {
+                                            self2.mett.ca_conn_create().inc();
                                             let conn = CaConn::new(
                                                 self2.backend.clone(),
                                                 addr,
@@ -564,8 +571,14 @@ impl ConnSet {
                                 Ok(items) => {
                                     //
                                     for item in items {
+                                        self2.mett.conn_item_recv().inc();
                                         match item {
+                                            conn2::conn::CaConnItem::Metrics(m) => {
+                                                self2.mett.conn_metrics_recv().inc();
+                                                self2.mett.ca_conn().ingest(m);
+                                            }
                                             conn2::conn::CaConnItem::StatusInfo(e1) => {
+                                                self2.mett.conn_status_info().inc();
                                                 match Self::handle_conn_comm_status_info(e1, &self2.cmder, cx) {
                                                     Ok(x) => match x {
                                                         Some(fut) => {
@@ -579,12 +592,12 @@ impl ConnSet {
                                                 }
                                             }
                                             conn2::conn::CaConnItem::ChannelInfoQuery(item) => {
+                                                self2.mett.conn_channel_info_query().inc();
                                                 let mut tx = self2.ch_info_tx.clone();
                                                 let fut = async move {
                                                     match tx.send(item).await {
                                                         Ok(()) => {}
                                                         Err(e) => {
-                                                            // TODO metrics
                                                             error!("ChannelInfoQuery channel send error");
                                                         }
                                                     }
@@ -593,12 +606,15 @@ impl ConnSet {
                                                 self2.cmd_fut_comm = Some(fut.box2());
                                             }
                                             conn2::conn::CaConnItem::TestValue(x) => {
+                                                self2.mett.conn_test_value().inc();
                                                 self2.out_buf.push_back_force(ConnSetItem::TestValue(x));
                                             }
                                             conn2::conn::CaConnItem::LocalLog(x) => {
+                                                self2.mett.conn_local_log().inc();
                                                 self2.llog.push_entry(x);
                                             }
                                             conn2::conn::CaConnItem::ChannelEventValue(x) => {
+                                                self2.mett.conn_channel_event_value().inc();
                                                 self2.out_buf.push_back_force(ConnSetItem::ChannelEventValue(x));
                                             }
                                             conn2::conn::CaConnItem::ChannelWriteItems(x) => {
@@ -612,6 +628,7 @@ impl ConnSet {
                                 }
                                 Err(e) => {
                                     error!("{selfname}  recv error  {e}");
+                                    self2.mett.conn_recv_error().inc();
                                     use conn2::conn::Error as E2;
                                     match e {
                                         E2::IO(e) => {
@@ -629,6 +646,7 @@ impl ConnSet {
                             hpp.mark_progress();
                             let addr = *addr;
                             debug!("{selfname}  CaConn done {addr}");
+                            self2.mett.conn_done().inc();
                             addr_found_done.push(addr);
                             let fut = async move {
                                 warn!("{selfname}  TODO  CaConn {addr} done, emit status event.");
@@ -650,6 +668,7 @@ impl ConnSet {
                         // TODO await the jh
                         let jh = conn.jh;
                     } else {
+                        self.mett.conn_done_not_in_registry().inc();
                         error!("finished connection not in registry  {addr}");
                     }
                 }
@@ -659,6 +678,7 @@ impl ConnSet {
                         // TODO await the jh
                         let jh = conn.jh;
                     } else {
+                        self.mett.conn_error_not_in_registry().inc();
                         error!("connection with error not in registry  {addr}");
                     }
                 }
@@ -802,7 +822,9 @@ impl ConnSet {
     // TODO return error via return type, let caller handle done_tx
     fn handle_channel_add(&mut self, conf: ChannelConfig, mut done_tx: asynchan::Sender<Result<(), Error>>) {
         let selfname = "handle_channel_add";
+        self.mett.cmd_channel_add().inc();
         if self.channels.contains_key(conf.name()) {
+            self.mett.cmd_channel_add_exists().inc();
             let e = Error::Command(format!("channel already added"));
             let _ = done_tx.try_send(Err(e));
         } else {
@@ -831,6 +853,7 @@ impl ConnSet {
                 self.handle_channel_add(cmd.ch_cfg, cmd.done_tx);
             }
             ConnSetCmdKind::ChannelRemove(cmd) => {
+                self.mett.cmd_channel_remove().inc();
                 // regular channel remove initiated by ConnSet.
                 let txs: Vec<_> = self
                     .channels
@@ -854,10 +877,12 @@ impl ConnSet {
                 error!("TODO connection tear down logic");
             }
             ConnSetCmdKind::Shutdown => {
+                self.mett.cmd_shutdown().inc();
                 self.as_mut().trigger_shutdown();
                 info!("{lf}shutdown triggered{lf}", lf = "\n\n\n");
             }
             ConnSetCmdKind::ConnectionListGetV1(mut tx) => {
+                self.mett.cmd_connection_list_v1().inc();
                 let mut ret = crate::metrics::ConnectionListV1 {
                     ingest_name: ingest_linux::net::local_hostname(),
                     list: Vec::new(),
@@ -920,6 +945,7 @@ impl ConnSet {
                 self.cmder_cmd_fut = Some(fut.box2());
             }
             ConnSetCmdKind::ChannelsForAddrInfoV1(addr, mut tx) => {
+                self.mett.cmd_channels_for_addr_v1().inc();
                 let cmdtxs: Vec<_> = self
                     .ca_conns
                     .iter()
@@ -971,6 +997,7 @@ impl ConnSet {
                 self.cmder_cmd_fut = Some(fut.box2());
             }
             ConnSetCmdKind::ChannelsForAddrInfoV2(addr, name, mut tx) => {
+                self.mett.cmd_channels_for_addr_v2().inc();
                 let cmdtxs: Vec<_> = self
                     .ca_conns
                     .iter()
@@ -994,12 +1021,34 @@ impl ConnSet {
                 self.cmder_cmd_fut = Some(fut.box2());
             }
             ConnSetCmdKind::CmdDynV1(cmd, tx) => {
+                self.mett.cmd_dyn_v1().inc();
                 // TODO maybe better return the future from here and let caller place it.
                 if let Some(fut) = self.as_mut().handle_cmd_dyn_v1(cmd, tx, cx) {
                     self.cmder_cmd_fut = Some(fut.box2());
                 }
             }
+            ConnSetCmdKind::MetricsGetV1(mut tx) => {
+                let ret = self.as_mut().metrics_prometheus();
+                let fut = async move {
+                    let _ = tx.send(ret).await;
+                    Ok(())
+                };
+                // TODO maybe better return the future from here and let caller place it.
+                self.cmder_cmd_fut = Some(fut.box2());
+            }
         }
+    }
+
+    /// Render the accumulated metrics of the v2 code path in the prometheus
+    /// text exposition format.
+    fn metrics_prometheus(mut self: Pin<&mut Self>) -> crate::metrics::types::MetricsPrometheusShort {
+        self.mett.metrics_request().inc();
+        self.mett.metrics_emit().inc();
+        let n = self.ca_conns.len() as u32;
+        self.mett.ca_conn_count().set(n);
+        let n = self.channels.len() as u32;
+        self.mett.channel_count().set(n);
+        (&self.mett).into()
     }
 
     fn poll_cmder_rx(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Result<(), Error>>> {
@@ -1114,6 +1163,7 @@ impl ConnSet {
                 // channel addr not yet resolved.
             }
         }
+        let mut idle_disconnect_trigger = 0;
         for (addr, cc) in ch_by_addr.into_iter() {
             if self.conn_idle_disconnect_futs.len() >= 1 {
                 break;
@@ -1121,6 +1171,7 @@ impl ConnSet {
                 if let Some(cr) = self.ca_conns.get_mut(&addr) {
                     if cr.shutting_down == false {
                         cr.shutting_down = true;
+                        idle_disconnect_trigger += 1;
                         let mut tx2 = cr.comm.clone();
                         let fut = async move {
                             tx2.trigger_disconnect_on_idle()
@@ -1138,6 +1189,9 @@ impl ConnSet {
                     panic!("logic");
                 }
             }
+        }
+        if idle_disconnect_trigger != 0 {
+            self.mett.channel_idle_disconnect_trigger().add(idle_disconnect_trigger);
         }
         if hpp.have_progress() {
             Ready(Some(()))
@@ -1167,7 +1221,8 @@ impl ConnSet {
                         Err(e) => match e {
                             Error::Conn(e2) => match e2 {
                                 conn2::conn::Error::ChanRecv => {
-                                    // TODO metrics. can be because racy.
+                                    // can be because racy.
+                                    self.mett.channel_idle_disconnect_err().inc();
                                 }
                                 _ => {
                                     error!("{selfname}  TODO  ERROR  {e2}");
