@@ -336,12 +336,18 @@ mod Metrics {
         item_test_value,
         item_local_log,
         item_channel_event_value,
+        item_channel_write_items,
+        item_channel_trace,
+        write_batch_flush,
+        write_batch_flush_blocked,
     }
     enum values {
         out_buf_len,
+        write_batch_len,
     }
     enum histolog2s {
         poll_all_dt,
+        write_batch_flush_len,
     }
     mod Compose {
         type Input = CaConnConnectedMetrics;
@@ -360,6 +366,10 @@ mod Metrics {
         conn_test_value,
         conn_local_log,
         conn_channel_event_value,
+        conn_channel_write_items,
+        conn_channel_trace,
+        write_sender_batch_send,
+        write_sender_closed,
         conn_recv_error,
         conn_done,
         conn_done_not_in_registry,
@@ -373,12 +383,17 @@ mod Metrics {
         cmd_channels_for_addr_v1,
         cmd_channels_for_addr_v2,
         cmd_dyn_v1,
+        cmd_scatter_gather_v1,
         channel_idle_disconnect_trigger,
         channel_idle_disconnect_err,
     }
     enum values {
         ca_conn_count,
         channel_count,
+        write_staging_len,
+    }
+    enum histolog2s {
+        write_sender_batch_len,
     }
     mod Compose {
         type Input = CaConn2Metrics;

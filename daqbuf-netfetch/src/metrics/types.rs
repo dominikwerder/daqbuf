@@ -22,6 +22,10 @@ impl MetricsPrometheusShort {
         Self { counters }
     }
 
+    pub fn into_flatten_prometheus(self) -> Vec<String> {
+        self.counters
+    }
+
     /// Append the metrics of `inp` to the metrics of `self` so that a single
     /// scrape can carry the metrics of several sub systems.
     pub fn append(&mut self, mut inp: Self) {

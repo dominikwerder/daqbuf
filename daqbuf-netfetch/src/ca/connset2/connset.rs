@@ -517,6 +517,7 @@ impl ConnSet {
                 Ready(Ok(())) => progress = true,
                 Ready(Err(e)) => {
                     error!("{selfname}  write_sender closed  {e:?}");
+                    self2.mett.write_sender_closed().inc();
                     progress = true;
                 }
                 Pending => {}
@@ -524,6 +525,8 @@ impl ConnSet {
         }
         if self2.write_sender.is_idle() && !self2.write_staging.is_empty() {
             let batch = std::mem::take(&mut self2.write_staging);
+            self2.mett.write_sender_batch_send().inc();
+            self2.mett.write_sender_batch_len().push_val(batch.len() as u32);
             self2.write_sender.as_mut().send_pin(batch);
             progress = true;
         }
@@ -618,9 +621,11 @@ impl ConnSet {
                                                 self2.out_buf.push_back_force(ConnSetItem::ChannelEventValue(x));
                                             }
                                             conn2::conn::CaConnItem::ChannelWriteItems(x) => {
+                                                self2.mett.conn_channel_write_items().add(x.len() as u32);
                                                 self2.write_staging.extend(x);
                                             }
                                             conn2::conn::CaConnItem::ChannelTrace(x) => {
+                                                self2.mett.conn_channel_trace().inc();
                                                 self2.chtrace.push(x);
                                             }
                                         }
@@ -969,6 +974,7 @@ impl ConnSet {
                 self.cmder_cmd_fut = Some(fut.box2());
             }
             ConnSetCmdKind::ScatterGatherV1(cmd, mut tx) => {
+                self.mett.cmd_scatter_gather_v1().inc();
                 let cmdtxs: Vec<_> = self
                     .ca_conns
                     .iter()
@@ -1047,6 +1053,8 @@ impl ConnSet {
         self.mett.ca_conn_count().set(n);
         let n = self.channels.len() as u32;
         self.mett.channel_count().set(n);
+        let n = self.write_staging.len() as u32;
+        self.mett.write_staging_len().set(n);
         (&self.mett).into()
     }
 

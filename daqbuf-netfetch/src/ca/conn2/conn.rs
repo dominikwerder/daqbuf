@@ -538,6 +538,8 @@ impl CaConn {
     fn metrics_emit(mut self: Pin<&mut Self>) {
         let n = self.out_buf.len() as u32;
         self.mett.out_buf_len().set(n);
+        let n = self.write_batch.len() as u32;
+        self.mett.write_batch_len().set(n);
         self.mett.metrics_emit().inc();
         let m = self.mett.take_and_reset();
         self.out_buf.push_back_force(CaConnItem::Metrics(m));
@@ -579,9 +581,15 @@ impl CaConn {
     }
 
     fn try_flush_write_batch(&mut self) {
-        if self.out_buf.len() < OUT_QUEUE_LEN_MAX && !self.write_batch.is_empty() {
-            let batch = std::mem::take(&mut self.write_batch);
-            self.out_buf.push_back_force(CaConnItem::ChannelWriteItems(batch));
+        if !self.write_batch.is_empty() {
+            if self.out_buf.len() < OUT_QUEUE_LEN_MAX {
+                let batch = std::mem::take(&mut self.write_batch);
+                self.mett.write_batch_flush().inc();
+                self.mett.write_batch_flush_len().push_val(batch.len() as u32);
+                self.out_buf.push_back_force(CaConnItem::ChannelWriteItems(batch));
+            } else {
+                self.mett.write_batch_flush_blocked().inc();
+            }
         }
     }
 
@@ -1011,9 +1019,11 @@ impl Stream for CaConn {
                                                     self2.out_buf.push_back_force(item);
                                                 }
                                                 connected::ItemInner::ChannelWriteItems(x) => {
+                                                    self2.mett.item_channel_write_items().add(x.len() as u32);
                                                     self2.write_batch.extend(x);
                                                 }
                                                 connected::ItemInner::ChannelTrace(x) => {
+                                                    self2.mett.item_channel_trace().inc();
                                                     let item = ChannelTraceL2Item::new(st1.addr(), x);
                                                     let item = CaConnItem::ChannelTrace(item);
                                                     self2.out_buf.push_back_force(item);
