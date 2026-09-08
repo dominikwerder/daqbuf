@@ -1043,7 +1043,6 @@ impl ConnSet {
     /// text exposition format.
     fn metrics_prometheus(mut self: Pin<&mut Self>) -> crate::metrics::types::MetricsPrometheusShort {
         self.mett.metrics_request().inc();
-        self.mett.metrics_emit().inc();
         let n = self.ca_conns.len() as u32;
         self.mett.ca_conn_count().set(n);
         let n = self.channels.len() as u32;

@@ -823,6 +823,7 @@ impl Stream for CaConn {
                             Ok(()) => {}
                             Err(e) => {
                                 error!("{selfname}  ca_cmd_tx_fut error: {e}");
+                                self2.mett.cmd_send_err().inc();
                                 self2.state = State::Done;
                                 break Ready(Some(Err(e)));
                             }

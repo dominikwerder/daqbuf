@@ -352,13 +352,11 @@ mod Metrics {
 mod Metrics {
     type StructName = ConnSet2Metrics;
     enum counters {
-        metrics_emit,
         metrics_request,
         conn_item_recv,
         conn_metrics_recv,
         conn_status_info,
         conn_channel_info_query,
-        conn_channel_info_query_send_err,
         conn_test_value,
         conn_local_log,
         conn_channel_event_value,
