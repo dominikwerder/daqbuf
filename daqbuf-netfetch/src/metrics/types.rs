@@ -87,6 +87,33 @@ mod test {
         assert!(!s.contains("\ndaemon_"), "{s}");
     }
 
+    /// The scylla insert worker metrics reach the daemon scrape.
+    #[test]
+    fn scylla_worker_metrics_to_prometheus() {
+        let mut w = stats::mett::ScyllaInsertWorker::new();
+        w.worker_start().inc();
+        w.job_ok().add(5);
+        w.db_timeout().inc();
+        w.db_error().add(2);
+        w.jobtrans().SeriesData().add(5);
+        w.input().batch_recv().inc();
+        w.input().item_recv().add(9);
+        w.input().fut_prepared().add(9);
+        w.input().batch_len().push_val(9);
+        let mut daemon = stats::mett::DaemonMetrics::new();
+        daemon.scy_inswork().ingest(w.take_and_reset());
+        let s = MetricsPrometheusShort::from(&daemon).prometheus();
+        assert!(s.contains("daemon_scy_inswork_worker_start 1\n"), "{s}");
+        assert!(s.contains("daemon_scy_inswork_job_ok 5\n"), "{s}");
+        assert!(s.contains("daemon_scy_inswork_db_timeout 1\n"), "{s}");
+        assert!(s.contains("daemon_scy_inswork_db_error 2\n"), "{s}");
+        assert!(s.contains("daemon_scy_inswork_jobtrans_SeriesData 5\n"), "{s}");
+        assert!(s.contains("daemon_scy_inswork_input_batch_recv 1\n"), "{s}");
+        assert!(s.contains("daemon_scy_inswork_input_item_recv 9\n"), "{s}");
+        assert!(s.contains("daemon_scy_inswork_input_fut_prepared 9\n"), "{s}");
+        assert!(s.contains("daemon_scy_inswork_input_batch_len_count 1\n"), "{s}");
+    }
+
     /// A scrape can carry the metrics of the v1 and the v2 code path.
     #[test]
     fn append_keeps_both() {

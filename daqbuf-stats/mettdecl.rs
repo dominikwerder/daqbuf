@@ -46,21 +46,56 @@ mod Metrics {
     }
 }
 
+// Counts the work which arrives at a scylla insert worker, before it is
+// turned into database futures. Together with ScyllaJobTransform (which counts
+// the jobs that completed) this shows whether the worker keeps up.
+mod Metrics {
+    type StructName = ScyllaWorkerInput;
+    enum counters {
+        batch_recv,
+        item_recv,
+        item_insert,
+        item_msp,
+        item_timebin_simple_f32_v02,
+        item_bin_write_index_v04,
+        item_accounting,
+        item_accounting_recv,
+        item_ignored,
+        fut_prepared,
+    }
+    enum histolog2s {
+        batch_len,
+        futs_per_batch,
+    }
+}
+
 mod Metrics {
     type StructName = ScyllaInsertWorker;
     enum counters {
         metrics_emit,
         job_ok,
         job_err,
+        worker_start,
+        worker_finish,
+        worker_dummy_start,
+        worker_dummy_finish,
+        db_timeout,
+        db_error,
+        db_no_future,
     }
     enum histolog2s {
         job_dt1,
         job_dt2,
         job_dt_net,
+        job_npoll,
     }
     mod Compose {
         type Input = ScyllaJobTransform;
         type Name = jobtrans;
+    }
+    mod Compose {
+        type Input = ScyllaWorkerInput;
+        type Name = input;
     }
 }
 
