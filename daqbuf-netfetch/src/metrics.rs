@@ -864,15 +864,22 @@ fn make_routes_daqingest(
     use axum::routing::get;
     Router::new()
         .fallback(|| async { axum::Json(json!({ "subcommands": ["channel", "metrics"] } )) })
-        .nest(
+        // Serve with and without the trailing slash: a scrape config which
+        // asks for /daqingest/metrics/ used to fall through to the subcommand
+        // listing above and get a 200 with json instead of the metrics.
+        .route(
             "/metrics",
-            Router::new().fallback(|| async { StatusCode::NOT_FOUND }).route(
-                "/",
-                get({
-                    let ca_ingest_ctrls = ca_ingest_ctrls.clone();
-                    || metrics2(ca_ingest_ctrls)
-                }),
-            ),
+            get({
+                let ca_ingest_ctrls = ca_ingest_ctrls.clone();
+                || metrics2(ca_ingest_ctrls)
+            }),
+        )
+        .route(
+            "/metrics/",
+            get({
+                let ca_ingest_ctrls = ca_ingest_ctrls.clone();
+                || metrics2(ca_ingest_ctrls)
+            }),
         )
         .nest(
             "/config",
@@ -999,4 +1006,275 @@ pub async fn metrics_service(
         .await?;
     info!("-----------------  metrics service done");
     Ok(())
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::metrics::types::MetricsPrometheusShort;
+
+    /// Stands in for the v2 daemon: it has conn2 ctrls, and its daemon level
+    /// metrics come from the ConnSet below it.
+    struct Conn2OnlyCtrls {
+        connset: stats::mett::ConnSet2Metrics,
+    }
+
+    impl Conn2OnlyCtrls {
+        fn new() -> Self {
+            let mut connset = stats::mett::ConnSet2Metrics::new();
+            connset.ca_conn_create().add(2);
+            let mut conn = stats::mett::CaConn2Metrics::new();
+            conn.tcp_connected().add(2);
+            conn.connected().proto().tcp_recv_bytes().add(1234);
+            connset.ca_conn().ingest(conn.take_and_reset());
+            Self { connset }
+        }
+
+        fn metrics(&self) -> MetricsPrometheusShort {
+            (&self.connset).into()
+        }
+    }
+
+    impl Conn2Ctrls for Conn2OnlyCtrls {
+        fn connection_list_get_v1(
+            &self,
+        ) -> Pin<Box<dyn Future<Output = Result<ConnectionListV1, Box<dyn std::error::Error>>> + Send>> {
+            unimplemented!()
+        }
+
+        fn channels_for_addr_v1(
+            &self,
+            _addr: SocketAddrV4,
+        ) -> Pin<Box<dyn Future<Output = Result<ChannelsForAddrInfoV1, Box<dyn std::error::Error>>> + Send>> {
+            unimplemented!()
+        }
+
+        fn channels_for_addr_v2(
+            &self,
+            _addr: SocketAddrV4,
+            _name: String,
+        ) -> Pin<Box<dyn Future<Output = Result<ChannelsForAddrInfoV2, Box<dyn std::error::Error>>> + Send>> {
+            unimplemented!()
+        }
+
+        fn cmd_dyn_v1(
+            &self,
+            _cmd: String,
+        ) -> Pin<Box<dyn Future<Output = Result<serde_json::Value, Box<dyn std::error::Error>>> + Send>> {
+            unimplemented!()
+        }
+
+        fn channel_add_v1(
+            &self,
+            _name: String,
+        ) -> Pin<Box<dyn Future<Output = Result<(), Box<dyn std::error::Error>>> + Send>> {
+            unimplemented!()
+        }
+
+        fn channel_remove_v1(
+            &self,
+            _name: String,
+        ) -> Pin<Box<dyn Future<Output = Result<(), Box<dyn std::error::Error>>> + Send>> {
+            unimplemented!()
+        }
+
+        fn get_metrics(
+            &self,
+        ) -> Pin<Box<dyn Future<Output = Result<MetricsPrometheusShort, Box<dyn std::error::Error>>> + Send>> {
+            let ret = self.metrics();
+            Box::pin(async move { Ok(ret) })
+        }
+    }
+
+    struct TestCaIngestCtrls {
+        /// `None` models the v1 daemon which does not run the v2 code path.
+        conn2: Option<Arc<Conn2OnlyCtrls>>,
+        daemon: stats::mett::DaemonMetrics,
+    }
+
+    impl TestCaIngestCtrls {
+        fn new(with_conn2: bool) -> Self {
+            let mut daemon = stats::mett::DaemonMetrics::new();
+            daemon.handle_event().add(11);
+            Self {
+                conn2: if with_conn2 {
+                    Some(Arc::new(Conn2OnlyCtrls::new()))
+                } else {
+                    None
+                },
+                daemon,
+            }
+        }
+    }
+
+    impl CaIngestCtrls for TestCaIngestCtrls {
+        fn timer_tick(&self, _v: u32) -> Box<dyn Future<Output = u32>> {
+            unimplemented!()
+        }
+
+        fn get_metrics(
+            &self,
+        ) -> Pin<Box<dyn Future<Output = Result<MetricsPrometheusShort, Box<dyn std::error::Error>>> + Send>> {
+            let ret = MetricsPrometheusShort::from(&self.daemon);
+            Box::pin(async move { Ok(ret) })
+        }
+
+        fn channel_add(
+            &self,
+            _conf: ChannelConfig,
+        ) -> Pin<Box<dyn Future<Output = Result<(), Box<dyn std::error::Error>>> + Send>> {
+            unimplemented!()
+        }
+
+        fn channel_remove(
+            &self,
+            _name: ChannelName,
+        ) -> Pin<Box<dyn Future<Output = Result<(), Box<dyn std::error::Error>>> + Send>> {
+            unimplemented!()
+        }
+
+        fn config_reload(&self) -> Pin<Box<dyn Future<Output = Result<(), Box<dyn std::error::Error>>> + Send>> {
+            unimplemented!()
+        }
+
+        fn shutdown(&self) -> Pin<Box<dyn Future<Output = Result<(), Box<dyn std::error::Error>>> + Send>> {
+            unimplemented!()
+        }
+
+        fn channel_states(
+            &self,
+            _name: String,
+            _limit: u64,
+        ) -> Pin<Box<dyn Future<Output = Result<ChannelStatusesResponse, Box<dyn std::error::Error>>> + Send>> {
+            unimplemented!()
+        }
+
+        fn conn2_ctrls(&self) -> Pin<Box<dyn Future<Output = Option<Box<dyn Conn2Ctrls>>> + Send>> {
+            let x = self.conn2.clone();
+            Box::pin(async move { x.map(|x| Box::new(Conn2CtrlsShared(x)) as Box<dyn Conn2Ctrls>) })
+        }
+    }
+
+    struct Conn2CtrlsShared(Arc<Conn2OnlyCtrls>);
+
+    impl Conn2Ctrls for Conn2CtrlsShared {
+        fn connection_list_get_v1(
+            &self,
+        ) -> Pin<Box<dyn Future<Output = Result<ConnectionListV1, Box<dyn std::error::Error>>> + Send>> {
+            self.0.connection_list_get_v1()
+        }
+
+        fn channels_for_addr_v1(
+            &self,
+            addr: SocketAddrV4,
+        ) -> Pin<Box<dyn Future<Output = Result<ChannelsForAddrInfoV1, Box<dyn std::error::Error>>> + Send>> {
+            self.0.channels_for_addr_v1(addr)
+        }
+
+        fn channels_for_addr_v2(
+            &self,
+            addr: SocketAddrV4,
+            name: String,
+        ) -> Pin<Box<dyn Future<Output = Result<ChannelsForAddrInfoV2, Box<dyn std::error::Error>>> + Send>> {
+            self.0.channels_for_addr_v2(addr, name)
+        }
+
+        fn cmd_dyn_v1(
+            &self,
+            cmd: String,
+        ) -> Pin<Box<dyn Future<Output = Result<serde_json::Value, Box<dyn std::error::Error>>> + Send>> {
+            self.0.cmd_dyn_v1(cmd)
+        }
+
+        fn channel_add_v1(
+            &self,
+            name: String,
+        ) -> Pin<Box<dyn Future<Output = Result<(), Box<dyn std::error::Error>>> + Send>> {
+            self.0.channel_add_v1(name)
+        }
+
+        fn channel_remove_v1(
+            &self,
+            name: String,
+        ) -> Pin<Box<dyn Future<Output = Result<(), Box<dyn std::error::Error>>> + Send>> {
+            self.0.channel_remove_v1(name)
+        }
+
+        fn get_metrics(
+            &self,
+        ) -> Pin<Box<dyn Future<Output = Result<MetricsPrometheusShort, Box<dyn std::error::Error>>> + Send>> {
+            self.0.get_metrics()
+        }
+    }
+
+    struct TestPostIngestCtrls {}
+
+    impl PostIngestCtrls for TestPostIngestCtrls {
+        fn resources(
+            &self,
+        ) -> Pin<Box<dyn Future<Output = Result<Arc<RoutesResources>, Box<dyn std::error::Error>>> + Send>> {
+            unimplemented!()
+        }
+    }
+
+    async fn scrape(with_conn2: bool, uri: &str) -> (StatusCode, String) {
+        use tower::ServiceExt;
+        let router = make_routes(
+            Arc::new(TestCaIngestCtrls::new(with_conn2)),
+            Arc::new(TestPostIngestCtrls {}),
+        );
+        let req = Request::builder().uri(uri).body(axum::body::Body::empty()).unwrap();
+        let res = router.oneshot(req).await.unwrap();
+        let status = res.status();
+        let body = axum::body::to_bytes(res.into_body(), 1 << 20).await.unwrap();
+        (status, String::from_utf8_lossy(&body).into_owned())
+    }
+
+    /// The v1 (production) daemon has no conn2 ctrls, so its scrape must carry
+    /// only the v1 tree.
+    #[test]
+    fn scrape_metrics_v1_only() {
+        let (status, body) =
+            taskrun::run(async { Ok::<_, err::Error>(scrape(false, "/daqingest/metrics").await) }).unwrap();
+        assert_eq!(status, StatusCode::OK);
+        assert!(body.contains("daemon_handle_event 11\n"), "{body}");
+        assert!(!body.contains("daemon2_"), "{body}");
+    }
+
+    /// A daemon which runs the v2 code path gets the v2 metrics in the same
+    /// scrape.
+    #[test]
+    fn scrape_metrics_with_conn2() {
+        let (status, body) =
+            taskrun::run(async { Ok::<_, err::Error>(scrape(true, "/daqingest/metrics").await) }).unwrap();
+        assert_eq!(status, StatusCode::OK);
+        assert!(body.contains("daemon_handle_event 11\n"), "{body}");
+        assert!(body.contains("daemon2_connset_ca_conn_create 2\n"), "{body}");
+        assert!(body.contains("daemon2_connset_ca_conn_tcp_connected 2\n"), "{body}");
+        assert!(
+            body.contains("daemon2_connset_ca_conn_connected_proto_tcp_recv_bytes 1234\n"),
+            "{body}"
+        );
+    }
+
+    /// Prometheus scrape configs are written with and without the trailing
+    /// slash, both must return the metrics rather than the subcommand listing.
+    #[test]
+    fn scrape_metrics_trailing_slash() {
+        let (status, body) =
+            taskrun::run(async { Ok::<_, err::Error>(scrape(false, "/daqingest/metrics/").await) }).unwrap();
+        assert_eq!(status, StatusCode::OK);
+        assert!(body.contains("daemon_handle_event 11\n"), "{body}");
+    }
+
+    /// The v2 metrics are also available on their own route.
+    #[test]
+    fn scrape_metrics_conn2_route() {
+        let (status, body) =
+            taskrun::run(async { Ok::<_, err::Error>(scrape(true, "/daqingest/private/conn2/metrics").await) })
+                .unwrap();
+        assert_eq!(status, StatusCode::OK);
+        assert!(body.contains("daemon2_connset_ca_conn_create 2\n"), "{body}");
+        assert!(!body.contains("daemon_handle_event"), "{body}");
+    }
 }

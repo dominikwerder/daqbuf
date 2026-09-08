@@ -66,3 +66,6 @@ daqingest-ui = { path = "../daqbuf-ingest-ui", package = "daqbuf-ingest-ui" }
 
 [features]
 disabled = []
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
