@@ -217,9 +217,16 @@ pub async fn test_01(cfgfn: String) {
             let (tx, _jhs, _jh) = start(2, ingest_opts.postgresql_config()).await.unwrap();
             dbpg::seriesbychannel::ChannelInfoQuerySender::new(tx)
         };
-        let mut connset = ConnSet::new(ingest_opts.backend().into(), "".into(), ch_info_tx, finder_handle)
-            .await
-            .unwrap();
+        let (insert_input, _insert_input_rx) = async_channel::bounded(1024);
+        let mut connset = ConnSet::new(
+            ingest_opts.backend().into(),
+            "".into(),
+            ch_info_tx,
+            finder_handle,
+            insert_input,
+        )
+        .await
+        .unwrap();
         let cmder = connset.cmder().clone();
         let conn2_ctrls = ConnSetConn2Ctrls::new(cmder.clone());
         let (metrics_shutdown_tx, metrics_shutdown_rx) = async_channel::bounded(16);

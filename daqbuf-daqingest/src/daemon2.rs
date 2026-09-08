@@ -112,18 +112,19 @@ impl Daemon {
         let (finder_handle, finder_jh) = Self::start_finder(&ingest_opts);
         let insert_set = Self::make_insert_set(&ingest_opts).await?;
         let local_epics_hostname = ingest_linux::net::local_hostname();
+        let insert_input = insert_set.input();
         let connset = ConnSet::new(
             ingest_opts.backend().into(),
             local_epics_hostname,
             ChannelInfoQuerySender::new(ch_info_query_tx.clone()),
             finder_handle,
+            insert_input.clone(),
         )
         .await?;
         let cmder = connset.cmder().clone();
         let (cmd_tx, cmd_rx) = async_channel::bounded(CMD_QUEUE_CAP);
         let (metrics_shutdown_tx, metrics_shutdown_rx) = async_channel::bounded(8);
         let channel_names = Self::channel_names(&channels_config);
-        let insert_input = insert_set.input();
         let insert_out_rx = insert_set.output().clone();
         Ok(Self {
             ingest_opts,

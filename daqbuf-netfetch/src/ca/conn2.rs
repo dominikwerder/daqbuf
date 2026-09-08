@@ -1,4 +1,4 @@
-mod ca_writer_value;
+pub(crate) mod ca_writer_value;
 mod caids;
 mod channel_event_value;
 mod channelstateinfo;
@@ -8,7 +8,6 @@ mod connevent;
 mod connfut;
 pub mod locallog;
 mod protowrap;
-mod scywritequeue;
 mod statefut;
 mod statetrans;
 mod synchan;

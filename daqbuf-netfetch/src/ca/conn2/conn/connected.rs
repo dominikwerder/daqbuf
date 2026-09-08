@@ -27,6 +27,7 @@ use futures::FutureExt;
 use futures::Stream;
 use futures::StreamExt;
 use netpod::futdbg::FutDbgBox;
+use scywr::iteminsertqueue::QueryItem;
 use serde::Serialize;
 use stats::mett::CaConnConnectedMetrics;
 use std::collections::VecDeque;
@@ -81,6 +82,7 @@ pub enum ItemInner {
     TestValue(crate::ca::connset2::connset::TestValue),
     LocalLog(locallog::Entry),
     ChannelEventValue(ChannelEventValue),
+    ChannelWriteItems(Vec<QueryItem>),
     ChannelTrace(ChannelTraceL1Item),
 }
 
@@ -540,6 +542,13 @@ impl Stream for Connected {
                                                     let item = ConnectedItem {
                                                         ts_create: item.ts_create,
                                                         inner: ItemInner::ChannelEventValue(x),
+                                                    };
+                                                    Some(item)
+                                                }
+                                                activeca::ItemInner::ChannelWriteItems(x) => {
+                                                    let item = ConnectedItem {
+                                                        ts_create: item.ts_create,
+                                                        inner: ItemInner::ChannelWriteItems(x),
                                                     };
                                                     Some(item)
                                                 }

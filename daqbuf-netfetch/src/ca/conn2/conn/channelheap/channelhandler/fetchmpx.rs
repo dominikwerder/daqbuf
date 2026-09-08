@@ -16,6 +16,7 @@ use crate::ca::conn2::locallog;
 use crate::ca::progpend::HaveProgressPending;
 use crate::conf::ChannelConfig;
 use ca_proto::ca::proto;
+use ca_proto::ca::proto::CaEventValue;
 use futures::Stream;
 use netpod::ScalarType;
 use netpod::Shape;
@@ -30,6 +31,7 @@ use std::task::Context;
 use std::task::Poll;
 use std::time::Duration;
 use std::time::Instant;
+use std::time::SystemTime;
 
 macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
 macro_rules! warn { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
@@ -93,6 +95,15 @@ fn _cb_tmp() {
 }
 
 #[derive(Debug)]
+pub(super) struct RawEventForWrite {
+    pub(super) value: CaEventValue,
+    pub(super) payload_len: u32,
+    pub(super) tsnow: Instant,
+    pub(super) stnow: SystemTime,
+    pub(super) tscaproto: Instant,
+}
+
+#[derive(Debug)]
 pub enum FetchmpxItem {
     CaMsgOut(proto::CaMsg),
     CaMsgOutIoid(proto::CaMsg, Sid, Instant),
@@ -103,6 +114,7 @@ pub enum FetchmpxItem {
     ChannelStatus(ChannelStatus),
     InputDone,
     ChannelEventValue(ChannelEventValue),
+    RawEventForWrite(RawEventForWrite),
 }
 
 #[derive(Debug, ToSerde)]
@@ -420,6 +432,10 @@ impl Stream for Fetchmpx {
                                         let g = FetchmpxItem::ChannelEventValue(x);
                                         break Ready(Some(Ok(g)));
                                     }
+                                    fetchpolling::Item::RawEventForWrite(x) => {
+                                        let g = FetchmpxItem::RawEventForWrite(x);
+                                        break Ready(Some(Ok(g)));
+                                    }
                                     fetchpolling::Item::TestValue(x) => {
                                         let g = FetchmpxItem::TestValue(x);
                                         break Ready(Some(Ok(g)));
@@ -466,6 +482,10 @@ impl Stream for Fetchmpx {
                                         }
                                         MonitoringItem::ChannelEventValue(x) => {
                                             let g = FetchmpxItem::ChannelEventValue(x);
+                                            break Ready(Some(Ok(g)));
+                                        }
+                                        MonitoringItem::RawEventForWrite(x) => {
+                                            let g = FetchmpxItem::RawEventForWrite(x);
                                             break Ready(Some(Ok(g)));
                                         }
                                     }
@@ -524,6 +544,10 @@ impl Stream for Fetchmpx {
                                         let g = FetchmpxItem::ChannelEventValue(x);
                                         break Ready(Some(Ok(g)));
                                     }
+                                    fetchpolling::Item::RawEventForWrite(x) => {
+                                        let g = FetchmpxItem::RawEventForWrite(x);
+                                        break Ready(Some(Ok(g)));
+                                    }
                                     fetchpolling::Item::TestValue(x) => {
                                         let g = FetchmpxItem::TestValue(x);
                                         break Ready(Some(Ok(g)));
@@ -570,6 +594,10 @@ impl Stream for Fetchmpx {
                                         }
                                         MonitoringItem::ChannelEventValue(x) => {
                                             let g = FetchmpxItem::ChannelEventValue(x);
+                                            break Ready(Some(Ok(g)));
+                                        }
+                                        MonitoringItem::RawEventForWrite(x) => {
+                                            let g = FetchmpxItem::RawEventForWrite(x);
                                             break Ready(Some(Ok(g)));
                                         }
                                     }

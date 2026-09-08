@@ -1,7 +1,11 @@
 pub(super) const INP_BUF_CAP: usize = 64;
 
+mod consume_event_data;
+
 use super::fetchmpx::Fetchmpx;
 use crate::asynchan;
+use crate::ca::conn2::ca_writer_value::CaRtWriter;
+use crate::ca::conn2::ca_writer_value::CaWriterValueState;
 use crate::ca::conn2::caids::CaDbrTy;
 use crate::ca::conn2::caids::Cid;
 use crate::ca::conn2::caids::Sid;
@@ -18,15 +22,23 @@ use futures::Stream;
 use futures::StreamExt;
 use netpod::ScalarType;
 use netpod::Shape;
+use netpod::TsNano;
 use netpod::channelstatus::ChannelStatus;
+use netpod::ttl::RetentionTime;
+use scywr::iteminsertqueue::QueryItem;
 use serde_helper::ToSerde;
+use series::ChannelStatusSeriesId;
 use series::SeriesId;
+use serieswriter::binwriter::BinWriter;
+use serieswriter::binwriter::DiscardFirstOutput;
+use serieswriter::binwriter::WriteCntZero;
 use stats::mett::ChannelHandlerMetrics;
 use std::collections::VecDeque;
 use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
 use std::time::Instant;
+use std::time::SystemTime;
 
 macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
 macro_rules! warn { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
@@ -56,7 +68,10 @@ autoerr::create_error_v1!(
         Recv,
         Timeout,
         Logic,
+        MissingTimestamp,
         Register(#[from] dbpg::seriesbychannel::Error),
+        RtWriter(#[from] serieswriter::rtwriter::Error),
+        BinWriter(#[from] serieswriter::binwriter::Error),
     },
 );
 
@@ -82,6 +97,7 @@ pub enum RunningItem {
     LocalLog(locallog::Entry),
     ChannelStatus(ChannelStatus),
     ChannelEventValue(ChannelEventValue),
+    ChannelWriteItems(Vec<QueryItem>),
 }
 
 #[derive(Debug, ToSerde)]
@@ -120,6 +136,13 @@ pub struct Running {
     inp_done: bool,
     #[to_serde(skip)]
     mett: ChannelHandlerMetrics,
+    #[to_serde(skip)]
+    rtwriter: CaRtWriter,
+    #[to_serde(skip)]
+    binwriter: Option<BinWriter>,
+    #[to_serde(skip)]
+    crst: consume_event_data::ChannelConsumeState,
+    use_ioc_time: bool,
 }
 
 impl Running {
@@ -137,15 +160,41 @@ impl Running {
         ca_dbr_ty: CaDbrTy,
         chi: ChannelInfoResult,
         chconf: ChannelConfig,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, Error> {
+        let series = chi.series.to_series();
+        let use_ioc_time = chconf.use_ioc_time();
+        let min_quiets = chconf.min_quiets();
+        let is_polled = chconf.is_polled();
+        let cssid = ChannelStatusSeriesId::new(series.id());
+        let rtwriter = CaRtWriter::new(
+            series,
+            scalar_type.clone(),
+            shape.clone(),
+            min_quiets.clone(),
+            is_polled,
+            chconf.replication(),
+            &|| CaWriterValueState::new(series, series, RetentionTime::Short),
+        )?;
+        let binwriter = BinWriter::new(
+            TsNano::from_system_time(SystemTime::now()),
+            min_quiets,
+            is_polled,
+            WriteCntZero::default_for_on_the_fly(),
+            DiscardFirstOutput::default_for_on_the_fly(),
+            cssid,
+            series,
+            scalar_type.clone(),
+            shape.clone(),
+            chconf.name().into(),
+        )?;
+        Ok(Self {
             state: State::Normal(Fetchmpx::new(
-                chi.series.to_series(),
+                series,
                 cid.clone(),
                 sid.clone(),
-                scalar_type.clone(),
-                shape.clone(),
-                ca_dbr_ty.clone(),
+                scalar_type,
+                shape,
+                ca_dbr_ty,
                 chconf,
             )),
             state_dt: Instant::now(),
@@ -158,7 +207,11 @@ impl Running {
             inp_buf: VecDeque::with_capacity(INP_BUF_CAP),
             inp_done: false,
             mett: ChannelHandlerMetrics::new(),
-        }
+            rtwriter,
+            binwriter: Some(binwriter),
+            crst: consume_event_data::ChannelConsumeState::new(),
+            use_ioc_time,
+        })
     }
 
     pub fn sid(&self) -> Sid {
@@ -355,6 +408,20 @@ impl Stream for Running {
                                 fetchmpx::FetchmpxItem::ChannelEventValue(x) => {
                                     let g = RunningItem::ChannelEventValue(x);
                                     break Ready(Some(Ok(g)));
+                                }
+                                fetchmpx::FetchmpxItem::RawEventForWrite(x) => {
+                                    match self.ingest_event(x.value, x.payload_len, x.tsnow, x.stnow, x.tscaproto) {
+                                        Ok(items) => {
+                                            if !items.is_empty() {
+                                                break Ready(Some(Ok(RunningItem::ChannelWriteItems(items))));
+                                            }
+                                        }
+                                        Err(e) => {
+                                            error!("TODO handle error {e}");
+                                            self.transition_state(State::Done);
+                                            break Ready(Some(Err(e)));
+                                        }
+                                    }
                                 }
                                 fetchmpx::FetchmpxItem::InputDone => {
                                     info!("got FetchmpxItem::InputDone  but that's just a notice");

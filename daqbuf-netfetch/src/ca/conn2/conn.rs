@@ -30,6 +30,7 @@ use futures::Stream;
 use futures::StreamExt;
 use futures::TryFutureExt;
 use regex::Regex;
+use scywr::iteminsertqueue::QueryItem;
 use serde::Serialize;
 use stats::rand_xoshiro::Xoshiro128PlusPlus;
 use std::collections::BTreeMap;
@@ -49,6 +50,7 @@ use taskrun::tokio;
 pub static CONN_DBG_PTR: AtomicUsize = AtomicUsize::new(0);
 
 const OUT_QUEUE_LEN_MAX: usize = 64;
+const WRITE_BATCH_LEN_MAX: usize = 256;
 
 macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
 macro_rules! warn { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
@@ -412,6 +414,7 @@ pub enum CaConnItem {
     TestValue(TestValue),
     LocalLog(locallog::Entry),
     ChannelEventValue(ChannelEventValue),
+    ChannelWriteItems(VecDeque<QueryItem>),
     ChannelTrace(ChannelTraceL2Item),
 }
 
@@ -421,10 +424,9 @@ pub struct CaConn {
     remote_addr: SocketAddrV4,
     local_epics_hostname: String,
     state: State,
-    // iqdqs: InsertDeques,
-    // ca_conn_event_out_queue: VecDeque<CaConnEvent>,
-    // ca_conn_event_out_queue_max: usize,
+    write_batch: VecDeque<QueryItem>,
     ticker: JitterTicker,
+    write_flush_ticker: JitterTicker,
     mett: stats::mett::CaConnConnectedMetrics,
     cmd_tx: asynchan::Sender<CaConnCmd>,
     cmd_rx: asynchan::Receiver<CaConnCmd>,
@@ -450,10 +452,9 @@ impl CaConn {
             remote_addr,
             local_epics_hostname,
             state: State::new(remote_addr),
-            // iqdqs: InsertDeques::new(),
-            // ca_conn_event_out_queue: VecDeque::new(),
-            // ca_conn_event_out_queue_max: 2000,
+            write_batch: VecDeque::new(),
             ticker: JitterTicker::new(Duration::from_millis(2000)),
+            write_flush_ticker: JitterTicker::new(Duration::from_millis(200)),
             mett: stats::mett::CaConnConnectedMetrics::new(),
             cmd_tx,
             cmd_rx,
@@ -532,7 +533,7 @@ impl CaConn {
         match self.ticker.poll_next_unpin(cx) {
             Ready(Some(())) => {
                 hpp.mark_progress();
-                match self.on_ticker_fired(cx) {
+                match self.as_mut().on_ticker_fired(cx) {
                     Ready(Some(())) => {
                         hpp.mark_progress();
                     }
@@ -547,7 +548,25 @@ impl CaConn {
                 hpp.mark_pending();
             }
         }
+        let self2 = self.as_mut().get_mut();
+        match self2.write_flush_ticker.poll_next_unpin(cx) {
+            Ready(Some(())) => {
+                hpp.mark_progress();
+                self2.try_flush_write_batch();
+            }
+            Ready(None) => {}
+            Pending => {
+                hpp.mark_pending();
+            }
+        }
         Ok(hpp)
+    }
+
+    fn try_flush_write_batch(&mut self) {
+        if self.out_buf.len() < OUT_QUEUE_LEN_MAX && !self.write_batch.is_empty() {
+            let batch = std::mem::take(&mut self.write_batch);
+            self.out_buf.push_back_force(CaConnItem::ChannelWriteItems(batch));
+        }
     }
 
     fn channel_info_v1(&mut self) -> crate::metrics::ChannelsForAddrInfoV1 {
@@ -958,6 +977,9 @@ impl Stream for CaConn {
                                                     let item = CaConnItem::ChannelEventValue(x);
                                                     self2.out_buf.push_back_force(item);
                                                 }
+                                                connected::ItemInner::ChannelWriteItems(x) => {
+                                                    self2.write_batch.extend(x);
+                                                }
                                                 connected::ItemInner::ChannelTrace(x) => {
                                                     let item = ChannelTraceL2Item::new(st1.addr(), x);
                                                     let item = CaConnItem::ChannelTrace(item);
@@ -976,12 +998,15 @@ impl Stream for CaConn {
                             }
                             Ready(None) => {
                                 error!("{selfname}:Connected:Done  TODO handle shutdown");
-                                self.state = State::Done;
+                                self2.state = State::Done;
                                 hpp.mark_progress();
                             }
                             Pending => {
                                 hpp.mark_pending();
                             }
+                        }
+                        if self2.write_batch.len() >= WRITE_BATCH_LEN_MAX {
+                            self2.try_flush_write_batch();
                         }
                     }
                     State::Done => {
@@ -1012,33 +1037,7 @@ impl Stream for CaConn {
                 }
             }
 
-            {
-                // TODO handle iqdqs async on demand.
-                // Batch all insert requests.
-                // Send requests when the queue is full enough.
-                // Send requests periodically: need to fine-tune the internal timer tick.
-                // Use internal timer tick modulo for various purposes.
-
-                // let stats2 = self.stats.clone();
-                // let stats_fn = move |item: &VecDeque<QueryItem>| {
-                //     stats2.iiq_batch_len().ingest(item.len() as u32);
-                // };
-                // flush_queue_dqs!(
-                //     self,
-                //     st_rf1_qu,
-                //     st_rf1_sp_pin,
-                //     send_batched::<256, _>,
-                //     32,
-                //     (&mut have_progress, &mut have_pending),
-                //     "st_rf1_rx",
-                //     cx,
-                //     stats_fn
-                // );
-
-                // etc...
-            }
-
-            // TODO handle channel info queries async batched on demand, like iqdqs.
+            // TODO handle channel info queries async batched on demand, like write_batch.
 
             // if !self.is_shutdown() {
             //     flush_queue!(

@@ -61,6 +61,7 @@ pub enum Item {
     ProtoOutIoid(proto::CaMsg, Sid, Instant),
     // CallbackOnRunning(Box<dyn FnOnce(&mut SomeData)>, Vec<ChannelHandlerItem>),
     ChannelEventValue(ChannelEventValue),
+    RawEventForWrite(super::RawEventForWrite),
     TestValue(crate::ca::connset2::connset::TestValue),
     LocalLog(locallog::Entry),
 }
@@ -131,6 +132,8 @@ pub struct FetchPolling {
     rng: stats::rand_xoshiro::Xoshiro128PlusPlus,
     #[to_serde(skip)]
     llog: locallog::LocalLog,
+    #[to_serde(skip)]
+    pending_write: VecDeque<super::RawEventForWrite>,
 }
 
 impl FetchPolling {
@@ -159,6 +162,7 @@ impl FetchPolling {
             mett: ChannelHandlerMetrics::new(),
             rng: stats::xoshiro_from_os_rng(),
             llog: locallog::LocalLog::new(),
+            pending_write: VecDeque::new(),
         }
     }
 
@@ -308,6 +312,9 @@ impl FetchPolling {
         }
         let mut hpp = HaveProgressPending::new();
         let self2 = self.as_mut().get_mut();
+        if let Some(x) = self2.pending_write.pop_front() {
+            return Ready(Some(Ok(Item::RawEventForWrite(x))));
+        }
         if let Some(item) = self2.inp_buf.pop_front() {
             match &mut self2.state {
                 State::DoNothing => {
@@ -367,6 +374,13 @@ impl FetchPolling {
                             }
                             let stnow = SystemTime::now();
                             let ts = TsNano::from_system_time(stnow);
+                            self2.pending_write.push_back(super::RawEventForWrite {
+                                value: v.value.clone(),
+                                payload_len: v.payload_len,
+                                tsnow,
+                                stnow,
+                                tscaproto: item.tscmd,
+                            });
                             let item =
                                 Item::ChannelEventValue(ChannelEventValue::new(self.series.clone(), ts, val_f32));
                             return Ready(Some(Ok(item)));

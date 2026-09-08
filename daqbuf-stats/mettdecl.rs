@@ -6,6 +6,16 @@ mod Metrics {
         read_notify_recv,
         event_add_recv,
         chan_tx_err,
+        ts_msp_reput_onevent,
+        writer_ignore_rewind_time,
+        writer_ignore_same_time,
+        writer_ignore_same_value,
+        writer_ignore_monitor_not_min_quiet,
+        writer_ignore_poll_not_min_quiet,
+        writer_ignore_rate_cap,
+    }
+    enum histolog2s {
+        ca_ts_off,
     }
 }
 

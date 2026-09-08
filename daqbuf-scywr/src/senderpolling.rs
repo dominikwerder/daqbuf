@@ -171,6 +171,15 @@ where
     }
 }
 
+impl<T> fmt::Debug for SenderPolling<T> {
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt.debug_struct("SenderPolling")
+            .field("is_idle", &self.is_idle())
+            .field("len", &self.len())
+            .finish()
+    }
+}
+
 impl<T> Clone for SenderPolling<T> {
     fn clone(&self) -> Self {
         let sender = self.sender.as_ref().unwrap().as_ref().clone();

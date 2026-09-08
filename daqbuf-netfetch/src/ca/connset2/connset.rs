@@ -19,6 +19,7 @@ use crate::conf::ChannelConfig;
 use crate::futwrap::FutDbg;
 use crate::futwrap::FutDbgBox;
 use crate::misc::todoval;
+use async_channel::Sender;
 pub use cmder::ConnSetCmder;
 use conn2::conn::CaConn;
 use conn2::conn::CaConnComm;
@@ -29,6 +30,7 @@ use conn2::timeoutable::Timeoutable;
 use dbpg::seriesbychannel::ChannelInfoQuery;
 use dbpg::seriesbychannel::ChannelInfoQuerySender;
 pub use futs::FutShutdown;
+use futures::Future;
 use futures::FutureExt;
 use futures::Stream;
 use futures::StreamExt;
@@ -36,6 +38,8 @@ use futures::TryFutureExt;
 use futures::future::ready;
 use regex::Regex;
 use scywr::insertqueues::InsertQueuesTx;
+use scywr::iteminsertqueue::QueryItem;
+use scywr::senderpolling::SenderPolling;
 use serde::Serialize;
 use std::collections::BTreeMap;
 use std::collections::VecDeque;
@@ -255,6 +259,8 @@ pub struct ConnSet {
     out_buf: AsynBuf<ConnSetItem>,
     llog: LocalLog,
     chtrace: channeltrace::ChannelTraceStash,
+    write_staging: VecDeque<QueryItem>,
+    write_sender: Pin<Box<SenderPolling<VecDeque<QueryItem>>>>,
 }
 
 impl ConnSet {
@@ -265,6 +271,7 @@ impl ConnSet {
         local_epics_hostname: String,
         ch_info_tx: ChannelInfoQuerySender,
         finder_handle: FinderHandleV02,
+        insert_input: Sender<VecDeque<QueryItem>>,
     ) -> Result<Self, Error> {
         let (cmd_tx, cmd_rx) = asynchan::bounded(100, "ConnSetCmder");
         let cmder = ConnSetCmder::new(cmd_tx);
@@ -286,6 +293,8 @@ impl ConnSet {
             out_buf: AsynBuf::new(INP_BUF_CAP),
             llog: LocalLog::new(),
             chtrace: channeltrace::ChannelTraceStash::new(),
+            write_staging: VecDeque::new(),
+            write_sender: Box::pin(SenderPolling::new(insert_input)),
         };
         Ok(ret)
     }
@@ -493,6 +502,37 @@ impl ConnSet {
         Ok(None)
     }
 
+    /// Drives the pending send (if any) of batched `QueryItem`s toward Daemon's scylla insert
+    /// pipeline, and starts the next send from `write_staging` once idle.
+    fn poll_write_sender(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<()>> {
+        use Poll::*;
+        let selfname = "poll_write_sender";
+        let self2 = self.as_mut().get_mut();
+        let mut progress = false;
+        if self2.write_sender.is_sending() {
+            match self2.write_sender.as_mut().poll(cx) {
+                Ready(Ok(())) => progress = true,
+                Ready(Err(e)) => {
+                    error!("{selfname}  write_sender closed  {e:?}");
+                    progress = true;
+                }
+                Pending => {}
+            }
+        }
+        if self2.write_sender.is_idle() && !self2.write_staging.is_empty() {
+            let batch = std::mem::take(&mut self2.write_staging);
+            self2.write_sender.as_mut().send_pin(batch);
+            progress = true;
+        }
+        if progress {
+            Ready(Some(()))
+        } else if self2.write_sender.is_sending() {
+            Pending
+        } else {
+            Ready(None)
+        }
+    }
+
     fn poll_conn_comm(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Result<(), Error>>> {
         let selfname = "poll_conn_comm";
         use Poll::*;
@@ -564,6 +604,9 @@ impl ConnSet {
                                             }
                                             conn2::conn::CaConnItem::ChannelEventValue(x) => {
                                                 self2.out_buf.push_back_force(ConnSetItem::ChannelEventValue(x));
+                                            }
+                                            conn2::conn::CaConnItem::ChannelWriteItems(x) => {
+                                                self2.write_staging.extend(x);
                                             }
                                             conn2::conn::CaConnItem::ChannelTrace(x) => {
                                                 self2.chtrace.push(x);
@@ -1282,6 +1325,15 @@ impl ConnSet {
             trace_hpp_flags!("FLAGS  {}  {}", hpp.have_progress(), hpp.have_pending());
         }
         match self.as_mut().poll_conn_idle_disconnect_futs(cx) {
+            Ready(Some(())) => {
+                hpp.mark_progress();
+            }
+            Ready(None) => {}
+            Pending => {
+                hpp.mark_pending();
+            }
+        }
+        match self.as_mut().poll_write_sender(cx) {
             Ready(Some(())) => {
                 hpp.mark_progress();
             }

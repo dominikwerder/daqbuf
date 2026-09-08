@@ -22,6 +22,7 @@ use futures::Stream;
 use futures::StreamExt;
 use netpod::futdbg::FutDbg;
 use netpod::futdbg::FutDbgBox;
+use scywr::iteminsertqueue::QueryItem;
 use serde::Serialize;
 use stats::mett::CaConnConnectedMetrics;
 use std::cell::RefCell;
@@ -247,6 +248,7 @@ pub enum ItemInner {
     TestValue(crate::ca::connset2::connset::TestValue),
     LocalLog(locallog::Entry),
     ChannelEventValue(ChannelEventValue),
+    ChannelWriteItems(Vec<QueryItem>),
     ProtoOut(CaMsg),
     ChannelTrace(ChannelTraceL1Item),
 }
@@ -696,6 +698,13 @@ impl ActiveCa {
                                                 let item = ActiveCaItem {
                                                     ts_create: item.ts_create,
                                                     inner: ItemInner::ChannelEventValue(x),
+                                                };
+                                                item
+                                            }
+                                            channelheap::ItemInner::ChannelWriteItems(x) => {
+                                                let item = ActiveCaItem {
+                                                    ts_create: item.ts_create,
+                                                    inner: ItemInner::ChannelWriteItems(x),
                                                 };
                                                 item
                                             }

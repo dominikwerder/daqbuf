@@ -29,6 +29,7 @@ use futures::FutureExt;
 use futures::StreamExt;
 use futures::future::ready;
 use hashbrown::HashMap;
+use scywr::iteminsertqueue::QueryItem;
 use serde::Serialize;
 use stats::mett::CaConnConnectedMetrics;
 use std::collections::BTreeMap;
@@ -199,6 +200,7 @@ pub enum ItemInner {
     TestValue(crate::ca::connset2::connset::TestValue),
     LocalLog(locallog::Entry),
     ChannelEventValue(ChannelEventValue),
+    ChannelWriteItems(Vec<QueryItem>),
     ProtoOut(CaMsg),
     ChannelTrace(ChannelTraceL1Item),
 }
@@ -219,6 +221,7 @@ enum PollHandlerItem {
     TestValue(crate::ca::connset2::connset::TestValue),
     LocalLog(locallog::Entry),
     ChannelEventValue(ChannelEventValue),
+    ChannelWriteItems(Vec<QueryItem>),
     ChannelTrace(ChannelTraceL1Item),
 }
 
@@ -780,6 +783,9 @@ impl ChannelHeap {
                                 channelhandler::ItemInner::ChannelEventValue(x) => {
                                     PollHandlerItem::ChannelEventValue(x)
                                 }
+                                channelhandler::ItemInner::ChannelWriteItems(x) => {
+                                    PollHandlerItem::ChannelWriteItems(x)
+                                }
                                 channelhandler::ItemInner::ChannelTrace(x) => PollHandlerItem::ChannelTrace(
                                     ChannelTraceL1Item::new(handler.channel_config().name().into(), x),
                                 ),
@@ -1022,6 +1028,13 @@ impl ChannelHeap {
                                                 let x = ChannelHeapItem {
                                                     ts_create: tsnow,
                                                     inner: ItemInner::ChannelEventValue(x),
+                                                };
+                                                self2.out_buf.push_back_force(x);
+                                            }
+                                            PollHandlerItem::ChannelWriteItems(x) => {
+                                                let x = ChannelHeapItem {
+                                                    ts_create: tsnow,
+                                                    inner: ItemInner::ChannelWriteItems(x),
                                                 };
                                                 self2.out_buf.push_back_force(x);
                                             }
@@ -1396,6 +1409,14 @@ impl ChannelHeap {
                                     }
                                     PollHandlerItem::ChannelEventValue(x) => {
                                         let inner = ItemInner::ChannelEventValue(x);
+                                        let item = ChannelHeapItem {
+                                            ts_create: tsloop,
+                                            inner,
+                                        };
+                                        self.out_buf.push_back_force(item);
+                                    }
+                                    PollHandlerItem::ChannelWriteItems(x) => {
+                                        let inner = ItemInner::ChannelWriteItems(x);
                                         let item = ChannelHeapItem {
                                             ts_create: tsloop,
                                             inner,

@@ -13,7 +13,7 @@ use std::time::Instant;
 macro_rules! warn { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
 
 #[derive(Debug, Serialize)]
-struct CaWriterValueState {
+pub(crate) struct CaWriterValueState {
     series_data: SeriesId,
     series_status: SeriesId,
     last_accepted_ts: TsNano,
@@ -21,7 +21,7 @@ struct CaWriterValueState {
 }
 
 impl CaWriterValueState {
-    fn new(series_status: SeriesId, series_data: SeriesId, rt: RetentionTime) -> Self {
+    pub(crate) fn new(series_status: SeriesId, series_data: SeriesId, rt: RetentionTime) -> Self {
         Self {
             series_data,
             series_status,
@@ -32,10 +32,10 @@ impl CaWriterValueState {
 }
 
 #[derive(Debug, Clone, Serialize)]
-struct CaWriterValue(CaEventValue, Option<String>);
+pub(crate) struct CaWriterValue(CaEventValue, Option<String>);
 
 impl CaWriterValue {
-    fn new(val: CaEventValue, enum_str_table: &BTreeMap<i32, String>) -> Self {
+    pub(crate) fn new(val: CaEventValue, enum_str_table: &BTreeMap<i32, String>) -> Self {
         let valstr = match &val.data {
             CaDataValue::Scalar(val) => {
                 use ca_proto::ca::proto::CaDataScalarValue;

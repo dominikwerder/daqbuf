@@ -70,6 +70,7 @@ pub enum MonitoringItem {
     ProtoOutSubid(CaMsg, Instant),
     SubidRemove(Cid),
     ChannelEventValue(ChannelEventValue),
+    RawEventForWrite(super::RawEventForWrite),
     TestValue(crate::ca::connset2::connset::TestValue),
     LocalLog(locallog::Entry),
 }
@@ -149,6 +150,8 @@ pub struct FetchMonitoring {
     rng: stats::rand_xoshiro::Xoshiro128PlusPlus,
     #[to_serde(skip)]
     llog: locallog::LocalLog,
+    #[to_serde(skip)]
+    pending_write: VecDeque<super::RawEventForWrite>,
 }
 
 impl FetchMonitoring {
@@ -174,6 +177,7 @@ impl FetchMonitoring {
             mett: ChannelHandlerMetrics::new(),
             rng: stats::xoshiro_from_os_rng(),
             llog: locallog::LocalLog::new(),
+            pending_write: VecDeque::new(),
         }
     }
 
@@ -326,6 +330,13 @@ impl FetchMonitoring {
                 }
                 let stnow = SystemTime::now();
                 let ts = TsNano::from_system_time(stnow);
+                self.pending_write.push_back(super::RawEventForWrite {
+                    value: v.value.clone(),
+                    payload_len: v.payload_len,
+                    tsnow,
+                    stnow,
+                    tscaproto: item.tscmd,
+                });
                 let item = MonitoringItem::ChannelEventValue(ChannelEventValue::new(self.series.clone(), ts, val_f32));
                 Ready(Some(Some(Ok(item))))
             }
@@ -415,6 +426,9 @@ impl FetchMonitoring {
         loop {
             if let Some(x) = self.llog.pop() {
                 break Ready(Some(Ok(MonitoringItem::LocalLog(x))));
+            }
+            if let Some(x) = self.pending_write.pop_front() {
+                break Ready(Some(Ok(MonitoringItem::RawEventForWrite(x))));
             }
             let mut hpp = HaveProgressPending::new();
             let self2 = &mut *self;
