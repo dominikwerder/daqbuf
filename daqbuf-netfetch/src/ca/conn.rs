@@ -7,6 +7,7 @@ use async_channel::Receiver;
 use async_channel::Sender;
 use ca_proto::ca::proto;
 use ca_proto_tokio::tcpasyncwriteread::TcpAsyncWriteRead;
+use dbpg::seriesbychannel::CanSendChannelInfoResult;
 use dbpg::seriesbychannel::ChannelInfoQuery;
 use dbpg::seriesbychannel::ChannelInfoResult;
 use enumfetch::ConnFuture;
@@ -963,62 +964,6 @@ fn check_ev_value_data(data: &proto::CaDataValue, scalar_type: &ScalarType) -> R
     Ok(())
 }
 
-struct EventAddIngestRefobjStage1<'a> {
-    iqdqs: &'a mut InsertDeques,
-    crst: &'a mut CreatedState,
-    rtwriter: &'a mut CaRtWriter,
-    mett: &'a mut CaConnMetrics,
-    rng: &'a mut Xoshiro128PlusPlus,
-    chname: &'a str,
-    is_dbg: bool,
-    binwriter: Option<&'a mut BinWriter>,
-}
-
-impl<'a> EventAddIngestRefobjStage1<'a> {
-    fn and_channel_status_writer(self, wrst: &'a mut WriterStatus) -> EventAddIngestRefobjStage2<'a> {
-        EventAddIngestRefobjStage2 {
-            iqdqs: self.iqdqs,
-            crst: self.crst,
-            rtwriter: self.rtwriter,
-            mett: self.mett,
-            rng: self.rng,
-            chname: self.chname,
-            is_dbg: self.is_dbg,
-            binwriter: self.binwriter,
-            wrst,
-        }
-    }
-}
-
-struct EventAddIngestRefobjStage2<'a> {
-    iqdqs: &'a mut InsertDeques,
-    crst: &'a mut CreatedState,
-    rtwriter: &'a mut CaRtWriter,
-    mett: &'a mut CaConnMetrics,
-    rng: &'a mut Xoshiro128PlusPlus,
-    chname: &'a str,
-    is_dbg: bool,
-    binwriter: Option<&'a mut BinWriter>,
-    wrst: &'a mut WriterStatus,
-}
-
-impl<'a> EventAddIngestRefobjStage2<'a> {
-    fn and_with_use_ioc_time(self, v: bool) -> EventAddIngestRefobj<'a> {
-        EventAddIngestRefobj {
-            iqdqs: self.iqdqs,
-            wrst: self.wrst,
-            crst: self.crst,
-            rtwriter: self.rtwriter,
-            mett: self.mett,
-            rng: self.rng,
-            chname: self.chname,
-            is_dbg: self.is_dbg,
-            binwriter: self.binwriter,
-            use_ioc_time: v,
-        }
-    }
-}
-
 struct EventAddIngestRefobj<'a> {
     iqdqs: &'a mut InsertDeques,
     wrst: &'a mut WriterStatus,
@@ -1040,14 +985,16 @@ impl<'a> EventAddIngestRefobj<'a> {
         mett: &'a mut CaConnMetrics,
         rng: &'a mut Xoshiro128PlusPlus,
         chname: &'a str,
-    ) -> EventAddIngestRefobjStage1<'a> {
+        wrst: &'a mut WriterStatus,
+        use_ioc_time: bool,
+    ) -> Self {
         let binwriter = if opts.binwriter_enable {
             Some(&mut st.binwriter)
         } else {
             None
         };
         let is_dbg = series::dbg::dbg_series(st.writer.series());
-        EventAddIngestRefobjStage1 {
+        Self {
             iqdqs,
             crst: &mut st.channel,
             rtwriter: &mut st.writer,
@@ -1056,6 +1003,8 @@ impl<'a> EventAddIngestRefobj<'a> {
             chname,
             is_dbg,
             binwriter,
+            wrst,
+            use_ioc_time,
         }
     }
 
@@ -1200,16 +1149,6 @@ pub struct CmdChannelInspectFull {
 impl fmt::Debug for CmdChannelInspectFull {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         fmt.debug_struct("CmdChannelInspectFull").finish()
-    }
-}
-
-pub struct StatusPrivate {
-    tx: Sender<serde_json::Value>,
-}
-
-impl fmt::Debug for StatusPrivate {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        fmt.debug_struct("StatusPrivate").finish()
     }
 }
 
@@ -2322,9 +2261,9 @@ impl CaConn {
                             &mut self.mett,
                             &mut self.rng,
                             ch_conf.name(),
-                        )
-                        .and_channel_status_writer(ch_wrst)
-                        .and_with_use_ioc_time(ch_conf.use_ioc_time());
+                            ch_wrst,
+                            ch_conf.use_ioc_time(),
+                        );
                         robj.event_add_ingest(ev.payload_len, ev.value, tsnow, stnow, tscaproto)?;
                     }
                     ReadingState::Monitoring(st2) => {
@@ -2346,9 +2285,9 @@ impl CaConn {
                             &mut self.mett,
                             &mut self.rng,
                             ch_conf.name(),
-                        )
-                        .and_channel_status_writer(ch_wrst)
-                        .and_with_use_ioc_time(ch_conf.use_ioc_time());
+                            ch_wrst,
+                            ch_conf.use_ioc_time(),
+                        );
                         robj.event_add_ingest(ev.payload_len, ev.value, tsnow, stnow, tscaproto)?;
                     }
                     ReadingState::StopMonitoringForPolling(st2) => {
@@ -2517,9 +2456,9 @@ impl CaConn {
                                             &mut self.mett,
                                             &mut self.rng,
                                             ch_conf.name(),
-                                        )
-                                        .and_channel_status_writer(ch_wrst)
-                                        .and_with_use_ioc_time(ch_conf.use_ioc_time());
+                                            ch_wrst,
+                                            ch_conf.use_ioc_time(),
+                                        );
                                         robj.event_add_ingest(ev.payload_len, ev.value, tsnow, stnow, tscaproto)?;
                                         Ok(())
                                     }
@@ -2625,9 +2564,9 @@ impl CaConn {
                                                     &mut self.mett,
                                                     &mut self.rng,
                                                     ch_conf.name(),
-                                                )
-                                                .and_channel_status_writer(ch_wrst)
-                                                .and_with_use_ioc_time(ch_conf.use_ioc_time());
+                                                    ch_wrst,
+                                                    ch_conf.use_ioc_time(),
+                                                );
                                                 robj.event_add_ingest(
                                                     ev.payload_len,
                                                     ev.value,
