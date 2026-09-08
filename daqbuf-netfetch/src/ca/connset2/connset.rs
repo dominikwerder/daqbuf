@@ -264,8 +264,6 @@ pub struct ConnSet {
 }
 
 impl ConnSet {
-    /// The channel-info lookup workers and the ioc finder are owned by the caller, see
-    /// `daqingest::daemon2::Daemon` which starts them and keeps their join handles.
     pub async fn new(
         backend: String,
         local_epics_hostname: String,
@@ -502,8 +500,6 @@ impl ConnSet {
         Ok(None)
     }
 
-    /// Drives the pending send (if any) of batched `QueryItem`s toward Daemon's scylla insert
-    /// pipeline, and starts the next send from `write_staging` once idle.
     fn poll_write_sender(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<()>> {
         use Poll::*;
         let selfname = "poll_write_sender";

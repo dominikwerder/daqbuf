@@ -157,19 +157,14 @@ impl ScyllaInsertSet {
         Ok(ret)
     }
 
-    /// The single input for batches of work items. Can be cloned and handed to producers.
     pub fn input(&self) -> Sender<VecDeque<QueryItem>> {
         self.input_tx.clone()
     }
 
-    /// The per-cluster queues which the sorter feeds from the input.
-    ///
-    /// Handed out for components which want to write into one specific cluster directly.
     pub fn sinks(&self) -> &[InsertQueuesTx] {
         &self.sinks
     }
 
-    /// Metrics emitted by the insert workers of all clusters.
     pub fn output(&self) -> &Receiver<InsertWorkerOutputItem> {
         &self.out_rx
     }
@@ -181,7 +176,6 @@ impl ScyllaInsertSet {
         }
     }
 
-    /// Close the input, let the sorter flush what it still holds, then join all worker tasks.
     pub async fn shutdown(self) -> Result<(), Error> {
         debug!("shutdown  close input");
         self.input_tx.close();
@@ -319,7 +313,6 @@ mod test {
         },
     );
 
-    // A work item which is cheap to build and which carries the given target.
     fn item(target: InsertTarget, id: u64) -> QueryItem {
         QueryItem::Msp(MspItem::new(
             target,
@@ -339,7 +332,6 @@ mod test {
         }
     }
 
-    // The series ids of the next batch on that lane, or an error if none arrives in time.
     async fn recv_ids(rx: &InsertQueuesRx, target: InsertTarget) -> Result<Vec<u64>, TestError> {
         let fut = rx.receiver_for_target(target).recv();
         match tokio::time::timeout(Duration::from_millis(2000), fut).await {
