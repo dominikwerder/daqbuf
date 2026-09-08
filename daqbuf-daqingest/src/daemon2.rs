@@ -1,10 +1,3 @@
-//! Central entry point of the conn2/connset2 based channel access ingest.
-//!
-//! The daemon owns all long-lived resources of the process: the linux signal handling, the
-//! postgres backed workers (series-id lookup and ioc finder), the scylla insert workers, the
-//! metrics http service and the connset. It drives the connset stream inline and performs an
-//! ordered shutdown.
-
 pub mod cmd;
 pub mod ctrls;
 
@@ -61,9 +54,7 @@ autoerr::create_error_v1!(
 
 const PG_LOOKUP_WORKER_COUNT: usize = 2;
 const TICK_INTERVAL: Duration = Duration::from_millis(1000);
-/// Upper bound for the connset to finish its shutdown before we tear down anyways.
 const SHUTDOWN_DEADLINE: Duration = Duration::from_millis(30000);
-/// Upper bound to wait for a single background worker to join.
 const JOIN_TIMEOUT: Duration = Duration::from_millis(10000);
 const CMD_QUEUE_CAP: usize = 32;
 

@@ -111,36 +111,25 @@ struct Closing2 {}
 #[derive(Debug, ToSerde)]
 #[to_serde(vis = "pub", serde(tag = "ty", content = "co"))]
 enum State {
-    /// Advances to `Creating` on the very next poll; a dwell here means the handler is not
-    /// getting polled, not that anything downstream is slow.
     Init(#[to_serde(elapsed, dwell_ms = 4000)] Instant, #[to_serde(skip)] Init),
-    /// Matches the 8s overall budget `Creating::new` arms for the create round-trip plus
-    /// series lookup. The inner `Creating` state scores its own steps more tightly.
     Creating(
         #[to_serde(elapsed, dwell_ms = 8000)] Instant,
         #[to_serde(nest)] Creating,
     ),
-    /// One enum-metadata round-trip to the IOC; no timeout arms this, so the dwell is the
-    /// only signal that it stalled.
     ReadEnum(
         #[to_serde(elapsed, dwell_ms = 4000)] Instant,
         #[to_serde(nest)] readenum::ReadEnum,
     ),
-    /// Steady state: a long dwell here is a healthy channel, so no dwell expectation.
     Running(#[to_serde(elapsed)] Instant, #[to_serde(nest)] Running),
-    /// Matches the fixed 2s channel-close-ack timeout armed alongside `Closing1` below.
     Closing1(
         #[to_serde(elapsed, dwell_ms = 2000)] Instant,
         #[to_serde(nest)] Closing1,
     ),
-    /// Pass-through shutdown step, advances on the next poll.
     Closing2(
         #[to_serde(elapsed, dwell_ms = 4000)] Instant,
         #[to_serde(skip)] Closing2,
     ),
-    /// Pass-through shutdown step: notifies the remover, then advances on the next poll.
     Done1(#[to_serde(elapsed, dwell_ms = 4000)] Instant),
-    /// Terminal resting states: they are meant to be dwelled in until reaped, so no score.
     Done(#[to_serde(elapsed)] Instant),
     Dummy(#[to_serde(elapsed)] Instant),
 }
@@ -988,30 +977,21 @@ impl Stream for ChannelHandler {
 mod test_state_serde {
     use super::*;
 
-    /// The snapshot that `dyn_cmd_v03` returns for a channel handler: structured state
-    /// with time-in-state, buffer fill and the nested child component, and no trace of the
-    /// non-serializable payloads (futures, wakers, channel handles).
     #[test]
     fn channel_handler_snapshot_shape() {
         let conf = ChannelConfig::st_monitor("SOME:CHANNEL", "test.hcl");
         let mut ch = ChannelHandler::new("testbackend".into(), conf);
         let v = serde_json::to_value(ch.to_serde()).unwrap();
-
         assert_eq!(v["state"]["ty"], "Init");
         assert_eq!(v["backend"], "testbackend");
         assert_eq!(v["conf"]["name"], "SOME:CHANNEL");
         assert_eq!(v["proto_inp_buf"]["cap"], INP_BUF_CAP);
         assert_eq!(v["proto_inp_buf"]["len"], 0);
         assert_eq!(v["counters"]["event_add_res_cnt"], 0);
-        // derived on snapshot, present in no field of ChannelHandler
         assert!(v["cid"].is_number(), "cid missing in {v}");
-        // non-serializable internals must not leak
         for k in ["cmd_tx", "cmd_rx", "mett", "waker_1", "waker_2", "removing"] {
             assert!(v.get(k).is_none(), "{k} leaked into {v}");
         }
-
-        // the state machine advances into Creating, which nests its own state.
-        // Creating::new arms a timeout future, so it needs a reactor.
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_time()
             .build()
@@ -1023,16 +1003,11 @@ mod test_state_serde {
         );
         let v = serde_json::to_value(ch.state_serde()).unwrap();
         assert_eq!(v["ty"], "Creating");
-        // time-in-state, rendered by the existing human duration helper
         assert!(v["co"][0].is_string(), "no time-in-state in {v}");
-        // Creating declares a dwell time, so co[1] is its dwell_score sibling and the
-        // nested child moves to co[2]
         assert!(v["co"][1].is_number(), "no dwell_score in {v}");
         assert_eq!(v["co"][2]["state"]["ty"], "CreateChanSend");
         assert!(v["co"][2]["state"]["co"][0].is_string());
-        // CreateChanSend also declares a dwell time, so co[1] is the dwell_score sibling
         assert!(v["co"][2]["state"]["co"][1].is_number());
-        // the outgoing CreateChan message is reported as buffer fill, not content
         assert_eq!(v["co"][2]["state"]["co"][2]["len"], 1);
     }
 }

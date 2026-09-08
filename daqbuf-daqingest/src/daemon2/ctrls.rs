@@ -1,9 +1,9 @@
 //! Implements the control interface which the metrics http service uses.
 
 use super::cmd::DaemonCmder;
+use netfetch::ca::connset::ChannelStatusesResponse;
 use netfetch::ca::connset2::connset::ConnSetCmder;
 use netfetch::ca::connset2::ctrls::ConnSetConn2Ctrls;
-use netfetch::ca::connset::ChannelStatusesResponse;
 use netfetch::conf::ChannelConfig;
 use netfetch::daemon_common::ChannelName;
 use netfetch::metrics::CaIngestCtrls;
@@ -90,7 +90,11 @@ impl CaIngestCtrls for CaIngestCtrlsV2 {
         let _ = (name, limit);
         // `ChannelStatusesResponse` is produced by the old connset only. The conn2 equivalent is
         // reachable via `cmd_dyn_v1` with `channel_details_v00`.
-        let fut = async move { Err(Box::new(Error::NotAvailable(format!("channel_states, use cmd_dyn_v1 with channel_details_v00"))) as _) };
+        let fut = async move {
+            Err(Box::new(Error::NotAvailable(format!(
+                "channel_states, use cmd_dyn_v1 with channel_details_v00"
+            ))) as _)
+        };
         Box::pin(fut)
     }
 

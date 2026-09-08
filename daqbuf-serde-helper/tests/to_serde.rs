@@ -271,7 +271,10 @@ fn dwell_score_survives_value_roundtrip_as_clean_integer() {
     // "0.6520000100135803" instead of "0.652") -- it must serialize as a clean integer.
     assert!(v["dwell_score"].is_u64(), "expected an integer, got {v}");
     let text = serde_json::to_string(&v["dwell_score"]).unwrap();
-    assert!(!text.contains('.'), "dwell_score serialized with a decimal point: {text}");
+    assert!(
+        !text.contains('.'),
+        "dwell_score serialized with a decimal point: {text}"
+    );
 }
 
 /// Embedded pattern (create.rs's SeriesIdRecv): elapsed and dwell live in the same variant,

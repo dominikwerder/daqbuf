@@ -79,7 +79,12 @@ impl crate::metrics::Conn2Ctrls for ConnSetConn2Ctrls {
         Box::pin(fut)
     }
 
-    fn scatter_gather_v1(&self, channel_regex: String, addr_regex: String, cmd: serde_json::Value) -> FutBox<serde_json::Value> {
+    fn scatter_gather_v1(
+        &self,
+        channel_regex: String,
+        addr_regex: String,
+        cmd: serde_json::Value,
+    ) -> FutBox<serde_json::Value> {
         let cmder = self.cmder.clone();
         let fut = async move {
             let cmd = ScatterGatherV1::new(Regex::new(&channel_regex)?, Regex::new(&addr_regex)?, cmd);

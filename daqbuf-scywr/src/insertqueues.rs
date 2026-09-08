@@ -301,7 +301,8 @@ impl InsertDeques {
     // Should be used only for connection and channel status items.
     // It encapsulates the decision to which queue(s) we want to send these kind of items.
     pub fn emit_accounting_item(&mut self, item: Accounting) -> Result<(), Error> {
-        self.deque_for_target(item.target).push_back(QueryItem::Accounting(item));
+        self.deque_for_target(item.target)
+            .push_back(QueryItem::Accounting(item));
         Ok(())
     }
 
