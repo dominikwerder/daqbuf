@@ -190,6 +190,10 @@ impl FetchPolling {
         self.poll_next_ts_jitter
     }
 
+    pub fn mett_take(&mut self) -> ChannelHandlerMetrics {
+        std::mem::replace(&mut self.mett, ChannelHandlerMetrics::new())
+    }
+
     pub fn transition_to_enable(&mut self) {
         let selfname = "transition_to_enable";
         match &mut self.state {

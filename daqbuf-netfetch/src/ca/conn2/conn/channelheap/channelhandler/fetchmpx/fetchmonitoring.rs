@@ -181,6 +181,10 @@ impl FetchMonitoring {
         }
     }
 
+    pub fn mett_take(&mut self) -> ChannelHandlerMetrics {
+        std::mem::replace(&mut self.mett, ChannelHandlerMetrics::new())
+    }
+
     fn rng_next(&mut self) -> u32 {
         stats::rand_xoshiro::rand_core::Rng::next_u32(&mut self.rng)
     }

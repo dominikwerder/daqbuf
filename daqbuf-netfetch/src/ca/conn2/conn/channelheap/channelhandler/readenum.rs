@@ -142,6 +142,10 @@ impl ReadEnum {
         }
     }
 
+    pub fn mett_take(&mut self) -> ChannelHandlerMetrics {
+        std::mem::replace(&mut self.mett, ChannelHandlerMetrics::new())
+    }
+
     pub fn sid(&self) -> Sid {
         self.sid.clone()
     }

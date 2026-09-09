@@ -11,6 +11,7 @@ use crate::asynbuf;
 use crate::asynbuf::AsynBuf;
 use crate::asynchan;
 use crate::ca::conn2::channel_event_value::ChannelEventValue;
+use crate::ca::conn2::conn::StatusSel;
 use crate::ca::conn2::conn::activeca;
 use crate::ca::conn2::conn::activeca::ActiveCa;
 use crate::ca::conn2::conn::ctchan::CtChan;
@@ -148,6 +149,10 @@ impl Connected {
     }
 
     pub fn status_info(&mut self) -> StatusInfo {
+        self.status_info_sel(&StatusSel::periodic())
+    }
+
+    pub fn status_info_sel(&mut self, sel: &StatusSel) -> StatusInfo {
         let ss = self.status_socket();
         match &self.state {
             State::Init(..) => StatusInfo {
@@ -159,7 +164,7 @@ impl Connected {
                 socket_state: ss,
             },
             State::ActiveCa(st) => StatusInfo {
-                state: StatusInfoState::ActiveCa(st.status_info()),
+                state: StatusInfoState::ActiveCa(st.status_info_sel(sel)),
                 socket_state: ss,
             },
             State::Done => StatusInfo {
@@ -169,23 +174,20 @@ impl Connected {
         }
     }
 
+    /// Harvest the metrics of this state, of the CA protocol layer and of the
+    /// currently active sub-state.
     pub fn mett_take(&mut self) -> CaConnConnectedMetrics {
-        // std::mem::replace(&mut self.mett, CaConnConnectedMetrics::new())
+        let mut ret = std::mem::replace(&mut self.mett, CaConnConnectedMetrics::new());
+        ret.proto().ingest(self.protowrap.mett_take());
         match &mut self.state {
-            State::Init(..) => {
-                // TODO
-                CaConnConnectedMetrics::new()
+            State::Init(..) => {}
+            State::Handshake(..) => {}
+            State::ActiveCa(st) => {
+                ret.ingest(st.mett_take());
             }
-            State::Handshake(..) => {
-                // TODO
-                CaConnConnectedMetrics::new()
-            }
-            State::ActiveCa(st) => st.mett_take(),
-            State::Done => {
-                // TODO
-                CaConnConnectedMetrics::new()
-            }
+            State::Done => {}
         }
+        ret
     }
 
     pub fn addr(&self) -> SocketAddrV4 {
@@ -259,24 +261,6 @@ impl Connected {
                 "error": "CaConn  Connected  State::Done",
             }))
             .box2(),
-        }
-    }
-
-    pub fn scatter_gather_v1(&mut self, cmd: super::ScatterGatherV1) -> serde_json::Value {
-        match &mut self.state {
-            State::Init() => serde_json::json!({
-                "state": "Init",
-            }),
-            State::Handshake(st) => serde_json::json!({
-                "state": "Handshake",
-            }),
-            State::ActiveCa(st) => serde_json::json!({
-                "state": "ActiveCa",
-                "response": st.scatter_gather_v1(cmd),
-            }),
-            State::Done => serde_json::json!({
-                "state": "Done",
-            }),
         }
     }
 

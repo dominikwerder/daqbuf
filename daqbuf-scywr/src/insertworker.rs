@@ -24,6 +24,7 @@ use smallvec::smallvec;
 use std::collections::VecDeque;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::sync::atomic;
 use std::task::Context;
 use std::task::Poll;
@@ -48,25 +49,22 @@ autoerr::create_error_v1!(
     },
 );
 
-fn stats_inc_for_err(err: &crate::iteminsertqueue::InsertFutError) {
+fn stats_inc_for_err(err: &crate::iteminsertqueue::InsertFutError, mett: &mut stats::mett::ScyllaInsertWorker) {
     use crate::iteminsertqueue::InsertFutError;
     match err {
         InsertFutError::Execution(e) => match e {
             scylla::errors::ExecutionError::RequestTimeout(_) => {
-                // TODO
-                // stats.db_timeout().inc();
+                mett.db_timeout().inc();
             }
             _ => {
                 if true {
                     warn!("db error {}", err);
                 }
-                // TODO
-                // stats.db_error().inc();
+                mett.db_error().inc();
             }
         },
         InsertFutError::NoFuture => {
-            // TODO
-            // stats.logic_error().inc();
+            mett.db_no_future().inc();
         }
     }
 }
@@ -89,6 +87,41 @@ async fn back_off_sleep(backoff_dt: &mut Duration) {
 #[derive(Debug)]
 pub enum InsertWorkerOutputItem {
     Metrics(stats::mett::ScyllaInsertWorker),
+}
+
+/// Shares the input metrics between the stream which prepares the database
+/// futures and the worker loop which emits the metrics. Both are driven by the
+/// same task, the lock is taken once per batch.
+#[derive(Clone)]
+struct InputMett {
+    inner: Arc<Mutex<stats::mett::ScyllaWorkerInput>>,
+}
+
+impl InputMett {
+    fn new() -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(stats::mett::ScyllaWorkerInput::new())),
+        }
+    }
+
+    fn ingest(&self, inp: stats::mett::ScyllaWorkerInput) {
+        match self.inner.lock() {
+            Ok(mut g) => g.ingest(inp),
+            Err(_) => {
+                error!("InputMett  poisoned");
+            }
+        }
+    }
+
+    fn take_and_reset(&self) -> stats::mett::ScyllaWorkerInput {
+        match self.inner.lock() {
+            Ok(mut g) => g.take_and_reset(),
+            Err(_) => {
+                error!("InputMett  poisoned");
+                stats::mett::ScyllaWorkerInput::new()
+            }
+        }
+    }
 }
 
 pub struct InsertWorkerOpts {
@@ -205,7 +238,7 @@ impl<F> Future for FutTrackDt<F>
 where
     F: Future + Unpin,
 {
-    type Output = (Instant, Instant, Instant, F::Output, FutJobKind);
+    type Output = (Instant, Instant, Instant, F::Output, FutJobKind, u16);
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         use Poll::*;
@@ -214,7 +247,7 @@ where
         }
         self.npoll = self.npoll.saturating_add(1);
         match self.as_mut().fut.poll_unpin(cx) {
-            Ready(x) => Ready((self.ts_net, self.ts1, self.ts2, x, self.jobkind.clone())),
+            Ready(x) => Ready((self.ts_net, self.ts1, self.ts2, x, self.jobkind.clone(), self.npoll)),
             Pending => Pending,
         }
     }
@@ -257,6 +290,7 @@ async fn worker_streamed(
     debug_setup!("worker_streamed  begin");
     let tsnow = Instant::now();
     let mut mett = stats::mett::ScyllaInsertWorker::new();
+    let mett_input = InputMett::new();
     let mut mett_emit_last = tsnow;
     let metrics_ivl = Duration::from_millis(500);
     insert_worker_opts
@@ -269,7 +303,8 @@ async fn worker_streamed(
     let stream = inspect_items(stream, worker_name.clone());
     let wid = Arc::new(wid);
     if let Some(data_store) = data_store {
-        let stream = transform_to_db_futures(stream, data_store, ignore_writes, wid.clone());
+        mett.worker_start().inc();
+        let stream = transform_to_db_futures(stream, data_store, ignore_writes, wid.clone(), mett_input.clone());
         // let stream = stream.map(|_| Vec::new());
         let stream = stream
             .map(|x| futures_util::stream::iter(x))
@@ -278,7 +313,7 @@ async fn worker_streamed(
             .buffer_unordered(concurrency);
         let mut stream = Box::pin(stream);
         debug_setup!("waiting for item");
-        while let Some((ts_net, ts1, ts2, item, jobkind)) = stream.next().await {
+        while let Some((ts_net, ts1, ts2, item, jobkind, npoll)) = stream.next().await {
             if false {
                 debug!("see scylla result item  {ts_net:?}  {ts1:?}  {ts2:?}  {item:?}  {jobkind:?}");
                 continue;
@@ -314,14 +349,18 @@ async fn worker_streamed(
                     mett.job_dt1().push_dur_100us(dt1);
                     mett.job_dt2().push_dur_100us(dt2);
                     mett.job_dt_net().push_dur_100us(dt_net);
+                    mett.job_npoll().push_val(npoll as u32);
                 }
                 Err(e) => {
                     mett.job_err().inc();
-                    stats_inc_for_err(&e);
+                    mett.job_npoll().push_val(npoll as u32);
+                    stats_inc_for_err(&e, &mut mett);
                 }
             }
             if mett_emit_last + metrics_ivl <= tsnow {
                 mett_emit_last = tsnow;
+                mett.input().ingest(mett_input.take_and_reset());
+                mett.metrics_emit().inc();
                 let m = mett.take_and_reset();
                 let item = InsertWorkerOutputItem::Metrics(m);
                 match tx.send(item).await {
@@ -333,14 +372,25 @@ async fn worker_streamed(
                 }
             }
         }
+        mett.worker_finish().inc();
     } else {
+        mett.worker_dummy_start().inc();
         let mut stream = Box::pin(stream);
         while let Some(item) = stream.next().await {
             drop(item);
         }
+        mett.worker_dummy_finish().inc();
     };
-    // TODO
-    // stats.worker_finish().inc();
+    // Hand out whatever accumulated since the last emit, so that the counters
+    // of a worker which stops are not lost.
+    {
+        mett.input().ingest(mett_input.take_and_reset());
+        mett.metrics_emit().inc();
+        let m = mett.take_and_reset();
+        if tx.send(InsertWorkerOutputItem::Metrics(m)).await.is_err() {
+            error!("insert worker can not emit final metrics");
+        }
+    }
     insert_worker_opts
         .insert_workers_running
         .fetch_sub(1, atomic::Ordering::AcqRel);
@@ -369,6 +419,7 @@ fn transform_to_db_futures<S>(
     data_store: Arc<DataStore>,
     ignore_writes: bool,
     wid: Arc<InsertWorkerId>,
+    mett_input: InputMett,
 ) -> impl Stream<Item = Vec<FutJob>>
 where
     S: Stream<Item = VecDeque<QueryItem>>,
@@ -378,10 +429,19 @@ where
         trace_transform!("transform_to_db_futures  have batch  len {}", batch.len());
         let tsnow = Instant::now();
         let mut res = Vec::with_capacity(32);
+        // One metrics update per batch, not per item.
+        let mut mett = stats::mett::ScyllaWorkerInput::new();
+        mett.batch_recv().inc();
+        mett.batch_len().push_val(batch.len() as u32);
+        mett.item_recv().add(batch.len() as u32);
         for item in batch {
             let wid = wid.clone();
+            if ignore_writes {
+                mett.item_ignored().inc();
+            }
             let futs = match item {
                 QueryItem::Insert(item) => {
+                    mett.item_insert().inc();
                     if ignore_writes {
                         SmallVec::new()
                     } else {
@@ -389,6 +449,7 @@ where
                     }
                 }
                 QueryItem::Msp(item) => {
+                    mett.item_msp().inc();
                     if ignore_writes {
                         SmallVec::new()
                     } else {
@@ -396,6 +457,7 @@ where
                     }
                 }
                 QueryItem::TimeBinSimpleF32V02(item) => {
+                    mett.item_timebin_simple_f32_v02().inc();
                     if ignore_writes {
                         SmallVec::new()
                     } else {
@@ -403,6 +465,7 @@ where
                     }
                 }
                 QueryItem::BinWriteIndexV04(item) => {
+                    mett.item_bin_write_index_v04().inc();
                     if ignore_writes {
                         SmallVec::new()
                     } else {
@@ -410,6 +473,7 @@ where
                     }
                 }
                 QueryItem::Accounting(item) => {
+                    mett.item_accounting().inc();
                     if ignore_writes {
                         SmallVec::new()
                     } else {
@@ -417,6 +481,7 @@ where
                     }
                 }
                 QueryItem::AccountingRecv(item) => {
+                    mett.item_accounting_recv().inc();
                     if ignore_writes {
                         SmallVec::new()
                     } else {
@@ -425,8 +490,11 @@ where
                 }
             };
             trace_transform!("prepared futs  len {}", futs.len());
+            mett.fut_prepared().add(futs.len() as u32);
             res.extend(futs.into_iter());
         }
+        mett.futs_per_batch().push_val(res.len() as u32);
+        mett_input.ingest(mett);
         res
     })
 }

@@ -52,6 +52,13 @@ impl ProtoPusher {
         }
     }
 
+    /// Harvest the metrics which the CA protocol layer collected.
+    pub fn mett_take(&mut self) -> ca_proto::mett::CaProtoMetrics {
+        let mett = self.proto.mett();
+        mett.metrics_emit().inc();
+        mett.take_and_reset()
+    }
+
     pub fn is_space(&self) -> bool {
         self.proto_out_buf.is_space()
     }

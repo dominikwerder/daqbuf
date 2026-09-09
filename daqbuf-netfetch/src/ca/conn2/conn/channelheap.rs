@@ -3,7 +3,7 @@ const OUT_BUF_MAX_LEN: usize = 128;
 
 //
 
-mod channelhandler;
+pub mod channelhandler;
 
 use crate::asynbuf;
 use crate::asynbuf::AsynBuf;
@@ -13,6 +13,7 @@ use crate::ca::conn2::caids::Ioid;
 use crate::ca::conn2::caids::Sid;
 use crate::ca::conn2::caids::Subid;
 use crate::ca::conn2::channel_event_value::ChannelEventValue;
+use crate::ca::conn2::conn::StatusSel;
 use crate::ca::conn2::conn::channelheap::channelhandler::ChannelHandler;
 use crate::ca::conn2::locallog;
 use crate::ca::conn2::timeoutable::TimeoutError;
@@ -241,6 +242,7 @@ pub struct StatusChannelHandler {
 #[derive(Debug, Serialize)]
 pub struct StatusInfo {
     pub handlers: Vec<StatusChannelHandler>,
+    pub channel_count_total: u32,
 }
 
 #[derive(Debug)]
@@ -411,18 +413,20 @@ impl ChannelHeap {
     }
 
     pub fn status_info(&self) -> StatusInfo {
-        let handlers = self
+        self.status_info_sel(&StatusSel::periodic())
+    }
+
+    pub fn status_info_sel(&self, sel: &StatusSel) -> StatusInfo {
+        let mut handlers: Vec<_> = self
             .by_cid
             .iter()
+            .filter(|(_cid, e)| sel.matches(&e.name))
             .map(|(cid, e)| match &e.ch_handler {
-                ChHandler::ChHandlerActive(ha) => {
-                    ha.handler.status_info();
-                    StatusChannelHandler {
-                        name: e.name.clone(),
-                        cid: cid.clone(),
-                        state: StatusChannelHandlerState::Active(ha.handler.status_info()),
-                    }
-                }
+                ChHandler::ChHandlerActive(ha) => StatusChannelHandler {
+                    name: e.name.clone(),
+                    cid: cid.clone(),
+                    state: StatusChannelHandlerState::Active(ha.handler.status_info_sel(sel)),
+                },
                 ChHandler::Done => StatusChannelHandler {
                     name: e.name.clone(),
                     cid: cid.clone(),
@@ -430,7 +434,11 @@ impl ChannelHeap {
                 },
             })
             .collect();
-        StatusInfo { handlers }
+        handlers.sort_by(|a, b| a.name.cmp(&b.name));
+        StatusInfo {
+            handlers,
+            channel_count_total: self.by_cid.len() as u32,
+        }
     }
 
     pub(super) fn dump_state_poll(&self) -> serde_json::Value {
@@ -452,37 +460,6 @@ impl ChannelHeap {
             "wakeup_cids": self.wakeup_cids.iter().map(|x|x.key().clone()).collect::<Vec<_>>(),
         });
         js
-    }
-
-    pub fn scatter_gather_v1(&mut self, cmd: super::ScatterGatherV1) -> serde_json::Value {
-        let chs: BTreeMap<_, _> = self
-            .by_cid
-            .iter()
-            .filter(|(cid, e)| cmd.channel_regex.is_match(&e.name))
-            .map(|(cid, e)| {
-                let chn = e.name.clone();
-                let val = match &e.ch_handler {
-                    ChHandler::ChHandlerActive(st) => {
-                        let st2 = st.handler.state_json_value();
-                        serde_json::json!({
-                            "state": "ChHandlerActive",
-                            "inner": st2,
-                        })
-                    }
-                    ChHandler::Done => serde_json::json!({
-                        "state": "Done",
-                    }),
-                };
-                (chn, val)
-            })
-            .collect();
-        serde_json::json!({
-            "state": match &self.state {
-                State::Running => "Running",
-                State::Done => "Done",
-            },
-            "channels": chs,
-        })
     }
 
     pub fn handle_dyn_cmd_v03(&mut self, cmd: serde_json::Value) -> impl Future<Output = serde_json::Value> + use<> {

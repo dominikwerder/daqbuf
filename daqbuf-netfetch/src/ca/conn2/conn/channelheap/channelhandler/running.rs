@@ -214,6 +214,18 @@ impl Running {
         })
     }
 
+    /// Harvest the metrics of this state and of the contained Fetchmpx.
+    pub fn mett_take(&mut self) -> ChannelHandlerMetrics {
+        let mut ret = std::mem::replace(&mut self.mett, ChannelHandlerMetrics::new());
+        match &mut self.state {
+            State::Normal(st) => {
+                ret.ingest(st.mett_take());
+            }
+            State::Done => {}
+        }
+        ret
+    }
+
     pub fn sid(&self) -> Sid {
         self.sid.clone()
     }
