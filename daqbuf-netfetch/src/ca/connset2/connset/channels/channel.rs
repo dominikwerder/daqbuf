@@ -195,6 +195,17 @@ pub struct ChannelInfo {
     local_log: Vec<locallog::Entry>,
 }
 
+/// A ConnSet-side channel as it appears in the status endpoints: one that is still
+/// searching for an address or backing off has no connection to be reported under.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct ChannelStatusLight {
+    pub name: String,
+    pub state: String,
+    pub backoff_i: u32,
+    pub backoff_remaining_ms: Option<u64>,
+    pub addr: Option<String>,
+}
+
 #[derive(Debug)]
 pub enum ChannelActionItem {
     AddToCaConn(ChannelConfig, SocketAddrV4),
@@ -272,6 +283,20 @@ impl Channel {
             },
             backoff_i: self.backoff_i,
             local_log: self.llog.to_vec_string(),
+        }
+    }
+
+    pub fn status_light(&self) -> ChannelStatusLight {
+        let backoff_remaining_ms = match &self.state {
+            State::Backoff(x) => Some(x.until.saturating_duration_since(Instant::now()).as_millis() as u64),
+            _ => None,
+        };
+        ChannelStatusLight {
+            name: self.conf.name().into(),
+            state: self.state.variant_name().into(),
+            backoff_i: self.backoff_i,
+            backoff_remaining_ms,
+            addr: self.addr.map(|x| x.to_string()),
         }
     }
 

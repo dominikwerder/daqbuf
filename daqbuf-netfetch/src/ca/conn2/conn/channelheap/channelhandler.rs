@@ -11,6 +11,8 @@ use crate::ca::conn2::caids::CidOwned;
 use crate::ca::conn2::caids::Sid;
 use crate::ca::conn2::caids::Subid;
 use crate::ca::conn2::channel_event_value::ChannelEventValue;
+use crate::ca::conn2::conn::StatusDetail;
+use crate::ca::conn2::conn::StatusSel;
 use crate::ca::conn2::conn::channelheap::ProtoRxItem;
 use crate::ca::conn2::conn::channelheap::channelhandler::create::Creating;
 use crate::ca::conn2::conn::channelheap::channelhandler::running::Running;
@@ -34,6 +36,8 @@ use netpod::channelstatus::ChannelStatus;
 use scywr::iteminsertqueue::QueryItem;
 use serde::Serialize;
 use serde_helper::ToSerde;
+use serde_helper::to_serde::HasLenCap;
+use serde_helper::to_serde::LenCap;
 use serieswriter::binwriter::BinWriter;
 use stats::mett::ChannelHandlerMetrics;
 use std::collections::VecDeque;
@@ -139,6 +143,20 @@ impl State {
     fn str(&self) -> &str {
         self.name_short()
     }
+
+    fn state_since(&self) -> Instant {
+        match self {
+            State::Init(ts, ..) => *ts,
+            State::Creating(ts, ..) => *ts,
+            State::ReadEnum(ts, ..) => *ts,
+            State::Running(ts, ..) => *ts,
+            State::Closing1(ts, ..) => *ts,
+            State::Closing2(ts, ..) => *ts,
+            State::Done1(ts) => *ts,
+            State::Done(ts) => *ts,
+            State::Dummy(ts) => *ts,
+        }
+    }
 }
 
 impl State {
@@ -179,9 +197,33 @@ pub struct ChannelHandlerItem {
     pub inner: ItemInner,
 }
 
+pub struct FullSnap(pub <ChannelHandler as ToSerde>::Serde);
+
+impl fmt::Debug for FullSnap {
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt.write_str("FullSnap {{ TODO }}")
+    }
+}
+
+impl Serialize for FullSnap {
+    fn serialize<S>(&self, ser: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        self.0.serialize(ser)
+    }
+}
+
 #[derive(Debug, Serialize)]
 pub struct StatusInfo {
+    pub state_short: String,
+    pub state_elapsed_ms: u64,
+    pub proto_inp_buf: LenCap,
+    pub outbuf: LenCap,
+    pub enum_variants_len: Option<u32>,
     pub counters: Counters,
+    /// Only present when the request asked for `StatusDetail::Full`.
+    pub full: Option<Box<FullSnap>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -192,6 +234,10 @@ pub struct Counters {
 impl Counters {
     fn new() -> Self {
         Self { event_add_res_cnt: 0 }
+    }
+
+    pub fn zero() -> Self {
+        Self::new()
     }
 }
 
@@ -265,8 +311,22 @@ impl ChannelHandler {
     }
 
     pub fn status_info(&self) -> StatusInfo {
+        self.status_info_sel(&StatusSel::periodic())
+    }
+
+    pub fn status_info_sel(&self, sel: &StatusSel) -> StatusInfo {
+        let full = match sel.detail {
+            StatusDetail::Full => Some(Box::new(FullSnap(self.to_serde()))),
+            StatusDetail::Light => None,
+        };
         StatusInfo {
+            state_short: self.state.name_short().into(),
+            state_elapsed_ms: self.state.state_since().elapsed().as_millis() as u64,
+            proto_inp_buf: self.proto_inp_buf.len_cap(),
+            outbuf: self.outbuf.len_cap(),
+            enum_variants_len: self.enum_variants.as_ref().map(|x| x.len() as u32),
             counters: self.counters.clone(),
+            full,
         }
     }
 

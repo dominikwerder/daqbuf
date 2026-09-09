@@ -2,6 +2,7 @@
 pub mod delete;
 pub mod ingest;
 pub mod status;
+pub mod status_v1;
 pub mod types;
 pub mod ui;
 
@@ -181,14 +182,16 @@ pub trait Conn2Ctrls: Send + Sync {
         name: String,
     ) -> Pin<Box<dyn Future<Output = Result<(), Box<dyn std::error::Error>>> + Send>>;
 
-    fn scatter_gather_v1(
+    fn status_light_v1(
         &self,
-        channel_regex: String,
-        addr_regex: String,
-        cmd: serde_json::Value,
-    ) -> Pin<Box<dyn Future<Output = Result<serde_json::Value, Box<dyn std::error::Error>>> + Send>>;
+        sel: status_v1::ChannelSelector,
+    ) -> Pin<Box<dyn Future<Output = Result<status_v1::StatusLight, Box<dyn std::error::Error>>> + Send>>;
 
-    /// Metrics of the v2 ingest code path, ready to be handed to prometheus.
+    fn status_full_v1(
+        &self,
+        sel: status_v1::ChannelSelector,
+    ) -> Pin<Box<dyn Future<Output = Result<status_v1::StatusFull, Box<dyn std::error::Error>>> + Send>>;
+
     fn get_metrics(
         &self,
     ) -> Pin<Box<dyn Future<Output = Result<MetricsPrometheusShort, Box<dyn std::error::Error>>> + Send>>;
@@ -521,7 +524,9 @@ fn make_routes_daqingest_private(
             "/debug_current_time",
             get(|| async {
                 let ts = time::UtcDateTime::now();
-                let format = time::format_description::parse("[year]-[month]-[day] [hour]:[minute]:[second]Z").unwrap();
+                let format =
+                    time::format_description::parse_borrowed::<3>("[year]-[month]-[day] [hour]:[minute]:[second]Z")
+                        .unwrap();
                 let s = ts.format(&format).unwrap();
                 axum::Json(json!({"ts":s}))
             }),
@@ -779,45 +784,6 @@ fn make_routes_conn2(ca_ingest_ctrls: Arc<dyn CaIngestCtrls>) -> axum::Router {
         )
 }
 
-#[utoipa::path(
-    post,
-    path = "/daqingest/private/conn2/scatter_gather_v1",
-    request_body = serde_json::Value,
-    responses(
-        (status = 200, description = "Scatter-gather command result", body = serde_json::Value),
-    ),
-    tag = "conn2-private",
-)]
-async fn scatter_gather_v1_openapi(
-    axum::extract::State(ca_ingest_ctrls): axum::extract::State<Arc<dyn CaIngestCtrls>>,
-    axum::extract::Json(cmd): axum::extract::Json<serde_json::Value>,
-) -> axum::Json<serde_json::Value> {
-    info!("scatter_gather_v1  {cmd:?}");
-    if let Some(c2) = ca_ingest_ctrls.conn2_ctrls().await {
-        #[derive(Deserialize)]
-        struct CmdTmp {
-            channel_regex: String,
-            addr_regex: String,
-            cmd: serde_json::Value,
-        }
-        if let Ok(cmd_tmp) = serde_json::from_value::<CmdTmp>(cmd) {
-            match c2
-                .scatter_gather_v1(cmd_tmp.channel_regex, cmd_tmp.addr_regex, cmd_tmp.cmd)
-                .await
-            {
-                Ok(x) => axum::Json(x),
-                Err(e) => axum::Json(json!({
-                    "error": e.to_string(),
-                })),
-            }
-        } else {
-            axum::Json(json!({"error": "not a command"}))
-        }
-    } else {
-        axum::Json(json!({"error": "no ctrl"}))
-    }
-}
-
 fn make_routes_daqingest_ui_static(rres: Arc<RoutesResources>) -> axum::Router {
     use axum::Router;
     use axum::extract;
@@ -917,7 +883,8 @@ fn make_routes(ca_ingest_ctrls: Arc<dyn CaIngestCtrls>, post_ingest_ctrls: Arc<d
     use utoipa_swagger_ui::SwaggerUi;
 
     let (documented_router, api) = OpenApiRouter::new()
-        .routes(routes!(scatter_gather_v1_openapi))
+        .routes(routes!(status_v1::status_light))
+        .routes(routes!(status_v1::status_full))
         .with_state(ca_ingest_ctrls.clone())
         .split_for_parts();
     let swagger = SwaggerUi::new("/daqingest/swagger-ui").url("/daqingest/api-docs/openapi.json", api);
@@ -1097,17 +1064,67 @@ mod test {
             unimplemented!()
         }
 
-        fn scatter_gather_v1(
+        fn status_light_v1(
             &self,
-            channel_regex: String,
-            addr_regex: String,
-            cmd: serde_json::Value,
-        ) -> Pin<Box<dyn Future<Output = Result<serde_json::Value, Box<dyn std::error::Error>>> + Send>> {
-            let ret = json!({
-                "channel_regex": channel_regex,
-                "addr_regex": addr_regex,
-                "cmd": cmd,
-            });
+            sel: status_v1::ChannelSelector,
+        ) -> Pin<Box<dyn Future<Output = Result<status_v1::StatusLight, Box<dyn std::error::Error>>> + Send>> {
+            let ret = status_v1::StatusLight {
+                ts: "2026-09-09T00:00:00Z".into(),
+                ingest_name: format!("ch={:?} addr={:?}", sel.channel_pattern(), sel.addr_pattern()),
+                conn_count_total: 2,
+                conn_count_matched: 1,
+                connset_channel_count_total: 1,
+                connset_channels: vec![crate::ca::connset2::connset::channels::channel::ChannelStatusLight {
+                    name: "SEARCHING:CHANNEL".into(),
+                    state: "AddrSearch".into(),
+                    backoff_i: 0,
+                    backoff_remaining_ms: None,
+                    addr: None,
+                }],
+                conns: vec![status_v1::StatusLightConn {
+                    addr: "10.0.0.5:5064".into(),
+                    state: "Connected".into(),
+                    connected_state: Some("ActiveCa".into()),
+                    activeca_state: Some("Running".into()),
+                    channel_count_total: 1,
+                    channels: vec![status_v1::StatusLightChannel {
+                        name: "SOME:CHANNEL".into(),
+                        cid: 7,
+                        state: "Running".into(),
+                        state_elapsed_ms: 1234,
+                        proto_inp_buf_len: 0,
+                        outbuf_len: 0,
+                        enum_variants_len: None,
+                        event_add_res_cnt: 42,
+                    }],
+                    error: None,
+                }],
+            };
+            Box::pin(async move { Ok(ret) })
+        }
+
+        fn status_full_v1(
+            &self,
+            sel: status_v1::ChannelSelector,
+        ) -> Pin<Box<dyn Future<Output = Result<status_v1::StatusFull, Box<dyn std::error::Error>>> + Send>> {
+            let ret = status_v1::StatusFull {
+                ts: "2026-09-09T00:00:00Z".into(),
+                ingest_name: format!("ch={:?} addr={:?}", sel.channel_pattern(), sel.addr_pattern()),
+                conn_count_total: 2,
+                conn_count_matched: 1,
+                connset_channel_count_total: 0,
+                connset_channels: Vec::new(),
+                conns: vec![status_v1::StatusFullConn {
+                    addr: "10.0.0.5:5064".into(),
+                    state: "Connected".into(),
+                    connected_state: Some("ActiveCa".into()),
+                    activeca_state: Some("Running".into()),
+                    socket_state: None,
+                    channel_count_total: 1,
+                    channels: Vec::new(),
+                    error: None,
+                }],
+            };
             Box::pin(async move { Ok(ret) })
         }
 
@@ -1120,7 +1137,7 @@ mod test {
     }
 
     struct TestCaIngestCtrls {
-        /// `None` models the v1 daemon which does not run the v2 code path.
+        // None for v1 daemon, otherwise v2
         conn2: Option<Conn2TestCtrls>,
         daemon: stats::mett::DaemonMetrics,
     }
@@ -1211,30 +1228,6 @@ mod test {
         taskrun::run(async move { Ok::<_, err::Error>(scrape(with_conn2, uri).await) }).unwrap()
     }
 
-    async fn post_json(with_conn2: bool, uri: &str, body: serde_json::Value) -> (StatusCode, String) {
-        use tower::ServiceExt;
-        let router = make_routes(
-            Arc::new(TestCaIngestCtrls::new(with_conn2)),
-            Arc::new(TestPostIngestCtrls {}),
-        );
-        let req = Request::builder()
-            .method("POST")
-            .uri(uri)
-            .header("content-type", "application/json")
-            .body(axum::body::Body::from(serde_json::to_vec(&body).unwrap()))
-            .unwrap();
-        let res = router.oneshot(req).await.unwrap();
-        let status = res.status();
-        let body = axum::body::to_bytes(res.into_body(), 1 << 20).await.unwrap();
-        (status, String::from_utf8_lossy(&body).into_owned())
-    }
-
-    fn post_json_blocking(with_conn2: bool, uri: &'static str, body: serde_json::Value) -> (StatusCode, String) {
-        taskrun::run(async move { Ok::<_, err::Error>(post_json(with_conn2, uri, body).await) }).unwrap()
-    }
-
-    /// The v1 (production) daemon has no conn2 ctrls, so its scrape must carry
-    /// only the v1 tree.
     #[test]
     fn scrape_metrics_v1_only() {
         let (status, body) = scrape_blocking(false, "/daqingest/metrics");
@@ -1243,8 +1236,6 @@ mod test {
         assert!(!body.contains("daemon2_"), "{body}");
     }
 
-    /// A daemon which runs the v2 code path gets the v2 metrics in the same
-    /// scrape.
     #[test]
     fn scrape_metrics_with_conn2() {
         let (status, body) = scrape_blocking(true, "/daqingest/metrics");
@@ -1258,8 +1249,6 @@ mod test {
         );
     }
 
-    /// Prometheus scrape configs are written with and without the trailing
-    /// slash, both must return the metrics rather than the subcommand listing.
     #[test]
     fn scrape_metrics_trailing_slash() {
         let (status, body) = scrape_blocking(false, "/daqingest/metrics/");
@@ -1267,7 +1256,6 @@ mod test {
         assert!(body.contains("daemon_handle_event 11\n"), "{body}");
     }
 
-    /// The v2 metrics are also available on their own route.
     #[test]
     fn scrape_metrics_conn2_route() {
         let (status, body) = scrape_blocking(true, "/daqingest/private/conn2/metrics");
@@ -1276,37 +1264,83 @@ mod test {
         assert!(!body.contains("daemon_handle_event"), "{body}");
     }
 
-    /// The scatter-gather endpoint is documented with utoipa and reachable at
-    /// its usual path.
     #[test]
-    fn scatter_gather_v1_route() {
-        let (status, body) = post_json_blocking(
+    fn admin_status_light() {
+        let (status, body) = scrape_blocking(true, "/daqingest/admin/status/light");
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(v["conn_count_total"], 2);
+        assert_eq!(v["conns"][0]["addr"], "10.0.0.5:5064");
+        assert_eq!(v["conns"][0]["activeca_state"], "Running");
+        assert_eq!(v["conns"][0]["channels"][0]["name"], "SOME:CHANNEL");
+        assert_eq!(v["conns"][0]["channels"][0]["state"], "Running");
+        assert_eq!(v["conns"][0]["channels"][0]["event_add_res_cnt"], 42);
+        // A channel which has no connection yet must still be reported.
+        assert_eq!(v["connset_channels"][0]["name"], "SEARCHING:CHANNEL");
+        assert_eq!(v["connset_channels"][0]["state"], "AddrSearch");
+    }
+
+    #[test]
+    fn admin_status_full() {
+        let (status, body) = scrape_blocking(true, "/daqingest/admin/status/full");
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(v["conns"][0]["addr"], "10.0.0.5:5064");
+    }
+
+    #[test]
+    fn admin_status_default_selectors_match_all() {
+        let (status, body) = scrape_blocking(true, "/daqingest/admin/status/light");
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(v["ingest_name"], "ch=\"\" addr=\"\"");
+    }
+
+    #[test]
+    fn admin_status_passes_selectors_through() {
+        let (status, body) = scrape_blocking(
             true,
-            "/daqingest/private/conn2/scatter_gather_v1",
-            json!({"channel_regex": "foo.*", "addr_regex": "10\\..*", "cmd": {"type": "Ping"}}),
+            "/daqingest/admin/status/light?channel_regex=ABC&addr_regex=10%5C.",
         );
         assert_eq!(status, StatusCode::OK, "{body}");
         let v: serde_json::Value = serde_json::from_str(&body).unwrap();
-        assert_eq!(v["channel_regex"], "foo.*");
-        assert_eq!(v["addr_regex"], "10\\..*");
-        assert_eq!(v["cmd"]["type"], "Ping");
+        assert_eq!(v["ingest_name"], "ch=\"ABC\" addr=\"10\\\\.\"");
     }
 
-    /// The generated OpenAPI spec must describe the documented endpoint at
-    /// its actual served path, so the spec cannot drift from the router.
     #[test]
-    fn openapi_json_contains_scatter_gather() {
+    fn admin_status_bad_regex_is_400() {
+        let (status, body) = scrape_blocking(true, "/daqingest/admin/status/light?channel_regex=%5B");
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(v["kind"], "bad-regex");
+    }
+
+    #[test]
+    fn admin_status_without_conn2_is_503() {
+        let (status, body) = scrape_blocking(false, "/daqingest/admin/status/light");
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+        let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(v["kind"], "conn2-not-active");
+    }
+
+    #[test]
+    fn openapi_json_contains_admin_status() {
         let (status, body) = scrape_blocking(false, "/daqingest/api-docs/openapi.json");
         assert_eq!(status, StatusCode::OK, "{body}");
         let v: serde_json::Value = serde_json::from_str(&body).unwrap();
-        assert!(
-            v["paths"]["/daqingest/private/conn2/scatter_gather_v1"]["post"].is_object(),
-            "{body}"
-        );
+        let light = &v["paths"]["/daqingest/admin/status/light"]["get"];
+        assert!(light.is_object(), "{body}");
+        assert!(v["paths"]["/daqingest/admin/status/full"]["get"].is_object(), "{body}");
+        let params = light["parameters"].as_array().unwrap();
+        let names: Vec<_> = params.iter().map(|x| x["name"].as_str().unwrap()).collect();
+        assert!(names.contains(&"channel_regex"), "{params:?}");
+        assert!(names.contains(&"addr_regex"), "{params:?}");
+        assert!(params.iter().all(|x| x["in"] == "query"), "{params:?}");
+        assert!(params.iter().all(|x| x["required"] == false), "{params:?}");
+        assert!(v["components"]["schemas"]["StatusLight"].is_object(), "{body}");
+        assert!(v["components"]["schemas"]["StatusLightChannel"].is_object(), "{body}");
     }
 
-    /// Swagger UI is mounted alongside the API so the spec can be browsed
-    /// interactively.
     #[test]
     fn swagger_ui_served() {
         let (status, body) = scrape_blocking(false, "/daqingest/swagger-ui/");

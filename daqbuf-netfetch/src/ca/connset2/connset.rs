@@ -1,10 +1,11 @@
 const INP_BUF_CAP: usize = 128;
 
-mod channels;
+pub mod channels;
 pub mod channeltrace;
 mod cmd_handler;
 mod cmder;
 mod futs;
+pub mod gather;
 mod streamtask;
 
 use crate::asynbuf::AsynBuf;
@@ -118,33 +119,32 @@ impl ChannelRemove {
     }
 }
 
-#[derive(Debug, Serialize)]
-pub struct ScatterGatherV1ResConnset {
-    pub channels: BTreeMap<String, serde_json::Value>,
-    pub connections: BTreeMap<SocketAddrV4, serde_json::Value>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct ScatterGatherV1Response {
-    pub connset: ScatterGatherV1ResConnset,
-    pub conns: BTreeMap<SocketAddrV4, conn2::conn::ScatterGatherV1ResConn>,
+#[derive(Debug)]
+pub struct StatusV1Req {
+    pub sel: crate::metrics::status_v1::ChannelSelector,
+    pub detail: conn2::conn::StatusDetail,
 }
 
 #[derive(Debug)]
-pub struct ScatterGatherV1 {
-    channel_regex: Regex,
-    addr_regex: Regex,
-    cmd: serde_json::Value,
+pub enum ConnsetChannels {
+    Light(Vec<channels::channel::ChannelStatusLight>),
+    Full(Vec<(String, channels::channel::ChannelInfo)>),
 }
 
-impl ScatterGatherV1 {
-    pub fn new(channel_regex: Regex, addr_regex: Regex, cmd: serde_json::Value) -> Self {
-        Self {
-            channel_regex,
-            addr_regex,
-            cmd,
-        }
-    }
+/// The gathered status of one ingest process.
+///
+/// Channels appear either under `connset_channels` (known to the ConnSet but not
+/// attached to a connection: searching, backing off, being removed) or under one of
+/// `conns`, never both.
+#[derive(Debug)]
+pub struct StatusV1Res {
+    pub ts: String,
+    pub ingest_name: String,
+    pub conn_count_total: u32,
+    pub conn_count_matched: u32,
+    pub connset_channel_count_total: u32,
+    pub connset_channels: ConnsetChannels,
+    pub conns: Vec<(SocketAddrV4, Result<conn2::conn::StatusInfo, gather::GatherError>)>,
 }
 
 #[derive(Debug)]
@@ -160,7 +160,7 @@ enum ConnSetCmdKind {
         asynchan::Sender<crate::metrics::ChannelsForAddrInfoV2>,
     ),
     CmdDynV1(String, asynchan::Sender<serde_json::Value>),
-    ScatterGatherV1(ScatterGatherV1, asynchan::Sender<ScatterGatherV1Response>),
+    StatusV1(StatusV1Req, asynchan::Sender<StatusV1Res>),
     MetricsGetV1(asynchan::Sender<crate::metrics::types::MetricsPrometheusShort>),
 }
 
@@ -973,33 +973,62 @@ impl ConnSet {
                 // TODO maybe better return the future from here and let caller place it.
                 self.cmder_cmd_fut = Some(fut.box2());
             }
-            ConnSetCmdKind::ScatterGatherV1(cmd, mut tx) => {
-                self.mett.cmd_scatter_gather_v1().inc();
+            ConnSetCmdKind::StatusV1(req, mut tx) => {
+                self.mett.cmd_status_v1().inc();
+                let conn_count_total = self.ca_conns.len() as u32;
                 let cmdtxs: Vec<_> = self
                     .ca_conns
                     .iter()
-                    .filter(|x| cmd.addr_regex.is_match(x.0.to_string().as_str()))
-                    .map(|x| (x.0.clone(), x.1.comm.clone()))
+                    .filter(|(addr, _)| req.sel.matches_addr(addr))
+                    .map(|(addr, reg)| (addr.clone(), reg.comm.clone()))
                     .collect();
+                let conn_count_matched = cmdtxs.len() as u32;
+                let connset_channel_count_total = self.channels.len() as u32;
+                let sel = req.sel.status_sel(req.detail);
+                // The ConnSet half needs no fan-out: these channels have no connection
+                // to ask, which is exactly why they have to be reported separately.
+                let connset_channels = match req.detail {
+                    conn2::conn::StatusDetail::Light => ConnsetChannels::Light(
+                        self.channels
+                            .iter()
+                            .filter(|(name, _)| sel.matches(name))
+                            .map(|(_, ch)| ch.channel.status_light())
+                            .collect(),
+                    ),
+                    conn2::conn::StatusDetail::Full => ConnsetChannels::Full(
+                        self.channels
+                            .iter()
+                            .filter(|(name, _)| sel.matches(name))
+                            .map(|(name, ch)| (name.clone(), ch.channel.channel_info()))
+                            .collect(),
+                    ),
+                };
+                let ingest_name = ingest_linux::net::local_hostname();
                 let fut = async move {
-                    let mut res = ScatterGatherV1Response {
-                        connset: ScatterGatherV1ResConnset {
-                            channels: BTreeMap::new(),
-                            connections: BTreeMap::new(),
+                    let conns = gather::gather(
+                        cmdtxs,
+                        gather::GATHER_CONCURRENCY,
+                        gather::GATHER_TIMEOUT,
+                        |mut comm| {
+                            let sel = sel.clone();
+                            async move { comm.status_v1(sel).await }
                         },
-                        conns: BTreeMap::new(),
+                    )
+                    .await;
+                    let res = StatusV1Res {
+                        ts: chrono::Utc::now().to_rfc3339(),
+                        ingest_name,
+                        conn_count_total,
+                        conn_count_matched,
+                        connset_channel_count_total,
+                        connset_channels,
+                        conns,
                     };
-                    for (addr, mut cmdtx) in cmdtxs {
-                        let cmd = conn2::conn::ScatterGatherV1::new(cmd.channel_regex.clone(), cmd.cmd.clone());
-                        let x = cmdtx.scatter_gather_v1(cmd).await;
-                        res.conns.insert(addr, x);
-                    }
                     if tx.send(res).await.is_err() {
                         error!("could not send response");
                     }
                     Ok(())
                 };
-                // TODO maybe better return the future from here and let caller place it.
                 self.cmder_cmd_fut = Some(fut.box2());
             }
             ConnSetCmdKind::ChannelsForAddrInfoV2(addr, name, mut tx) => {

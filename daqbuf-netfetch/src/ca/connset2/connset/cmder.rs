@@ -146,14 +146,11 @@ impl ConnSetCmder {
         Ok(ret)
     }
 
-    pub async fn scatter_gather_v1(
-        &self,
-        cmd: super::ScatterGatherV1,
-    ) -> Result<super::ScatterGatherV1Response, Error> {
+    pub async fn status_v1(&self, req: super::StatusV1Req) -> Result<super::StatusV1Res, Error> {
         let mut dtx = self.tx.clone();
-        let (tx, mut rx) = asynchan::bounded(2, "ScatterGatherV1");
+        let (tx, mut rx) = asynchan::bounded(2, "StatusV1");
         let cmd = ConnSetCmd {
-            kind: ConnSetCmdKind::ScatterGatherV1(cmd, tx),
+            kind: ConnSetCmdKind::StatusV1(req, tx),
         };
         let _ = dtx.send(cmd).await?;
         let ret = rx.recv().await?;

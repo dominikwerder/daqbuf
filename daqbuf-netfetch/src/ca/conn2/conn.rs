@@ -243,24 +243,6 @@ pub struct ChannelHandlerCmd {
     tx: asynchan::Sender<serde_json::Value>,
 }
 
-#[derive(Debug, Serialize)]
-pub struct ScatterGatherV1ResConn {
-    pub conn: serde_json::Value,
-    pub channels: BTreeMap<String, serde_json::Value>,
-}
-
-#[derive(Debug, Clone)]
-pub struct ScatterGatherV1 {
-    channel_regex: Regex,
-    cmd: serde_json::Value,
-}
-
-impl ScatterGatherV1 {
-    pub fn new(channel_regex: Regex, cmd: serde_json::Value) -> Self {
-        Self { channel_regex, cmd }
-    }
-}
-
 #[derive(Debug)]
 enum CaConnCmdKind {
     ChannelAdd(ChannelConfig, asynchan::Sender<u32>),
@@ -270,7 +252,7 @@ enum CaConnCmdKind {
     ChannelsForAddrInfoV2(String, asynchan::Sender<crate::metrics::ChannelsForAddrInfoV2>),
     ChannelsByRegexV1(String, String, asynchan::Sender<Vec<serde_json::Value>>),
     DynCmdV03(serde_json::Value, asynchan::Sender<serde_json::Value>),
-    ScatterGatherV1(ScatterGatherV1, asynchan::Sender<ScatterGatherV1ResConn>),
+    StatusV1(StatusSel, asynchan::Sender<StatusInfo>),
 }
 
 #[derive(Debug)]
@@ -367,29 +349,40 @@ impl CaConnComm {
         }
     }
 
-    pub async fn scatter_gather_v1(&mut self, cmd: ScatterGatherV1) -> ScatterGatherV1ResConn {
-        let (tx, mut rx) = asynchan::bounded(1, "CaConnComm-scatter_gather_v1");
+    pub async fn status_v1(&mut self, sel: StatusSel) -> Result<StatusInfo, Error> {
+        let (tx, mut rx) = asynchan::bounded(1, "CaConnComm-status_v1");
         let cmd = CaConnCmd {
-            kind: CaConnCmdKind::ScatterGatherV1(cmd, tx),
+            kind: CaConnCmdKind::StatusV1(sel, tx),
         };
-        if self.cmd_tx.send(cmd).await.is_err() {
-            ScatterGatherV1ResConn {
-                conn: serde_json::json!({
-                    "error": "can not send command",
-                }),
-                channels: BTreeMap::new(),
-            }
-        } else {
-            match rx.recv().await {
-                Ok(x) => x,
-                Err(_) => ScatterGatherV1ResConn {
-                    conn: serde_json::json!({
-                        "error": "can not recv response",
-                    }),
-                    channels: BTreeMap::new(),
-                },
-            }
+        self.cmd_tx.send(cmd).await?;
+        let ret = rx.recv().await?;
+        Ok(ret)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StatusDetail {
+    Light,
+    Full,
+}
+
+/// Which channels a status snapshot covers, and how deep it goes.
+#[derive(Debug, Clone)]
+pub struct StatusSel {
+    pub channel_regex: Option<Regex>,
+    pub detail: StatusDetail,
+}
+
+impl StatusSel {
+    pub fn periodic() -> Self {
+        Self {
+            channel_regex: None,
+            detail: StatusDetail::Light,
         }
+    }
+
+    pub fn matches(&self, name: &str) -> bool {
+        self.channel_regex.as_ref().map_or(true, |re| re.is_match(name))
     }
 }
 
@@ -478,6 +471,10 @@ impl CaConn {
     }
 
     fn status_info(&mut self) -> StatusInfo {
+        self.status_info_sel(&StatusSel::periodic())
+    }
+
+    fn status_info_sel(&mut self, sel: &StatusSel) -> StatusInfo {
         // We only consider state which is sync available here.
         // For other information, we take the last known values.
         match &mut self.state {
@@ -489,7 +486,7 @@ impl CaConn {
             State::Connected(st) => StatusInfo {
                 ts: time::UtcDateTime::now(),
                 addr: self.remote_addr,
-                state: StatusState::Connected(st.status_info()),
+                state: StatusState::Connected(st.status_info_sel(sel)),
             },
             State::Done => StatusInfo {
                 ts: time::UtcDateTime::now(),
@@ -614,39 +611,6 @@ impl CaConn {
             State::Connecting(..) => Vec::new(),
             State::Connected(st) => st.channels_by_regex_v1(kind, reg),
             State::Done => Vec::new(),
-        }
-    }
-
-    fn scatter_gather_v1(&mut self, cmd: ScatterGatherV1) -> ScatterGatherV1ResConn {
-        match &mut self.state {
-            State::Connecting(..) => ScatterGatherV1ResConn {
-                conn: serde_json::json!({
-                    "state": self.state.display_short().to_string(),
-                }),
-                channels: BTreeMap::new(),
-            },
-            State::Connected(st) => {
-                if cmd.cmd.eq(&serde_json::json!("state_full_v1")) {
-                    ScatterGatherV1ResConn {
-                        conn: serde_json::json!({
-                            "state": "Connected",
-                            "response": st.scatter_gather_v1(cmd),
-                        }),
-                        channels: BTreeMap::new(),
-                    }
-                } else {
-                    ScatterGatherV1ResConn {
-                        conn: serde_json::json!({
-                            "state": self.state.display_short().to_string(),
-                        }),
-                        channels: BTreeMap::new(),
-                    }
-                }
-            }
-            State::Done => ScatterGatherV1ResConn {
-                conn: serde_json::json!(null),
-                channels: BTreeMap::new(),
-            },
         }
     }
 
@@ -924,9 +888,10 @@ impl Stream for CaConn {
                                 };
                                 self2.ca_cmd_tx_fut = Some(fut.box2());
                             }
-                            CaConnCmdKind::ScatterGatherV1(cmd, mut tx) => {
-                                trace!("{selfname}:Received:ScatterGatherV1");
-                                let ret = self2.scatter_gather_v1(cmd);
+                            CaConnCmdKind::StatusV1(sel, mut tx) => {
+                                self2.mett.cmd_status_v1().inc();
+                                trace!("{selfname}:Received:StatusV1");
+                                let ret = self2.status_info_sel(&sel);
                                 let fut = async move {
                                     if tx.send(ret).await.is_err() {
                                         error!("could not send response");

@@ -2,7 +2,7 @@ pub(crate) mod ca_writer_value;
 mod caids;
 mod channel_event_value;
 mod channelstateinfo;
-pub(super) mod conn;
+pub mod conn;
 mod conncmd;
 mod connevent;
 mod connfut;

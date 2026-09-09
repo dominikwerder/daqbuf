@@ -326,6 +326,7 @@ mod Metrics {
         cmd_channels_for_addr_v1,
         cmd_channels_for_addr_v2,
         cmd_channels_by_regex_v1,
+        cmd_status_v1,
         cmd_send_err,
         cmd_res_send_err,
         tcp_connected,
@@ -383,7 +384,7 @@ mod Metrics {
         cmd_channels_for_addr_v1,
         cmd_channels_for_addr_v2,
         cmd_dyn_v1,
-        cmd_scatter_gather_v1,
+        cmd_status_v1,
         channel_idle_disconnect_trigger,
         channel_idle_disconnect_err,
     }
