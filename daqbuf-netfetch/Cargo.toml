@@ -31,6 +31,9 @@ regex = "1.11.2"
 axum = "0.8.4"
 http-body = "1"
 tower-http = { version = "0.6.8", features = ["compression-gzip", "cors"] }
+utoipa = { version = "5", features = ["axum_extras"] }
+utoipa-axum = "0.2"
+utoipa-swagger-ui = { version = "9", features = ["axum"] }
 url = "2.5"
 chrono = "0.4"
 time = { version = "0.3.40", features = ["serde"] }

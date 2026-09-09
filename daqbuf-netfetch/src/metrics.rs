@@ -772,44 +772,50 @@ fn make_routes_conn2(ca_ingest_ctrls: Arc<dyn CaIngestCtrls>) -> axum::Router {
                 }
             }),
         )
-        .route(
-            "/scatter_gather_v1",
-            post({
-                let ca_ingest_ctrls = ca_ingest_ctrls.clone();
-                |Query(params): Query<HashMap<String, String>>,
-                 axum::extract::Json(mut cmd): axum::extract::Json<serde_json::Value>| async move {
-                    info!("scatter_gather_v1  {cmd:?}");
-                    if let Some(c2) = ca_ingest_ctrls.conn2_ctrls().await {
-                        #[derive(Deserialize)]
-                        struct CmdTmp {
-                            channel_regex: String,
-                            addr_regex: String,
-                            cmd: serde_json::Value,
-                        }
-                        if let Ok(cmd_tmp) = serde_json::from_value::<CmdTmp>(cmd) {
-                            match c2
-                                .scatter_gather_v1(cmd_tmp.channel_regex, cmd_tmp.addr_regex, cmd_tmp.cmd)
-                                .await
-                            {
-                                Ok(x) => axum::Json(x),
-                                Err(e) => axum::Json(json!({
-                                    "error": e.to_string(),
-                                })),
-                            }
-                        } else {
-                            axum::Json(json!({"error": "not a command"}))
-                        }
-                    } else {
-                        axum::Json(json!({"error": "no ctrl"}))
-                    }
-                }
-            }),
-        )
         .layer(
             tower_http::cors::CorsLayer::new()
                 .allow_origin(tower_http::cors::Any)
                 .allow_headers(tower_http::cors::Any),
         )
+}
+
+#[utoipa::path(
+    post,
+    path = "/daqingest/private/conn2/scatter_gather_v1",
+    request_body = serde_json::Value,
+    responses(
+        (status = 200, description = "Scatter-gather command result", body = serde_json::Value),
+    ),
+    tag = "conn2-private",
+)]
+async fn scatter_gather_v1_openapi(
+    axum::extract::State(ca_ingest_ctrls): axum::extract::State<Arc<dyn CaIngestCtrls>>,
+    axum::extract::Json(cmd): axum::extract::Json<serde_json::Value>,
+) -> axum::Json<serde_json::Value> {
+    info!("scatter_gather_v1  {cmd:?}");
+    if let Some(c2) = ca_ingest_ctrls.conn2_ctrls().await {
+        #[derive(Deserialize)]
+        struct CmdTmp {
+            channel_regex: String,
+            addr_regex: String,
+            cmd: serde_json::Value,
+        }
+        if let Ok(cmd_tmp) = serde_json::from_value::<CmdTmp>(cmd) {
+            match c2
+                .scatter_gather_v1(cmd_tmp.channel_regex, cmd_tmp.addr_regex, cmd_tmp.cmd)
+                .await
+            {
+                Ok(x) => axum::Json(x),
+                Err(e) => axum::Json(json!({
+                    "error": e.to_string(),
+                })),
+            }
+        } else {
+            axum::Json(json!({"error": "not a command"}))
+        }
+    } else {
+        axum::Json(json!({"error": "no ctrl"}))
+    }
 }
 
 fn make_routes_daqingest_ui_static(rres: Arc<RoutesResources>) -> axum::Router {
@@ -906,11 +912,23 @@ fn make_routes(ca_ingest_ctrls: Arc<dyn CaIngestCtrls>, post_ingest_ctrls: Arc<d
     use axum::extract;
     use axum::routing::{get, post, put};
     use http::StatusCode;
+    use utoipa_axum::router::OpenApiRouter;
+    use utoipa_axum::routes;
+    use utoipa_swagger_ui::SwaggerUi;
+
+    let (documented_router, api) = OpenApiRouter::new()
+        .routes(routes!(scatter_gather_v1_openapi))
+        .with_state(ca_ingest_ctrls.clone())
+        .split_for_parts();
+    let swagger = SwaggerUi::new("/daqingest/swagger-ui").url("/daqingest/api-docs/openapi.json", api);
+
     Router::new()
         .fallback(|req: Request<axum::body::Body>| async move {
             info!("Fallback for {} {}", req.method(), req.uri());
             StatusCode::NOT_FOUND
         })
+        .merge(documented_router)
+        .merge(swagger)
         .nest("/daqingest", make_routes_daqingest(ca_ingest_ctrls, post_ingest_ctrls))
         .route(
             "/daqingest/always-error/",
@@ -1081,11 +1099,16 @@ mod test {
 
         fn scatter_gather_v1(
             &self,
-            _channel_regex: String,
-            _addr_regex: String,
-            _cmd: serde_json::Value,
+            channel_regex: String,
+            addr_regex: String,
+            cmd: serde_json::Value,
         ) -> Pin<Box<dyn Future<Output = Result<serde_json::Value, Box<dyn std::error::Error>>> + Send>> {
-            unimplemented!()
+            let ret = json!({
+                "channel_regex": channel_regex,
+                "addr_regex": addr_regex,
+                "cmd": cmd,
+            });
+            Box::pin(async move { Ok(ret) })
         }
 
         fn get_metrics(
@@ -1188,6 +1211,28 @@ mod test {
         taskrun::run(async move { Ok::<_, err::Error>(scrape(with_conn2, uri).await) }).unwrap()
     }
 
+    async fn post_json(with_conn2: bool, uri: &str, body: serde_json::Value) -> (StatusCode, String) {
+        use tower::ServiceExt;
+        let router = make_routes(
+            Arc::new(TestCaIngestCtrls::new(with_conn2)),
+            Arc::new(TestPostIngestCtrls {}),
+        );
+        let req = Request::builder()
+            .method("POST")
+            .uri(uri)
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from(serde_json::to_vec(&body).unwrap()))
+            .unwrap();
+        let res = router.oneshot(req).await.unwrap();
+        let status = res.status();
+        let body = axum::body::to_bytes(res.into_body(), 1 << 20).await.unwrap();
+        (status, String::from_utf8_lossy(&body).into_owned())
+    }
+
+    fn post_json_blocking(with_conn2: bool, uri: &'static str, body: serde_json::Value) -> (StatusCode, String) {
+        taskrun::run(async move { Ok::<_, err::Error>(post_json(with_conn2, uri, body).await) }).unwrap()
+    }
+
     /// The v1 (production) daemon has no conn2 ctrls, so its scrape must carry
     /// only the v1 tree.
     #[test]
@@ -1229,5 +1274,42 @@ mod test {
         assert_eq!(status, StatusCode::OK);
         assert!(body.contains("daemon2_connset_ca_conn_create 2\n"), "{body}");
         assert!(!body.contains("daemon_handle_event"), "{body}");
+    }
+
+    /// The scatter-gather endpoint is documented with utoipa and reachable at
+    /// its usual path.
+    #[test]
+    fn scatter_gather_v1_route() {
+        let (status, body) = post_json_blocking(
+            true,
+            "/daqingest/private/conn2/scatter_gather_v1",
+            json!({"channel_regex": "foo.*", "addr_regex": "10\\..*", "cmd": {"type": "Ping"}}),
+        );
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(v["channel_regex"], "foo.*");
+        assert_eq!(v["addr_regex"], "10\\..*");
+        assert_eq!(v["cmd"]["type"], "Ping");
+    }
+
+    /// The generated OpenAPI spec must describe the documented endpoint at
+    /// its actual served path, so the spec cannot drift from the router.
+    #[test]
+    fn openapi_json_contains_scatter_gather() {
+        let (status, body) = scrape_blocking(false, "/daqingest/api-docs/openapi.json");
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert!(
+            v["paths"]["/daqingest/private/conn2/scatter_gather_v1"]["post"].is_object(),
+            "{body}"
+        );
+    }
+
+    /// Swagger UI is mounted alongside the API so the spec can be browsed
+    /// interactively.
+    #[test]
+    fn swagger_ui_served() {
+        let (status, body) = scrape_blocking(false, "/daqingest/swagger-ui/");
+        assert_eq!(status, StatusCode::OK, "{body}");
     }
 }
