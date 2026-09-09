@@ -1073,14 +1073,23 @@ mod test {
                 ingest_name: format!("ch={:?} addr={:?}", sel.channel_pattern(), sel.addr_pattern()),
                 conn_count_total: 2,
                 conn_count_matched: 1,
-                connset_channel_count_total: 1,
-                connset_channels: vec![crate::ca::connset2::connset::channels::channel::ChannelStatusLight {
-                    name: "SEARCHING:CHANNEL".into(),
-                    state: "AddrSearch".into(),
-                    backoff_i: 0,
-                    backoff_remaining_ms: None,
-                    addr: None,
-                }],
+                connset_channel_count_total: 2,
+                connset_channels: vec![
+                    crate::ca::connset2::connset::channels::channel::ChannelStatusLight {
+                        name: "SEARCHING:CHANNEL".into(),
+                        state: "AddrSearch".into(),
+                        backoff_i: 0,
+                        backoff_remaining_ms: None,
+                        addr: None,
+                    },
+                    crate::ca::connset2::connset::channels::channel::ChannelStatusLight {
+                        name: "SOME:CHANNEL".into(),
+                        state: "Observing".into(),
+                        backoff_i: 0,
+                        backoff_remaining_ms: None,
+                        addr: Some("10.0.0.5:5064".into()),
+                    },
+                ],
                 conns: vec![status_v1::StatusLightConn {
                     addr: "10.0.0.5:5064".into(),
                     state: "Connected".into(),
@@ -1275,9 +1284,22 @@ mod test {
         assert_eq!(v["conns"][0]["channels"][0]["name"], "SOME:CHANNEL");
         assert_eq!(v["conns"][0]["channels"][0]["state"], "Running");
         assert_eq!(v["conns"][0]["channels"][0]["event_add_res_cnt"], 42);
-        // A channel which has no connection yet must still be reported.
         assert_eq!(v["connset_channels"][0]["name"], "SEARCHING:CHANNEL");
         assert_eq!(v["connset_channels"][0]["state"], "AddrSearch");
+        let connset_names: Vec<_> = v["connset_channels"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|x| x["name"].as_str().unwrap())
+            .collect();
+        assert!(connset_names.contains(&"SOME:CHANNEL"), "{connset_names:?}");
+        let conn_names: Vec<_> = v["conns"][0]["channels"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|x| x["name"].as_str().unwrap())
+            .collect();
+        assert!(conn_names.contains(&"SOME:CHANNEL"), "{conn_names:?}");
     }
 
     #[test]

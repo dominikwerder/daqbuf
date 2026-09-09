@@ -131,11 +131,6 @@ pub enum ConnsetChannels {
     Full(Vec<(String, channels::channel::ChannelInfo)>),
 }
 
-/// The gathered status of one ingest process.
-///
-/// Channels appear either under `connset_channels` (known to the ConnSet but not
-/// attached to a connection: searching, backing off, being removed) or under one of
-/// `conns`, never both.
 #[derive(Debug)]
 pub struct StatusV1Res {
     pub ts: String,
@@ -985,8 +980,6 @@ impl ConnSet {
                 let conn_count_matched = cmdtxs.len() as u32;
                 let connset_channel_count_total = self.channels.len() as u32;
                 let sel = req.sel.status_sel(req.detail);
-                // The ConnSet half needs no fan-out: these channels have no connection
-                // to ask, which is exactly why they have to be reported separately.
                 let connset_channels = match req.detail {
                     conn2::conn::StatusDetail::Light => ConnsetChannels::Light(
                         self.channels

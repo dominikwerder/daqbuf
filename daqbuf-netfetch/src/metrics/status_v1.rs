@@ -78,8 +78,6 @@ pub struct StatusLight {
     pub conn_count_total: u32,
     pub conn_count_matched: u32,
     pub connset_channel_count_total: u32,
-    /// Channels the ConnSet knows about which are not attached to a connection: still
-    /// searching for an address, backing off, or being removed.
     pub connset_channels: Vec<ChannelStatusLight>,
     pub conns: Vec<StatusLightConn>,
 }
