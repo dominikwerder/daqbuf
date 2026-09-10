@@ -399,11 +399,9 @@ async fn conn2_ctrls(ctrls: &Arc<dyn CaIngestCtrls>) -> Result<Box<dyn Conn2Ctrl
     ctrls.conn2_ctrls().await.ok_or(StatusApiError::Conn2NotActive)
 }
 
-/// Cheap overview: one entry per connection and per channel, without the internal
-/// state tree. Suitable for frequent polling.
 #[utoipa::path(
     get,
-    path = "/daqingest/admin/status/light",
+    path = "/light",
     params(StatusQuery),
     responses(
         (status = 200, description = "Status of the matching connections and channels", body = StatusLight),
@@ -433,7 +431,7 @@ pub async fn status_light(
 /// free-form object on purpose.
 #[utoipa::path(
     get,
-    path = "/daqingest/admin/status/full",
+    path = "/full",
     params(StatusQuery),
     responses(
         (status = 200, description = "Full status snapshot", body = serde_json::Value),
