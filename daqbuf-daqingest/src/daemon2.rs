@@ -237,6 +237,19 @@ impl Daemon {
             let n = channels.len();
             info!("add {n} channels from config");
             for ch_cfg in channels {
+                if ch_cfg.name() == "testset-00" {
+                    for j in 10..12 {
+                        let g = 1000 * j;
+                        let h = 10 + g;
+                        for i in g..h {
+                            let chname = format!("TEST:SLOW:SCALAR:F32:{i:06}");
+                            let conf = ChannelConfig::st_monitor(chname, "TEST");
+                            if let Err(e) = cmder.channel_add(conf).await {
+                                error!("daemon2 initial channel_add error {e}");
+                            }
+                        }
+                    }
+                }
                 if let Err(e) = cmder.channel_add(ch_cfg).await {
                     error!("daemon2 initial channel_add error {e}");
                 }
