@@ -7,7 +7,7 @@ mod conncmd;
 mod connevent;
 mod connfut;
 pub mod locallog;
-mod protowrap;
+pub(crate) mod protowrap;
 mod statefut;
 mod statetrans;
 mod synchan;

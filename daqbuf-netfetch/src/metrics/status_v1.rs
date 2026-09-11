@@ -4,6 +4,7 @@ use crate::ca::conn2::conn::StatusSel;
 use crate::ca::conn2::conn::activeca;
 use crate::ca::conn2::conn::channelheap;
 use crate::ca::conn2::conn::connected;
+use crate::ca::conn2::protowrap;
 use crate::ca::connset2::connset::ConnsetChannels;
 use crate::ca::connset2::connset::StatusV1Res;
 use crate::ca::connset2::connset::channels::channel::ChannelInfo;
@@ -110,7 +111,7 @@ pub struct StatusLightChannel {
     pub event_add_res_cnt: u64,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct StatusFull {
     pub ts: String,
     pub ingest_name: String,
@@ -121,32 +122,33 @@ pub struct StatusFull {
     pub conns: Vec<StatusFullConn>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct StatusFullConnsetChannel {
     pub name: String,
     pub info: ChannelInfo,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct StatusFullConn {
     pub addr: String,
     pub state: String,
     pub connected_state: Option<String>,
     pub activeca_state: Option<String>,
-    pub socket_state: Option<serde_json::Value>,
+    pub socket_state: Option<protowrap::SocketState>,
     pub channel_count_total: u32,
     pub channels: Vec<StatusFullChannel>,
     pub error: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct StatusFullChannel {
     pub name: String,
     pub cid: u32,
     pub state: String,
     pub state_elapsed_ms: u64,
     pub counters: channelheap::channelhandler::Counters,
-    /// The `ToSerde` snapshot of the handler and its whole state tree.
+    /// The `ToSerde` snapshot of the handler and its whole state tree; free-form.
+    #[schema(value_type = Object)]
     pub handler: Option<Box<channelheap::channelhandler::FullSnap>>,
 }
 
@@ -427,14 +429,14 @@ pub async fn status_light(
 /// The full internal state tree of every matching channel. Expensive; intended for
 /// debugging a specific channel or address rather than for polling.
 ///
-/// The response shape follows the internal state machines and is documented as a
-/// free-form object on purpose.
+/// Only `conns[].channels[].handler` remains a free-form object, since it mirrors the
+/// whole per-channel state machine tree.
 #[utoipa::path(
     get,
     path = "/full",
     params(StatusQuery),
     responses(
-        (status = 200, description = "Full status snapshot", body = serde_json::Value),
+        (status = 200, description = "Full status snapshot", body = StatusFull),
         (status = 400, description = "A given regex does not compile", body = StatusErrorBody),
         (status = 503, description = "This daemon does not run the v2 ingest path", body = StatusErrorBody),
         (status = 504, description = "The connection set did not answer", body = StatusErrorBody),
@@ -527,7 +529,11 @@ mod test {
             addr,
             Ok(mk(conn::StatusState::Connected(connected::StatusInfo {
                 state: connected::StatusInfoState::Handshake,
-                socket_state: serde_json::Value::Null,
+                socket_state: protowrap::SocketState::Stats {
+                    socket_buffer_len: 0,
+                    tcp_read_bytes: 0,
+                    buf_rlen: 0,
+                },
             }))),
         );
         assert_eq!(c.state, "Connected");
@@ -541,7 +547,11 @@ mod test {
                 state: connected::StatusInfoState::ActiveCa(activeca::StatusInfo {
                     state: activeca::StatusInfoState::Done,
                 }),
-                socket_state: serde_json::Value::Null,
+                socket_state: protowrap::SocketState::Stats {
+                    socket_buffer_len: 0,
+                    tcp_read_bytes: 0,
+                    buf_rlen: 0,
+                },
             }))),
         );
         assert_eq!(c.connected_state.as_deref(), Some("ActiveCa"));

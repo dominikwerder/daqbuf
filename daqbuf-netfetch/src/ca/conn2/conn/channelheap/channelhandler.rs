@@ -51,6 +51,7 @@ use std::time::Duration;
 use std::time::Instant;
 use taskrun::tokio;
 use timeoutable::Timeoutable;
+use utoipa::ToSchema;
 
 macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
 macro_rules! warn { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
@@ -226,7 +227,7 @@ pub struct StatusInfo {
     pub full: Option<Box<FullSnap>>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct Counters {
     pub event_add_res_cnt: u64,
 }
