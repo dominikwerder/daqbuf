@@ -18,6 +18,7 @@ pub trait ToSerde {
 ///
 /// Mirrors the `{len, cap}` shape that the existing `dump_state_poll` trees already emit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 pub struct LenCap {
     pub len: usize,
     pub cap: usize,

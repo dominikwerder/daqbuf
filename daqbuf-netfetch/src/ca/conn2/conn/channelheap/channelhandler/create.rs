@@ -64,39 +64,53 @@ pub enum CreatingItem {
 }
 
 #[derive(Debug, ToSerde)]
-#[to_serde(vis = "pub", serde(tag = "ty", content = "co"))]
+#[to_serde(
+    vis = "pub",
+    name = CreateStateSerde,
+    serde(tag = "ty"),
+    derive(utoipa::ToSchema)
+)]
 enum State {
-    CreateChanSend(
-        #[to_serde(elapsed, dwell_ms = 2000)] Instant,
-        #[to_serde(len)] VecDeque<CaMsg>,
-        #[to_serde(skip)] FutDbg<()>,
-    ),
-    CreateChanRecv(
-        #[to_serde(elapsed, dwell_ms = 2000)] Instant,
-        #[to_serde(skip)] FutDbg<()>,
-    ),
-    /// Series lookup is a DB round-trip; anything past ~4s is worth a second look.
-    SeriesIdRecv(
-        #[to_serde(elapsed, dwell_ms = 4000)] Instant,
+    CreateChanSend {
+        #[to_serde(elapsed, dwell_ms = 2000, schema(value_type = String))]
+        ts: Instant,
+        #[to_serde(len)]
+        outbuf: VecDeque<CaMsg>,
         #[to_serde(skip)]
-        FutDbg<(
+        fut: FutDbg<()>,
+    },
+    CreateChanRecv {
+        #[to_serde(elapsed, dwell_ms = 2000, schema(value_type = String))]
+        ts: Instant,
+        #[to_serde(skip)]
+        fut: FutDbg<()>,
+    },
+    /// Series lookup is a DB round-trip; anything past ~4s is worth a second look.
+    SeriesIdRecv {
+        #[to_serde(elapsed, dwell_ms = 4000, schema(value_type = String))]
+        ts: Instant,
+        #[to_serde(skip)]
+        fut: FutDbg<(
             Result<Result<dbpg::seriesbychannel::ChannelInfoResult, dbpg::seriesbychannel::Error>, Error>,
             Sid,
             ScalarType,
             Shape,
             CaDbrTy,
         )>,
-    ),
-    Done(#[to_serde(elapsed)] Instant),
+    },
+    Done {
+        #[to_serde(elapsed, schema(value_type = String))]
+        ts: Instant,
+    },
 }
 
 #[derive(Debug, ToSerde)]
-#[to_serde(vis = "pub")]
+#[to_serde(vis = "pub", derive(utoipa::ToSchema))]
 pub struct Creating {
     cid: Cid,
     name: String,
     backend: String,
-    #[to_serde(nest)]
+    #[to_serde(nest, schema(value_type = CreateStateSerde))]
     state: State,
     removing: bool,
     #[to_serde(len)]
@@ -124,7 +138,11 @@ impl Creating {
             cid,
             name,
             backend,
-            state: State::CreateChanSend(tsnow, msgs, to.box2()),
+            state: State::CreateChanSend {
+                ts: tsnow,
+                outbuf: msgs,
+                fut: to.box2(),
+            },
             removing: false,
             inp_buf: VecDeque::with_capacity(16),
             inp_done: false,
@@ -174,10 +192,12 @@ impl Stream for Creating {
             let self2 = self.as_mut().get_mut();
             let tsnow = Instant::now();
             match &mut self2.state {
-                State::CreateChanSend(_ts, msgs, to) => {
+                State::CreateChanSend {
+                    outbuf: msgs, fut: to, ..
+                } => {
                     match to.poll_unpin(cx) {
                         Ready(()) => {
-                            self2.state = State::Done(tsnow);
+                            self2.state = State::Done { ts: tsnow };
                             break Ready(Some(Err(Error::TimeoutCreateChanSend)));
                         }
                         Pending => {
@@ -190,13 +210,13 @@ impl Stream for Creating {
                     } else {
                         hpp.mark_progress();
                         let to = std::mem::replace(to, async {}.box2());
-                        self2.state = State::CreateChanRecv(tsnow, to);
+                        self2.state = State::CreateChanRecv { ts: tsnow, fut: to };
                     }
                 }
-                State::CreateChanRecv(_ts, to) => {
+                State::CreateChanRecv { fut: to, .. } => {
                     match to.poll_unpin(cx) {
                         Ready(()) => {
-                            self2.state = State::Done(tsnow);
+                            self2.state = State::Done { ts: tsnow };
                             break Ready(Some(Err(Error::TimeoutCreateChanRecv)));
                         }
                         Pending => {
@@ -258,7 +278,10 @@ impl Stream for Creating {
                                     let chi = rx.recv().map_err(|_| Error::RecvChannelInfoResult).await;
                                     (chi, sid, scalar_type, shape, ca_dbr_type)
                                 };
-                                self.state = State::SeriesIdRecv(tsnow, fut.box2());
+                                self.state = State::SeriesIdRecv {
+                                    ts: tsnow,
+                                    fut: fut.box2(),
+                                };
                                 let item = CreatingItem::ChannelInfoQuery(item);
                                 trace3!("--- EMIT --- {item:?}");
                                 break Ready(Some(Ok(item)));
@@ -282,18 +305,18 @@ impl Stream for Creating {
                     } else if self.inp_done {
                         // TODO status event
                         hpp.mark_progress();
-                        self.state = State::Done(tsnow);
+                        self.state = State::Done { ts: tsnow };
                     } else {
                         hpp.mark_pending();
                     }
                 }
-                State::SeriesIdRecv(ts, rx) => {
+                State::SeriesIdRecv { fut: rx, .. } => {
                     trace3!("State::SeriesIdRecv  polling");
                     match rx.poll_unpin(cx) {
                         Ready((x, sid, scalar_type, shape, ca_dbr_type)) => {
                             hpp.mark_progress();
                             trace!("received channel info  {scalar_type}  {shape}  {x:?}");
-                            self2.state = State::Done(tsnow);
+                            self2.state = State::Done { ts: tsnow };
                             match x {
                                 Ok(x) => match x {
                                     Ok(x) => {
@@ -301,12 +324,12 @@ impl Stream for Creating {
                                         break Ready(Some(Ok(item)));
                                     }
                                     Err(e) => {
-                                        self2.state = State::Done(tsnow);
+                                        self2.state = State::Done { ts: tsnow };
                                         break Ready(Some(Err(e.into())));
                                     }
                                 },
                                 Err(e) => {
-                                    self2.state = State::Done(tsnow);
+                                    self2.state = State::Done { ts: tsnow };
                                     break Ready(Some(Err(e)));
                                 }
                             }
@@ -316,7 +339,7 @@ impl Stream for Creating {
                         }
                     }
                 }
-                State::Done(_ts) => break Ready(Some(Err(Error::Logic))),
+                State::Done { .. } => break Ready(Some(Err(Error::Logic))),
             }
             break if hpp.have_progress() {
                 trace4!("HPP:Progress");

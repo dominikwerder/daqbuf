@@ -76,7 +76,7 @@ impl Drop for SubidOwned {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, utoipa::ToSchema)]
 pub struct Cid(u32);
 
 impl Cid {
@@ -107,7 +107,7 @@ impl Subid {
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, utoipa::ToSchema)]
 pub struct Sid(u32);
 
 impl Sid {
@@ -174,7 +174,7 @@ impl fmt::Display for Ioid {
     }
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, utoipa::ToSchema)]
 pub struct CaDbrTy(u16);
 
 impl fmt::Debug for CaDbrTy {

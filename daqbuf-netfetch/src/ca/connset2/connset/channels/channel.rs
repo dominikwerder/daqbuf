@@ -33,6 +33,7 @@ use std::task::Waker;
 use std::time::Duration;
 use std::time::Instant;
 use taskrun::tokio;
+use utoipa::ToSchema;
 
 const ADDR_SEARCH_TIMEOUT: Duration = Duration::from_millis(30000);
 const CSSID_SEARCH_TIMEOUT: Duration = Duration::from_millis(10000);
@@ -151,30 +152,37 @@ impl fmt::Display for State {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct BackoffInfo {
+    /// Human-readable duration, e.g. `"1m30s500ms"`.
     #[serde(with = "serde_helper::serde_Duration_human")]
+    #[schema(value_type = String)]
     until: Duration,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct AddrSearchInfo {
+    #[schema(value_type = u64)]
     cssid: ChannelStatusSeriesId,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct ObservingInfo {
+    #[schema(value_type = u64)]
     cssid: ChannelStatusSeriesId,
+    #[schema(value_type = String)]
     addr: SocketAddrV4,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct RemovingInfo2 {
+    #[schema(value_type = Option<u64>)]
     cssid: Option<ChannelStatusSeriesId>,
+    #[schema(value_type = Option<String>)]
     addr: Option<SocketAddrV4>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub enum StateInfo {
     Init,
     Backoff(BackoffInfo),
@@ -188,10 +196,12 @@ pub enum StateInfo {
     Done,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct ChannelInfo {
     state: StateInfo,
     backoff_i: u32,
+    /// Each entry is `[seq, ts, message]`.
+    #[schema(value_type = Vec<Object>)]
     local_log: Vec<locallog::Entry>,
 }
 

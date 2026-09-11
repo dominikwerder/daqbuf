@@ -48,7 +48,8 @@ autoerr::create_error_v1!(
     },
 );
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
+#[schema(as = fetchpolling::PollStateDirection)]
 pub enum StateDirection {
     None,
     DoNothing,
@@ -74,7 +75,13 @@ fn transition_state(old: &mut State, new: State, ts: &mut Instant, llog: &mut lo
 }
 
 #[derive(Debug, ToSerde)]
-#[to_serde(vis = "pub", serde(tag = "ty", content = "co"), dwell_ctx = Duration)]
+#[to_serde(
+    vis = "pub",
+    name = FetchPollingStateSerde,
+    serde(tag = "ty"),
+    dwell_ctx = Duration,
+    derive(utoipa::ToSchema)
+)]
 enum State {
     DoNothing,
     /// Typical dwell is the poll interval itself, supplied at snapshot time by the parent
@@ -104,20 +111,26 @@ impl fmt::Display for State {
 }
 
 #[derive(Debug, ToSerde)]
-#[to_serde(vis = "pub")]
+#[to_serde(vis = "pub", derive(utoipa::ToSchema))]
 pub struct FetchPolling {
-    #[to_serde(nest)]
+    #[to_serde(nest, schema(value_type = FetchPollingStateSerde))]
     state: State,
     /// Set by `transition_state`, reported as time-in-state, alongside a dwell-warn score
     /// derived from `State::dwell_typical` (the poll `interval` below is its runtime context).
-    #[to_serde(elapsed, dwell = self.state.dwell_typical(&self.interval))]
+    #[to_serde(elapsed, dwell = self.state.dwell_typical(&self.interval), schema(value_type = String))]
     state_dt: Instant,
+    #[to_serde(schema(value_type = u64))]
     series: SeriesId,
     sid: Sid,
+    #[to_serde(schema(value_type = String))]
     scalar_type: ScalarType,
+    #[to_serde(schema(value_type = String))]
     shape: Shape,
     ca_dbr_ty: CaDbrTy,
-    #[to_serde(serde(with = "serde_helper::serde_Duration_human"))]
+    #[to_serde(
+        serde(with = "serde_helper::serde_Duration_human"),
+        schema(value_type = String)
+    )]
     interval: Duration,
     #[to_serde(skip)]
     poll_next_ts_exact: Instant,

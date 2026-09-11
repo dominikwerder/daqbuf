@@ -11,6 +11,8 @@ struct Opaque;
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 struct Sid(u32);
 
+// TODO add also tests for internally tagged cases.
+
 /// A leaf component, nested into the parent below.
 ///
 /// Adjacent tagging (`tag` + `content`) rather than internal tagging: once a variant's

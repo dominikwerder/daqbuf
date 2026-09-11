@@ -53,12 +53,13 @@ macro_rules! todo_shutdown { ($($arg:tt)*) => { if false { log::debug!($($arg)*)
 autoerr::create_error_v1!(
     name(Error, "FetchMonitoring"),
     enum variants {
-        Logic,
+        _Placeholder,
     },
 );
 
-#[derive(Debug, Clone, Serialize)]
-enum StateDirection {
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
+#[schema(as = fetchmonitoring::MonitorStateDirection)]
+pub enum StateDirection {
     None,
     Disable,
     Enable,
@@ -83,7 +84,12 @@ fn transition_state(old: &mut State, new: State, ts: &mut Instant, llog: &mut lo
 }
 
 #[derive(Debug, ToSerde)]
-#[to_serde(vis = "pub", serde(tag = "ty", content = "co"))]
+#[to_serde(
+    vis = "pub",
+    name = FetchMonitoringStateSerde,
+    serde(tag = "ty"),
+    derive(utoipa::ToSchema)
+)]
 enum State {
     /// Parked: this channel is polled instead of monitored, so it rests here indefinitely.
     DoNothing(),
@@ -127,18 +133,25 @@ impl fmt::Display for State {
 }
 
 #[derive(Debug, ToSerde)]
-#[to_serde(vis = "pub")]
+#[to_serde(vis = "pub", derive(utoipa::ToSchema))]
 pub struct FetchMonitoring {
-    #[to_serde(nest)]
+    #[to_serde(nest, schema(value_type = FetchMonitoringStateSerde))]
     state: State,
     /// Set by `transition_state`, reported as time-in-state, alongside a dwell-warn score
     /// derived from `State::dwell_typical`.
-    #[to_serde(elapsed, dwell = self.state.dwell_typical())]
+    #[to_serde(
+        elapsed,
+        dwell = self.state.dwell_typical(),
+        schema(value_type = String)
+    )]
     state_dt: Instant,
+    #[to_serde(schema(value_type = u64))]
     series: SeriesId,
     cid: Cid,
     sid: Sid,
+    #[to_serde(schema(value_type = String))]
     scalar_type: ScalarType,
+    #[to_serde(schema(value_type = String))]
     shape: Shape,
     ca_dbr_ty: CaDbrTy,
     #[to_serde(len)]

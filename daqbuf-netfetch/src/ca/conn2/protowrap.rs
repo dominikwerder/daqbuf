@@ -10,9 +10,11 @@ use ca_proto::ca::proto::CaMsg;
 use ca_proto::ca::proto::CaProto;
 use futures::Stream;
 use futures::StreamExt;
+use serde::Serialize;
 use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
+use utoipa::ToSchema;
 
 macro_rules! warn { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
 macro_rules! debug { ($($arg:tt)*) => { if true { log::debug!($($arg)*); } }; }
@@ -30,6 +32,19 @@ autoerr::create_error_v1!(
 enum State {
     Running,
     Done,
+}
+
+#[derive(Debug, Clone, Serialize, ToSchema)]
+#[serde(untagged)]
+pub enum SocketState {
+    Stats {
+        socket_buffer_len: u64,
+        tcp_read_bytes: u64,
+        buf_rlen: u64,
+    },
+    Error {
+        error: String,
+    },
 }
 
 #[derive(Debug)]
@@ -100,17 +115,14 @@ impl ProtoPusher {
         }
     }
 
-    pub fn status_socket(&mut self) -> serde_json::Value {
-        use serde_json::json;
+    pub fn status_socket(&mut self) -> SocketState {
         match self.proto.get_read_stats_v1() {
-            Ok(x) => json!({
-                "socket_buffer_len": x.0,
-                "tcp_read_bytes": x.1,
-                "buf_rlen": x.2,
-            }),
-            Err(e) => json!({
-                "error": e.to_string(),
-            }),
+            Ok(x) => SocketState::Stats {
+                socket_buffer_len: x.0,
+                tcp_read_bytes: x.1,
+                buf_rlen: x.2,
+            },
+            Err(e) => SocketState::Error { error: e.to_string() },
         }
     }
 

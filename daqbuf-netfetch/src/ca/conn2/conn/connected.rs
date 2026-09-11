@@ -105,7 +105,7 @@ pub enum StatusInfoState {
 #[derive(Debug, Serialize)]
 pub struct StatusInfo {
     pub state: StatusInfoState,
-    pub socket_state: serde_json::Value,
+    pub socket_state: protowrap::SocketState,
 }
 
 #[derive(Debug)]
@@ -228,7 +228,7 @@ impl Connected {
         }
     }
 
-    pub fn status_socket(&mut self) -> serde_json::Value {
+    pub fn status_socket(&mut self) -> protowrap::SocketState {
         self.protowrap.status_socket()
     }
 
