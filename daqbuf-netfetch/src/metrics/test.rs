@@ -363,6 +363,68 @@ fn openapi_json_contains_admin_status() {
     assert!(v["components"]["schemas"]["StatusLightChannel"].is_object(), "{body}");
 }
 
+/// `conns[].channels[].handler` used to be an opaque `Object` in the OpenAPI schema. This
+/// pins that the generated tree now carries real types for `state_dt`/`dwell_score` down
+/// through the nested sub-state-machines, and that the several module-local `State` (and
+/// `StateDirection`) enums landed under distinct component names instead of silently
+/// colliding and overwriting each other.
+#[test]
+fn openapi_handler_state_tree_is_typed() {
+    let (status, body) = scrape_blocking(false, "/daqingest/api-docs/openapi.json");
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    let schemas = &v["components"]["schemas"];
+
+    let handler = &schemas["StatusFullChannel"]["properties"]["handler"];
+    assert_eq!(
+        handler["$ref"], "#/components/schemas/ChannelHandlerSerde",
+        "handler is no longer typed as a concrete schema: {body}"
+    );
+
+    let fetch_polling = &schemas["FetchPollingStateSerde"];
+    assert!(fetch_polling.is_object(), "FetchPollingStateSerde missing: {body}");
+    let send_req = fetch_polling["oneOf"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|v| v["properties"]["ty"]["enum"] == serde_json::json!(["SendReq"]))
+        .expect("SendReq variant missing");
+    assert_eq!(
+        send_req["properties"]["co"]["$ref"], "#/components/schemas/fetchpolling.PollStateDirection",
+        "{body}"
+    );
+
+    let fetch_polling_struct = &schemas["FetchPollingSerde"]["properties"];
+    assert_eq!(fetch_polling_struct["state_dt"]["type"], "string", "{body}");
+    assert_ne!(fetch_polling_struct["dwell_score"], serde_json::json!({}), "{body}");
+    assert!(fetch_polling_struct["dwell_score"]["type"].is_array(), "{body}");
+
+    // The two module-local `StateDirection` enums must not have collided under one name.
+    assert_eq!(
+        schemas["fetchpolling.PollStateDirection"]["enum"],
+        serde_json::json!(["None", "DoNothing"]),
+        "{body}"
+    );
+    assert_eq!(
+        schemas["fetchmonitoring.MonitorStateDirection"]["enum"],
+        serde_json::json!(["None", "Disable", "Enable", "Closing"]),
+        "{body}"
+    );
+
+    // Every module-local `State` enum must have its own distinct schema name.
+    for name in [
+        "StateSerde",
+        "CreateStateSerde",
+        "ReadEnumStateSerde",
+        "RunningStateSerde",
+        "FetchmpxStateSerde",
+        "FetchPollingStateSerde",
+        "FetchMonitoringStateSerde",
+    ] {
+        assert!(schemas[name].is_object(), "{name} missing from schema: {body}");
+    }
+}
+
 #[test]
 fn swagger_ui_served() {
     let (status, body) = scrape_blocking(false, "/daqingest/swagger-ui/");

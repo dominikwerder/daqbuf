@@ -98,6 +98,17 @@ fn serde_attr(attrs: &[TokenStream2]) -> TokenStream2 {
     }
 }
 
+/// Forwards `#[to_serde(schema(..))]` as a plain `#[schema(..)]` on the generated field, for
+/// utoipa's `ToSchema` derive to pick up a `value_type` override where the mirror type's own
+/// `Serialize` shape (e.g. a human-readable `Duration`) can't be inferred automatically.
+fn schema_attr(attrs: &[TokenStream2]) -> TokenStream2 {
+    if attrs.is_empty() {
+        quote!()
+    } else {
+        quote!(#[schema( #(#attrs),* )])
+    }
+}
+
 /// Variant-level dwell arm body: always `Some(Duration)`, since presence/absence of the
 /// dwell expectation itself is what `None` vs `Some` on the surrounding match arm encodes.
 fn dwell_variant_arm_expr(dwell: &DwellSpec) -> TokenStream2 {
@@ -203,6 +214,7 @@ fn expand_enum(inp: &syn::DeriveInput, ca: &ContainerAttrs, data: &syn::DataEnum
         let va = parse_variant_attrs(&v.attrs)?;
         let vname = &v.ident;
         let vserde = serde_attr(&va.serde);
+        let vschema = schema_attr(&va.schema);
         let extras = &va.extra;
 
         let dwell_pat = match &v.fields {
@@ -237,7 +249,8 @@ fn expand_enum(inp: &syn::DeriveInput, ca: &ContainerAttrs, data: &syn::DataEnum
                     let m = map_field(f, &fa, &quote!(#name), &cp);
                     collect_bound(&mut bounds, m.bound);
                     let (ty, expr, sa) = (m.ty, m.expr, serde_attr(&m.serde_attrs));
-                    defs.push(quote!(#sa #name: #ty));
+                    let sca = schema_attr(&fa.schema);
+                    defs.push(quote!(#sca #sa #name: #ty));
                     inits.push(quote!(#name: #expr));
                     if let Some(d) = &fa.dwell {
                         let score_name = format_ident!("dwell_score");
@@ -250,7 +263,7 @@ fn expand_enum(inp: &syn::DeriveInput, ca: &ContainerAttrs, data: &syn::DataEnum
                     defs.push(quote!(#name: #ty));
                     inits.push(quote!(#name: #expr));
                 }
-                var_defs.push(quote!(#vserde #vname { #(#defs),* }));
+                var_defs.push(quote!(#vschema #vserde #vname { #(#defs),* }));
                 arms.push(quote!(#src::#vname { #(#binds),* } => #dst::#vname { #(#inits),* }));
             }
             syn::Fields::Unnamed(fs) => {
@@ -265,7 +278,8 @@ fn expand_enum(inp: &syn::DeriveInput, ca: &ContainerAttrs, data: &syn::DataEnum
                     let m = map_field(f, &fa, &quote!(#b), &cp);
                     collect_bound(&mut bounds, m.bound);
                     let (ty, expr, sa) = (m.ty, m.expr, serde_attr(&m.serde_attrs));
-                    defs.push(quote!(#sa #ty));
+                    let sca = schema_attr(&fa.schema);
+                    defs.push(quote!(#sca #sa #ty));
                     inits.push(expr);
                     if let Some(d) = &fa.dwell {
                         let score_expr = dwell_score_block(&quote!(#b), d);
@@ -278,21 +292,21 @@ fn expand_enum(inp: &syn::DeriveInput, ca: &ContainerAttrs, data: &syn::DataEnum
                     inits.push(quote!(#expr));
                 }
                 if defs.is_empty() {
-                    var_defs.push(quote!(#vserde #vname));
+                    var_defs.push(quote!(#vschema #vserde #vname));
                     arms.push(quote!(#src::#vname( #(#binds),* ) => #dst::#vname));
                 } else {
-                    var_defs.push(quote!(#vserde #vname( #(#defs),* )));
+                    var_defs.push(quote!(#vschema #vserde #vname( #(#defs),* )));
                     arms.push(quote!(#src::#vname( #(#binds),* ) => #dst::#vname( #(#inits),* )));
                 }
             }
             syn::Fields::Unit => {
                 if extras.is_empty() {
-                    var_defs.push(quote!(#vserde #vname));
+                    var_defs.push(quote!(#vschema #vserde #vname));
                     arms.push(quote!(#src::#vname => #dst::#vname));
                 } else {
                     let defs: Vec<_> = extras.iter().map(|x| &x.ty).collect();
                     let inits: Vec<_> = extras.iter().map(|x| &x.expr).collect();
-                    var_defs.push(quote!(#vserde #vname( #(#defs),* )));
+                    var_defs.push(quote!(#vschema #vserde #vname( #(#defs),* )));
                     arms.push(quote!(#src::#vname => #dst::#vname( #(#inits),* )));
                 }
             }
@@ -365,7 +379,8 @@ fn expand_struct(inp: &syn::DeriveInput, ca: &ContainerAttrs, data: &syn::DataSt
                 let m = map_field(f, &fa, &quote!(&self.#name), &cp);
                 collect_bound(&mut bounds, m.bound);
                 let (ty, expr, sa) = (m.ty, m.expr, serde_attr(&m.serde_attrs));
-                defs.push(quote!(#sa pub #name: #ty));
+                let sca = schema_attr(&fa.schema);
+                defs.push(quote!(#sca #sa pub #name: #ty));
                 inits.push(quote!(#name: #expr));
                 if let Some(d) = &fa.dwell {
                     let score_name = format_ident!("dwell_score");
@@ -404,7 +419,8 @@ fn expand_struct(inp: &syn::DeriveInput, ca: &ContainerAttrs, data: &syn::DataSt
                 let m = map_field(f, &fa, &quote!(&self.#idx), &cp);
                 collect_bound(&mut bounds, m.bound);
                 let (ty, expr, sa) = (m.ty, m.expr, serde_attr(&m.serde_attrs));
-                defs.push(quote!(#sa pub #ty));
+                let sca = schema_attr(&fa.schema);
+                defs.push(quote!(#sca #sa pub #ty));
                 inits.push(expr);
                 if let Some(d) = &fa.dwell {
                     let score_expr = dwell_score_block(&quote!(&self.#idx), d);

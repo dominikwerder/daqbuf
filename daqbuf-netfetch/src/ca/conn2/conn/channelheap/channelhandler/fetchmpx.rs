@@ -118,7 +118,14 @@ pub enum FetchmpxItem {
 }
 
 #[derive(Debug, ToSerde)]
-#[to_serde(vis = "pub", serde(tag = "ty", content = "co"))]
+// No `content` tag: every variant is unit (wire-identical either way), and utoipa 5.5's
+// `ToSchema` derive fails to expand on an all-unit adjacently tagged enum.
+#[to_serde(
+    vis = "pub",
+    name = FetchmpxStateSerde,
+    serde(tag = "ty"),
+    derive(utoipa::ToSchema)
+)]
 enum State {
     /// Steady state: the multiplexer sits here for the life of the channel.
     Normal,
@@ -142,20 +149,25 @@ impl State {
 }
 
 #[derive(Debug, ToSerde)]
-#[to_serde(vis = "pub")]
+#[to_serde(vis = "pub", derive(utoipa::ToSchema))]
 pub struct Fetchmpx {
-    #[to_serde(nest)]
+    #[to_serde(nest, schema(value_type = FetchmpxStateSerde))]
     state: State,
     /// Set by `transition_state`, reported as time-in-state, alongside a dwell-warn score
     /// derived from `State::dwell_typical`.
-    #[to_serde(elapsed, dwell = self.state.dwell_typical())]
+    #[to_serde(
+        elapsed,
+        dwell = self.state.dwell_typical(),
+        schema(value_type = String)
+    )]
     state_dt: Instant,
+    #[to_serde(schema(value_type = u64))]
     series: SeriesId,
     cid: Cid,
     sid: Sid,
-    #[to_serde(nest)]
+    #[to_serde(nest, schema(value_type = fetchpolling::FetchPollingSerde))]
     polling: FetchPolling,
-    #[to_serde(nest)]
+    #[to_serde(nest, schema(value_type = fetchmonitoring::FetchMonitoringSerde))]
     monitoring: FetchMonitoring,
     #[to_serde(len)]
     inp_buf: VecDeque<ProtoRxItem>,

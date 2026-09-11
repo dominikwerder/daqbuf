@@ -157,6 +157,9 @@ pub struct FieldAttrs {
     pub mode: FieldMode,
     pub ty: Option<syn::Type>,
     pub serde: Vec<TokenStream2>,
+    /// Forwarded verbatim as `#[schema(..)]` on the generated field, for utoipa's `ToSchema`
+    /// derive when the field's mirror type needs an explicit `value_type` override.
+    pub schema: Vec<TokenStream2>,
     pub span: proc_macro2::Span,
     /// Only valid on `elapsed`/`elapsed_ms` fields. Produces an `Option<u32>` sibling
     /// (`elapsed / typical` in per-mille, `1000` == a ratio of `1.0`) right after this field.
@@ -172,6 +175,7 @@ pub fn parse_field_attrs(field: &syn::Field) -> syn::Result<FieldAttrs> {
         mode: FieldMode::Clone,
         ty: None,
         serde: Vec::new(),
+        schema: Vec::new(),
         span: field.span(),
         dwell: None,
     };
@@ -209,6 +213,11 @@ pub fn parse_field_attrs(field: &syn::Field) -> syn::Result<FieldAttrs> {
                         syn::parenthesized!(content in inp);
                         out.serde.push(content.parse()?);
                     }
+                    "schema" => {
+                        let content;
+                        syn::parenthesized!(content in inp);
+                        out.schema.push(content.parse()?);
+                    }
                     "dwell_ms" | "dwell" => {
                         if out.dwell.is_some() {
                             return Err(syn::Error::new(key.span(), "conflicting to_serde dwell spec"));
@@ -219,7 +228,7 @@ pub fn parse_field_attrs(field: &syn::Field) -> syn::Result<FieldAttrs> {
                         return Err(syn::Error::new(
                             key.span(),
                             "unknown to_serde field option, expected one of: \
-                             skip, elapsed, elapsed_ms, nest, len, with, ty, serde, dwell_ms, dwell",
+                             skip, elapsed, elapsed_ms, nest, len, with, ty, serde, schema, dwell_ms, dwell",
                         ));
                     }
                 }
@@ -252,6 +261,10 @@ pub fn parse_field_attrs(field: &syn::Field) -> syn::Result<FieldAttrs> {
 #[derive(Default)]
 pub struct VariantAttrs {
     pub serde: Vec<TokenStream2>,
+    /// Forwarded verbatim as `#[schema(..)]` on the generated variant. utoipa only accepts a
+    /// `value_type` override for a single-field tuple variant here, at the variant level, not
+    /// on the field itself.
+    pub schema: Vec<TokenStream2>,
     pub extra: Vec<ExtraField>,
     /// This variant's typical time-in-state, used to build the enum's `dwell_typical`.
     /// Absent means "no dwell expectation for this variant" (`dwell_typical` returns `None`).
@@ -273,6 +286,11 @@ pub fn parse_variant_attrs(attrs: &[syn::Attribute]) -> syn::Result<VariantAttrs
                         syn::parenthesized!(content in inp);
                         out.serde.push(content.parse()?);
                     }
+                    "schema" => {
+                        let content;
+                        syn::parenthesized!(content in inp);
+                        out.schema.push(content.parse()?);
+                    }
                     "extra" => {
                         let content;
                         syn::parenthesized!(content in inp);
@@ -288,7 +306,7 @@ pub fn parse_variant_attrs(attrs: &[syn::Attribute]) -> syn::Result<VariantAttrs
                         return Err(syn::Error::new(
                             key.span(),
                             "unknown to_serde variant option, expected one of: \
-                             serde, extra, dwell_ms, dwell",
+                             serde, schema, extra, dwell_ms, dwell",
                         ));
                     }
                 }

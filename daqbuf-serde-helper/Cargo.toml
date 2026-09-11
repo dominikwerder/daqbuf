@@ -8,8 +8,10 @@ edition = "2024"
 [features]
 default = ["derive"]
 derive = ["dep:daqbuf-serde-helper-derive"]
+schema = ["dep:utoipa"]
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1"
 daqbuf-serde-helper-derive = { path = "../daqbuf-serde-helper-derive", optional = true }
+utoipa = { version = "5", optional = true }

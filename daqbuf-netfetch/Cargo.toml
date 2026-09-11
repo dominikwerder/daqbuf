@@ -61,7 +61,7 @@ items_2 = { path = "../daqbuf-items-2", package = "daqbuf-items-2" }
 streams = { path = "../daqbuf-streams", package = "daqbuf-streams" }
 ca_proto = { path = "../daqbuf-ca-proto", package = "daqbuf-ca-proto" }
 ca-proto-tokio = { path = "../daqbuf-ca-proto-tokio", package = "daqbuf-ca-proto-tokio" }
-serde-helper = { path = "../daqbuf-serde-helper", package = "daqbuf-serde-helper" }
+serde-helper = { path = "../daqbuf-serde-helper", package = "daqbuf-serde-helper", features = ["schema"] }
 taskrun = { path = "../daqbuf-taskrun", package = "daqbuf-taskrun" }
 mrucache = { path = "../daqbuf-mrucache", package = "daqbuf-mrucache" }
 batchtools = { path = "../daqbuf-batchtools", package = "daqbuf-batchtools" }

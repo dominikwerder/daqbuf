@@ -64,7 +64,7 @@ pub enum CreatingItem {
 }
 
 #[derive(Debug, ToSerde)]
-#[to_serde(vis = "pub", serde(tag = "ty", content = "co"))]
+#[to_serde(vis = "pub", name = CreateStateSerde, serde(tag = "ty", content = "co"))]
 enum State {
     CreateChanSend(
         #[to_serde(elapsed, dwell_ms = 2000)] Instant,
@@ -90,13 +90,92 @@ enum State {
     Done(#[to_serde(elapsed)] Instant),
 }
 
+// `CreateStateSerde` can't derive `utoipa::ToSchema`: utoipa 5.5 refuses any
+// `#[serde(tag = ..)]` enum with a variant holding more than one unnamed field, which every
+// non-terminal variant here does (elapsed duration + dwell score, and `CreateChanSend` also
+// its outbound buffer fill). Hand-written instead, describing the real wire shape without
+// touching `State`.
+impl utoipa::PartialSchema for CreateStateSerde {
+    fn schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
+        use utoipa::PartialSchema as _;
+        use utoipa::openapi::RefOr;
+        use utoipa::openapi::schema::ArrayBuilder;
+        use utoipa::openapi::schema::ObjectBuilder;
+        use utoipa::openapi::schema::OneOfBuilder;
+        use utoipa::openapi::schema::Schema;
+        use utoipa::openapi::schema::Type;
+
+        let duration = String::schema();
+        let dwell_score = Option::<u32>::schema();
+        let outbuf = serde_helper::to_serde::LenCap::schema();
+
+        let tagged = |ty: &str, co: ArrayBuilder| {
+            ObjectBuilder::new()
+                .property(
+                    "ty",
+                    ObjectBuilder::new().schema_type(Type::String).enum_values(Some([ty])),
+                )
+                .required("ty")
+                .property("co", co)
+                .required("co")
+        };
+
+        RefOr::T(Schema::OneOf(
+            OneOfBuilder::new()
+                .item(tagged(
+                    "CreateChanSend",
+                    ArrayBuilder::new()
+                        .prefix_items([duration.clone(), dwell_score.clone(), outbuf])
+                        .max_items(Some(3))
+                        .min_items(Some(3)),
+                ))
+                .item(tagged(
+                    "CreateChanRecv",
+                    ArrayBuilder::new()
+                        .prefix_items([duration.clone(), dwell_score.clone()])
+                        .max_items(Some(2))
+                        .min_items(Some(2)),
+                ))
+                .item(tagged(
+                    "SeriesIdRecv",
+                    ArrayBuilder::new()
+                        .prefix_items([duration.clone(), dwell_score])
+                        .max_items(Some(2))
+                        .min_items(Some(2)),
+                ))
+                .item(tagged(
+                    "Done",
+                    ArrayBuilder::new()
+                        .prefix_items([duration])
+                        .max_items(Some(1))
+                        .min_items(Some(1)),
+                ))
+                .build(),
+        ))
+    }
+}
+
+impl utoipa::ToSchema for CreateStateSerde {
+    // See the matching note on `channelhandler::StateSerde`'s `ToSchema` impl: a manual
+    // `PartialSchema::schema()` doesn't join utoipa's automatic component-collection walk, so
+    // the type it embeds inline (`LenCap`) is registered here by hand.
+    fn schemas(schemas: &mut Vec<(String, utoipa::openapi::RefOr<utoipa::openapi::schema::Schema>)>) {
+        use utoipa::PartialSchema as _;
+        use utoipa::ToSchema as _;
+        schemas.push((
+            serde_helper::to_serde::LenCap::name().into(),
+            serde_helper::to_serde::LenCap::schema(),
+        ));
+    }
+}
+
 #[derive(Debug, ToSerde)]
-#[to_serde(vis = "pub")]
+#[to_serde(vis = "pub", derive(utoipa::ToSchema))]
 pub struct Creating {
     cid: Cid,
     name: String,
     backend: String,
-    #[to_serde(nest)]
+    #[to_serde(nest, schema(value_type = CreateStateSerde))]
     state: State,
     removing: bool,
     #[to_serde(len)]

@@ -147,8 +147,10 @@ pub struct StatusFullChannel {
     pub state: String,
     pub state_elapsed_ms: u64,
     pub counters: channelheap::channelhandler::Counters,
-    /// The `ToSerde` snapshot of the handler and its whole state tree; free-form.
-    #[schema(value_type = Object)]
+    /// The `ToSerde` snapshot of the handler and its whole state tree. Every state tag,
+    /// `state_dt` and `dwell_score` is typed; only `conf`/`chi` (channel config and DB lookup
+    /// results) remain free-form `Object` payloads.
+    #[schema(value_type = channelheap::channelhandler::ChannelHandlerSerde)]
     pub handler: Option<Box<channelheap::channelhandler::FullSnap>>,
 }
 
@@ -429,8 +431,9 @@ pub async fn status_light(
 /// The full internal state tree of every matching channel. Expensive; intended for
 /// debugging a specific channel or address rather than for polling.
 ///
-/// Only `conns[].channels[].handler` remains a free-form object, since it mirrors the
-/// whole per-channel state machine tree.
+/// `conns[].channels[].handler` mirrors the whole per-channel state machine tree and is
+/// fully typed (every state tag, `state_dt`, `dwell_score`), except for two payload fields
+/// that stay free-form `Object`: `conf` (channel config) and `chi` (a DB lookup result).
 #[utoipa::path(
     get,
     path = "/full",

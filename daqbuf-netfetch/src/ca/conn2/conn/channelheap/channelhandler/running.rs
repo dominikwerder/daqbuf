@@ -101,8 +101,14 @@ pub enum RunningItem {
 }
 
 #[derive(Debug, ToSerde)]
-#[to_serde(vis = "pub", serde(tag = "ty", content = "co"))]
+#[to_serde(
+    vis = "pub",
+    name = RunningStateSerde,
+    serde(tag = "ty", content = "co"),
+    derive(utoipa::ToSchema)
+)]
 enum State {
+    #[to_serde(schema(value_type = fetchmpx::FetchmpxSerde))]
     Normal(#[to_serde(nest)] Fetchmpx),
     Done,
 }
@@ -117,15 +123,16 @@ impl State {
 }
 
 #[derive(Debug, ToSerde)]
-#[to_serde(vis = "pub")]
+#[to_serde(vis = "pub", derive(utoipa::ToSchema))]
 pub struct Running {
-    #[to_serde(nest)]
+    #[to_serde(nest, schema(value_type = RunningStateSerde))]
     state: State,
     /// Set by `transition_state`, reported as time-in-state.
-    #[to_serde(elapsed)]
+    #[to_serde(elapsed, schema(value_type = String))]
     state_dt: Instant,
     cid: Cid,
     sid: Sid,
+    #[to_serde(schema(value_type = Object))]
     chi: ChannelInfoResult,
     removing: bool,
     chan_close_ack: bool,

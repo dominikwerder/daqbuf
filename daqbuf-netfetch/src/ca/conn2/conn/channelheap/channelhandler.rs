@@ -102,7 +102,7 @@ pub enum ClosingReason {
 struct Init {}
 
 #[derive(Debug, ToSerde)]
-#[to_serde(vis = "pub")]
+#[to_serde(vis = "pub", derive(utoipa::ToSchema))]
 struct Closing1 {
     chan_close_ack: bool,
     #[to_serde(skip)]
@@ -173,6 +173,101 @@ impl State {
             State::Done(..) => "Done",
             State::Dummy(..) => "Dummy",
         }
+    }
+}
+
+// `StateSerde` (the `ToSerde`-generated mirror of `State`) can't derive `utoipa::ToSchema`:
+// utoipa 5.5 refuses any `#[serde(tag = ..)]` enum with a variant holding more than one
+// unnamed field, which every non-terminal variant here does once the macro appends the
+// `dwell_score` sibling next to `state_dt`. Hand-written instead, describing the real wire
+// shape (`{"ty": <variant name>, "co": [state_dt, ..]}`) without touching `State` itself;
+// each nested sub-state-machine's own schema is embedded so the OpenAPI doc still reaches it.
+impl utoipa::PartialSchema for StateSerde {
+    fn schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
+        use utoipa::PartialSchema as _;
+        use utoipa::openapi::RefOr;
+        use utoipa::openapi::schema::ArrayBuilder;
+        use utoipa::openapi::schema::ObjectBuilder;
+        use utoipa::openapi::schema::OneOfBuilder;
+        use utoipa::openapi::schema::Schema;
+        use utoipa::openapi::schema::Type;
+
+        let duration = String::schema();
+        let dwell_score = Option::<u32>::schema();
+
+        let tagged = |ty: &str, co: ArrayBuilder| {
+            ObjectBuilder::new()
+                .property(
+                    "ty",
+                    ObjectBuilder::new().schema_type(Type::String).enum_values(Some([ty])),
+                )
+                .required("ty")
+                .property("co", co)
+                .required("co")
+        };
+        let items = |n: usize, items: Vec<RefOr<Schema>>| {
+            ArrayBuilder::new()
+                .prefix_items(items)
+                .max_items(Some(n))
+                .min_items(Some(n))
+        };
+
+        RefOr::T(Schema::OneOf(
+            OneOfBuilder::new()
+                .item(tagged("Init", items(2, vec![duration.clone(), dwell_score.clone()])))
+                .item(tagged(
+                    "Creating",
+                    items(
+                        3,
+                        vec![duration.clone(), dwell_score.clone(), create::CreatingSerde::schema()],
+                    ),
+                ))
+                .item(tagged(
+                    "ReadEnum",
+                    items(
+                        3,
+                        vec![duration.clone(), dwell_score.clone(), readenum::ReadEnumSerde::schema()],
+                    ),
+                ))
+                .item(tagged(
+                    "Running",
+                    items(2, vec![duration.clone(), running::RunningSerde::schema()]),
+                ))
+                .item(tagged(
+                    "Closing1",
+                    items(3, vec![duration.clone(), dwell_score.clone(), Closing1Serde::schema()]),
+                ))
+                .item(tagged(
+                    "Closing2",
+                    items(2, vec![duration.clone(), dwell_score.clone()]),
+                ))
+                .item(tagged("Done1", items(2, vec![duration.clone(), dwell_score])))
+                .item(tagged("Done", items(1, vec![duration.clone()])))
+                .item(tagged("Dummy", items(1, vec![duration])))
+                .build(),
+        ))
+    }
+}
+
+impl utoipa::ToSchema for StateSerde {
+    // Manual `PartialSchema::schema()` impls don't participate in utoipa's automatic
+    // component-collection walk (that walk only follows the derive macro's own generated
+    // `schemas()` calls), so the types this schema embeds inline have to be registered here
+    // by hand, or they silently never appear in `components.schemas`.
+    fn schemas(schemas: &mut Vec<(String, utoipa::openapi::RefOr<utoipa::openapi::schema::Schema>)>) {
+        use utoipa::PartialSchema as _;
+        use utoipa::ToSchema as _;
+        schemas.push((create::CreatingSerde::name().into(), create::CreatingSerde::schema()));
+        create::CreatingSerde::schemas(schemas);
+        schemas.push((
+            readenum::ReadEnumSerde::name().into(),
+            readenum::ReadEnumSerde::schema(),
+        ));
+        readenum::ReadEnumSerde::schemas(schemas);
+        schemas.push((running::RunningSerde::name().into(), running::RunningSerde::schema()));
+        running::RunningSerde::schemas(schemas);
+        schemas.push((Closing1Serde::name().into(), Closing1Serde::schema()));
+        Closing1Serde::schemas(schemas);
     }
 }
 
@@ -257,16 +352,17 @@ pub enum Cmd {
 }
 
 #[derive(Debug, ToSerde)]
-#[to_serde(vis = "pub")]
+#[to_serde(vis = "pub", derive(utoipa::ToSchema))]
 #[to_serde(extra(cid: Cid = self.cid.to_cid()))]
 pub struct ChannelHandler {
-    #[to_serde(nest)]
+    #[to_serde(nest, schema(value_type = StateSerde))]
     state: State,
     #[to_serde(skip)]
     removing: Option<asynchan::Sender<u32>>,
     #[to_serde(skip)]
     cid: CidOwned,
     backend: String,
+    #[to_serde(schema(value_type = Object))]
     conf: ChannelConfig,
     enum_variants: Option<Vec<String>>,
     #[to_serde(len)]
