@@ -78,7 +78,7 @@ fn transition_state(old: &mut State, new: State, ts: &mut Instant, llog: &mut lo
 #[to_serde(
     vis = "pub",
     name = FetchPollingStateSerde,
-    serde(tag = "ty", content = "co"),
+    serde(tag = "ty"),
     dwell_ctx = Duration,
     derive(utoipa::ToSchema)
 )]

@@ -62,7 +62,7 @@ pub enum ReadEnumItem {
 #[to_serde(
     vis = "pub",
     name = ReadEnumStateSerde,
-    serde(tag = "ty", content = "co"),
+    serde(tag = "ty"),
     derive(utoipa::ToSchema)
 )]
 enum State {

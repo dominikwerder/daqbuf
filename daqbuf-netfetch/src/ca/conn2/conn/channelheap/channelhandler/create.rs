@@ -67,7 +67,7 @@ pub enum CreatingItem {
 #[to_serde(
     vis = "pub",
     name = CreateStateSerde,
-    serde(tag = "ty", content = "co"),
+    serde(tag = "ty"),
     derive(utoipa::ToSchema)
 )]
 enum State {

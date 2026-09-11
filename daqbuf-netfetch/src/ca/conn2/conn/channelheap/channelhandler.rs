@@ -117,7 +117,7 @@ struct Closing1 {
 struct Closing2 {}
 
 #[derive(Debug, ToSerde)]
-#[to_serde(vis = "pub", serde(tag = "ty", content = "co"), derive(utoipa::ToSchema))]
+#[to_serde(vis = "pub", serde(tag = "ty"), derive(utoipa::ToSchema))]
 enum State {
     Init {
         #[to_serde(elapsed, dwell_ms = 4000, schema(value_type = String))]

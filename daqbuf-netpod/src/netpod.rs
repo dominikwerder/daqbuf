@@ -3795,7 +3795,7 @@ pub struct DaqbufChannelConfig {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "type")]
+#[serde(tag = "ty")]
 pub enum ChannelConfigResponse {
     SfDatabuffer(SfChannelConfigResponse),
     Daqbuf(DaqbufChannelConfig),

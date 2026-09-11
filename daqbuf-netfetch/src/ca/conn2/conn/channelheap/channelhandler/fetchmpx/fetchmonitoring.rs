@@ -53,13 +53,13 @@ macro_rules! todo_shutdown { ($($arg:tt)*) => { if false { log::debug!($($arg)*)
 autoerr::create_error_v1!(
     name(Error, "FetchMonitoring"),
     enum variants {
-        Logic,
+        _Placeholder,
     },
 );
 
 #[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
 #[schema(as = fetchmonitoring::MonitorStateDirection)]
-enum StateDirection {
+pub enum StateDirection {
     None,
     Disable,
     Enable,
@@ -87,7 +87,7 @@ fn transition_state(old: &mut State, new: State, ts: &mut Instant, llog: &mut lo
 #[to_serde(
     vis = "pub",
     name = FetchMonitoringStateSerde,
-    serde(tag = "ty", content = "co"),
+    serde(tag = "ty"),
     derive(utoipa::ToSchema)
 )]
 enum State {

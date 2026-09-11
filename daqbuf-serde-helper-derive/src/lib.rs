@@ -7,7 +7,7 @@
 //!
 //! ```ignore
 //! #[derive(Debug, ToSerde)]
-//! #[to_serde(vis = "pub", serde(tag = "ty", content = "co"))]
+//! #[to_serde(vis = "pub", serde(tag = "ty"))]
 //! enum State {
 //!     Init(#[to_serde(elapsed)] Instant, #[to_serde(skip)] Init),
 //!     Creating(#[to_serde(elapsed)] Instant, #[to_serde(nest)] Creating),

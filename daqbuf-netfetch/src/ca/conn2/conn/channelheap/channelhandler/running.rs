@@ -104,7 +104,7 @@ pub enum RunningItem {
 #[to_serde(
     vis = "pub",
     name = RunningStateSerde,
-    serde(tag = "ty", content = "co"),
+    serde(tag = "ty"),
     derive(utoipa::ToSchema)
 )]
 enum State {
