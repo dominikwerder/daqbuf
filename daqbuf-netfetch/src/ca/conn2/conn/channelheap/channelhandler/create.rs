@@ -64,109 +64,44 @@ pub enum CreatingItem {
 }
 
 #[derive(Debug, ToSerde)]
-#[to_serde(vis = "pub", name = CreateStateSerde, serde(tag = "ty", content = "co"))]
+#[to_serde(
+    vis = "pub",
+    name = CreateStateSerde,
+    serde(tag = "ty", content = "co"),
+    derive(utoipa::ToSchema)
+)]
 enum State {
-    CreateChanSend(
-        #[to_serde(elapsed, dwell_ms = 2000)] Instant,
-        #[to_serde(len)] VecDeque<CaMsg>,
-        #[to_serde(skip)] FutDbg<()>,
-    ),
-    CreateChanRecv(
-        #[to_serde(elapsed, dwell_ms = 2000)] Instant,
-        #[to_serde(skip)] FutDbg<()>,
-    ),
-    /// Series lookup is a DB round-trip; anything past ~4s is worth a second look.
-    SeriesIdRecv(
-        #[to_serde(elapsed, dwell_ms = 4000)] Instant,
+    CreateChanSend {
+        #[to_serde(elapsed, dwell_ms = 2000, schema(value_type = String))]
+        ts: Instant,
+        #[to_serde(len)]
+        outbuf: VecDeque<CaMsg>,
         #[to_serde(skip)]
-        FutDbg<(
+        fut: FutDbg<()>,
+    },
+    CreateChanRecv {
+        #[to_serde(elapsed, dwell_ms = 2000, schema(value_type = String))]
+        ts: Instant,
+        #[to_serde(skip)]
+        fut: FutDbg<()>,
+    },
+    /// Series lookup is a DB round-trip; anything past ~4s is worth a second look.
+    SeriesIdRecv {
+        #[to_serde(elapsed, dwell_ms = 4000, schema(value_type = String))]
+        ts: Instant,
+        #[to_serde(skip)]
+        fut: FutDbg<(
             Result<Result<dbpg::seriesbychannel::ChannelInfoResult, dbpg::seriesbychannel::Error>, Error>,
             Sid,
             ScalarType,
             Shape,
             CaDbrTy,
         )>,
-    ),
-    Done(#[to_serde(elapsed)] Instant),
-}
-
-// `CreateStateSerde` can't derive `utoipa::ToSchema`: utoipa 5.5 refuses any
-// `#[serde(tag = ..)]` enum with a variant holding more than one unnamed field, which every
-// non-terminal variant here does (elapsed duration + dwell score, and `CreateChanSend` also
-// its outbound buffer fill). Hand-written instead, describing the real wire shape without
-// touching `State`.
-impl utoipa::PartialSchema for CreateStateSerde {
-    fn schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
-        use utoipa::PartialSchema as _;
-        use utoipa::openapi::RefOr;
-        use utoipa::openapi::schema::ArrayBuilder;
-        use utoipa::openapi::schema::ObjectBuilder;
-        use utoipa::openapi::schema::OneOfBuilder;
-        use utoipa::openapi::schema::Schema;
-        use utoipa::openapi::schema::Type;
-
-        let duration = String::schema();
-        let dwell_score = Option::<u32>::schema();
-        let outbuf = serde_helper::to_serde::LenCap::schema();
-
-        let tagged = |ty: &str, co: ArrayBuilder| {
-            ObjectBuilder::new()
-                .property(
-                    "ty",
-                    ObjectBuilder::new().schema_type(Type::String).enum_values(Some([ty])),
-                )
-                .required("ty")
-                .property("co", co)
-                .required("co")
-        };
-
-        RefOr::T(Schema::OneOf(
-            OneOfBuilder::new()
-                .item(tagged(
-                    "CreateChanSend",
-                    ArrayBuilder::new()
-                        .prefix_items([duration.clone(), dwell_score.clone(), outbuf])
-                        .max_items(Some(3))
-                        .min_items(Some(3)),
-                ))
-                .item(tagged(
-                    "CreateChanRecv",
-                    ArrayBuilder::new()
-                        .prefix_items([duration.clone(), dwell_score.clone()])
-                        .max_items(Some(2))
-                        .min_items(Some(2)),
-                ))
-                .item(tagged(
-                    "SeriesIdRecv",
-                    ArrayBuilder::new()
-                        .prefix_items([duration.clone(), dwell_score])
-                        .max_items(Some(2))
-                        .min_items(Some(2)),
-                ))
-                .item(tagged(
-                    "Done",
-                    ArrayBuilder::new()
-                        .prefix_items([duration])
-                        .max_items(Some(1))
-                        .min_items(Some(1)),
-                ))
-                .build(),
-        ))
-    }
-}
-
-impl utoipa::ToSchema for CreateStateSerde {
-    // See the matching note on `channelhandler::StateSerde`'s `ToSchema` impl: a manual
-    // `PartialSchema::schema()` doesn't join utoipa's automatic component-collection walk, so
-    // the type it embeds inline (`LenCap`) is registered here by hand.
-    fn schemas(schemas: &mut Vec<(String, utoipa::openapi::RefOr<utoipa::openapi::schema::Schema>)>) {
-        use utoipa::PartialSchema as _;
-        use utoipa::ToSchema as _;
-        schemas.push((
-            serde_helper::to_serde::LenCap::name().into(),
-            serde_helper::to_serde::LenCap::schema(),
-        ));
-    }
+    },
+    Done {
+        #[to_serde(elapsed, schema(value_type = String))]
+        ts: Instant,
+    },
 }
 
 #[derive(Debug, ToSerde)]
@@ -203,7 +138,11 @@ impl Creating {
             cid,
             name,
             backend,
-            state: State::CreateChanSend(tsnow, msgs, to.box2()),
+            state: State::CreateChanSend {
+                ts: tsnow,
+                outbuf: msgs,
+                fut: to.box2(),
+            },
             removing: false,
             inp_buf: VecDeque::with_capacity(16),
             inp_done: false,
@@ -253,10 +192,12 @@ impl Stream for Creating {
             let self2 = self.as_mut().get_mut();
             let tsnow = Instant::now();
             match &mut self2.state {
-                State::CreateChanSend(_ts, msgs, to) => {
+                State::CreateChanSend {
+                    outbuf: msgs, fut: to, ..
+                } => {
                     match to.poll_unpin(cx) {
                         Ready(()) => {
-                            self2.state = State::Done(tsnow);
+                            self2.state = State::Done { ts: tsnow };
                             break Ready(Some(Err(Error::TimeoutCreateChanSend)));
                         }
                         Pending => {
@@ -269,13 +210,13 @@ impl Stream for Creating {
                     } else {
                         hpp.mark_progress();
                         let to = std::mem::replace(to, async {}.box2());
-                        self2.state = State::CreateChanRecv(tsnow, to);
+                        self2.state = State::CreateChanRecv { ts: tsnow, fut: to };
                     }
                 }
-                State::CreateChanRecv(_ts, to) => {
+                State::CreateChanRecv { fut: to, .. } => {
                     match to.poll_unpin(cx) {
                         Ready(()) => {
-                            self2.state = State::Done(tsnow);
+                            self2.state = State::Done { ts: tsnow };
                             break Ready(Some(Err(Error::TimeoutCreateChanRecv)));
                         }
                         Pending => {
@@ -337,7 +278,10 @@ impl Stream for Creating {
                                     let chi = rx.recv().map_err(|_| Error::RecvChannelInfoResult).await;
                                     (chi, sid, scalar_type, shape, ca_dbr_type)
                                 };
-                                self.state = State::SeriesIdRecv(tsnow, fut.box2());
+                                self.state = State::SeriesIdRecv {
+                                    ts: tsnow,
+                                    fut: fut.box2(),
+                                };
                                 let item = CreatingItem::ChannelInfoQuery(item);
                                 trace3!("--- EMIT --- {item:?}");
                                 break Ready(Some(Ok(item)));
@@ -361,18 +305,18 @@ impl Stream for Creating {
                     } else if self.inp_done {
                         // TODO status event
                         hpp.mark_progress();
-                        self.state = State::Done(tsnow);
+                        self.state = State::Done { ts: tsnow };
                     } else {
                         hpp.mark_pending();
                     }
                 }
-                State::SeriesIdRecv(ts, rx) => {
+                State::SeriesIdRecv { fut: rx, .. } => {
                     trace3!("State::SeriesIdRecv  polling");
                     match rx.poll_unpin(cx) {
                         Ready((x, sid, scalar_type, shape, ca_dbr_type)) => {
                             hpp.mark_progress();
                             trace!("received channel info  {scalar_type}  {shape}  {x:?}");
-                            self2.state = State::Done(tsnow);
+                            self2.state = State::Done { ts: tsnow };
                             match x {
                                 Ok(x) => match x {
                                     Ok(x) => {
@@ -380,12 +324,12 @@ impl Stream for Creating {
                                         break Ready(Some(Ok(item)));
                                     }
                                     Err(e) => {
-                                        self2.state = State::Done(tsnow);
+                                        self2.state = State::Done { ts: tsnow };
                                         break Ready(Some(Err(e.into())));
                                     }
                                 },
                                 Err(e) => {
-                                    self2.state = State::Done(tsnow);
+                                    self2.state = State::Done { ts: tsnow };
                                     break Ready(Some(Err(e)));
                                 }
                             }
@@ -395,7 +339,7 @@ impl Stream for Creating {
                         }
                     }
                 }
-                State::Done(_ts) => break Ready(Some(Err(Error::Logic))),
+                State::Done { .. } => break Ready(Some(Err(Error::Logic))),
             }
             break if hpp.have_progress() {
                 trace4!("HPP:Progress");
