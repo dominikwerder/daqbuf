@@ -120,6 +120,31 @@ pub struct StatusFull {
     pub connset_channel_count_total: u32,
     pub connset_channels: Vec<StatusFullConnsetChannel>,
     pub conns: Vec<StatusFullConn>,
+    pub scylla: ScyllaStatus,
+}
+
+#[derive(Debug, Default, Serialize, ToSchema)]
+pub struct ScyllaStatus {
+    /// False when no scylla cluster is configured (dummy insert workers only).
+    pub enabled: bool,
+    pub input_queue_len: usize,
+    pub input_queue_cap: usize,
+    pub clusters: Vec<ScyllaClusterQueueStatus>,
+    pub workers_running: u64,
+    pub worker_count: usize,
+    pub job_ok: u32,
+    pub job_err: u32,
+    pub db_timeout: u32,
+    pub db_error: u32,
+}
+
+#[derive(Debug, Default, Serialize, ToSchema)]
+pub struct ScyllaClusterQueueStatus {
+    pub st_rf1_len: usize,
+    pub st_rf3_len: usize,
+    pub mt_rf3_len: usize,
+    pub lt_rf3_len: usize,
+    pub lt_rf3_lat5_len: usize,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -396,6 +421,7 @@ pub fn assemble_full(res: StatusV1Res) -> StatusFull {
         connset_channel_count_total: res.connset_channel_count_total,
         connset_channels,
         conns: res.conns.into_iter().map(|(a, r)| flatten_full(a, r)).collect(),
+        scylla: ScyllaStatus::default(),
     }
 }
 
@@ -456,7 +482,11 @@ pub async fn status_full(
         .status_full_v1(sel)
         .await
         .map_err(|e| StatusApiError::ConnSet(e.to_string()))?;
-    Ok(axum::Json(ret))
+    let scylla = ctrls
+        .scylla_status_v1()
+        .await
+        .map_err(|e| StatusApiError::ConnSet(e.to_string()))?;
+    Ok(axum::Json(StatusFull { scylla, ..ret }))
 }
 
 #[cfg(test)]

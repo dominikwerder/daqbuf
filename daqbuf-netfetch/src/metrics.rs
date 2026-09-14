@@ -206,6 +206,9 @@ pub trait CaIngestCtrls: Send + Sync {
     fn get_metrics(
         &self,
     ) -> Pin<Box<dyn Future<Output = Result<MetricsPrometheusShort, Box<dyn std::error::Error>>> + Send>>;
+    fn scylla_status_v1(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = Result<status_v1::ScyllaStatus, Box<dyn std::error::Error>>> + Send>>;
     fn channel_add(
         &self,
         conf: ChannelConfig,

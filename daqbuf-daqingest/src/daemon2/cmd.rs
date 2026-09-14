@@ -1,16 +1,13 @@
-//! Commands which need state owned by the daemon run loop.
-//!
-//! Everything which the `ConnSet` can answer on its own goes directly to
-//! [`netfetch::ca::connset2::connset::ConnSetCmder`] instead.
-
 use super::Error;
 use async_channel::Receiver;
 use async_channel::Sender;
+use netfetch::metrics::status_v1::ScyllaStatus;
 use netfetch::metrics::types::MetricsPrometheusShort;
 
 #[derive(Debug)]
 pub enum DaemonCmd {
     GetMetrics(Sender<MetricsPrometheusShort>),
+    ScyllaStatus(Sender<ScyllaStatus>),
     ConfigReload(Sender<Result<(), String>>),
     Shutdown(Sender<()>),
 }
@@ -19,6 +16,7 @@ impl DaemonCmd {
     pub fn name(&self) -> &'static str {
         match self {
             DaemonCmd::GetMetrics(_) => "GetMetrics",
+            DaemonCmd::ScyllaStatus(_) => "ScyllaStatus",
             DaemonCmd::ConfigReload(_) => "ConfigReload",
             DaemonCmd::Shutdown(_) => "Shutdown",
         }
@@ -45,6 +43,11 @@ impl DaemonCmder {
     pub async fn get_metrics(&self) -> Result<MetricsPrometheusShort, Error> {
         let (tx, rx) = async_channel::bounded(1);
         self.send(DaemonCmd::GetMetrics(tx), rx).await
+    }
+
+    pub async fn scylla_status(&self) -> Result<ScyllaStatus, Error> {
+        let (tx, rx) = async_channel::bounded(1);
+        self.send(DaemonCmd::ScyllaStatus(tx), rx).await
     }
 
     pub async fn config_reload(&self) -> Result<(), Error> {

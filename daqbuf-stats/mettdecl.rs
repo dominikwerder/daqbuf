@@ -290,11 +290,14 @@ mod Metrics {
     enum values {
         proc_cpu_v0,
         proc_mem_rss,
+        iqtx_len_input,
         iqtx_len_st_rf1,
         iqtx_len_st_rf3,
         iqtx_len_mt_rf3,
         iqtx_len_lt_rf3,
         iqtx_len_lt_rf3_lat5,
+        insert_workers_running,
+        insert_worker_count,
     }
 }
 

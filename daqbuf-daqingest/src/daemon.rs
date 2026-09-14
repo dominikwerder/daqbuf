@@ -84,6 +84,14 @@ impl netfetch::metrics::CaIngestCtrls for CaIngestCtrls {
         Box::pin(fut)
     }
 
+    fn scylla_status_v1(
+        &self,
+    ) -> Pin<
+        Box<dyn Future<Output = Result<netfetch::metrics::status_v1::ScyllaStatus, Box<dyn std::error::Error>>> + Send>,
+    > {
+        Box::pin(async move { Ok(netfetch::metrics::status_v1::ScyllaStatus::default()) })
+    }
+
     fn channel_add(
         &self,
         conf: ChannelConfig,
