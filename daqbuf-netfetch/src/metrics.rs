@@ -823,25 +823,23 @@ fn make_routes(ca_ingest_ctrls: Arc<dyn CaIngestCtrls>, post_ingest_ctrls: Arc<d
     use utoipa_axum::router::OpenApiRouter;
     use utoipa_axum::routes;
     use utoipa_swagger_ui::SwaggerUi;
-
-    let rt_status = OpenApiRouter::new()
+    let rt_channelhandler = OpenApiRouter::new()
         .routes(routes!(status_v1::status_light))
-        .routes(routes!(status_v1::status_full))
-        .routes(routes!(status_v1::scylla_status));
-
+        .routes(routes!(status_v1::status_full));
+    let rt_scylla = OpenApiRouter::new().routes(routes!(status_v1::scylla_status));
+    let rt_status = OpenApiRouter::new()
+        .nest("/channelhandler", rt_channelhandler)
+        .nest("/scylla", rt_scylla);
     let rt_admin = OpenApiRouter::new().nest("/status", rt_status);
-
     let rt_channel = OpenApiRouter::new()
         .routes(routes!(channel_v1::channel_add))
         .routes(routes!(channel_v1::channel_remove));
-
     let (documented_router, api) = OpenApiRouter::new()
         .nest("/daqingest/admin", rt_admin)
         .nest("/daqingest/channel", rt_channel)
         .with_state(ca_ingest_ctrls.clone())
         .split_for_parts();
     let swagger = SwaggerUi::new("/daqingest/swagger-ui").url("/daqingest/api-docs/openapi.json", api);
-
     Router::new()
         .fallback(|req: Request<axum::body::Body>| async move {
             info!("Fallback for {} {}", req.method(), req.uri());
