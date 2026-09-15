@@ -1082,6 +1082,14 @@ impl ChannelConfig {
         }
     }
 
+    pub fn copy_with_name<S: Into<String>>(&self, name: S) -> Self {
+        Self {
+            name: name.into(),
+            arch: self.arch.clone(),
+            config_file_basename: self.config_file_basename.clone(),
+        }
+    }
+
     pub fn name(&self) -> &str {
         &self.name
     }

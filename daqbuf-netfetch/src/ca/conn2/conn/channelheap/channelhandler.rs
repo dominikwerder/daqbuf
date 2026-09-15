@@ -566,7 +566,7 @@ impl ChannelHandler {
                 hpp.mark_pending();
             }
             break if hpp.have_progress() {
-                trace!("{selfname}  HPP:Progress");
+                trace4!("{selfname}  HPP:Progress");
                 continue;
             } else if hpp.have_pending() {
                 trace_pending!("{selfname}  HPP");
@@ -1097,7 +1097,7 @@ impl Stream for ChannelHandler {
                 State::Dummy { .. } => break Ready(Some(Err(Error::Logic))),
             }
             break if hpp.have_progress() {
-                trace!("HPP:Progress");
+                trace4!("HPP:Progress");
                 continue;
             } else if hpp.have_pending() {
                 trace_pending!("HPP");

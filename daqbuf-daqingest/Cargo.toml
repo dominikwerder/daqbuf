@@ -25,6 +25,7 @@ chrono = "0.4.38"
 bytes = "1.10.0"
 libc = "0.2"
 autoerr = "0.0.5"
+regex = "1.13.1"
 err = { path = "../daqbuf-err", package = "daqbuf-err" }
 netpod = { path = "../daqbuf-netpod", package = "daqbuf-netpod" }
 taskrun = { path = "../daqbuf-taskrun", package = "daqbuf-taskrun" }

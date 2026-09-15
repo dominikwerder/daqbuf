@@ -33,7 +33,6 @@ use hashbrown::HashMap;
 use scywr::iteminsertqueue::QueryItem;
 use serde::Serialize;
 use stats::mett::CaConnConnectedMetrics;
-use std::collections::BTreeMap;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task;
@@ -50,8 +49,8 @@ macro_rules! trace { ($($arg:tt)*) => { if true { log::trace!($($arg)*); } }; }
 macro_rules! trace2 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
 macro_rules! trace3 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
 macro_rules! trace4 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
+macro_rules! trace_proto { ($($arg:tt)*) => { if false { trace!("{}  Pending", format_args!($($arg)*)); } }; }
 macro_rules! trace_pending { ($($arg:tt)*) => { if false { trace!("{}  Pending", format_args!($($arg)*)); } }; }
-
 macro_rules! todo_shutdown { ($($arg:tt)*) => { if true { log::debug!($($arg)*); } }; }
 macro_rules! debug_shutdown { ($($arg:tt)*) => { if true { log::debug!($($arg)*); } }; }
 
@@ -639,7 +638,7 @@ impl ChannelHeap {
     }
 
     pub fn channel_add(&mut self, conf: ChannelConfig, cx: &mut Context) {
-        trace!("channel_add {conf:?}");
+        trace2!("channel_add {conf:?}");
         let name = conf.name().to_string();
         if self.by_name.contains_key(&name) {
             warn!("TODO channel already present, return error");
@@ -703,7 +702,7 @@ impl ChannelHeap {
                         Ok(item) => {
                             let item = match item.inner {
                                 channelhandler::ItemInner::ProtoOut(msg) => {
-                                    trace!("{selfname}  received channelhandler::ItemInner::ProtoOut {msg:?}");
+                                    trace_proto!("{selfname}  received channelhandler::ItemInner::ProtoOut {msg:?}");
                                     PollHandlerItem::ProtoOut(msg)
                                 }
                                 channelhandler::ItemInner::ProtoOutIoid(mut msg, sid, tscmd) => {
@@ -814,11 +813,11 @@ impl ChannelHeap {
             let mut idp = 0;
             if let Some(item) = self2.inp_proto_buf.pop_front() {
                 let disp = if let Some(cid) = item.cid() {
-                    trace!("{selfname}  resolved via cid");
+                    trace_proto!("{selfname}  resolved via cid");
                     Some((Cid::new(cid), tsnow, tsnow))
                 } else if let Some(subid) = item.subid() {
                     if let Some((cid, _tsreg)) = self2.subid_reg.lookup(Subid::new(subid)) {
-                        trace2!("{selfname}  resolved via subid");
+                        trace_proto!("{selfname}  resolved via subid");
                         Some((cid.clone(), tsnow, tsnow))
                     } else {
                         debug!("{selfname}  TODO  msg has unknown subid");
@@ -832,7 +831,7 @@ impl ChannelHeap {
                             let dtcmd = 1e3 * dt.as_secs_f32();
                             let dt = Instant::now().duration_since(tsreg);
                             let dtreg = 1e3 * dt.as_secs_f32();
-                            trace!("resolve incoming Ioid  dtcmd {:.3} ms  dtreg {:.3} ms", dtcmd, dtreg);
+                            trace_proto!("resolve incoming Ioid  dtcmd {:.3} ms  dtreg {:.3} ms", dtcmd, dtreg);
                         }
                         Some((cid, tscmd, tsreg))
                     } else {

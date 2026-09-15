@@ -220,10 +220,6 @@ impl Daemon {
         self.metrics_jh = Some(tokio::task::spawn(fut));
     }
 
-    /// Add the channels from the config file.
-    ///
-    /// Runs as a separate task because each add waits for the connset to acknowledge, which can
-    /// only happen while this daemon polls the connset.
     fn spawn_initial_channel_add(&self) {
         let channels: Vec<ChannelConfig> = self
             .channels_config
@@ -238,22 +234,29 @@ impl Daemon {
         taskrun::spawn(async move {
             let n = channels.len();
             info!("add {n} channels from config");
+            let re1 = regex::Regex::new(r"^testset-00-nport-(\d+)-nchan-(\d+)$").unwrap();
             for ch_cfg in channels {
-                if ch_cfg.name() == "testset-00" {
-                    for j in 10..12 {
-                        let g = 1000 * j;
-                        let h = 10 + g;
-                        for i in g..h {
-                            let chname = format!("TEST:SLOW:SCALAR:F32:{i:06}");
-                            let conf = ChannelConfig::st_monitor(chname, "TEST");
-                            if let Err(e) = cmder.channel_add(conf).await {
-                                error!("daemon2 initial channel_add error {e}");
+                if ch_cfg.name().starts_with("testset-00") {
+                    if let Some(rr) = re1.captures(ch_cfg.name()) {
+                        let nport: u32 = rr.get(1).map(|x| x.as_str().parse().unwrap_or(0)).unwrap_or(0);
+                        let nchan: u32 = rr.get(2).map(|x| x.as_str().parse().unwrap_or(0)).unwrap_or(0);
+                        for j in 10..(10 + nport) {
+                            let g = 1000 * j;
+                            let h = nchan + g;
+                            for i in g..h {
+                                let chname = format!("TEST:SLOW:SCALAR:F32:{i:06}");
+                                let conf = ch_cfg.copy_with_name(chname);
+                                info!("adding {}", conf.name());
+                                if let Err(e) = cmder.channel_add(conf).await {
+                                    error!("daemon2 initial channel_add error {e}");
+                                }
                             }
                         }
                     }
-                }
-                if let Err(e) = cmder.channel_add(ch_cfg).await {
-                    error!("daemon2 initial channel_add error {e}");
+                } else {
+                    if let Err(e) = cmder.channel_add(ch_cfg).await {
+                        error!("daemon2 initial channel_add error {e}");
+                    }
                 }
             }
             info!("added {n} channels from config");
