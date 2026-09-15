@@ -489,6 +489,25 @@ pub async fn status_full(
     Ok(axum::Json(StatusFull { scylla, ..ret }))
 }
 
+#[utoipa::path(
+    get,
+    path = "/scylla",
+    responses(
+        (status = 200, description = "Scylla insert queue and worker status", body = ScyllaStatus),
+        (status = 504, description = "The connection set did not answer", body = StatusErrorBody),
+    ),
+    tag = "daqingest-admin",
+)]
+pub async fn scylla_status(
+    axum::extract::State(ctrls): axum::extract::State<Arc<dyn CaIngestCtrls>>,
+) -> Result<axum::Json<ScyllaStatus>, StatusApiError> {
+    let ret = ctrls
+        .scylla_status_v1()
+        .await
+        .map_err(|e| StatusApiError::ConnSet(e.to_string()))?;
+    Ok(axum::Json(ret))
+}
+
 #[cfg(test)]
 mod test {
     use super::*;

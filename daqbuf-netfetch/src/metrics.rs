@@ -826,7 +826,8 @@ fn make_routes(ca_ingest_ctrls: Arc<dyn CaIngestCtrls>, post_ingest_ctrls: Arc<d
 
     let rt_status = OpenApiRouter::new()
         .routes(routes!(status_v1::status_light))
-        .routes(routes!(status_v1::status_full));
+        .routes(routes!(status_v1::status_full))
+        .routes(routes!(status_v1::scylla_status));
 
     let rt_admin = OpenApiRouter::new().nest("/status", rt_status);
 
