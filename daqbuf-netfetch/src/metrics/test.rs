@@ -174,6 +174,12 @@ impl CaIngestCtrls for TestCaIngestCtrls {
         Box::pin(async move { Ok(ret) })
     }
 
+    fn scylla_status_v1(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = Result<status_v1::ScyllaStatus, Box<dyn std::error::Error>>> + Send>> {
+        Box::pin(async move { Ok(status_v1::ScyllaStatus::default()) })
+    }
+
     fn channel_add(
         &self,
         _conf: ChannelConfig,

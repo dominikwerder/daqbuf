@@ -92,6 +92,7 @@ pub struct ScyllaInsertSet {
     sorter_jh: Option<JoinHandle<()>>,
     worker_jhs: Vec<JoinHandle<Result<(), insertworker::Error>>>,
     out_rx: Receiver<InsertWorkerOutputItem>,
+    insert_worker_opts: Arc<InsertWorkerOpts>,
 }
 
 impl ScyllaInsertSet {
@@ -109,7 +110,7 @@ impl ScyllaInsertSet {
                 opts.insert_worker_count,
                 opts.insert_worker_concurrency,
                 input_rx,
-                insert_worker_opts,
+                insert_worker_opts.clone(),
                 out_tx,
             )
             .await?;
@@ -120,6 +121,7 @@ impl ScyllaInsertSet {
                 sorter_jh: None,
                 worker_jhs,
                 out_rx,
+                insert_worker_opts,
             };
             return Ok(ret);
         }
@@ -153,6 +155,7 @@ impl ScyllaInsertSet {
             sorter_jh: Some(sorter_jh),
             worker_jhs,
             out_rx,
+            insert_worker_opts,
         };
         Ok(ret)
     }
@@ -163,6 +166,20 @@ impl ScyllaInsertSet {
 
     pub fn sinks(&self) -> &[InsertQueuesTx] {
         &self.sinks
+    }
+
+    pub fn workers_running(&self) -> u64 {
+        self.insert_worker_opts
+            .insert_workers_running
+            .load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    pub fn worker_count(&self) -> usize {
+        self.worker_jhs.len()
+    }
+
+    pub fn input_queue_cap(&self) -> usize {
+        self.input_tx.capacity().unwrap_or(0)
     }
 
     pub fn output(&self) -> &Receiver<InsertWorkerOutputItem> {

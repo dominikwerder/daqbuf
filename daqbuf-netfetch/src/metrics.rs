@@ -1,4 +1,5 @@
 #![allow(unused)]
+pub mod channel_v1;
 pub mod delete;
 pub mod ingest;
 pub mod status;
@@ -205,6 +206,9 @@ pub trait CaIngestCtrls: Send + Sync {
     fn get_metrics(
         &self,
     ) -> Pin<Box<dyn Future<Output = Result<MetricsPrometheusShort, Box<dyn std::error::Error>>> + Send>>;
+    fn scylla_status_v1(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = Result<status_v1::ScyllaStatus, Box<dyn std::error::Error>>> + Send>>;
     fn channel_add(
         &self,
         conf: ChannelConfig,
@@ -346,61 +350,6 @@ async fn find_channel(params: HashMap<String, String>) -> axum::Json<Vec<(String
     error!("TODO find_channel");
     let res = Vec::new();
     axum::Json(res)
-}
-
-async fn channel_add_inner(
-    params: HashMap<String, String>,
-    ca_ingest_ctrls: Arc<dyn CaIngestCtrls>,
-) -> Result<(), Error> {
-    if let Some(name) = params.get("name") {
-        let conf = ChannelConfig::st_monitor(name, "api");
-        let _ = ca_ingest_ctrls
-            .channel_add(conf)
-            .await
-            .map_err(|_| Error::with_public_msg_no_trace("channel_add fail"))?;
-        Ok(())
-    } else {
-        Err(Error::with_msg_no_trace(format!("wrong parameters given")))
-    }
-}
-
-async fn channel_add(
-    params: HashMap<String, String>,
-    ca_ingest_ctrls: Arc<dyn CaIngestCtrls>,
-) -> Result<axum::Json<bool>, Response> {
-    match channel_add_inner(params, ca_ingest_ctrls).await {
-        Ok(_) => Ok(axum::Json::from(true)),
-        Err(e) => Err(e.to_public_err_msg().into_response()),
-    }
-}
-
-async fn channel_remove(
-    params: HashMap<String, String>,
-    ca_ingest_ctrls: Arc<dyn CaIngestCtrls>,
-) -> axum::Json<serde_json::Value> {
-    use axum::Json;
-    use serde_json::Value;
-    let addr = if let Some(x) = params.get("addr") {
-        if let Ok(addr) = x.parse::<SocketAddrV4>() {
-            addr
-        } else {
-            return Json(Value::Bool(false));
-        }
-    } else {
-        return Json(Value::Bool(false));
-    };
-    let _backend = if let Some(x) = params.get("backend") {
-        x
-    } else {
-        return Json(Value::Bool(false));
-    };
-    let name = if let Some(x) = params.get("name") {
-        x
-    } else {
-        return Json(Value::Bool(false));
-    };
-    error!("TODO channel_remove");
-    Json(Value::Bool(false))
 }
 
 // ChannelStatusesResponse
@@ -874,19 +823,23 @@ fn make_routes(ca_ingest_ctrls: Arc<dyn CaIngestCtrls>, post_ingest_ctrls: Arc<d
     use utoipa_axum::router::OpenApiRouter;
     use utoipa_axum::routes;
     use utoipa_swagger_ui::SwaggerUi;
-
-    let rt_status = OpenApiRouter::new()
+    let rt_channelhandler = OpenApiRouter::new()
         .routes(routes!(status_v1::status_light))
         .routes(routes!(status_v1::status_full));
-
+    let rt_scylla = OpenApiRouter::new().routes(routes!(status_v1::scylla_status));
+    let rt_status = OpenApiRouter::new()
+        .nest("/channelhandler", rt_channelhandler)
+        .nest("/scylla", rt_scylla);
     let rt_admin = OpenApiRouter::new().nest("/status", rt_status);
-
+    let rt_channel = OpenApiRouter::new()
+        .routes(routes!(channel_v1::channel_add))
+        .routes(routes!(channel_v1::channel_remove));
     let (documented_router, api) = OpenApiRouter::new()
         .nest("/daqingest/admin", rt_admin)
+        .nest("/daqingest/channel", rt_channel)
         .with_state(ca_ingest_ctrls.clone())
         .split_for_parts();
     let swagger = SwaggerUi::new("/daqingest/swagger-ui").url("/daqingest/api-docs/openapi.json", api);
-
     Router::new()
         .fallback(|req: Request<axum::body::Body>| async move {
             info!("Fallback for {} {}", req.method(), req.uri());
@@ -935,20 +888,6 @@ fn make_routes_channel(ca_ingest_ctrls: Arc<dyn CaIngestCtrls>) -> axum::Router 
             get({
                 let ca_ingest_ctrls = ca_ingest_ctrls.clone();
                 |Query(params): Query<HashMap<String, String>>| status::channel_states(params, ca_ingest_ctrls)
-            }),
-        )
-        .route(
-            "/add",
-            get({
-                let ca_ingest_ctrls = ca_ingest_ctrls.clone();
-                |Query(params): Query<HashMap<String, String>>| channel_add(params, ca_ingest_ctrls)
-            }),
-        )
-        .route(
-            "/remove",
-            get({
-                let ca_ingest_ctrls = ca_ingest_ctrls.clone();
-                |Query(params): Query<HashMap<String, String>>| channel_remove(params, ca_ingest_ctrls)
             }),
         )
 }

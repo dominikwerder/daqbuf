@@ -122,6 +122,30 @@ pub struct StatusFull {
     pub conns: Vec<StatusFullConn>,
 }
 
+#[derive(Debug, Default, Serialize, ToSchema)]
+pub struct ScyllaStatus {
+    /// False when no scylla cluster is configured (dummy insert workers only).
+    pub enabled: bool,
+    pub input_queue_len: usize,
+    pub input_queue_cap: usize,
+    pub clusters: Vec<ScyllaClusterQueueStatus>,
+    pub workers_running: u64,
+    pub worker_count: usize,
+    pub job_ok: u32,
+    pub job_err: u32,
+    pub db_timeout: u32,
+    pub db_error: u32,
+}
+
+#[derive(Debug, Default, Serialize, ToSchema)]
+pub struct ScyllaClusterQueueStatus {
+    pub st_rf1_len: usize,
+    pub st_rf3_len: usize,
+    pub mt_rf3_len: usize,
+    pub lt_rf3_len: usize,
+    pub lt_rf3_lat5_len: usize,
+}
+
 #[derive(Debug, Serialize, ToSchema)]
 pub struct StatusFullConnsetChannel {
     pub name: String,
@@ -454,6 +478,25 @@ pub async fn status_full(
     let c2 = conn2_ctrls(&ctrls).await?;
     let ret = c2
         .status_full_v1(sel)
+        .await
+        .map_err(|e| StatusApiError::ConnSet(e.to_string()))?;
+    Ok(axum::Json(ret))
+}
+
+#[utoipa::path(
+    get,
+    path = "/scylla",
+    responses(
+        (status = 200, description = "Scylla insert queue and worker status", body = ScyllaStatus),
+        (status = 504, description = "The connection set did not answer", body = StatusErrorBody),
+    ),
+    tag = "daqingest-admin",
+)]
+pub async fn scylla_status(
+    axum::extract::State(ctrls): axum::extract::State<Arc<dyn CaIngestCtrls>>,
+) -> Result<axum::Json<ScyllaStatus>, StatusApiError> {
+    let ret = ctrls
+        .scylla_status_v1()
         .await
         .map_err(|e| StatusApiError::ConnSet(e.to_string()))?;
     Ok(axum::Json(ret))

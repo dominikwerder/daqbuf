@@ -364,7 +364,7 @@ impl ChannelHandler {
         }
     }
 
-    pub fn state_serde(&self) -> <State as ToSerde>::Serde {
+    pub fn state_serde(&self) -> StateSerde {
         self.state.to_serde()
     }
 

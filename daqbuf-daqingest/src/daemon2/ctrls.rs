@@ -10,6 +10,7 @@ use netfetch::metrics::CaIngestCtrls;
 use netfetch::metrics::Conn2Ctrls;
 use netfetch::metrics::PostIngestCtrls;
 use netfetch::metrics::RoutesResources;
+use netfetch::metrics::status_v1::ScyllaStatus;
 use netfetch::metrics::types::MetricsPrometheusShort;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -45,6 +46,15 @@ impl CaIngestCtrls for CaIngestCtrlsV2 {
         let daemon = self.daemon.clone();
         let fut = async move {
             let ret = daemon.get_metrics().await?;
+            Ok(ret)
+        };
+        Box::pin(fut)
+    }
+
+    fn scylla_status_v1(&self) -> FutBox<ScyllaStatus> {
+        let daemon = self.daemon.clone();
+        let fut = async move {
+            let ret = daemon.scylla_status().await?;
             Ok(ret)
         };
         Box::pin(fut)

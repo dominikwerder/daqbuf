@@ -19,6 +19,8 @@ use netfetch::conf::CaIngestOptsV2;
 use netfetch::conf::ChannelConfig;
 use netfetch::conf::ChannelsConfig;
 use netfetch::metrics::RoutesResources;
+use netfetch::metrics::status_v1::ScyllaClusterQueueStatus;
+use netfetch::metrics::status_v1::ScyllaStatus;
 use scywr::insertset::ScyllaInsertSet;
 use scywr::insertset::ScyllaInsertSetOpts;
 use scywr::insertworker::InsertWorkerOpts;
@@ -346,6 +348,11 @@ impl Daemon {
                     warn!("can not reply to GetMetrics");
                 }
             }
+            DaemonCmd::ScyllaStatus(tx) => {
+                if tx.send(self.scylla_status()).await.is_err() {
+                    warn!("can not reply to ScyllaStatus");
+                }
+            }
             DaemonCmd::ConfigReload(tx) => {
                 let res = self.handle_config_reload().await.map_err(|e| e.to_string());
                 if tx.send(res).await.is_err() {
@@ -411,12 +418,46 @@ impl Daemon {
             lt_rf3 += x.lt_rf3_len;
             lt_rf3_lat5 += x.lt_rf3_lat5_len;
         }
+        self.metrics.iqtx_len_input().set(qm.input_len as _);
         self.metrics.iqtx_len_st_rf1().set(st_rf1 as _);
         self.metrics.iqtx_len_st_rf3().set(st_rf3 as _);
         self.metrics.iqtx_len_mt_rf3().set(mt_rf3 as _);
         self.metrics.iqtx_len_lt_rf3().set(lt_rf3 as _);
         self.metrics.iqtx_len_lt_rf3_lat5().set(lt_rf3_lat5 as _);
+        self.metrics
+            .insert_workers_running()
+            .set(self.insert_set.workers_running() as _);
+        self.metrics
+            .insert_worker_count()
+            .set(self.insert_set.worker_count() as _);
         info!("{}", prep.oneline());
+    }
+
+    fn scylla_status(&mut self) -> ScyllaStatus {
+        let qm = self.insert_set.queue_metrics();
+        let scy_inswork = self.metrics.scy_inswork();
+        ScyllaStatus {
+            enabled: !self.insert_set.sinks().is_empty(),
+            input_queue_len: qm.input_len,
+            input_queue_cap: self.insert_set.input_queue_cap(),
+            clusters: qm
+                .clusters
+                .into_iter()
+                .map(|x| ScyllaClusterQueueStatus {
+                    st_rf1_len: x.st_rf1_len,
+                    st_rf3_len: x.st_rf3_len,
+                    mt_rf3_len: x.mt_rf3_len,
+                    lt_rf3_len: x.lt_rf3_len,
+                    lt_rf3_lat5_len: x.lt_rf3_lat5_len,
+                })
+                .collect(),
+            workers_running: self.insert_set.workers_running(),
+            worker_count: self.insert_set.worker_count(),
+            job_ok: scy_inswork.job_ok().to_u32(),
+            job_err: scy_inswork.job_err().to_u32(),
+            db_timeout: scy_inswork.db_timeout().to_u32(),
+            db_error: scy_inswork.db_error().to_u32(),
+        }
     }
 
     fn trigger_shutdown(&mut self) {
