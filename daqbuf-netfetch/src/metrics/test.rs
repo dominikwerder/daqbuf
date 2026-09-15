@@ -133,7 +133,6 @@ impl Conn2Ctrls for Conn2TestCtrls {
                 channels: Vec::new(),
                 error: None,
             }],
-            scylla: status_v1::ScyllaStatus::default(),
         };
         Box::pin(async move { Ok(ret) })
     }

@@ -120,7 +120,6 @@ pub struct StatusFull {
     pub connset_channel_count_total: u32,
     pub connset_channels: Vec<StatusFullConnsetChannel>,
     pub conns: Vec<StatusFullConn>,
-    pub scylla: ScyllaStatus,
 }
 
 #[derive(Debug, Default, Serialize, ToSchema)]
@@ -421,7 +420,6 @@ pub fn assemble_full(res: StatusV1Res) -> StatusFull {
         connset_channel_count_total: res.connset_channel_count_total,
         connset_channels,
         conns: res.conns.into_iter().map(|(a, r)| flatten_full(a, r)).collect(),
-        scylla: ScyllaStatus::default(),
     }
 }
 
@@ -482,11 +480,7 @@ pub async fn status_full(
         .status_full_v1(sel)
         .await
         .map_err(|e| StatusApiError::ConnSet(e.to_string()))?;
-    let scylla = ctrls
-        .scylla_status_v1()
-        .await
-        .map_err(|e| StatusApiError::ConnSet(e.to_string()))?;
-    Ok(axum::Json(StatusFull { scylla, ..ret }))
+    Ok(axum::Json(ret))
 }
 
 #[utoipa::path(
