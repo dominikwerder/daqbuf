@@ -496,13 +496,13 @@ impl FetchPolling {
             State::Done => {}
         }
         if hpp.have_progress() {
-            trace!("{selfname}  HPP:Progress");
+            trace4!("{selfname}  HPP:Progress");
             Ready(Some(Ok(Item::None)))
         } else if hpp.have_pending() {
             trace_pending!("{selfname}  HPP");
             Pending
         } else {
-            trace!("{selfname}  HPP:Done");
+            trace4!("{selfname}  HPP:Done");
             Ready(None)
         }
     }

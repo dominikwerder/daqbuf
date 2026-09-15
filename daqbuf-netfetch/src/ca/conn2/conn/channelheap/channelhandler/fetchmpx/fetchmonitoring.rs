@@ -622,13 +622,13 @@ impl FetchMonitoring {
                 State::Done => {}
             }
             break if hpp.have_progress() {
-                trace!("{selfname}  HPP:Progress");
+                trace4!("{selfname}  HPP:Progress");
                 continue;
             } else if hpp.have_pending() {
                 trace_pending!("{selfname}  HPP");
                 Pending
             } else {
-                trace!("{selfname}  HPP:Done");
+                trace3!("{selfname}  HPP:Done");
                 Ready(None)
             };
         }

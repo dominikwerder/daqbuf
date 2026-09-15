@@ -707,8 +707,8 @@ impl ChannelHeap {
                                 }
                                 channelhandler::ItemInner::ProtoOutIoid(mut msg, sid, tscmd) => {
                                     {
-                                        let dt = 1e3 * tscmd.elapsed().as_secs_f32();
-                                        if dt > 0.005 {
+                                        let dt = (1e3 * tscmd.elapsed().as_secs_f32()) as u32;
+                                        if dt > 10 {
                                             trace!(
                                                 "seeing slow channelhandler::ItemInner::ProtoOutIoid  {dt:0} ms  {msg:?}"
                                             );
@@ -731,8 +731,8 @@ impl ChannelHeap {
                                 }
                                 channelhandler::ItemInner::ProtoOutSubid(mut msg, tscmd) => {
                                     {
-                                        let dt = 1e3 * tscmd.elapsed().as_secs_f32();
-                                        if dt > 0.005 {
+                                        let dt = (1e3 * tscmd.elapsed().as_secs_f32()) as u32;
+                                        if dt > 10 {
                                             trace!(
                                                 "seeing slow channelhandler::ItemInner::ProtoOutSubid  {dt:0} ms  {msg:?}"
                                             );

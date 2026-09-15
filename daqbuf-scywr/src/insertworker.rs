@@ -38,10 +38,10 @@ macro_rules! warn { ($($arg:tt)*) => ( if true { log::warn!($($arg)*); } ); }
 macro_rules! debug { ($($arg:tt)*) => ( if true { log::debug!($($arg)*); } ); }
 macro_rules! debug_setup { ($($arg:tt)*) => ( if false { log::debug!($($arg)*); } ); }
 macro_rules! trace2 { ($($arg:tt)*) => ( if false { log::trace!($($arg)*); } ); }
-macro_rules! trace_transform { ($($arg:tt)*) => ( if true { log::trace!($($arg)*); } ); }
-macro_rules! trace_transform_2 { ($($arg:tt)*) => ( if true { log::trace!($($arg)*); } ); }
+macro_rules! trace_transform { ($($arg:tt)*) => ( if false { log::trace!($($arg)*); } ); }
+macro_rules! trace_transform_2 { ($($arg:tt)*) => ( if false { log::trace!($($arg)*); } ); }
 macro_rules! trace_inspect { ($($arg:tt)*) => ( if false { log::trace!($($arg)*); } ); }
-macro_rules! trace_item_execute { ($($arg:tt)*) => ( if true { log::trace!($($arg)*); } ); }
+macro_rules! trace_item_execute { ($($arg:tt)*) => ( if false { log::trace!($($arg)*); } ); }
 macro_rules! trace_item_execute_2 { ($($arg:tt)*) => ( if false { log::trace!($($arg)*); } ); }
 
 autoerr::create_error_v1!(
