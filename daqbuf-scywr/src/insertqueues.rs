@@ -24,7 +24,6 @@ pub fn make_pair() -> (InsertQueuesTx, InsertQueuesRx) {
     make_pair_cap(128)
 }
 
-/// Same as [`make_pair`] but with an explicit capacity for each of the queues.
 pub fn make_pair_cap(cap: usize) -> (InsertQueuesTx, InsertQueuesRx) {
     let (st_rf1_tx, st_rf1_rx) = async_channel::bounded(cap);
     let (st_rf3_tx, st_rf3_rx) = async_channel::bounded(cap);

@@ -227,7 +227,7 @@ where
         let state_st = {
             let writer = RateLimitWriter::new(
                 series,
-                InsertTarget::from_rt(RetentionTime::Short, do_st_rf1),
+                InsertTarget::StRf3,
                 min_quiets.st,
                 is_polled,
                 emit_state_new(),

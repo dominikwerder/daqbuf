@@ -24,6 +24,8 @@ use scylla::response::query_result::QueryResult;
 use scylla::serialize::row::SerializeRow;
 use scylla::serialize::value::SerializeValue;
 use scylla::statement::prepared::PreparedStatement;
+use serde::Deserialize;
+use serde::Serialize;
 use series::ChannelStatusSeriesId;
 use series::SeriesId;
 use std::fmt;
@@ -590,12 +592,7 @@ pub struct BinWriteIndexV04 {
     pub binlen: i32,
 }
 
-/// Selects the scylla keyspace and table prefix that an item belongs to.
-///
-/// The keyspace comes from the matching member of the configured insert set, the table prefix from
-/// [`RetentionTime`]. `RetentionTime` alone can not express the distinction between the rf1 and the
-/// rf3 short-term store, therefore this separate type.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum InsertTarget {
     StRf1,
     StRf3,
@@ -629,7 +626,6 @@ impl InsertTarget {
         }
     }
 
-    /// Short tag for logs and metrics.
     pub fn debug_tag(&self) -> &'static str {
         use InsertTarget::*;
         match self {

@@ -38,9 +38,11 @@ macro_rules! warn { ($($arg:tt)*) => ( if true { log::warn!($($arg)*); } ); }
 macro_rules! debug { ($($arg:tt)*) => ( if true { log::debug!($($arg)*); } ); }
 macro_rules! debug_setup { ($($arg:tt)*) => ( if false { log::debug!($($arg)*); } ); }
 macro_rules! trace2 { ($($arg:tt)*) => ( if false { log::trace!($($arg)*); } ); }
-macro_rules! trace_transform { ($($arg:tt)*) => ( if false { log::trace!($($arg)*); } ); }
+macro_rules! trace_transform { ($($arg:tt)*) => ( if true { log::trace!($($arg)*); } ); }
+macro_rules! trace_transform_2 { ($($arg:tt)*) => ( if true { log::trace!($($arg)*); } ); }
 macro_rules! trace_inspect { ($($arg:tt)*) => ( if false { log::trace!($($arg)*); } ); }
-macro_rules! trace_item_execute { ($($arg:tt)*) => ( if false { log::trace!($($arg)*); } ); }
+macro_rules! trace_item_execute { ($($arg:tt)*) => ( if true { log::trace!($($arg)*); } ); }
+macro_rules! trace_item_execute_2 { ($($arg:tt)*) => ( if false { log::trace!($($arg)*); } ); }
 
 autoerr::create_error_v1!(
     name(Error, "ScyllaInsertWorker"),
@@ -314,11 +316,7 @@ async fn worker_streamed(
         let mut stream = Box::pin(stream);
         debug_setup!("waiting for item");
         while let Some((ts_net, ts1, ts2, item, jobkind, npoll)) = stream.next().await {
-            if false {
-                debug!("see scylla result item  {ts_net:?}  {ts1:?}  {ts2:?}  {item:?}  {jobkind:?}");
-                continue;
-            }
-            trace_item_execute!("see scylla result item  {ts_net:?}  {ts1:?}  {ts2:?}  {item:?}  {jobkind:?}");
+            trace_item_execute_2!("see scylla result item  {ts_net:?}  {ts1:?}  {ts2:?}  {item:?}  {jobkind:?}");
             let tsnow = Instant::now();
             match jobkind {
                 FutJobKind::SeriesData => {
@@ -424,9 +422,10 @@ fn transform_to_db_futures<S>(
 where
     S: Stream<Item = VecDeque<QueryItem>>,
 {
-    trace_transform!("transform_to_db_futures  begin");
+    let selfname = "transform_to_db_futures";
+    trace_transform!("{selfname}  begin");
     item_inp.map(move |batch| {
-        trace_transform!("transform_to_db_futures  have batch  len {}", batch.len());
+        trace_transform!("{selfname}  have batch  len {}", batch.len());
         let tsnow = Instant::now();
         let mut res = Vec::with_capacity(32);
         // One metrics update per batch, not per item.
@@ -435,6 +434,7 @@ where
         mett.batch_len().push_val(batch.len() as u32);
         mett.item_recv().add(batch.len() as u32);
         for item in batch {
+            trace_transform_2!("{selfname}  item {:?}", item);
             let wid = wid.clone();
             if ignore_writes {
                 mett.item_ignored().inc();
@@ -489,7 +489,7 @@ where
                     }
                 }
             };
-            trace_transform!("prepared futs  len {}", futs.len());
+            trace_transform!("{selfname}  prepared futs  len {}", futs.len());
             mett.fut_prepared().add(futs.len() as u32);
             res.extend(futs.into_iter());
         }
