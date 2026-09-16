@@ -244,7 +244,7 @@ pub struct ConnSet {
     cmder: ConnSetCmder,
     cmd_rx: asynchan::Receiver<ConnSetCmd>,
     cmder_cmd_fut: Option<FutDbg<Result<(), Error>>>,
-    cmd_fut_channel: Option<FutDbg<Result<(), Error>>>,
+    cmd_futs_channel: VecDeque<Option<FutDbg<Result<(), Error>>>>,
     cmd_fut_comm: Option<FutDbg<Result<(), Error>>>,
     finder_handle: FinderHandleV02,
     channels: BTreeMap<String, ChannelCat>,
@@ -280,7 +280,7 @@ impl ConnSet {
             cmder,
             cmd_rx,
             cmder_cmd_fut: None,
-            cmd_fut_channel: None,
+            cmd_futs_channel: VecDeque::with_capacity(16),
             cmd_fut_comm: None,
             finder_handle,
             channels: BTreeMap::new(),
@@ -1166,7 +1166,7 @@ impl ConnSet {
         }
     }
 
-    fn check_idle_caconn(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<()>> {
+    fn check_idle_caconn(mut self: Pin<&mut Self>, _cx: &mut Context) -> Poll<Option<()>> {
         let selfname = "check_idle_caconn";
         trace4!("{selfname}");
         use Poll::*;
@@ -1278,50 +1278,67 @@ impl ConnSet {
     }
 
     fn poll_channels_outer(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Result<(), Error>>> {
+        use Poll::*;
         let selfname = "poll_channels_outer";
         trace4!("{selfname}");
-        use Poll::*;
-        if false {
-            for (name, ch) in self.channels.iter() {
-                debug!("{selfname}  {}  {:?}", name, ch.channel.channel_info());
+        let mut hpp = HaveProgressPending::new();
+        for e in self.cmd_futs_channel.iter_mut() {
+            if let Some(fut) = e {
+                match fut.poll_unpin(cx) {
+                    Ready(x) => match x {
+                        Ok(()) => {
+                            *e = None;
+                            hpp.mark_progress();
+                        }
+                        Err(e) => {
+                            hpp.mark_progress();
+                            return Ready(Some(Err(e)));
+                        }
+                    },
+                    Pending => {
+                        hpp.mark_pending();
+                    }
+                }
             }
         }
-        // let mut hpp = HaveProgressPending::new();
-        let opt = &mut self.cmd_fut_channel;
-        if let Some(fut) = opt {
-            match fut.poll_unpin(cx) {
-                Ready(x) => match x {
-                    Ok(()) => {
-                        *opt = None;
-                        // hpp.mark_progress();
-                        Ready(Some(Ok(())))
+        loop {
+            let mut hpp2 = HaveProgressPending::new();
+            let fa = &mut self.cmd_futs_channel;
+            if fa.len() < fa.capacity() {
+                match self.as_mut().poll_channels(cx) {
+                    Ready(x) => match x {
+                        Ok(Some((fut,))) => {
+                            hpp2.mark_progress();
+                            let fa = &mut self.cmd_futs_channel;
+                            fa.push_back(Some(fut));
+                        }
+                        Ok(None) => {}
+                        Err(e) => {
+                            hpp2.mark_progress();
+                            return Ready(Some(Err(e)));
+                        }
+                    },
+                    Pending => {
+                        hpp2.mark_pending();
                     }
-                    Err(e) => Ready(Some(Err(e))),
-                },
-                Pending => {
-                    // hpp.mark_pending();
-                    Pending
                 }
             }
+            break if hpp2.have_progress() {
+                hpp.mark_progress();
+                continue;
+            } else if hpp2.have_pending() {
+                hpp.mark_pending();
+            } else {
+            };
+        }
+        let fa = &mut self.cmd_futs_channel;
+        fa.retain(Option::is_some);
+        if hpp.have_progress() {
+            Ready(Some(Ok(())))
+        } else if hpp.have_pending() {
+            Pending
         } else {
-            match self.as_mut().poll_channels(cx) {
-                Ready(x) => match x {
-                    Ok(Some((fut,))) => {
-                        self.cmd_fut_channel = Some(fut);
-                        // hpp.mark_progress();
-                        Ready(Some(Ok(())))
-                    }
-                    Ok(None) => Ready(None),
-                    Err(e) => {
-                        // hpp.mark_progress();
-                        Ready(Some(Err(e)))
-                    }
-                },
-                Pending => {
-                    // hpp.mark_pending();
-                    Pending
-                }
-            }
+            Ready(None)
         }
     }
 
