@@ -250,16 +250,13 @@ pub struct ConnSet {
     channels: BTreeMap<String, ChannelCat>,
     ch_info_tx: ChannelInfoQuerySender,
     ca_conns: BTreeMap<SocketAddrV4, CaConnReg>,
-    shutdown_fut: Option<FutDbg<Result<(), Error>>>,
+    shutdown_futs: VecDeque<Option<FutDbg<Result<(), Error>>>>,
     conn_idle_disconnect_futs: VecDeque<FutDbg<Result<(), Error>>>,
     out_buf: AsynBuf<ConnSetItem>,
     llog: LocalLog,
     chtrace: channeltrace::ChannelTraceStash,
     write_staging: VecDeque<QueryItem>,
     write_sender: Pin<Box<SenderPolling<VecDeque<QueryItem>>>>,
-    /// Accumulates the metrics of this ConnSet and of all CaConn below it.
-    /// This is the root of the v2 metrics tree, so it is never reset: the
-    /// counters are handed out to prometheus as cumulative counters.
     mett: stats::mett::ConnSet2Metrics,
 }
 
@@ -286,7 +283,7 @@ impl ConnSet {
             channels: BTreeMap::new(),
             ch_info_tx,
             ca_conns: BTreeMap::new(),
-            shutdown_fut: None,
+            shutdown_futs: VecDeque::with_capacity(32),
             conn_idle_disconnect_futs: VecDeque::new(),
             out_buf: AsynBuf::new(INP_BUF_CAP),
             llog: LocalLog::new(),
@@ -1448,6 +1445,42 @@ impl ConnSet {
         }
     }
 
+    fn poll_shutdown_futs(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Result<(), Error>>> {
+        use Poll::*;
+        let self2 = self.get_mut();
+        let ret = 'outer: loop {
+            let mut hpp = HaveProgressPending::new();
+            for e in &mut self2.shutdown_futs.iter_mut() {
+                if let Some(fut) = e {
+                    match fut.poll_unpin(cx) {
+                        Ready(x) => {
+                            *e = None;
+                            hpp.mark_progress();
+                            match x {
+                                Ok(()) => {}
+                                Err(e) => {
+                                    break 'outer Ready(Some(Err(e)));
+                                }
+                            }
+                        }
+                        Pending => {
+                            hpp.mark_pending();
+                        }
+                    }
+                }
+            }
+            break if hpp.have_progress() {
+                continue;
+            } else if hpp.have_pending() {
+                Pending
+            } else {
+                Ready(None)
+            };
+        };
+        self2.shutdown_futs.retain(Option::is_some);
+        ret
+    }
+
     fn poll_shutdown_issue_all_removes(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -1458,39 +1491,34 @@ impl ConnSet {
         trace!("{selfname}  {n1}  {n2}");
         use Poll::*;
         let mut hpp = HaveProgressPending::new();
-        if let Some(fut) = &mut self.shutdown_fut {
-            match fut.poll_unpin(cx) {
-                Ready(x) => {
-                    self.shutdown_fut = None;
+        match self.as_mut().poll_shutdown_futs(cx) {
+            Ready(Some(x)) => match x {
+                Ok(()) => {
                     hpp.mark_progress();
-                    match x {
-                        Ok(()) => {}
-                        Err(e) => {
-                            return Ready(Some(Err(e)));
-                        }
-                    }
                 }
-                Pending => {
-                    hpp.mark_pending();
-                }
+                Err(e) => return Ready(Some(Err(e))),
+            },
+            Ready(None) => {}
+            Pending => {
+                hpp.mark_pending();
             }
-        } else {
-            // Either find something new to do for shutdown_fut for transition to Done.
-            let self2 = self.as_mut().get_mut();
-            for (_, ch) in self2.channels.iter_mut() {
-                if !ch.remove_on_shutdown_sent {
-                    hpp.mark_progress();
-                    ch.remove_on_shutdown_sent = true;
-                    let (done_tx, mut done_rx) = asynchan::bounded(4, "ConnSetShutdownRemove");
-                    let mut tx = ch.cmd_tx.clone();
-                    let fut = async move {
-                        tx.send(pollcstm::Cmd::Remove(pollcstm::Remove { done_tx })).await?;
-                        let _ = done_rx.recv().await;
-                        Ok(())
-                    };
-                    self2.shutdown_fut = Some(fut.box2());
-                    break;
-                }
+        }
+        let self2 = self.as_mut().get_mut();
+        for (_, ch) in self2.channels.iter_mut() {
+            if self2.shutdown_futs.len() >= self2.shutdown_futs.capacity() {
+                break;
+            }
+            if !ch.remove_on_shutdown_sent {
+                hpp.mark_progress();
+                ch.remove_on_shutdown_sent = true;
+                let (done_tx, mut done_rx) = asynchan::bounded(4, "ConnSetShutdownRemove");
+                let mut tx = ch.cmd_tx.clone();
+                let fut = async move {
+                    tx.send(pollcstm::Cmd::Remove(pollcstm::Remove { done_tx })).await?;
+                    let _ = done_rx.recv().await;
+                    Ok(())
+                };
+                self2.shutdown_futs.push_back(Some(fut.box2()));
             }
         }
         if hpp.have_progress() {
@@ -1636,7 +1664,8 @@ impl Stream for ConnSet {
                     }
                     poll_a!(self.as_mut().poll_common(cx), hpp);
                     if false {
-                        poll_opt_fut_map!(self.shutdown_fut, cx, hpp, self, break, |x| { Ok(None) }, {});
+                        let mut optfut = Some(futures::future::ready(()));
+                        poll_opt_fut_map!(optfut, cx, hpp, self, break, |x| { Ok(None) }, {});
                     }
                     poll_stream_map_ok!(
                         self.as_mut().poll_shutdown_issue_all_removes(cx),

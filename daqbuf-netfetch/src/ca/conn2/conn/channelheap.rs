@@ -967,10 +967,11 @@ impl ChannelHeap {
                                                 error!("TODO handle PollHandlerItem::ChHandlerMod");
                                             }
                                             PollHandlerItem::ProtoOut(x) => {
-                                                {
-                                                    let dt = 1e3 * x.ts().elapsed().as_secs_f32();
+                                                // TODO metrics
+                                                let dt = (1e3 * x.ts().elapsed().as_secs_f32()) as u32;
+                                                if dt > 10 {
                                                     trace!(
-                                                        "PollHandlerItem::ProtoOut  self2.out_buf.push_back_force  {dt:0} ms  {x:?}"
+                                                        "PollHandlerItem::ProtoOut  self2.out_buf.push_back_force  {dt} ms  {x:?}"
                                                     );
                                                 }
                                                 let x = ChannelHeapItem {

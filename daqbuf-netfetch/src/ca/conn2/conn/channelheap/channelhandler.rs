@@ -320,7 +320,8 @@ pub struct ChannelHandler {
 impl ChannelHandler {
     pub fn new(backend: String, conf: ChannelConfig) -> Self {
         let cid = CidOwned::new();
-        trace!("ChannelHandler::new  {cid:?}  {conf:?}");
+        trace!("ChannelHandler::new  {}", conf.name());
+        trace2!("ChannelHandler::new  {cid:?}  {conf:?}");
         let (cmd_tx, cmd_rx) = asynchan::bounded(16, "ChannelHandler-cmd");
         Self {
             state: State::Init {
@@ -646,7 +647,6 @@ impl Stream for ChannelHandler {
             }
             match &mut self2.state {
                 State::Init { .. } => {
-                    trace!("ChannelHandler:Init");
                     self2.state = State::Creating {
                         ts: tsloop,
                         state: Creating::new(self2.cid.to_cid(), self2.conf.name().into(), self2.backend.clone()),
@@ -654,7 +654,6 @@ impl Stream for ChannelHandler {
                     hpp.mark_progress();
                 }
                 State::Creating { state: st1, .. } => {
-                    trace!("ChannelHandler:Creating");
                     match Self::poll_proto_rx_creating(
                         Pin::new(st1),
                         &mut self2.proto_inp_buf,
@@ -700,7 +699,7 @@ impl Stream for ChannelHandler {
                                         break Ready(Some(Ok(item)));
                                     }
                                     create::CreatingItem::Done((sid, scalar_type, shape, ca_dbr_ty, chi)) => {
-                                        trace!("got create::CreatingItem::Done  {scalar_type}  {shape}");
+                                        trace2!("got create::CreatingItem::Done  {scalar_type}  {shape}");
                                         // TODO guard on outbuf len?
                                         self2.outbuf.push_back(ChannelHandlerItem {
                                             ts_create: Instant::now(),
@@ -748,21 +747,20 @@ impl Stream for ChannelHandler {
                                 },
                                 Err(e) => {
                                     info!("ChannelHandler:Creating:state:Ready:Err {e}");
-                                    if true {
+                                    if false {
                                         let ptr = crate::ca::conn2::conn::CONN_DBG_PTR.load(atomic::Ordering::Acquire);
                                         let ptr = ptr as *const crate::ca::conn2::conn::CaConn;
                                         let x = unsafe { &*ptr };
                                         x.dump_state_poll();
                                         std::process::exit(88);
                                     }
-                                    // self2.state = State::Done1;
-                                    // break Ready(Some(Err(e.into())));
+                                    self2.state = State::Done1 { ts: Instant::now() };
+                                    break Ready(Some(Err(e.into())));
                                 }
                             }
                         }
                         Ready(None) => {}
                         Pending => {
-                            trace_pending!("ChannelHandler:Creating");
                             hpp.mark_pending();
                         }
                     }

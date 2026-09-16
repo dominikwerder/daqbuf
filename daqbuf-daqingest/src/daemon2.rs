@@ -433,7 +433,7 @@ impl Daemon {
         self.metrics
             .insert_worker_count()
             .set(self.insert_set.worker_count() as _);
-        info!("{}", prep.oneline());
+        // info!("{}", prep.oneline());
     }
 
     fn scylla_status(&mut self) -> ScyllaStatus {

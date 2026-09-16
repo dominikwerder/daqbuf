@@ -46,7 +46,7 @@ macro_rules! trace3 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; 
 macro_rules! trace4 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
 macro_rules! trace_pending { ($($arg:tt)*) => { if false { trace!("{}  Pending", format_args!($($arg)*)); } }; }
 
-macro_rules! debug_transition_state { ($($arg:tt)*) => { if true { log::debug!($($arg)*); } }; }
+macro_rules! trace_transition_state { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
 macro_rules! debug_shutdown { ($($arg:tt)*) => { if false { log::debug!($($arg)*); } }; }
 macro_rules! todo_shutdown { ($($arg:tt)*) => { if false { log::debug!($($arg)*); } }; }
 
@@ -77,7 +77,7 @@ pub enum MonitoringItem {
 }
 
 fn transition_state(old: &mut State, new: State, ts: &mut Instant, llog: &mut locallog::LocalLog) {
-    debug_transition_state!("{}", format!("transition  {} -> {}", old, new));
+    trace_transition_state!("{}", format!("transition  {} -> {}", old, new));
     llog.push(format!("transition  {} -> {}", old, new));
     *old = new;
     *ts = Instant::now();

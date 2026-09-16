@@ -428,14 +428,11 @@ impl ActiveCa {
         if let Some(fut) = self2.cmd_fut.as_mut() {
             match fut.0.poll_unpin(cx) {
                 Ready(Ok(())) => {
-                    trace!("CmdFut:Ready:Ok");
+                    debug!("CmdFut:Ready:Ok");
                     self2.cmd_fut = None;
                     Some(Ready(None))
                 }
-                Ready(Err(e)) => {
-                    trace!("CmdFut:Ready:Err {e}");
-                    Some(Ready(Some(e)))
-                }
+                Ready(Err(e)) => Some(Ready(Some(e))),
                 Pending => {
                     trace_pending!("CmdFut");
                     Some(Pending)
@@ -598,8 +595,6 @@ impl ActiveCa {
                             }
                         } else {
                         }
-                    } else {
-                        warn!("{selfname}  SKIP inp_buf pop");
                     }
                     match self.as_mut().poll_command_input(cx) {
                         Some(x) => match x {
