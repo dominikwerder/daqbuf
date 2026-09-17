@@ -25,8 +25,9 @@ macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
 macro_rules! warn { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
 macro_rules! info { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
 macro_rules! debug { ($($arg:tt)*) => { if true { log::debug!($($arg)*); } }; }
-macro_rules! trace1 { ($($arg:tt)*) => { if true { log::trace!($($arg)*); } }; }
-macro_rules! trace2 { ($($arg:tt)*) => { if true { log::trace!($($arg)*); } }; }
+macro_rules! trace { ($($arg:tt)*) => { if true { log::trace!($($arg)*); } }; }
+macro_rules! trace1 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
+macro_rules! trace2 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
 
 autoerr::create_error_v1!(
     name(Error, "PgSeries"),
@@ -172,6 +173,7 @@ impl Clone for ChannelInfoQuerySender {
 }
 
 struct Worker {
+    worker_id: usize,
     pg: PgClient,
     qu_select: PgStatement,
     qu_insert: PgStatement,
@@ -180,7 +182,7 @@ struct Worker {
 }
 
 impl Worker {
-    async fn new(db: &Database, batch_rx: Receiver<Vec<ChannelInfoQuery>>) -> Result<Self, Error> {
+    async fn new(db: &Database, batch_rx: Receiver<Vec<ChannelInfoQuery>>, worker_id: usize) -> Result<Self, Error> {
         info!("start postgres worker to {}:{}", db.host, db.port);
         use tokio_postgres::types::Type;
         let (pg, pg_client_jh) = crate::conn::make_pg_client(db).await?;
@@ -229,6 +231,7 @@ impl Worker {
             )
             .await?;
         let ret = Self {
+            worker_id,
             pg,
             qu_select,
             qu_insert,
@@ -239,6 +242,8 @@ impl Worker {
     }
 
     async fn work<FR: HashSalter>(&mut self) -> Result<(), Error> {
+        let worker_id = self.worker_id;
+        let mut i_batch: u32 = 0;
         let batch_rx = self.batch_rx.clone();
         while let Ok(batch) = batch_rx.recv().await {
             // TODO
@@ -266,17 +271,23 @@ impl Worker {
                 );
             }
             if batch.len() != 0 {
+                trace!("worker_id {worker_id}  i_batch {i_batch}  begin");
+                let ts1 = Instant::now();
                 self.pg.execute("begin", &[]).await?;
                 match self.handle_batch::<FR>(batch).await {
                     Ok(()) => {
-                        let ts1 = Instant::now();
+                        let ts2 = Instant::now();
                         match self.pg.execute("commit", &[]).await {
                             Ok(n) => {
-                                let dt = ts1.elapsed();
+                                let dt1 = (1e6 * ts1.elapsed().as_secs_f32()) as u32;
+                                let dt2 = (1e6 * ts2.elapsed().as_secs_f32()) as u32;
+                                trace!(
+                                    "worker_id {worker_id}  i_batch {i_batch}  commit done  dt1 {dt1} us  dt2 {dt2} us"
+                                );
                                 // TODO
                                 // stats.commit_duration_ms().ingest((1e3 * dt.as_secs_f32()) as u32);
-                                if dt > Duration::from_millis(40) {
-                                    debug!("commit {} {:.0} ms", n, dt.as_secs_f32());
+                                if dt2 > 40000 {
+                                    debug!("commit  n {n}  dt1 {dt1} us  dt2 {dt2} us");
                                 }
                             }
                             Err(e) => {
@@ -292,6 +303,7 @@ impl Worker {
                     }
                 }
             }
+            i_batch += 1;
         }
         trace1!("Worker2 done");
         Ok(())
@@ -663,8 +675,8 @@ pub async fn start_lookup_workers<FR: HashSalter>(
     let (query_tx, query_rx) = async_channel::bounded(inp_cap);
     let (batch_rx, bjh) = batchtools::batcher::batch(inp_cap, timeout, batch_out_cap, query_rx);
     let mut jhs = Vec::new();
-    for _ in 0..worker_count {
-        let mut worker = Worker::new(db, batch_rx.clone()).await?;
+    for i in 0..worker_count {
+        let mut worker = Worker::new(db, batch_rx.clone(), i).await?;
         let jh = tokio::task::spawn(async move { worker.work::<FR>().await });
         jhs.push(jh);
     }

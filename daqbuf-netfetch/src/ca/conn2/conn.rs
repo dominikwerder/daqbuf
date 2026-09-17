@@ -957,6 +957,7 @@ impl Stream for CaConn {
                         Ready(None) => break,
                         Pending => {
                             hpp.mark_pending();
+                            break;
                         }
                     }
                 }
