@@ -1,5 +1,7 @@
-const INP_BUF_CAP: usize = 3;
-const FWD_BUF_CAP: usize = 1;
+//
+
+const INP_BUF_CAP: usize = 16;
+const FWD_BUF_CAP: usize = 16;
 const LOOP_MAX_PUSH_TO_CHANHEAP: usize = 200;
 
 //
@@ -287,7 +289,7 @@ pub struct ActiveCa {
     inp_msg_buf: asynbuf::AsynBuf<CaMsg>,
     buf_for_chanheap: asynbuf::AsynBuf<channelheap::InpItem>,
     ts_mark_proto_rx: TsMark,
-    cmd_fut: Option<CommandFut>,
+    cmd_futs: VecDeque<Option<CommandFut>>,
     mett: CaConnConnectedMetrics,
 }
 
@@ -305,7 +307,7 @@ impl ActiveCa {
             inp_msg_buf: asynbuf::AsynBuf::new(FWD_BUF_CAP),
             buf_for_chanheap: asynbuf::AsynBuf::new(FWD_BUF_CAP),
             ts_mark_proto_rx: TsMark::new("proto_rx".into()),
-            cmd_fut: None,
+            cmd_futs: VecDeque::new(),
             mett: CaConnConnectedMetrics::new(),
         }
     }
@@ -420,34 +422,61 @@ impl ActiveCa {
         }
     }
 
-    // Has no EOS return.
-    fn poll_command_input(self: Pin<&mut Self>, cx: &mut Context) -> Option<Poll<Option<Error>>> {
+    fn poll_command_futs(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Result<(), Error>>> {
         use Poll::*;
-        let selfname = "poll_command_input";
-        let self2 = self.get_mut();
-        if let Some(fut) = self2.cmd_fut.as_mut() {
-            match fut.0.poll_unpin(cx) {
-                Ready(Ok(())) => {
-                    debug!("CmdFut:Ready:Ok");
-                    self2.cmd_fut = None;
-                    Some(Ready(None))
-                }
-                Ready(Err(e)) => Some(Ready(Some(e))),
-                Pending => {
-                    trace_pending!("CmdFut");
-                    Some(Pending)
+        let ret = 'outer: loop {
+            let mut hpp = HaveProgressPending::new();
+            for a in &mut self.cmd_futs {
+                if let Some(fut) = a {
+                    match fut.0.poll_unpin(cx) {
+                        Ready(x) => {
+                            *a = None;
+                            hpp.mark_progress();
+                            match x {
+                                Ok(()) => {}
+                                Err(e) => {
+                                    break 'outer Ready(Some(Err(e)));
+                                }
+                            }
+                        }
+                        Pending => {
+                            trace_pending!("CmdFut");
+                            hpp.mark_pending();
+                        }
+                    }
                 }
             }
-        } else if self2.buf_for_chanheap.is_space() {
+            break if hpp.have_progress() {
+                continue;
+            } else if hpp.have_pending() {
+                Pending
+            } else {
+                Ready(None)
+            };
+        };
+        self.cmd_futs.retain(Option::is_some);
+        ret
+    }
+
+    fn poll_command_input(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Result<(), Error>>> {
+        use Poll::*;
+        let self2 = self.get_mut();
+        let mut hpp = HaveProgressPending::new();
+        while self2.buf_for_chanheap.is_space() {
             if let Some(item) = self2.inp_cmd_buf.pop_front() {
                 let fut = self2.handle_command(item, cx);
-                self2.cmd_fut = Some(fut);
-                Some(Ready(None))
+                self2.cmd_futs.push_back(Some(fut));
+                hpp.mark_progress();
             } else {
-                None
+                break;
             }
+        }
+        if hpp.have_progress() {
+            Ready(Some(Ok(())))
+        } else if hpp.have_pending() {
+            Pending
         } else {
-            None
+            Ready(None)
         }
     }
 
@@ -597,20 +626,32 @@ impl ActiveCa {
                         }
                     }
                     match self.as_mut().poll_command_input(cx) {
-                        Some(x) => match x {
-                            Ready(Some(e)) => {
-                                hpp.mark_progress();
-                                self.state = State::Done;
-                                break Ready(Some(Err(e.into())));
-                            }
-                            Ready(None) => {
-                                hpp.mark_progress();
-                            }
-                            Pending => {
-                                hpp.mark_pending();
-                            }
-                        },
-                        None => {}
+                        Ready(Some(Ok(()))) => {
+                            hpp.mark_progress();
+                        }
+                        Ready(Some(Err(e))) => {
+                            hpp.mark_progress();
+                            self.state = State::Done;
+                            break Ready(Some(Err(e.into())));
+                        }
+                        Ready(None) => {}
+                        Pending => {
+                            hpp.mark_pending();
+                        }
+                    }
+                    match self.as_mut().poll_command_futs(cx) {
+                        Ready(Some(Ok(()))) => {
+                            hpp.mark_progress();
+                        }
+                        Ready(Some(Err(e))) => {
+                            hpp.mark_progress();
+                            self.state = State::Done;
+                            break Ready(Some(Err(e.into())));
+                        }
+                        Ready(None) => {}
+                        Pending => {
+                            hpp.mark_pending();
+                        }
                     }
                     match self.as_mut().poll_dispatch(cx) {
                         Some(x) => match x {
