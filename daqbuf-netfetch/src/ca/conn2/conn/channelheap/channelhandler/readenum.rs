@@ -199,6 +199,10 @@ impl ReadEnum {
         loop {
             let mut hpp = HaveProgressPending::new();
             let self2 = self.as_mut().get_mut();
+            if self2.removing {
+                self2.state = State::Done;
+                hpp.mark_progress();
+            }
             match &mut self2.state {
                 State::Done => {}
                 _ => {
@@ -246,7 +250,7 @@ impl ReadEnum {
                 trace_pending!("HPP");
                 Pending
             } else {
-                trace!("HPP:Done");
+                trace2!("HPP:Done");
                 Ready(None)
             };
         }

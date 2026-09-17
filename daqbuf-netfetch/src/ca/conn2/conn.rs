@@ -2,6 +2,9 @@ pub const TRACE_BLOCK: bool = false;
 
 pub const LOOP_MAX_PASS_CMD: usize = 1;
 const INP_BUF_CAP: usize = 128;
+const OUT_BUF_CAP: usize = 128;
+const CMD_TX_FUTS_CAP: usize = 32;
+const WRITE_BATCH_LEN_MAX: usize = 256;
 
 //
 
@@ -48,9 +51,6 @@ use std::time::Instant;
 use taskrun::tokio;
 
 pub static CONN_DBG_PTR: AtomicUsize = AtomicUsize::new(0);
-
-const OUT_QUEUE_LEN_MAX: usize = 64;
-const WRITE_BATCH_LEN_MAX: usize = 256;
 
 macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
 macro_rules! warn { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
@@ -425,7 +425,7 @@ pub struct CaConn {
     cmd_tx: asynchan::Sender<CaConnCmd>,
     cmd_rx: asynchan::Receiver<CaConnCmd>,
     ca_cmd_tx: asynchan::Sender<activeca::CaCommand>,
-    ca_cmd_tx_fut: Option<FutDbg<Result<(), Error>>>,
+    ca_cmd_tx_futs: VecDeque<Option<FutDbg<Result<(), Error>>>>,
     ca_cmd_rx: asynchan::Receiver<activeca::CaCommand>,
     out_buf: AsynBuf<CaConnItem>,
 }
@@ -453,9 +453,9 @@ impl CaConn {
             cmd_tx,
             cmd_rx,
             ca_cmd_tx,
-            ca_cmd_tx_fut: None,
+            ca_cmd_tx_futs: VecDeque::with_capacity(CMD_TX_FUTS_CAP),
             ca_cmd_rx,
-            out_buf: AsynBuf::new(INP_BUF_CAP),
+            out_buf: AsynBuf::new(OUT_BUF_CAP),
         };
         ret
     }
@@ -517,7 +517,7 @@ impl CaConn {
             }
         }
         self.as_mut().metrics_emit();
-        if self.out_buf.len() < OUT_QUEUE_LEN_MAX {
+        if self.out_buf.len() < OUT_BUF_CAP {
             trace!("TODO  poll_own_ticker  emit status info");
             let v = self.as_mut().status_info();
             let item = CaConnItem::StatusInfo(v);
@@ -530,8 +530,6 @@ impl CaConn {
         }
     }
 
-    /// Hand the metrics which accumulated since the last call over to the
-    /// consumer of our item stream (the ConnSet).
     fn metrics_emit(mut self: Pin<&mut Self>) {
         let n = self.out_buf.len() as u32;
         self.mett.out_buf_len().set(n);
@@ -540,6 +538,147 @@ impl CaConn {
         self.mett.metrics_emit().inc();
         let m = self.mett.take_and_reset();
         self.out_buf.push_back_force(CaConnItem::Metrics(m));
+    }
+
+    fn poll_cmd_futs(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Result<(), Error>>> {
+        use Poll::*;
+        let selfname = "poll_cmd_futs";
+        let ret = 'outer: loop {
+            let mut hpp = HaveProgressPending::new();
+            let self2 = self.as_mut().get_mut();
+            for e in &mut self2.ca_cmd_tx_futs {
+                if let Some(fut) = e {
+                    match fut.poll_unpin(cx) {
+                        Ready(x) => {
+                            *e = None;
+                            hpp.mark_progress();
+                            match x {
+                                Ok(()) => {}
+                                Err(e) => {
+                                    error!("{selfname}  fut error: {e}");
+                                    break 'outer Ready(Some(Err(e)));
+                                }
+                            }
+                        }
+                        Pending => {
+                            hpp.mark_pending();
+                        }
+                    }
+                }
+            }
+            break if hpp.have_progress() {
+                continue;
+            } else if hpp.have_pending() {
+                Pending
+            } else {
+                Ready(None)
+            };
+        };
+        self.ca_cmd_tx_futs.retain(Option::is_some);
+        ret
+    }
+
+    fn poll_cmd_rx(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Result<(), Error>>> {
+        use Poll::*;
+        let selfname = "poll_cmd_rx";
+        let self2 = self.as_mut().get_mut();
+        match self2.cmd_rx.poll_next_unpin(cx) {
+            Ready(Some(cmd)) => {
+                self2.mett.cmd_recv().inc();
+                let fut = match cmd.kind {
+                    CaConnCmdKind::ChannelAdd(conf, done_tx) => {
+                        self2.mett.cmd_channel_add().inc();
+                        trace!("{selfname}:Received:ChannelAdd  {conf:?}");
+                        let cmd = activeca::CaCommand::channel_add(conf, done_tx);
+                        let mut tx = self2.ca_cmd_tx.clone();
+                        let fut = async move {
+                            tx.send(cmd).await?;
+                            // The is-done-sender is passed to inner handler.
+                            Ok(())
+                        };
+                        Some(fut.box2())
+                    }
+                    CaConnCmdKind::ChannelRemove(conf, done_tx) => {
+                        self2.mett.cmd_channel_remove().inc();
+                        trace!("{selfname}:Received:ChannelRemove  {conf:?}");
+                        let cmd = activeca::CaCommand::channel_remove(conf.name(), done_tx);
+                        let mut tx = self2.ca_cmd_tx.clone();
+                        let fut = async move {
+                            tx.send(cmd).await?;
+                            // The is-done-sender is passed to inner handler.
+                            Ok(())
+                        };
+                        Some(fut.box2())
+                    }
+                    CaConnCmdKind::DisconnectOnIdle(done_tx) => {
+                        self2.mett.cmd_disconnect_on_idle().inc();
+                        trace!("{selfname}:Received:DisconnectOnIdle");
+                        let cmd = activeca::CaCommand::disconnect_on_idle(done_tx);
+                        let mut tx = self2.ca_cmd_tx.clone();
+                        let fut = async move {
+                            tx.send(cmd).await?;
+                            // The is-done-sender is passed to inner handler.
+                            Ok(())
+                        };
+                        Some(fut.box2())
+                    }
+                    CaConnCmdKind::DynCmdV03(cmd, tx) => {
+                        self2.mett.cmd_dyn_v03().inc();
+                        trace!("{selfname}:Received:DynCmd  {cmd:?}");
+                        let fut = self2.handle_dyn_cmd_v03(cmd, tx);
+                        Some(fut.box2())
+                    }
+                    CaConnCmdKind::ChannelsForAddrInfoV1(mut tx) => {
+                        self2.mett.cmd_channels_for_addr_v1().inc();
+                        trace!("{selfname}:Received:ChannelsForAddrInfoV1");
+                        let ret = self2.channel_info_v1();
+                        let fut = async move {
+                            tx.send(ret).await?;
+                            Ok(())
+                        };
+                        Some(fut.box2())
+                    }
+                    CaConnCmdKind::ChannelsForAddrInfoV2(name, mut tx) => {
+                        self2.mett.cmd_channels_for_addr_v2().inc();
+                        trace!("{selfname}:Received:ChannelsForAddrInfoV2");
+                        let ret = self2.channel_info_v2(name);
+                        let fut = async move {
+                            tx.send(ret).await?;
+                            Ok(())
+                        };
+                        Some(fut.box2())
+                    }
+                    CaConnCmdKind::ChannelsByRegexV1(kind, reg, mut tx) => {
+                        self2.mett.cmd_channels_by_regex_v1().inc();
+                        trace!("{selfname}:Received:ChannelsByRegexV1");
+                        let ret = self2.channels_by_regex_v1(kind, reg);
+                        let fut = async move {
+                            tx.send(ret).await?;
+                            Ok(())
+                        };
+                        Some(fut.box2())
+                    }
+                    CaConnCmdKind::StatusV1(sel, mut tx) => {
+                        self2.mett.cmd_status_v1().inc();
+                        trace!("{selfname}:Received:StatusV1");
+                        let ret = self2.status_info_sel(&sel);
+                        let fut = async move {
+                            if tx.send(ret).await.is_err() {
+                                error!("could not send response");
+                            }
+                            Ok(())
+                        };
+                        Some(fut.box2())
+                    }
+                };
+                if let Some(fut) = fut {
+                    self2.ca_cmd_tx_futs.push_back(Some(fut));
+                }
+                Ready(Some(Ok(())))
+            }
+            Ready(None) => Ready(None),
+            Pending => Pending,
+        }
     }
 
     fn poll_own_ticker(mut self: Pin<&mut Self>, cx: &mut Context) -> Result<HaveProgressPending, Error> {
@@ -579,7 +718,7 @@ impl CaConn {
 
     fn try_flush_write_batch(&mut self) {
         if !self.write_batch.is_empty() {
-            if self.out_buf.len() < OUT_QUEUE_LEN_MAX {
+            if self.out_buf.len() < OUT_BUF_CAP {
                 let batch = std::mem::take(&mut self.write_batch);
                 self.mett.write_batch_flush().inc();
                 self.mett.write_batch_flush_len().push_val(batch.len() as u32);
@@ -779,187 +918,102 @@ impl Stream for CaConn {
         let mut durs = DurationMeasureSteps::new();
         let ts_poll_begin = Instant::now();
         self.mett.poll_fn_begin().inc();
-        let ret = loop {
-            let self2 = self.as_mut().get_mut();
-            trace4!("{selfname}  loop  state {}", self2.state.display_short());
+        let ret = 'outer: loop {
+            trace4!("{selfname}  loop  state {}", self.state.display_short());
             let tsloop = Instant::now();
             let hpp = &mut HaveProgressPending::new();
-            if self2.out_buf.len() != 0 {
-                break Ready(Some(Ok(self2.out_buf.take())));
-            } else if let Some(fut) = self2.ca_cmd_tx_fut.as_mut() {
-                match fut.poll_unpin(cx) {
-                    Ready(x) => {
-                        self2.ca_cmd_tx_fut = None;
-                        hpp.mark_progress();
-                        match x {
-                            Ok(()) => {}
-                            Err(e) => {
-                                error!("{selfname}  ca_cmd_tx_fut error: {e}");
-                                self2.mett.cmd_send_err().inc();
-                                self2.state = State::Done;
-                                break Ready(Some(Err(e)));
-                            }
-                        }
-                    }
-                    Pending => {
-                        hpp.mark_pending();
-                    }
-                }
-            } else if let State::Done = &self2.state {
+            if self.out_buf.len() != 0 {
+                break Ready(Some(Ok(self.out_buf.take())));
+            }
+            if let State::Done = &self.state {
             } else {
-                //
-                // TODO these commands run in a future.
-                // Some want to use a channel to async send the command to ActiveCa.
-                //
-                match self2.cmd_rx.poll_next_unpin(cx) {
-                    Ready(Some(cmd)) => {
-                        hpp.mark_progress();
-                        self2.mett.cmd_recv().inc();
-                        match cmd.kind {
-                            CaConnCmdKind::ChannelAdd(conf, done_tx) => {
-                                self2.mett.cmd_channel_add().inc();
-                                trace!("{selfname}:Received:ChannelAdd  {conf:?}");
-                                let cmd = activeca::CaCommand::channel_add(conf, done_tx);
-                                let mut tx = self2.ca_cmd_tx.clone();
-                                let fut = async move {
-                                    tx.send(cmd).await?;
-                                    // The is-done-sender is already passed to inner handler.
-                                    Ok(())
-                                };
-                                self2.ca_cmd_tx_fut = Some(fut.box2());
-                            }
-                            CaConnCmdKind::ChannelRemove(conf, done_tx) => {
-                                self2.mett.cmd_channel_remove().inc();
-                                trace!("{selfname}:Received:ChannelRemove  {conf:?}");
-                                let cmd = activeca::CaCommand::channel_remove(conf.name(), done_tx);
-                                let mut tx = self2.ca_cmd_tx.clone();
-                                let fut = async move {
-                                    tx.send(cmd).await?;
-                                    // The is-done-sender is already passed to inner handler.
-                                    Ok(())
-                                };
-                                self2.ca_cmd_tx_fut = Some(fut.box2());
-                            }
-                            CaConnCmdKind::DisconnectOnIdle(done_tx) => {
-                                self2.mett.cmd_disconnect_on_idle().inc();
-                                trace!("{selfname}:Received:DisconnectOnIdle");
-                                let cmd = activeca::CaCommand::disconnect_on_idle(done_tx);
-                                let mut tx = self2.ca_cmd_tx.clone();
-                                let fut = async move {
-                                    tx.send(cmd).await?;
-                                    // The is-done-sender is already passed to inner handler.
-                                    Ok(())
-                                };
-                                self2.ca_cmd_tx_fut = Some(fut.box2());
-                            }
-                            CaConnCmdKind::DynCmdV03(cmd, tx) => {
-                                self2.mett.cmd_dyn_v03().inc();
-                                trace!("{selfname}:Received:DynCmd  {cmd:?}");
-                                let fut = self2.handle_dyn_cmd_v03(cmd, tx);
-                                self2.ca_cmd_tx_fut = Some(fut.box2());
-                            }
-                            CaConnCmdKind::ChannelsForAddrInfoV1(mut tx) => {
-                                self2.mett.cmd_channels_for_addr_v1().inc();
-                                trace!("{selfname}:Received:ChannelsForAddrInfoV1");
-                                let ret = self2.channel_info_v1();
-                                let fut = async move {
-                                    tx.send(ret).await?;
-                                    Ok(())
-                                };
-                                self2.ca_cmd_tx_fut = Some(fut.box2());
-                            }
-                            CaConnCmdKind::ChannelsForAddrInfoV2(name, mut tx) => {
-                                self2.mett.cmd_channels_for_addr_v2().inc();
-                                trace!("{selfname}:Received:ChannelsForAddrInfoV2");
-                                let ret = self2.channel_info_v2(name);
-                                let fut = async move {
-                                    tx.send(ret).await?;
-                                    Ok(())
-                                };
-                                self2.ca_cmd_tx_fut = Some(fut.box2());
-                            }
-                            CaConnCmdKind::ChannelsByRegexV1(kind, reg, mut tx) => {
-                                self2.mett.cmd_channels_by_regex_v1().inc();
-                                trace!("{selfname}:Received:ChannelsByRegexV1");
-                                let ret = self2.channels_by_regex_v1(kind, reg);
-                                let fut = async move {
-                                    tx.send(ret).await?;
-                                    Ok(())
-                                };
-                                self2.ca_cmd_tx_fut = Some(fut.box2());
-                            }
-                            CaConnCmdKind::StatusV1(sel, mut tx) => {
-                                self2.mett.cmd_status_v1().inc();
-                                trace!("{selfname}:Received:StatusV1");
-                                let ret = self2.status_info_sel(&sel);
-                                let fut = async move {
-                                    if tx.send(ret).await.is_err() {
-                                        error!("could not send response");
-                                    }
-                                    Ok(())
-                                };
-                                self2.ca_cmd_tx_fut = Some(fut.box2());
-                            }
+                match self.as_mut().poll_cmd_futs(cx) {
+                    Ready(Some(x)) => match x {
+                        Ok(()) => {
+                            hpp.mark_progress();
                         }
-                    }
+                        Err(e) => {
+                            hpp.mark_progress();
+                            self.state = State::Done;
+                            break Ready(Some(Err(e)));
+                        }
+                    },
                     Ready(None) => {}
                     Pending => {
                         hpp.mark_pending();
                     }
                 }
-            }
-            if true {
-                match &mut self2.state {
-                    State::Connecting(st1) => match st1.poll_unpin(cx) {
-                        Ready(Ok(x)) => {
-                            trace!("{selfname}:Connecting:Ready");
-                            self2.mett.tcp_connected().inc();
-                            // ok, we replace the full state
-                            let stn = Connected::new(self2.backend.clone(), x, self.remote_addr, tsloop);
-                            self.state = State::Connected(stn);
-                            hpp.mark_progress();
-                        }
-                        Ready(Err(e)) => {
-                            trace!("{selfname}:Connecting:Err:{e}");
-                            self.mett.connect_error().inc();
-                            self.state = State::Done;
-                            hpp.mark_progress();
-                            break Ready(Some(Err(e)));
-                        }
+                while self.ca_cmd_tx_futs.len() < CMD_TX_FUTS_CAP {
+                    match self.as_mut().poll_cmd_rx(cx) {
+                        Ready(Some(x)) => match x {
+                            Ok(()) => {
+                                hpp.mark_progress();
+                            }
+                            Err(e) => {
+                                hpp.mark_progress();
+                                break 'outer Ready(Some(Err(e)));
+                            }
+                        },
+                        Ready(None) => break,
                         Pending => {
                             hpp.mark_pending();
                         }
-                    },
-                    State::Connected(st1) => {
-                        let mut i = 0;
-                        loop {
-                            i += 1;
-                            break if i > LOOP_MAX_PASS_CMD {
-                            } else if st1.inp_cmd_buf().is_space() {
-                                match self2.ca_cmd_rx.poll_next_unpin(cx) {
-                                    Ready(Some(x)) => {
-                                        hpp.mark_progress();
-                                        // guarded
-                                        st1.inp_cmd_buf().push_back_force(x);
-                                        continue;
-                                    }
-                                    Ready(None) => {}
-                                    Pending => {
-                                        hpp.mark_pending();
-                                    }
+                    }
+                }
+            }
+            let self2 = self.as_mut().get_mut();
+            match &mut self2.state {
+                State::Connecting(st1) => match st1.poll_unpin(cx) {
+                    Ready(Ok(x)) => {
+                        trace!("{selfname}:Connecting:Ready");
+                        self2.mett.tcp_connected().inc();
+                        // ok, we replace the full state
+                        let stn = Connected::new(self2.backend.clone(), x, self.remote_addr, tsloop);
+                        self.state = State::Connected(stn);
+                        hpp.mark_progress();
+                    }
+                    Ready(Err(e)) => {
+                        trace!("{selfname}:Connecting:Err:{e}");
+                        self.mett.connect_error().inc();
+                        self.state = State::Done;
+                        hpp.mark_progress();
+                        break Ready(Some(Err(e)));
+                    }
+                    Pending => {
+                        hpp.mark_pending();
+                    }
+                },
+                State::Connected(st1) => {
+                    let mut i = 0;
+                    loop {
+                        i += 1;
+                        break if i > LOOP_MAX_PASS_CMD {
+                        } else if st1.inp_cmd_buf().is_space() {
+                            match self2.ca_cmd_rx.poll_next_unpin(cx) {
+                                Ready(Some(x)) => {
+                                    hpp.mark_progress();
+                                    // guarded
+                                    st1.inp_cmd_buf().push_back_force(x);
+                                    continue;
                                 }
-                            } else {
-                                trace_blocked!(
-                                    "{selfname}  SKIP Self::ca_cmd_rx poll  BLOCKED BY Connected inp_cmd_buf has_space"
-                                );
-                            };
-                        }
+                                Ready(None) => {}
+                                Pending => {
+                                    hpp.mark_pending();
+                                }
+                            }
+                        } else {
+                            trace_blocked!(
+                                "{selfname}  SKIP Self::ca_cmd_rx poll  BLOCKED BY Connected inp_cmd_buf has_space"
+                            );
+                        };
+                    }
+                    if self2.out_buf.len() < OUT_BUF_CAP {
+                        // Precondition: must only call this if self.out_buf not too full.
                         match st1.poll_next_unpin(cx) {
                             Ready(Some(x)) => {
                                 hpp.mark_progress();
                                 match x {
                                     Ok(items) => {
-                                        // Precondition: can only arrive here if self.out_qu not too full.
                                         for item in items {
                                             match item.inner {
                                                 connected::ItemInner::ChannelInfoQuery(item) => {
@@ -1015,24 +1069,22 @@ impl Stream for CaConn {
                                 hpp.mark_pending();
                             }
                         }
-                        if self2.write_batch.len() >= WRITE_BATCH_LEN_MAX {
-                            self2.try_flush_write_batch();
-                        }
                     }
-                    State::Done => {
-                        error!(
-                            "{selfname}  State::Done  {}  {}",
-                            hpp.have_progress(),
-                            hpp.have_pending()
-                        );
-                        // TODO when in Done, we should no longer be stuck with Pending on something.
+                    if self2.write_batch.len() >= WRITE_BATCH_LEN_MAX {
+                        self2.try_flush_write_batch();
                     }
-                };
-            }
-
+                }
+                State::Done => {
+                    error!(
+                        "{selfname}  State::Done  {}  {}",
+                        hpp.have_progress(),
+                        hpp.have_pending()
+                    );
+                    // TODO when in Done, we should no longer be stuck with Pending on something.
+                }
+            };
             // TODO get rid of the handling of ca_conn_event_out_queue in here.
             // The future which pushes to the queue must also trigger the async push if needed.
-
             if let State::Done = &self.state {
             } else {
                 // TODO add up duration of this scope

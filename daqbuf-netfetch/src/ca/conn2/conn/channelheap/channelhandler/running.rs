@@ -246,17 +246,6 @@ impl Running {
             }
             State::Done => {}
         }
-        // TODO
-        // Tear down, but ChannelHandler must do the channel close when we are Done.
-        // add necessary commands to outbuf.
-        // in poll loop, check for outbuf and poll emit.
-        // handle:
-        // CA_PROTO_EVENT_CANCEL leads to 0-size CA_PROTO_EVENT_ADD response
-        // CA_PROTO_CLEAR_CHANNEL leads to CA_PROTO_CLEAR_CHANNEL response
-        // and flag when those messages come in "removing" mode.
-        // Otherwise, the IOC may also shut down of course.
-        // TODO make sure the IOC disconnect triggers correct logic in ingest. (log!)
-        // When we are in removing mode, and received all cleanup confirmations, then trigger state change.
     }
 
     pub fn handle_channel_handler_cmd(&mut self, cmd: serde_json::Value) -> serde_json::Value {

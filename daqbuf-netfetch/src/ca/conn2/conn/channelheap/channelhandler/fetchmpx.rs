@@ -176,15 +176,11 @@ pub struct Fetchmpx {
     mett: ChannelHandlerMetrics,
     #[to_serde(skip)]
     llog: locallog::LocalLog,
+    #[to_serde(skip)]
+    chconf: ChannelConfig,
 }
 
 impl Fetchmpx {
-    /// Single choke point for state changes so the time-in-state stamp can not drift.
-    fn transition_state(&mut self, new: State) {
-        self.state = new;
-        self.state_dt = Instant::now();
-    }
-
     pub fn new(
         series: SeriesId,
         cid: Cid,
@@ -228,6 +224,7 @@ impl Fetchmpx {
             inp_done: false,
             mett: ChannelHandlerMetrics::new(),
             llog: locallog::LocalLog::new(),
+            chconf,
         }
     }
 
@@ -238,6 +235,11 @@ impl Fetchmpx {
         ret.ingest(self.polling.mett_take());
         ret.ingest(self.monitoring.mett_take());
         ret
+    }
+
+    fn transition_state(&mut self, new: State) {
+        self.state = new;
+        self.state_dt = Instant::now();
     }
 
     fn trigger_closing(&mut self, reason: channelhandler::ClosingReason) {
@@ -655,7 +657,7 @@ impl Stream for Fetchmpx {
                 trace_pending!("HPP");
                 Pending
             } else {
-                trace!("HPP:Done");
+                trace!("HPP:Done  {}", self.chconf.name());
                 Ready(None)
             };
         }

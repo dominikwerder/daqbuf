@@ -462,6 +462,7 @@ impl ChannelHandler {
         match &mut self.state {
             State::Init { .. } => {
                 self.state = State::Done1 { ts: Instant::now() };
+                error!("TODO impl Cmd::Remove for State::Init");
             }
             State::Creating { .. } => {
                 let Creating { .. } = if let State::Creating { state: st2, .. } =
@@ -472,7 +473,6 @@ impl ChannelHandler {
                     panic!()
                 };
                 error!("TODO impl Cmd::Remove for State::Creating");
-                panic!("TODO impl Cmd::Remove for State::Creating");
                 // TODO add flags to Creating so that we now what proto messages we still expect
                 // TODO add timeout to Creating (anyways!)
             }
@@ -490,13 +490,13 @@ impl ChannelHandler {
             }
             State::Done1 { .. } => {
                 error!("{selfname} received Remove in State::Done1");
-                panic!()
             }
             State::Done { .. } => {
                 error!("{selfname} received Remove in State::Done");
-                panic!()
             }
-            State::Dummy { .. } => panic!(),
+            State::Dummy { .. } => {
+                error!("{selfname} received Remove in State::Dummy");
+            }
         }
         // TODO send proto msg to cancel monitors.
         // TODO check if we have some open IO, and wait for some timeout.
