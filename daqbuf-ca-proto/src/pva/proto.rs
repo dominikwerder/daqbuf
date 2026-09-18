@@ -34,7 +34,7 @@ macro_rules! debug { ($($arg:tt)*) => { if true { log::debug!($($arg)*); } }; }
 macro_rules! trace_in_out { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
 
 pub const PVA_MAGIC: u8 = 0xca;
-pub const PVA_VERSION: u8 = 2;
+pub const PVA_VERSION: u8 = 1;
 pub const PVA_TCP_PORT: u16 = 5075;
 pub const PVA_UDP_PORT: u16 = 5076;
 pub const PVA_INPUT_BUF_CAP: usize = 1024 * 1024 * 40;
@@ -690,7 +690,7 @@ fn parse_payload(head: &PvaHead, payload: &[u8], ctx: &mut ParseCtx) -> Result<P
                 let client_cid = r.u32()?;
                 let server_cid = r.u32()?;
                 let status = r.status()?;
-                let access_rights = if status.has_data() { Some(r.i16()?) } else { None };
+                let access_rights = if !r.is_empty() { Some(r.i16()?) } else { None };
                 PvaMsgTy::CreateChannelRes(CreateChannelRes {
                     client_cid,
                     server_cid,
@@ -1010,7 +1010,7 @@ impl PvaProto {
         let mut ret = Ok(false);
         while let Some(msg) = self.out.front() {
             scratch.clear();
-            if let Err(e) = write_message(&mut scratch, &msg.ty, Endian::Little) {
+            if let Err(e) = write_message(&mut scratch, &msg.ty, self.conn_endian) {
                 ret = Err(e);
                 break;
             }

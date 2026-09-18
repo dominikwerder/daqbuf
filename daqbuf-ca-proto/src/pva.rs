@@ -1,3 +1,4 @@
+pub mod client;
 pub mod field;
 pub mod merge;
 pub mod proto;
