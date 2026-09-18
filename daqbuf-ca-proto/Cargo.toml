@@ -22,7 +22,7 @@ netpod = { path = "../daqbuf-netpod", package = "daqbuf-netpod" }
 mettrics = { version = "0.0.7", path = "../mettrics" }
 libc = "0.2.175"
 clap = { version = "4.5.28", features = ["derive"] }
-tokio = { version = "1.43", features = ["rt-multi-thread", "macros", "net", "time"] }
+tokio = { version = "1.43", features = ["rt-multi-thread", "macros", "net", "time", "sync"] }
 ca_proto_tokio = { path = "../daqbuf-ca-proto-tokio", package = "daqbuf-ca-proto-tokio" }
 
 [[bin]]

@@ -6,15 +6,24 @@ use daqbuf_ca_proto::pva::value::PvaValue;
 use std::path::PathBuf;
 use std::process::Command;
 use std::process::Stdio;
+use std::sync::OnceLock;
 use std::time::Duration;
 use std::time::Instant;
 use std::time::SystemTime;
 use tokio::net::TcpStream;
+use tokio::sync::Mutex;
 use tokio::time::sleep;
 use tokio::time::timeout;
 
 const PVA_PORT: u16 = 5075;
 const PV_NAME: &str = "PVA_E2E_TEST:SINECOUNTER";
+const UPDATE_PERIOD: Duration = Duration::from_millis(100);
+
+static SERVER_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+fn server_lock() -> &'static Mutex<()> {
+    SERVER_LOCK.get_or_init(|| Mutex::new(()))
+}
 
 fn server_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../pva-test-server-java")
@@ -57,6 +66,32 @@ impl Drop for ServerGuard {
     }
 }
 
+async fn spawn_ready_server() -> Option<ServerGuard> {
+    if !have_binary("java") {
+        eprintln!("skipping: no `java` binary available");
+        return None;
+    }
+    if !ensure_jar_built() {
+        eprintln!("skipping: pva-test-server jar not built and could not be built (no `mvn` or build failed)");
+        return None;
+    }
+    if TcpStream::connect(("127.0.0.1", PVA_PORT)).await.is_ok() {
+        panic!("port {PVA_PORT} already in use; stop whatever is listening there before running this test");
+    }
+    let child = Command::new("java")
+        .arg("-jar")
+        .arg(jar_path())
+        .arg(PV_NAME)
+        .arg("10.0")
+        .env("EPICS_PVA_AUTO_ADDR_LIST", "NO")
+        .env("EPICS_PVA_ADDR_LIST", "127.0.0.1")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("failed to spawn java server");
+    Some(ServerGuard(child))
+}
+
 async fn try_get_once(request: PvaRequest, per_try: Duration) -> Result<PvaStructValue, String> {
     let attempt = async {
         let tcp = TcpStream::connect(("127.0.0.1", PVA_PORT))
@@ -92,30 +127,10 @@ async fn wait_until_ready(deadline: Duration) -> PvaStructValue {
 #[tokio::test]
 #[ignore]
 async fn read_sine_counter_pv_twice() {
-    if !have_binary("java") {
-        eprintln!("skipping: no `java` binary available");
+    let _lock = server_lock().lock().await;
+    let Some(_guard) = spawn_ready_server().await else {
         return;
-    }
-    if !ensure_jar_built() {
-        eprintln!("skipping: pva-test-server jar not built and could not be built (no `mvn` or build failed)");
-        return;
-    }
-    if TcpStream::connect(("127.0.0.1", PVA_PORT)).await.is_ok() {
-        panic!("port {PVA_PORT} already in use; stop whatever is listening there before running this test");
-    }
-
-    let child = Command::new("java")
-        .arg("-jar")
-        .arg(jar_path())
-        .arg(PV_NAME)
-        .arg("10.0")
-        .env("EPICS_PVA_AUTO_ADDR_LIST", "NO")
-        .env("EPICS_PVA_ADDR_LIST", "127.0.0.1")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("failed to spawn java server");
-    let _guard = ServerGuard(child);
+    };
 
     let first = wait_until_ready(Duration::from_secs(30)).await;
     assert_eq!(first.type_id(), "example:SineCounter:1.0");
@@ -158,4 +173,54 @@ async fn read_sine_counter_pv_twice() {
     assert!(counter1 > counter0, "counter did not advance: {counter0} -> {counter1}");
     let value1 = second.get("value").and_then(PvaValue::as_f64).expect("value field");
     assert!((-1.0..=1.0).contains(&value1));
+}
+
+#[tokio::test]
+#[ignore]
+async fn monitor_receives_events_for_two_seconds() {
+    let _lock = server_lock().lock().await;
+    let Some(_guard) = spawn_ready_server().await else {
+        return;
+    };
+
+    wait_until_ready(Duration::from_secs(30)).await;
+
+    let tcp = TcpStream::connect(("127.0.0.1", PVA_PORT))
+        .await
+        .expect("connect failed");
+    tcp.set_nodelay(true).ok();
+    let tcp = TcpAsyncWriteRead::from(tcp);
+    let mut session = timeout(
+        Duration::from_secs(10),
+        client::open_monitor(tcp, "e2e-monitor".into(), PV_NAME, PvaRequest::all(), 1024 * 1024),
+    )
+    .await
+    .expect("open_monitor timed out")
+    .expect("open_monitor failed");
+    assert_eq!(session.ty().id(), "example:SineCounter:1.0");
+
+    let collect_for = Duration::from_secs(2);
+    let deadline = Instant::now() + collect_for;
+    let mut count = 0usize;
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            break;
+        }
+        match timeout(remaining, session.next_delta()).await {
+            Ok(Ok(Some(_delta))) => count += 1,
+            Ok(Ok(None)) => break,
+            Ok(Err(e)) => panic!("monitor error: {e}"),
+            Err(_) => break,
+        }
+    }
+
+    let _ = session.close().await;
+
+    let expected = (collect_for.as_secs_f64() / UPDATE_PERIOD.as_secs_f64()).round() as i64;
+    let got = count as i64;
+    assert!(
+        (got - expected).abs() <= expected / 2 + 3,
+        "expected roughly {expected} monitor events in {collect_for:?}, got {got}"
+    );
 }
