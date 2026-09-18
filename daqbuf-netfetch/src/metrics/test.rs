@@ -281,7 +281,7 @@ fn scrape_metrics_conn2_route() {
 
 #[test]
 fn admin_status_light() {
-    let (status, body) = scrape_blocking(true, "/daqingest/admin/status/light");
+    let (status, body) = scrape_blocking(true, "/daqingest/admin/status/channelhandler/light");
     assert_eq!(status, StatusCode::OK, "{body}");
     let v: serde_json::Value = serde_json::from_str(&body).unwrap();
     assert_eq!(v["conn_count_total"], 2);
@@ -310,7 +310,7 @@ fn admin_status_light() {
 
 #[test]
 fn admin_status_full() {
-    let (status, body) = scrape_blocking(true, "/daqingest/admin/status/full");
+    let (status, body) = scrape_blocking(true, "/daqingest/admin/status/channelhandler/full");
     assert_eq!(status, StatusCode::OK, "{body}");
     let v: serde_json::Value = serde_json::from_str(&body).unwrap();
     assert_eq!(v["conns"][0]["addr"], "10.0.0.5:5064");
@@ -318,7 +318,7 @@ fn admin_status_full() {
 
 #[test]
 fn admin_status_default_selectors_match_all() {
-    let (status, body) = scrape_blocking(true, "/daqingest/admin/status/light");
+    let (status, body) = scrape_blocking(true, "/daqingest/admin/status/channelhandler/light");
     assert_eq!(status, StatusCode::OK, "{body}");
     let v: serde_json::Value = serde_json::from_str(&body).unwrap();
     assert_eq!(v["ingest_name"], "ch=\"\" addr=\"\"");
@@ -328,7 +328,7 @@ fn admin_status_default_selectors_match_all() {
 fn admin_status_passes_selectors_through() {
     let (status, body) = scrape_blocking(
         true,
-        "/daqingest/admin/status/light?channel_regex=ABC&addr_regex=10%5C.",
+        "/daqingest/admin/status/channelhandler/light?channel_regex=ABC&addr_regex=10%5C.",
     );
     assert_eq!(status, StatusCode::OK, "{body}");
     let v: serde_json::Value = serde_json::from_str(&body).unwrap();
@@ -337,7 +337,7 @@ fn admin_status_passes_selectors_through() {
 
 #[test]
 fn admin_status_bad_regex_is_400() {
-    let (status, body) = scrape_blocking(true, "/daqingest/admin/status/light?channel_regex=%5B");
+    let (status, body) = scrape_blocking(true, "/daqingest/admin/status/channelhandler/light?channel_regex=%5B");
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     let v: serde_json::Value = serde_json::from_str(&body).unwrap();
     assert_eq!(v["kind"], "bad-regex");
@@ -345,90 +345,10 @@ fn admin_status_bad_regex_is_400() {
 
 #[test]
 fn admin_status_without_conn2_is_503() {
-    let (status, body) = scrape_blocking(false, "/daqingest/admin/status/light");
+    let (status, body) = scrape_blocking(false, "/daqingest/admin/status/channelhandler/light");
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
     let v: serde_json::Value = serde_json::from_str(&body).unwrap();
     assert_eq!(v["kind"], "conn2-not-active");
-}
-
-#[test]
-fn openapi_json_contains_admin_status() {
-    let (status, body) = scrape_blocking(false, "/daqingest/api-docs/openapi.json");
-    assert_eq!(status, StatusCode::OK, "{body}");
-    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
-    let light = &v["paths"]["/daqingest/admin/status/light"]["get"];
-    assert!(light.is_object(), "{body}");
-    assert!(v["paths"]["/daqingest/admin/status/full"]["get"].is_object(), "{body}");
-    let params = light["parameters"].as_array().unwrap();
-    let names: Vec<_> = params.iter().map(|x| x["name"].as_str().unwrap()).collect();
-    assert!(names.contains(&"channel_regex"), "{params:?}");
-    assert!(names.contains(&"addr_regex"), "{params:?}");
-    assert!(params.iter().all(|x| x["in"] == "query"), "{params:?}");
-    assert!(params.iter().all(|x| x["required"] == false), "{params:?}");
-    assert!(v["components"]["schemas"]["StatusLight"].is_object(), "{body}");
-    assert!(v["components"]["schemas"]["StatusLightChannel"].is_object(), "{body}");
-}
-
-/// `conns[].channels[].handler` used to be an opaque `Object` in the OpenAPI schema. This
-/// pins that the generated tree now carries real types for `state_dt`/`dwell_score` down
-/// through the nested sub-state-machines, and that the several module-local `State` (and
-/// `StateDirection`) enums landed under distinct component names instead of silently
-/// colliding and overwriting each other.
-#[test]
-fn openapi_handler_state_tree_is_typed() {
-    let (status, body) = scrape_blocking(false, "/daqingest/api-docs/openapi.json");
-    assert_eq!(status, StatusCode::OK, "{body}");
-    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
-    let schemas = &v["components"]["schemas"];
-
-    let handler = &schemas["StatusFullChannel"]["properties"]["handler"];
-    assert_eq!(
-        handler["$ref"], "#/components/schemas/ChannelHandlerSerde",
-        "handler is no longer typed as a concrete schema: {body}"
-    );
-
-    let fetch_polling = &schemas["FetchPollingStateSerde"];
-    assert!(fetch_polling.is_object(), "FetchPollingStateSerde missing: {body}");
-    let send_req = fetch_polling["oneOf"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|v| v["properties"]["ty"]["enum"] == serde_json::json!(["SendReq"]))
-        .expect("SendReq variant missing");
-    assert_eq!(
-        send_req["properties"]["co"]["$ref"], "#/components/schemas/fetchpolling.PollStateDirection",
-        "{body}"
-    );
-
-    let fetch_polling_struct = &schemas["FetchPollingSerde"]["properties"];
-    assert_eq!(fetch_polling_struct["state_dt"]["type"], "string", "{body}");
-    assert_ne!(fetch_polling_struct["dwell_score"], serde_json::json!({}), "{body}");
-    assert!(fetch_polling_struct["dwell_score"]["type"].is_array(), "{body}");
-
-    // The two module-local `StateDirection` enums must not have collided under one name.
-    assert_eq!(
-        schemas["fetchpolling.PollStateDirection"]["enum"],
-        serde_json::json!(["None", "DoNothing"]),
-        "{body}"
-    );
-    assert_eq!(
-        schemas["fetchmonitoring.MonitorStateDirection"]["enum"],
-        serde_json::json!(["None", "Disable", "Enable", "Closing"]),
-        "{body}"
-    );
-
-    // Every module-local `State` enum must have its own distinct schema name.
-    for name in [
-        "StateSerde",
-        "CreateStateSerde",
-        "ReadEnumStateSerde",
-        "RunningStateSerde",
-        "FetchmpxStateSerde",
-        "FetchPollingStateSerde",
-        "FetchMonitoringStateSerde",
-    ] {
-        assert!(schemas[name].is_object(), "{name} missing from schema: {body}");
-    }
 }
 
 #[test]

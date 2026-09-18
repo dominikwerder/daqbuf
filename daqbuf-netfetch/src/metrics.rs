@@ -795,6 +795,13 @@ fn make_routes_daqingest(
                 || metrics2(ca_ingest_ctrls)
             }),
         )
+        .route(
+            "/metrics/",
+            get({
+                let ca_ingest_ctrls = ca_ingest_ctrls.clone();
+                || metrics2(ca_ingest_ctrls)
+            }),
+        )
         .nest(
             "/config",
             Router::new().route(
@@ -920,7 +927,6 @@ pub async fn metrics_service(
         .layer(tower_http::compression::CompressionLayer::new().gzip(true))
         .into_make_service();
     let listener = TcpListener::bind(addr).await?;
-    // into_make_service_with_connect_info
     axum::serve(listener, router)
         .with_graceful_shutdown(async move {
             let _ = shutdown_signal.recv().await;

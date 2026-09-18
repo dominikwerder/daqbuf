@@ -534,6 +534,21 @@ scylla_st_rf1 { keyspace = "KS_ST_RF1" }
             }
         }
     }
+    {
+        // Keep only the last block for each identifier, preserving order otherwise,
+        // so a later block overrides an earlier one with the same name.
+        let structures = body.into_inner();
+        let mut keep_from_end = std::collections::HashSet::new();
+        let mut kept_rev = Vec::with_capacity(structures.len());
+        for st in structures.into_iter().rev() {
+            match st.as_block() {
+                Some(block) if !keep_from_end.insert(block.identifier.to_string()) => continue,
+                _ => kept_rev.push(st),
+            }
+        }
+        kept_rev.reverse();
+        body = hcl::Body::from(kept_rev);
+    }
     let conf: CaIngestOpts = hcl::from_body(body).unwrap();
     assert_eq!(conf.backend, "test_backend");
     assert_eq!(conf.search.len(), 2);

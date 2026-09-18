@@ -1348,11 +1348,11 @@ mod test_state_serde {
         };
         let v = serde_json::to_value(ch.state_serde()).unwrap();
         assert_eq!(v["ty"], "Creating");
-        assert!(v["co"]["ts"].is_string(), "no time-in-state in {v}");
-        assert!(v["co"]["dwell_score"].is_number(), "no dwell_score in {v}");
-        assert_eq!(v["co"]["state"]["state"]["ty"], "CreateChanSend");
-        assert!(v["co"]["state"]["state"]["co"]["ts"].is_string());
-        assert!(v["co"]["state"]["state"]["co"]["dwell_score"].is_number());
-        assert_eq!(v["co"]["state"]["state"]["co"]["outbuf"]["len"], 1);
+        assert!(v["ts"].is_string(), "no time-in-state in {v}");
+        assert!(v["dwell_score"].is_number(), "no dwell_score in {v}");
+        assert_eq!(v["state"]["state"]["ty"], "CreateChanSend");
+        assert!(v["state"]["state"]["ts"].is_string());
+        assert!(v["state"]["state"]["dwell_score"].is_number());
+        assert_eq!(v["state"]["state"]["outbuf"]["len"], 1);
     }
 }
