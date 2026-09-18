@@ -21,3 +21,10 @@ series = { path = "../daqbuf-series", package = "daqbuf-series" }
 netpod = { path = "../daqbuf-netpod", package = "daqbuf-netpod" }
 mettrics = { version = "0.0.7", path = "../mettrics" }
 libc = "0.2.175"
+clap = { version = "4.5.28", features = ["derive"] }
+tokio = { version = "1.43", features = ["rt-multi-thread", "macros", "net", "time"] }
+ca_proto_tokio = { path = "../daqbuf-ca-proto-tokio", package = "daqbuf-ca-proto-tokio" }
+
+[[bin]]
+name = "pva-get"
+path = "src/bin/pva_get.rs"
