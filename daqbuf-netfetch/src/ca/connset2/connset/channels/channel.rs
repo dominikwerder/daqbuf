@@ -41,7 +41,7 @@ const CSSID_SEARCH_TIMEOUT: Duration = Duration::from_millis(10000);
 macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
 macro_rules! warn { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
 macro_rules! debug { ($($arg:tt)*) => { if true { log::debug!($($arg)*); } }; }
-macro_rules! trace { ($($arg:tt)*) => { if false { log::info!($($arg)*); } }; }
+macro_rules! trace { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
 macro_rules! trace2 { ($($arg:tt)*) => { if false { log::info!($($arg)*); } }; }
 
 macro_rules! todo_shutdown { ($($arg:tt)*) => { if false { log::info!($($arg)*); } }; }
@@ -57,10 +57,18 @@ autoerr::create_error_v1!(
     },
 );
 
-async fn addr_search(conf: ChannelConfig, mut fh: FinderHandleV02) -> Result<SocketAddrV4, Error> {
+async fn addr_search(
+    conf: ChannelConfig,
+    mut fh: FinderHandleV02,
+    addr_cache_skip: bool,
+) -> Result<SocketAddrV4, Error> {
     let selfname = "addr_search";
-    let res = fh.find_uncached(conf.name().into()).await?;
-    trace!("{selfname}  res {res:?}");
+    let res = if addr_cache_skip {
+        fh.find_uncached(conf.name().into()).await?
+    } else {
+        fh.find_cached(conf.name().into()).await?
+    };
+    trace!("{selfname}  {name}  res {res:?}", name = conf.name());
     let ret = res.addr().ok_or_else(|| Error::AddrNotFound(conf.name().into()))?;
     Ok(ret)
 }
@@ -231,6 +239,7 @@ pub struct Channel {
     cmd_rx: asynchan::Receiver<pollcstm::Cmd>,
     removing: bool,
     addr: Option<SocketAddrV4>,
+    addr_cache_skip: bool,
     backoff_i: u32,
     llog: LocalLog,
     waker: Option<Waker>,
@@ -246,6 +255,7 @@ impl Channel {
             cmd_rx,
             removing: false,
             addr: None,
+            addr_cache_skip: false,
             backoff_i: 0,
             llog: LocalLog::new(),
             waker: None,
@@ -371,11 +381,12 @@ impl Channel {
     fn produce_addr_search_state(&mut self, chi: ChannelInfoResult, fh: FinderHandleV02) -> State {
         let cssid = ChannelStatusSeriesId::new(chi.series.to_series().id());
         let conf = self.conf.clone();
+        let addr_cache_skip = self.addr_cache_skip;
         let to = tokio::time::sleep(ADDR_SEARCH_TIMEOUT).box2();
         State::AddrSearch(AddrSearch {
             cssid,
             chi,
-            fut: addr_search(conf, fh).box2(),
+            fut: addr_search(conf, fh, addr_cache_skip).box2(),
             to,
         })
     }
@@ -552,6 +563,7 @@ impl PollCstm for Channel {
                                 Err(e) => {
                                     match e {
                                         Error::AddrNotFound(_) => {
+                                            self2.addr_cache_skip = true;
                                             // TODO metrics
                                             let (to, until) = self2.backoff_to_until();
                                             if let State::AddrSearch(st1) =

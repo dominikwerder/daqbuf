@@ -19,6 +19,9 @@ use crate::ca::progpend::HaveProgressPending;
 use crate::conf::ChannelConfig;
 use crate::futwrap::FutDbg;
 use crate::futwrap::FutDbgBox;
+use crate::futwrap::poll_a;
+use crate::futwrap::poll_opt_fut_map;
+use crate::futwrap::poll_stream_map_ok;
 use crate::misc::todoval;
 use async_channel::Sender;
 pub use cmder::ConnSetCmder;
@@ -557,8 +560,7 @@ impl ConnSet {
                 let mut addr_found_error = Vec::new();
                 let self2 = self.as_mut().get_mut();
                 // TODO introduce fairness for congested case
-                for (addr, conn_reg) in self2.ca_conns.iter_mut() {
-                    // match comm.poll_next_unpin(cx) {
+                'lvl1: for (addr, conn_reg) in self2.ca_conns.iter_mut() {
                     match conn_reg.rx.poll_next_unpin(cx) {
                         Ready(Some(x)) => {
                             hpp.mark_progress();
@@ -578,6 +580,7 @@ impl ConnSet {
                                                     Ok(x) => match x {
                                                         Some(fut) => {
                                                             self2.cmd_fut_comm = Some(fut);
+                                                            break 'lvl1;
                                                         }
                                                         None => {}
                                                     },
@@ -593,12 +596,13 @@ impl ConnSet {
                                                     match tx.send(item).await {
                                                         Ok(()) => {}
                                                         Err(e) => {
-                                                            error!("ChannelInfoQuery channel send error");
+                                                            error!("ChannelInfoQuery  {e}");
                                                         }
                                                     }
                                                     Ok(())
                                                 };
                                                 self2.cmd_fut_comm = Some(fut.box2());
+                                                break 'lvl1;
                                             }
                                             conn2::conn::CaConnItem::TestValue(x) => {
                                                 self2.mett.conn_test_value().inc();
@@ -651,7 +655,7 @@ impl ConnSet {
                                 Ok(())
                             };
                             self2.cmd_fut_comm = Some(fut.box2());
-                            break;
+                            break 'lvl1;
                         }
                         Pending => {
                             hpp.mark_pending();
@@ -1530,113 +1534,6 @@ impl ConnSet {
         }
     }
 }
-
-macro_rules! poll_a {
-    ($poll:expr, $hpp:expr) => {{
-        use Poll::*;
-        match $poll {
-            Ready(Some(x)) => {
-                $hpp.mark_progress();
-                match x {
-                    Some(Ok(())) => {}
-                    Some(Err(e)) => {
-                        //
-                        break Ready(Some(Err(e)));
-                    }
-                    None => {}
-                }
-            }
-            Ready(None) => {}
-            Pending => {
-                $hpp.mark_pending();
-            }
-        }
-    }};
-}
-
-macro_rules! poll_break {
-    ($poll:expr, $hpp:expr) => {{
-        use Poll::*;
-        match $poll {
-            Ready(Some(x)) => {
-                $hpp.mark_progress();
-                match x {
-                    Some(x) => match x {
-                        Ok(x) => {
-                            break Ready(Some(Ok(x)));
-                        }
-                        Err(e) => {
-                            //
-                            break Ready(Some(Err(e)));
-                        }
-                    },
-                    None => {}
-                }
-            }
-            Ready(None) => {}
-            Pending => {
-                $hpp.mark_pending();
-            }
-        }
-    }};
-}
-
-macro_rules! poll_stream_map_ok {
-    ($poll:expr, $hpp:expr, $self2:expr, $map:expr, $streamdone:tt) => {{
-        use Poll::*;
-        match $poll {
-            Ready(Some(x)) => {
-                $hpp.mark_progress();
-                match $map(x) {
-                    Ok(Some(x)) => {
-                        //
-                        break Ready(Some(Ok(x)));
-                    }
-                    Ok(None) => {}
-                    Err(e) => {
-                        // TODO
-                        $self2.state = State::Done;
-                        break Ready(Some(Err(e)));
-                    }
-                }
-            }
-            Ready(None) => $streamdone,
-            Pending => {
-                $hpp.mark_pending();
-            }
-        }
-    }};
-}
-
-macro_rules! poll_opt_fut_map {
-    ($futopt:expr, $cx:expr, $hpp:expr, $self2:expr, $cf1:ident, $map:expr, $futnone:tt) => {{
-        use Poll::*;
-        if let Some(fut) = $futopt.as_mut() {
-            match fut.poll_unpin($cx) {
-                Ready(x) => {
-                    $hpp.mark_progress();
-                    match $map(x) {
-                        Ok(Some(x)) => {
-                            $cf1 Poll::Ready(Some(Ok(x)));
-                        }
-                        Ok(None) => {}
-                        Err(e) => {
-                            // TODO
-                            $self2.state = State::Done;
-                            $cf1 Poll::Ready(Some(Err(e)));
-                        }
-                    }
-                }
-                Pending => {
-                    $hpp.mark_pending();
-                }
-            }
-        } else {
-            $futnone
-        }
-    }};
-}
-
 impl Stream for ConnSet {
     type Item = Result<AsynBuf<ConnSetItem>, Error>;
 

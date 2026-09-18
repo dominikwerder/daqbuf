@@ -24,8 +24,8 @@ macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
 macro_rules! warn { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
 macro_rules! info { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
 macro_rules! debug { ($($arg:tt)*) => { if true { log::debug!($($arg)*); } }; }
-macro_rules! debug_batch { ($($arg:tt)*) => { if false { log::debug!($($arg)*); } }; }
-macro_rules! trace { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
+macro_rules! debug_batch { ($($arg:tt)*) => { if true { log::debug!($($arg)*); } }; }
+macro_rules! trace { ($($arg:tt)*) => { if true { log::trace!($($arg)*); } }; }
 
 autoerr::create_error_v1!(
     name(Error, "Finder"),
@@ -191,12 +191,15 @@ where
                         for f in v {
                             match f {
                                 FindIocCacheRes::Hit(x, mut tx) => {
+                                    trace!("FindIocCacheRes::Hit  {}", x.channel());
                                     let _ = tx.send(x).await;
                                 }
                                 FindIocCacheRes::Miss(x) => {
+                                    trace!("FindIocCacheRes::Miss  {}", x.name());
                                     a.push_back(x);
                                 }
                                 FindIocCacheRes::Uncached(x) => {
+                                    trace!("FindIocCacheRes::Uncached  {}", x.name());
                                     a.push_back(x);
                                 }
                             }

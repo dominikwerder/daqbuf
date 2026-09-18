@@ -283,7 +283,6 @@ impl Stream for Creating {
                                     fut: fut.box2(),
                                 };
                                 let item = CreatingItem::ChannelInfoQuery(item);
-                                trace3!("--- EMIT --- {item:?}");
                                 break Ready(Some(Ok(item)));
                             }
                             CaMsgTy::CreateChanFail(k) => {
