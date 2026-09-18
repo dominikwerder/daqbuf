@@ -85,7 +85,6 @@ enum State {
         #[to_serde(skip)]
         fut: FutDbg<()>,
     },
-    /// Series lookup is a DB round-trip; anything past ~4s is worth a second look.
     SeriesIdRecv {
         #[to_serde(elapsed, dwell_ms = 4000, schema(value_type = String))]
         ts: Instant,
@@ -180,7 +179,6 @@ impl Creating {
 }
 
 impl Stream for Creating {
-    // type Output = Result<(Sid, ScalarType, Shape, CaDbrTy, asynchan::Receiver<CaMsg>), Error>;
     type Item = Result<CreatingItem, Error>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
@@ -309,45 +307,38 @@ impl Stream for Creating {
                         hpp.mark_pending();
                     }
                 }
-                State::SeriesIdRecv { fut: rx, .. } => {
-                    trace3!("State::SeriesIdRecv  polling");
-                    match rx.poll_unpin(cx) {
-                        Ready((x, sid, scalar_type, shape, ca_dbr_type)) => {
-                            hpp.mark_progress();
-                            trace!("received channel info  {scalar_type}  {shape}  {x:?}");
-                            self2.state = State::Done { ts: tsnow };
-                            match x {
-                                Ok(x) => match x {
-                                    Ok(x) => {
-                                        let item = CreatingItem::Done((sid, scalar_type, shape, ca_dbr_type, x));
-                                        break Ready(Some(Ok(item)));
-                                    }
-                                    Err(e) => {
-                                        self2.state = State::Done { ts: tsnow };
-                                        break Ready(Some(Err(e.into())));
-                                    }
-                                },
+                State::SeriesIdRecv { fut: rx, .. } => match rx.poll_unpin(cx) {
+                    Ready((x, sid, scalar_type, shape, ca_dbr_type)) => {
+                        hpp.mark_progress();
+                        self2.state = State::Done { ts: tsnow };
+                        match x {
+                            Ok(x) => match x {
+                                Ok(x) => {
+                                    let item = CreatingItem::Done((sid, scalar_type, shape, ca_dbr_type, x));
+                                    break Ready(Some(Ok(item)));
+                                }
                                 Err(e) => {
                                     self2.state = State::Done { ts: tsnow };
-                                    break Ready(Some(Err(e)));
+                                    break Ready(Some(Err(e.into())));
                                 }
+                            },
+                            Err(e) => {
+                                self2.state = State::Done { ts: tsnow };
+                                break Ready(Some(Err(e)));
                             }
                         }
-                        Pending => {
-                            hpp.mark_pending();
-                        }
                     }
-                }
+                    Pending => {
+                        hpp.mark_pending();
+                    }
+                },
                 State::Done { .. } => break Ready(Some(Err(Error::Logic))),
             }
             break if hpp.have_progress() {
-                trace4!("HPP:Progress");
                 continue;
             } else if hpp.have_pending() {
-                trace_pending!("HPP");
                 Pending
             } else {
-                trace!("HPP:Done");
                 Ready(None)
             };
         }

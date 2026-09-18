@@ -43,11 +43,12 @@ macro_rules! trace3 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; 
 macro_rules! trace4 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
 macro_rules! trace_pending { ($($arg:tt)*) => { if false { trace!("{}  Pending", format_args!($($arg)*)); } }; }
 
-macro_rules! debug_shutdown { ($($arg:tt)*) => { if false { log::debug!($($arg)*); } }; }
-macro_rules! todo_shutdown { ($($arg:tt)*) => { if false { log::debug!($($arg)*); } }; }
+macro_rules! debug_shutdown { ($($arg:tt)*) => { if true { log::debug!($($arg)*); } }; }
+macro_rules! todo_shutdown { ($($arg:tt)*) => { if true { log::debug!($($arg)*); } }; }
 
 fn _keep() {
     info!("");
+    debug!("");
 }
 
 autoerr::create_error_v1!(
@@ -167,8 +168,12 @@ pub struct Fetchmpx {
     sid: Sid,
     #[to_serde(nest, schema(value_type = fetchpolling::FetchPollingSerde))]
     polling: FetchPolling,
+    #[to_serde(schema(value_type = bool))]
+    polling_done: bool,
     #[to_serde(nest, schema(value_type = fetchmonitoring::FetchMonitoringSerde))]
     monitoring: FetchMonitoring,
+    #[to_serde(schema(value_type = bool))]
+    monitoring_done: bool,
     #[to_serde(len)]
     inp_buf: VecDeque<ProtoRxItem>,
     inp_done: bool,
@@ -219,7 +224,9 @@ impl Fetchmpx {
             cid,
             sid,
             polling,
+            polling_done: false,
             monitoring,
+            monitoring_done: false,
             inp_buf: VecDeque::with_capacity(INP_BUF_CAP),
             inp_done: false,
             mett: ChannelHandlerMetrics::new(),
@@ -260,8 +267,7 @@ impl Fetchmpx {
         }
     }
 
-    pub fn trigger_remove(&mut self) {
-        todo_shutdown!("TODO trigger_remove");
+    pub fn trigger_remove_on_command(&mut self) {
         self.trigger_closing(channelhandler::ClosingReason::Command);
     }
 
@@ -544,10 +550,7 @@ impl Stream for Fetchmpx {
                             }
                         }
                         Ready(None) => {}
-                        Pending => {
-                            // Do not wait on pending input.
-                            // hpp.mark_pending();
-                        }
+                        Pending => {}
                     }
                     match Pin::new(&mut self.polling).poll_next(cx) {
                         Ready(Some(x)) => {
@@ -587,7 +590,9 @@ impl Stream for Fetchmpx {
                                 }
                             }
                         }
-                        Ready(None) => {}
+                        Ready(None) => {
+                            self.polling_done = true;
+                        }
                         Pending => {
                             hpp.mark_pending();
                         }
@@ -632,14 +637,17 @@ impl Stream for Fetchmpx {
                                 }
                             }
                         }
-                        Ready(None) => {}
+                        Ready(None) => {
+                            self.monitoring_done = true;
+                        }
                         Pending => {
                             hpp.mark_pending();
                         }
                     }
                     if hpp.have_progress() || hpp.have_pending() {
                     } else {
-                        todo_shutdown!("NOTE Closing1 no HPP go to Done");
+                        let name = self.chconf.name();
+                        debug_shutdown!("Closing1 no HPP to Done  {name}");
                         self.transition_state(State::Done);
                     }
                 }

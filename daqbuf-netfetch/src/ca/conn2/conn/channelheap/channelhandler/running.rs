@@ -238,11 +238,10 @@ impl Running {
     }
 
     pub fn trigger_remove(&mut self) {
-        todo_shutdown!("TODO set up teardown");
         self.removing = true;
         match &mut self.state {
             State::Normal(x) => {
-                x.trigger_remove();
+                x.trigger_remove_on_command();
             }
             State::Done => {}
         }

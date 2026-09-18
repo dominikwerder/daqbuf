@@ -39,7 +39,7 @@ macro_rules! trace4 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; 
 macro_rules! trace_pending { ($($arg:tt)*) => { if false { trace!("{}  Pending", format_args!($($arg)*)); } }; }
 
 macro_rules! debug_transition_state { ($($arg:tt)*) => { if false { log::debug!($($arg)*); } }; }
-macro_rules! todo_shutdown { ($($arg:tt)*) => { if false { log::debug!($($arg)*); } }; }
+macro_rules! todo_shutdown { ($($arg:tt)*) => { if true { log::debug!($($arg)*); } }; }
 
 autoerr::create_error_v1!(
     name(Error, "FetchPolling"),
