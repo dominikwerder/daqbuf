@@ -162,18 +162,14 @@ impl ReadEnum {
         self.sid.clone()
     }
 
-    pub fn trigger_remove(&mut self) {
-        todo_shutdown!("trigger_remove");
+    pub fn trigger_close(&mut self, reason: super::ClosingReason) {
+        todo_shutdown!("trigger_close  {reason:?}");
         self.removing = true;
-        match &mut self.state {
-            State::SendMsg(..) => {
-                //
-            }
-            State::WaitMsg(..) => {
-                //
-            }
-            State::Done => {}
-        }
+    }
+
+    pub fn notify_peer_closed(&mut self) {
+        self.removing = true;
+        self.inp_done = true;
     }
 
     pub fn inp_push_try(&mut self, item: ProtoRxItem) -> Option<ProtoRxItem> {

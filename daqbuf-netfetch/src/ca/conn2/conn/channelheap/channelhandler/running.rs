@@ -11,6 +11,7 @@ use crate::ca::conn2::caids::Cid;
 use crate::ca::conn2::caids::Sid;
 use crate::ca::conn2::channel_event_value::ChannelEventValue;
 use crate::ca::conn2::conn::channelheap::ProtoRxItem;
+use crate::ca::conn2::conn::channelheap::channelhandler::ClosingReason;
 use crate::ca::conn2::conn::channelheap::channelhandler::fetchmpx;
 use crate::ca::conn2::locallog;
 use crate::ca::progpend::HaveProgressPending;
@@ -98,6 +99,7 @@ pub enum RunningItem {
     ChannelStatus(ChannelStatus),
     ChannelEventValue(ChannelEventValue),
     ChannelWriteItems(Vec<QueryItem>),
+    RequestClose(ClosingReason),
 }
 
 #[derive(Debug, ToSerde)]
@@ -135,7 +137,6 @@ pub struct Running {
     #[to_serde(schema(value_type = Object))]
     chi: ChannelInfoResult,
     removing: bool,
-    chan_close_ack: bool,
     #[to_serde(len)]
     outbuf: VecDeque<CaMsg>,
     #[to_serde(len)]
@@ -209,7 +210,6 @@ impl Running {
             sid,
             chi,
             removing: false,
-            chan_close_ack: false,
             outbuf: VecDeque::new(),
             inp_buf: VecDeque::with_capacity(INP_BUF_CAP),
             inp_done: false,
@@ -237,11 +237,22 @@ impl Running {
         self.sid.clone()
     }
 
-    pub fn trigger_remove(&mut self) {
+    pub fn trigger_close(&mut self, reason: ClosingReason) {
         self.removing = true;
         match &mut self.state {
             State::Normal(x) => {
-                x.trigger_remove_on_command();
+                x.trigger_closing(reason);
+            }
+            State::Done => {}
+        }
+    }
+
+    pub fn notify_peer_closed(&mut self) {
+        self.removing = true;
+        self.inp_done = true;
+        match &mut self.state {
+            State::Normal(x) => {
+                x.notify_peer_closed();
             }
             State::Done => {}
         }
@@ -302,28 +313,10 @@ impl Running {
                                 }
                             }
                         } else {
-                            match &item.msg.ty {
-                                proto::CaMsgTy::ChannelCloseRes(item2) => {
-                                    error!("{selfname}  TODO revisit the ChannelClose procedure");
-                                    if self.removing {
-                                        debug!(
-                                            "{selfname}  NOTE ----  while removing  ---- {} {item2:?}",
-                                            "ChannelCloseRes"
-                                        );
-                                        self.chan_close_ack = true;
-                                    } else {
-                                        error!("{selfname}  TODO not removing but got {} {item2:?}", "ChannelCloseRes");
-                                        // TODO abort?
-                                    }
-                                    hpp.mark_progress();
-                                }
-                                _ => {
-                                    hpp.mark_progress();
-                                    error!("{selfname}  TODO unexpected message {item:?}");
-                                    let e = Error::CreateMonitorUnexpectedMessage;
-                                    break Ready(Some(Err(e)));
-                                }
-                            }
+                            hpp.mark_progress();
+                            error!("{selfname}  unexpected message {item:?}");
+                            let e = Error::CreateMonitorUnexpectedMessage;
+                            break Ready(Some(Err(e)));
                         }
                     } else if self.inp_done {
                     } else {
@@ -369,9 +362,8 @@ impl Stream for Running {
                         }
                     }
                     Ready(None) => {
-                        error!("TODO even on input abort, continue with clean shutdown");
                         hpp.mark_progress();
-                        self.transition_state(State::Done);
+                        self.trigger_close(ClosingReason::InputDone);
                     }
                     Pending => {
                         hpp.mark_pending();
@@ -430,8 +422,8 @@ impl Stream for Running {
                                         }
                                     }
                                 }
-                                fetchmpx::FetchmpxItem::InputDone => {
-                                    info!("got FetchmpxItem::InputDone  but that's just a notice");
+                                fetchmpx::FetchmpxItem::RequestClose(reason) => {
+                                    break Ready(Some(Ok(RunningItem::RequestClose(reason))));
                                 }
                             }
                         }

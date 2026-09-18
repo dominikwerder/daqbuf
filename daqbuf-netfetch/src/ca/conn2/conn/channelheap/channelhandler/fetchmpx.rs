@@ -113,7 +113,7 @@ pub enum FetchmpxItem {
     TestValue(crate::ca::connset2::connset::TestValue),
     LocalLog(locallog::Entry),
     ChannelStatus(ChannelStatus),
-    InputDone,
+    RequestClose(channelhandler::ClosingReason),
     ChannelEventValue(ChannelEventValue),
     RawEventForWrite(RawEventForWrite),
 }
@@ -249,7 +249,7 @@ impl Fetchmpx {
         self.state_dt = Instant::now();
     }
 
-    fn trigger_closing(&mut self, reason: channelhandler::ClosingReason) {
+    pub fn trigger_closing(&mut self, reason: channelhandler::ClosingReason) {
         let selfname = "trigger_closing";
         todo_shutdown!("{selfname}  {}  reason {:?}", self.sid, reason);
         match &mut self.state {
@@ -267,8 +267,9 @@ impl Fetchmpx {
         }
     }
 
-    pub fn trigger_remove_on_command(&mut self) {
-        self.trigger_closing(channelhandler::ClosingReason::Command);
+    pub fn notify_peer_closed(&mut self) {
+        self.inp_done();
+        self.trigger_closing(channelhandler::ClosingReason::PeerClosed);
     }
 
     pub fn handle_channel_handler_cmd(&mut self, mut cmd: serde_json::Value) -> serde_json::Value {
@@ -382,9 +383,10 @@ impl Fetchmpx {
                         }
                     } else if self2.inp_done {
                         hpp.mark_progress();
+                        let reason = channelhandler::ClosingReason::InputDone;
                         // if we are closing already, this will have no effect:
-                        self2.trigger_closing(channelhandler::ClosingReason::InputDone);
-                        let item = FetchmpxItem::InputDone;
+                        self2.trigger_closing(reason.clone());
+                        let item = FetchmpxItem::RequestClose(reason);
                         break Ready(Some(Ok(Some(item))));
                     } else {
                         hpp.mark_pending();

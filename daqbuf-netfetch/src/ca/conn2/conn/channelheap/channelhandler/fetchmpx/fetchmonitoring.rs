@@ -271,10 +271,22 @@ impl FetchMonitoring {
         }
     }
 
-    fn transition_to_closing(&mut self) -> () {
+    fn transition_to_closing(&mut self, reason: &conn2::conn::channelheap::channelhandler::ClosingReason) -> () {
         let selfname = "transition_to_closing";
-        debug_shutdown!("{selfname}");
+        debug_shutdown!("{selfname}  {reason:?}");
         self.llog.push(format!("{selfname}  {}", self.state));
+        if reason.no_more_protocol() {
+            self.llog
+                .push(format!("{selfname}  no_more_protocol  goto Closing1  {}", self.state));
+            match &mut self.state {
+                State::Closing1 => {}
+                State::Done => {}
+                _ => {
+                    transition_state(&mut self.state, State::Closing1, &mut self.state_dt, &mut self.llog);
+                }
+            }
+            return;
+        }
         match &mut self.state {
             State::DoNothing() => {
                 self.llog.push(format!("{selfname}  State::DoNothing  goto Closing1"));
@@ -321,7 +333,7 @@ impl FetchMonitoring {
     pub fn trigger_closing(&mut self, reason: conn2::conn::channelheap::channelhandler::ClosingReason) {
         let selfname = "trigger_closing";
         todo_shutdown!("{selfname}  {}  {:?}", self.sid, reason);
-        self.transition_to_closing();
+        self.transition_to_closing(&reason);
     }
 
     fn handle_received_item(&mut self, item: ProtoRxItem) -> Poll<Option<Option<Result<MonitoringItem, Error>>>> {

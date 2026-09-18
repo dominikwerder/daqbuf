@@ -150,8 +150,14 @@ impl Creating {
         }
     }
 
-    pub fn set_removing(&mut self) {
+    pub fn trigger_close(&mut self, reason: super::ClosingReason) {
+        let _ = reason;
         self.removing = true;
+    }
+
+    pub fn notify_peer_closed(&mut self) {
+        self.removing = true;
+        self.inp_done = true;
     }
 
     pub fn poll_inp_push(&mut self, item: ProtoRxItem, cx: &mut Context<'_>) -> Option<ProtoRxItem> {
@@ -189,6 +195,10 @@ impl Stream for Creating {
             let mut hpp = HaveProgressPending::new();
             let self2 = self.as_mut().get_mut();
             let tsnow = Instant::now();
+            if self2.removing {
+                self2.state = State::Done { ts: tsnow };
+                break Ready(None);
+            }
             match &mut self2.state {
                 State::CreateChanSend {
                     outbuf: msgs, fut: to, ..

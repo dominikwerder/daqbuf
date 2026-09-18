@@ -1,4 +1,5 @@
 const INP_BUF_CAP: usize = 64;
+const CLOSE_RES_TIMEOUT_MS: u64 = 2000;
 
 mod create;
 mod fetchmpx;
@@ -35,6 +36,7 @@ use futures::Stream;
 use futures::StreamExt;
 use hashbrown::HashMap;
 use netpod::channelstatus::ChannelStatus;
+use netpod::channelstatus::ChannelStatusClosedReason;
 use scywr::iteminsertqueue::QueryItem;
 use serde::Serialize;
 use serde_helper::ToSerde;
@@ -98,23 +100,36 @@ pub enum ClosingReason {
     ErrorMsg(String),
     InputDone,
     Command,
+    PeerClosed,
+}
+
+impl ClosingReason {
+    fn to_channel_status_closed_reason(&self) -> ChannelStatusClosedReason {
+        match self {
+            ClosingReason::ErrorMsg(_) => ChannelStatusClosedReason::ProtocolError,
+            ClosingReason::InputDone => ChannelStatusClosedReason::NoProtocol,
+            ClosingReason::Command => ChannelStatusClosedReason::ChannelRemove,
+            ClosingReason::PeerClosed => ChannelStatusClosedReason::ProtocolDone,
+        }
+    }
+
+    pub fn no_more_protocol(&self) -> bool {
+        match self {
+            ClosingReason::ErrorMsg(_) => false,
+            ClosingReason::InputDone => true,
+            ClosingReason::Command => false,
+            ClosingReason::PeerClosed => true,
+        }
+    }
 }
 
 #[derive(Debug)]
 struct Init {}
 
-#[derive(Debug, ToSerde)]
-#[to_serde(vis = "pub", derive(utoipa::ToSchema))]
-struct Closing1 {
-    chan_close_ack: bool,
-    #[to_serde(skip)]
-    fut: Option<FutDbg<Result<(), Error>>>,
-    #[to_serde(skip)]
+#[derive(Debug)]
+struct CloseWait {
     to: FutDbg<()>,
 }
-
-#[derive(Debug)]
-struct Closing2 {}
 
 #[derive(Debug, ToSerde)]
 #[to_serde(vis = "pub", serde(tag = "ty"), derive(utoipa::ToSchema))]
@@ -143,27 +158,21 @@ enum State {
         #[to_serde(nest, schema(value_type = RunningStateSerde))]
         state: Running,
     },
-    Closing1 {
+    CloseSend {
+        #[to_serde(elapsed, dwell_ms = 1000, schema(value_type = String))]
+        ts: Instant,
+    },
+    CloseWait {
         #[to_serde(elapsed, dwell_ms = 2000, schema(value_type = String))]
         ts: Instant,
-        #[to_serde(nest, schema(value_type = Closing1Serde))]
-        state: Closing1,
-    },
-    Closing2 {
-        #[to_serde(elapsed, dwell_ms = 4000, schema(value_type = String))]
-        ts: Instant,
         #[to_serde(skip)]
-        state: Closing2,
+        state: CloseWait,
     },
     Done1 {
         #[to_serde(elapsed, dwell_ms = 4000, schema(value_type = String))]
         ts: Instant,
     },
     Done {
-        #[to_serde(elapsed, schema(value_type = String))]
-        ts: Instant,
-    },
-    Dummy {
         #[to_serde(elapsed, schema(value_type = String))]
         ts: Instant,
     },
@@ -180,11 +189,10 @@ impl State {
             State::Creating { ts, .. } => *ts,
             State::ReadEnum { ts, .. } => *ts,
             State::Running { ts, .. } => *ts,
-            State::Closing1 { ts, .. } => *ts,
-            State::Closing2 { ts, .. } => *ts,
+            State::CloseSend { ts, .. } => *ts,
+            State::CloseWait { ts, .. } => *ts,
             State::Done1 { ts } => *ts,
             State::Done { ts } => *ts,
-            State::Dummy { ts } => *ts,
         }
     }
 }
@@ -196,11 +204,10 @@ impl State {
             State::Creating { .. } => "Creating",
             State::ReadEnum { .. } => "ReadEnum",
             State::Running { .. } => "Running",
-            State::Closing1 { .. } => "Closing1",
-            State::Closing2 { .. } => "Closing2",
+            State::CloseSend { .. } => "CloseSend",
+            State::CloseWait { .. } => "CloseWait",
             State::Done1 { .. } => "Done1",
             State::Done { .. } => "Done",
-            State::Dummy { .. } => "Dummy",
         }
     }
 }
@@ -295,6 +302,12 @@ pub struct ChannelHandler {
     removing: Option<asynchan::Sender<u32>>,
     #[to_serde(skip)]
     cid: CidOwned,
+    #[to_serde(skip)]
+    sid: Option<Sid>,
+    #[to_serde(skip)]
+    closing: Option<ClosingReason>,
+    peer_closed: bool,
+    chan_close_ack: bool,
     backend: String,
     #[to_serde(schema(value_type = Object))]
     conf: ChannelConfig,
@@ -330,6 +343,10 @@ impl ChannelHandler {
             },
             removing: None,
             cid,
+            sid: None,
+            closing: None,
+            peer_closed: false,
+            chan_close_ack: false,
             backend,
             conf,
             enum_variants: None,
@@ -438,77 +455,114 @@ impl ChannelHandler {
     }
 
     pub fn sid(&self) -> Option<Sid> {
-        match &self.state {
-            State::Init { .. } => None,
-            State::Creating { .. } => None,
-            State::ReadEnum { state: st, .. } => Some(st.sid()),
-            State::Running { state: st, .. } => Some(st.sid()),
-            State::Closing1 { .. } => None,
-            State::Closing2 { .. } => None,
-            State::Done1 { .. } => None,
-            State::Done { .. } => None,
-            State::Dummy { .. } => None,
-        }
+        self.sid.clone()
     }
 
     pub fn cmd_tx(&self) -> &asynchan::Sender<Cmd> {
         &self.cmd_tx
     }
 
-    fn handle_cmd_remove(&mut self, done_tx: asynchan::Sender<u32>) {
-        let selfname = "handle_cmd_remove";
-        debug!("{selfname}");
-        self.removing = Some(done_tx);
+    /// Every site that pops from `proto_inp_buf` must pass the item through here. The pop
+    /// sites are drain loops, so this has to run per item, not as a peek at the front.
+    fn intercept_close_msg(
+        item: ProtoRxItem,
+        closing: &Option<ClosingReason>,
+        peer_closed: &mut bool,
+        chan_close_ack: &mut bool,
+        chn: &str,
+    ) -> Option<ProtoRxItem> {
+        match &item.msg.ty {
+            CaMsgTy::ChannelCloseRes(_) => {
+                *chan_close_ack = true;
+                if closing.is_none() {
+                    warn!("unsolicited ChannelCloseRes  {chn}");
+                    *peer_closed = true;
+                }
+                None
+            }
+            CaMsgTy::ChannelDisconnect(_) => {
+                warn!("ChannelDisconnect  {chn}");
+                *peer_closed = true;
+                None
+            }
+            CaMsgTy::ChannelClose(_) => {
+                warn!("unexpected ChannelClose from server  {chn}");
+                *peer_closed = true;
+                None
+            }
+            _ => Some(item),
+        }
+    }
+
+    fn drain_inp_closing(
+        buf: &mut VecDeque<ProtoRxItem>,
+        closing: &Option<ClosingReason>,
+        peer_closed: &mut bool,
+        chan_close_ack: &mut bool,
+        chn: &str,
+    ) -> bool {
+        let mut any = false;
+        while let Some(item) = buf.pop_front() {
+            any = true;
+            if let Some(item) = Self::intercept_close_msg(item, closing, peer_closed, chan_close_ack, chn) {
+                debug!("discard while closing  {chn}  {item:?}");
+            }
+        }
+        any
+    }
+
+    fn note_closing(
+        closing: &mut Option<ClosingReason>,
+        outbuf: &mut VecDeque<ChannelHandlerItem>,
+        reason: ClosingReason,
+    ) {
+        if closing.is_some() {
+            return;
+        }
+        outbuf.push_back(ChannelHandlerItem {
+            ts_create: Instant::now(),
+            inner: ItemInner::ChannelStatus(ChannelStatus::Closed(reason.to_channel_status_closed_reason())),
+        });
+        *closing = Some(reason);
+    }
+
+    fn initiate_close(&mut self, reason: ClosingReason) {
+        if self.closing.is_some() {
+            return;
+        }
+        debug!("initiate_close  {}  {reason:?}", self.conf.name());
+        Self::note_closing(&mut self.closing, &mut self.outbuf, reason.clone());
         match &mut self.state {
             State::Init { .. } => {
                 self.state = State::Done1 { ts: Instant::now() };
-                error!("TODO impl Cmd::Remove for State::Init");
             }
-            State::Creating { .. } => {
-                let Creating { .. } = if let State::Creating { state: st2, .. } =
-                    std::mem::replace(&mut self.state, State::Dummy { ts: Instant::now() })
-                {
-                    st2
-                } else {
-                    panic!()
-                };
-                error!("TODO impl Cmd::Remove for State::Creating");
-                // TODO add flags to Creating so that we now what proto messages we still expect
-                // TODO add timeout to Creating (anyways!)
-            }
-            State::ReadEnum { state: st2, .. } => {
-                st2.trigger_remove();
-            }
-            State::Running { state: st2, .. } => {
-                st2.trigger_remove();
-            }
-            State::Closing1 { .. } => {
-                error!("{selfname} received Remove in State::Closing1");
-            }
-            State::Closing2 { .. } => {
-                error!("{selfname} received Remove in State::Closing2");
-            }
-            State::Done1 { .. } => {
-                error!("{selfname} received Remove in State::Done1");
-            }
-            State::Done { .. } => {
-                error!("{selfname} received Remove in State::Done");
-            }
-            State::Dummy { .. } => {
-                error!("{selfname} received Remove in State::Dummy");
-            }
+            State::Creating { state: st, .. } => st.trigger_close(reason),
+            State::ReadEnum { state: st, .. } => st.trigger_close(reason),
+            State::Running { state: st, .. } => st.trigger_close(reason),
+            State::CloseSend { .. } => {}
+            State::CloseWait { .. } => {}
+            State::Done1 { .. } => {}
+            State::Done { .. } => {}
         }
-        // TODO send proto msg to cancel monitors.
-        // TODO check if we have some open IO, and wait for some timeout.
-        // There is already IO in the "normal" code path.
-        // Must not duplicate code there.
-        // So, maybe this means simply waiting and periodically checking?
-        // Or: register a optional callback on-io-done. In that callback, we can signal progress?
-        // TODO async send to proto to close the channel.
-        // TODO wait for channel close confirm, under timeout.
-        // TODO async write status event and final stats.
-        // TODO done tx send in response to this command.
-        // TODO transition to Done.
+    }
+
+    fn enter_close_send(&mut self, ts: Instant) {
+        if self.closing.is_none() {
+            warn!("sub-handler ended without a close request  {}", self.conf.name());
+            Self::note_closing(&mut self.closing, &mut self.outbuf, ClosingReason::InputDone);
+        }
+        let no_proto = self.closing.as_ref().map_or(false, |x| x.no_more_protocol());
+        if self.sid.is_none() || self.peer_closed || self.proto_inp_done || no_proto {
+            self.state = State::Done1 { ts };
+        } else {
+            self.state = State::CloseSend { ts };
+        }
+    }
+
+    fn handle_cmd_remove(&mut self, done_tx: asynchan::Sender<u32>) {
+        debug!("handle_cmd_remove  {}", self.conf.name());
+        self.removing = Some(done_tx);
+        self.initiate_close(ClosingReason::Command);
     }
 
     fn handle_cmd(&mut self, cmd: Cmd) {
@@ -534,6 +588,10 @@ impl ChannelHandler {
         buf: &mut VecDeque<ProtoRxItem>,
         done: &mut bool,
         waker_2: &mut Option<Waker>,
+        closing: &Option<ClosingReason>,
+        peer_closed: &mut bool,
+        chan_close_ack: &mut bool,
+        chn: &str,
         cx: &mut Context<'_>,
     ) -> Poll<Option<Result<u32, Error>>> {
         let selfname = "poll_proto_rx_creating";
@@ -543,6 +601,9 @@ impl ChannelHandler {
         loop {
             let mut hpp = HaveProgressPending::new();
             if let Some(item) = buf.pop_front() {
+                let Some(item) = Self::intercept_close_msg(item, closing, peer_closed, chan_close_ack, chn) else {
+                    continue;
+                };
                 match st1.as_mut().poll_inp_push(item, cx) {
                     Some(item) => {
                         trace2!("{selfname}  item came back");
@@ -600,16 +661,28 @@ impl ChannelHandler {
 
     pub fn inp_done(&mut self) {
         self.proto_inp_done = true;
-        match &mut self.state {
-            State::Init { .. } => {}
-            State::Creating { state: st, .. } => st.inp_done(),
-            State::ReadEnum { state: st, .. } => st.inp_done(),
-            State::Running { state: st, .. } => st.inp_done(),
-            State::Closing1 { .. } => todo!(),
-            State::Closing2 { .. } => todo!(),
-            State::Done1 { .. } => {}
-            State::Done { .. } => {}
-            State::Dummy { .. } => {}
+        let abort_close = match &mut self.state {
+            State::Init { .. } => false,
+            State::Creating { state: st, .. } => {
+                st.inp_done();
+                false
+            }
+            State::ReadEnum { state: st, .. } => {
+                st.inp_done();
+                false
+            }
+            State::Running { state: st, .. } => {
+                st.inp_done();
+                false
+            }
+            State::CloseSend { .. } => true,
+            State::CloseWait { .. } => true,
+            State::Done1 { .. } => false,
+            State::Done { .. } => false,
+        };
+        self.initiate_close(ClosingReason::InputDone);
+        if abort_close {
+            self.state = State::Done1 { ts: Instant::now() };
         }
     }
 }
@@ -624,6 +697,7 @@ impl Stream for ChannelHandler {
         loop {
             let tsloop = Instant::now();
             let mut hpp = HaveProgressPending::new();
+            let mut close_request: Option<ClosingReason> = None;
             let self2 = self.as_mut().get_mut();
             if let Some(item) = self2.outbuf.pop_front() {
                 break Ready(Some(Ok(item)));
@@ -659,6 +733,10 @@ impl Stream for ChannelHandler {
                         &mut self2.proto_inp_buf,
                         &mut self2.proto_inp_done,
                         &mut self2.waker_2,
+                        &self2.closing,
+                        &mut self2.peer_closed,
+                        &mut self2.chan_close_ack,
+                        self2.conf.name(),
                         cx,
                     ) {
                         Ready(Some(x)) => {
@@ -678,6 +756,11 @@ impl Stream for ChannelHandler {
                         Pending => {
                             hpp.mark_pending();
                         }
+                    }
+                    if self2.peer_closed && self2.closing.is_none() {
+                        hpp.mark_progress();
+                        Self::note_closing(&mut self2.closing, &mut self2.outbuf, ClosingReason::PeerClosed);
+                        st1.notify_peer_closed();
                     }
                     match st1.poll_next_unpin(cx) {
                         Ready(Some(x)) => {
@@ -700,6 +783,7 @@ impl Stream for ChannelHandler {
                                     }
                                     create::CreatingItem::Done((sid, scalar_type, shape, ca_dbr_ty, chi)) => {
                                         trace2!("got create::CreatingItem::Done  {scalar_type}  {shape}");
+                                        self2.sid = Some(sid.clone());
                                         // TODO guard on outbuf len?
                                         self2.outbuf.push_back(ChannelHandlerItem {
                                             ts_create: Instant::now(),
@@ -759,7 +843,10 @@ impl Stream for ChannelHandler {
                                 }
                             }
                         }
-                        Ready(None) => {}
+                        Ready(None) => {
+                            hpp.mark_progress();
+                            self2.enter_close_send(tsloop);
+                        }
                         Pending => {
                             hpp.mark_pending();
                         }
@@ -768,6 +855,16 @@ impl Stream for ChannelHandler {
                 State::ReadEnum { state: st2, .. } => {
                     let vi = &mut self2.proto_inp_buf;
                     while let Some(item) = vi.pop_front() {
+                        let Some(item) = Self::intercept_close_msg(
+                            item,
+                            &self2.closing,
+                            &mut self2.peer_closed,
+                            &mut self2.chan_close_ack,
+                            self2.conf.name(),
+                        ) else {
+                            hpp.mark_progress();
+                            continue;
+                        };
                         match st2.inp_push_try(item) {
                             Some(x) => {
                                 hpp.mark_pending();
@@ -783,6 +880,11 @@ impl Stream for ChannelHandler {
                                 hpp.mark_progress();
                             }
                         }
+                    }
+                    if self2.peer_closed && self2.closing.is_none() {
+                        hpp.mark_progress();
+                        Self::note_closing(&mut self2.closing, &mut self2.outbuf, ClosingReason::PeerClosed);
+                        st2.notify_peer_closed();
                     }
                     match st2.poll_next_unpin(cx) {
                         Ready(Some(x)) => {
@@ -842,42 +944,7 @@ impl Stream for ChannelHandler {
                         }
                         Ready(None) => {
                             hpp.mark_progress();
-                            let chn = self2.conf.name();
-                            if self2.removing.is_none() {
-                                warn!("move ReadEnum to Closing1, but apparently not on user command  {chn}");
-                            }
-                            let item = if let Some(sid) = self2.sid() {
-                                let msg = CaMsg::from_ty_ts(
-                                    CaMsgTy::ChannelClose(proto::ChannelClose {
-                                        sid: sid.to_u32(),
-                                        cid: self2.cid.to_u32(),
-                                    }),
-                                    tsloop,
-                                );
-                                Some(ChannelHandlerItem {
-                                    ts_create: tsloop,
-                                    inner: ItemInner::ProtoOut(msg),
-                                })
-                            } else {
-                                warn!("can not close channel, maybe never fully created  {chn}");
-                                // seems like the channel got never created.
-                                // TODO except in the case when we send create but did not receive response.
-                                None
-                            };
-                            let fut = async move { Ok(()) };
-                            self2.state = State::Closing1 {
-                                ts: tsloop,
-                                state: Closing1 {
-                                    // TODO channel close may be also already received from server in Running state.
-                                    // TODO handle the remove done tx in better way.
-                                    chan_close_ack: false,
-                                    fut: Some(fut.box2()),
-                                    to: tokio::time::sleep(Duration::from_millis(2000)).box2(),
-                                },
-                            };
-                            if let Some(item) = item {
-                                break Ready(Some(Ok(item)));
-                            }
+                            self2.enter_close_send(tsloop);
                         }
                         Pending => {
                             hpp.mark_pending();
@@ -887,6 +954,16 @@ impl Stream for ChannelHandler {
                 State::Running { state: st2, .. } => {
                     let vi = &mut self2.proto_inp_buf;
                     while let Some(item) = vi.pop_front() {
+                        let Some(item) = Self::intercept_close_msg(
+                            item,
+                            &self2.closing,
+                            &mut self2.peer_closed,
+                            &mut self2.chan_close_ack,
+                            self2.conf.name(),
+                        ) else {
+                            hpp.mark_progress();
+                            continue;
+                        };
                         match st2.inp_push_try(item) {
                             Some(x) => {
                                 hpp.mark_pending();
@@ -902,6 +979,11 @@ impl Stream for ChannelHandler {
                                 hpp.mark_progress();
                             }
                         }
+                    }
+                    if self2.peer_closed && self2.closing.is_none() {
+                        hpp.mark_progress();
+                        Self::note_closing(&mut self2.closing, &mut self2.outbuf, ClosingReason::PeerClosed);
+                        st2.notify_peer_closed();
                     }
                     match st2.poll_next_unpin(cx) {
                         Ready(Some(x)) => {
@@ -963,6 +1045,9 @@ impl Stream for ChannelHandler {
                                             inner: ItemInner::ChannelWriteItems(x),
                                         })));
                                     }
+                                    running::RunningItem::RequestClose(reason) => {
+                                        close_request = Some(reason);
+                                    }
                                 },
                                 Err(e) => {
                                     info!("ChannelHandler:Running:Ready:Err {e}");
@@ -973,115 +1058,81 @@ impl Stream for ChannelHandler {
                         }
                         Ready(None) => {
                             hpp.mark_progress();
-                            let chn = self2.conf.name();
-                            if self2.removing.is_none() {
-                                warn!("move to Closing1, but apparently not on user command  {chn}");
-                            }
-                            let item = if let Some(sid) = self2.sid() {
-                                let msg = CaMsg::from_ty_ts(
-                                    CaMsgTy::ChannelClose(proto::ChannelClose {
-                                        sid: sid.to_u32(),
-                                        cid: self2.cid.to_u32(),
-                                    }),
-                                    tsloop,
-                                );
-                                Some(ChannelHandlerItem {
-                                    ts_create: tsloop,
-                                    inner: ItemInner::ProtoOut(msg),
-                                })
-                            } else {
-                                warn!("can not close channel, maybe never fully created  {chn}");
-                                // seems like the channel got never created.
-                                // TODO except in the case when we send create but did not receive response.
-                                None
-                            };
-                            let fut = async move { Ok(()) };
-                            self2.state = State::Closing1 {
-                                ts: tsloop,
-                                state: Closing1 {
-                                    // TODO channel close may be also already received from server in Running state.
-                                    // TODO handle the remove done tx in better way.
-                                    chan_close_ack: false,
-                                    fut: Some(fut.box2()),
-                                    to: tokio::time::sleep(Duration::from_millis(2000)).box2(),
-                                },
-                            };
-                            if let Some(item) = item {
-                                break Ready(Some(Ok(item)));
-                            }
+                            self2.enter_close_send(tsloop);
                         }
                         Pending => {
                             hpp.mark_pending();
                         }
                     }
                 }
-                State::Closing1 { state: st2, .. } => {
-                    if let Some(item) = self2.proto_inp_buf.pop_front() {
-                        hpp.mark_progress();
-                        match item.msg.ty {
-                            CaMsgTy::ChannelCloseRes(x) => {
-                                debug!("ChannelCloseRes");
-                                st2.chan_close_ack = true;
-                            }
-                            CaMsgTy::ChannelClose(x) => {
-                                warn!("unexpected  ChannelClose");
-                            }
-                            CaMsgTy::ChannelDisconnect(x) => {
-                                warn!("unexpected  ChannelDisconnect");
-                            }
-                            _ => {}
+                State::CloseSend { .. } => {
+                    hpp.mark_progress();
+                    Self::drain_inp_closing(
+                        &mut self2.proto_inp_buf,
+                        &self2.closing,
+                        &mut self2.peer_closed,
+                        &mut self2.chan_close_ack,
+                        self2.conf.name(),
+                    );
+                    let item = match &self2.sid {
+                        Some(sid) => {
+                            let msg = CaMsg::from_ty_ts(
+                                CaMsgTy::ChannelClose(proto::ChannelClose {
+                                    sid: sid.to_u32(),
+                                    cid: self2.cid.to_u32(),
+                                }),
+                                tsloop,
+                            );
+                            Some(ChannelHandlerItem {
+                                ts_create: tsloop,
+                                inner: ItemInner::ProtoOut(msg),
+                            })
                         }
+                        None => {
+                            warn!("can not close channel, never fully created  {}", self2.conf.name());
+                            None
+                        }
+                    };
+                    self2.state = State::CloseWait {
+                        ts: tsloop,
+                        state: CloseWait {
+                            to: tokio::time::sleep(Duration::from_millis(CLOSE_RES_TIMEOUT_MS)).box2(),
+                        },
+                    };
+                    if let Some(item) = item {
+                        break Ready(Some(Ok(item)));
+                    }
+                }
+                State::CloseWait { state: st2, .. } => {
+                    if Self::drain_inp_closing(
+                        &mut self2.proto_inp_buf,
+                        &self2.closing,
+                        &mut self2.peer_closed,
+                        &mut self2.chan_close_ack,
+                        self2.conf.name(),
+                    ) {
+                        hpp.mark_progress();
+                    }
+                    if self2.chan_close_ack {
+                        hpp.mark_progress();
+                        trace2!("CloseWait done");
+                        self2.state = State::Done1 { ts: tsloop };
                     } else if self2.proto_inp_done {
-                    } else {
-                        hpp.mark_pending();
-                    }
-                    {
-                        let futopt = &mut st2.fut;
-                        if let Some(fut) = futopt {
-                            match fut.poll_unpin(cx) {
-                                Ready(x) => {
-                                    *futopt = None;
-                                    hpp.mark_progress();
-                                    match x {
-                                        Ok(()) => {}
-                                        Err(e) => {
-                                            info!("Closing1  {e}");
-                                            break Ready(Some(Err(e.into())));
-                                        }
-                                    }
-                                }
-                                Pending => {
-                                    hpp.mark_pending();
-                                }
-                            }
-                        }
-                    }
-                    if st2.chan_close_ack && st2.fut.is_none() {
                         hpp.mark_progress();
-                        trace2!("Closing1 done");
-                        self2.state = State::Closing2 {
-                            ts: tsloop,
-                            state: Closing2 {},
-                        };
+                        debug!("input gone while waiting for close confirm");
+                        self2.state = State::Done1 { ts: tsloop };
                     } else {
                         match st2.to.poll_unpin(cx) {
                             Ready(()) => {
                                 hpp.mark_progress();
-                                warn!("channel close timeout");
-                                self2.state = State::Closing2 {
-                                    ts: tsloop,
-                                    state: Closing2 {},
-                                };
+                                warn!("channel close timeout  {}", self2.conf.name());
+                                self2.state = State::Done1 { ts: tsloop };
                             }
                             Pending => {
                                 hpp.mark_pending();
                             }
                         }
                     }
-                }
-                State::Closing2 { .. } => {
-                    hpp.mark_progress();
-                    self.state = State::Done1 { ts: tsloop };
                 }
                 State::Done1 { .. } => {
                     trace!("ChannelHandler:Done1");
@@ -1092,7 +1143,10 @@ impl Stream for ChannelHandler {
                     hpp.mark_progress();
                 }
                 State::Done { .. } => {}
-                State::Dummy { .. } => break Ready(Some(Err(Error::Logic))),
+            }
+            if let Some(reason) = close_request {
+                hpp.mark_progress();
+                self.as_mut().get_mut().initiate_close(reason);
             }
             break if hpp.have_progress() {
                 trace4!("HPP:Progress");
@@ -1106,6 +1160,161 @@ impl Stream for ChannelHandler {
                 Ready(None)
             };
         }
+    }
+}
+
+#[cfg(test)]
+mod test_close_sequence {
+    use super::*;
+    use futures::task::noop_waker;
+
+    fn rx_item(ty: CaMsgTy) -> ProtoRxItem {
+        let ts = Instant::now();
+        ProtoRxItem {
+            msg: CaMsg::from_ty_ts(ty, ts),
+            tscmd: ts,
+            tsreg: ts,
+            tsdisp: ts,
+        }
+    }
+
+    fn event_add_res() -> CaMsgTy {
+        CaMsgTy::EventAddResEmpty(proto::EventAddResEmpty {
+            data_type: 0,
+            sid: 7,
+            subid: 1,
+        })
+    }
+
+    fn close_res() -> CaMsgTy {
+        CaMsgTy::ChannelCloseRes(proto::ChannelCloseRes { sid: 7, cid: 3 })
+    }
+
+    fn handler() -> ChannelHandler {
+        let conf = ChannelConfig::st_monitor("SOME:CHANNEL", "test.hcl");
+        ChannelHandler::new("testbackend".into(), conf)
+    }
+
+    #[test]
+    fn intercept_consumes_only_close_protocol() {
+        let mut peer_closed = false;
+        let mut ack = false;
+        let pass =
+            ChannelHandler::intercept_close_msg(rx_item(event_add_res()), &None, &mut peer_closed, &mut ack, "CH");
+        assert!(pass.is_some(), "a normal message must be forwarded");
+        assert!(!peer_closed);
+        assert!(!ack);
+
+        let taken = ChannelHandler::intercept_close_msg(rx_item(close_res()), &None, &mut peer_closed, &mut ack, "CH");
+        assert!(taken.is_none(), "ChannelCloseRes must be consumed");
+        assert!(ack);
+        assert!(peer_closed, "an ack we did not ask for means the peer closed");
+    }
+
+    #[test]
+    fn solicited_ack_is_not_treated_as_peer_close() {
+        let mut peer_closed = false;
+        let mut ack = false;
+        let closing = Some(ClosingReason::Command);
+        ChannelHandler::intercept_close_msg(rx_item(close_res()), &closing, &mut peer_closed, &mut ack, "CH");
+        assert!(ack);
+        assert!(!peer_closed);
+    }
+
+    #[test]
+    fn ack_behind_a_batch_is_intercepted() {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap();
+        let _g = rt.enter();
+        let mut ch = handler();
+        for _ in 0..5 {
+            ch.proto_inp_buf.push_back(rx_item(event_add_res()));
+        }
+        ch.proto_inp_buf.push_back(rx_item(close_res()));
+        let w = noop_waker();
+        let mut cx = Context::from_waker(&w);
+        let _ = Pin::new(&mut ch).poll_next(&mut cx);
+        assert!(ch.chan_close_ack, "ack behind the batch was missed");
+        assert!(ch.peer_closed);
+        assert!(ch.closing.is_some(), "peer close must start the close sequence");
+    }
+
+    #[test]
+    fn peer_close_skips_the_close_command() {
+        let mut ch = handler();
+        ch.sid = Some(Sid::new(7));
+        ch.peer_closed = true;
+        ch.closing = Some(ClosingReason::PeerClosed);
+        ch.enter_close_send(Instant::now());
+        assert_eq!(ch.state.name_short(), "Done1");
+    }
+
+    #[test]
+    fn never_created_skips_the_close_command() {
+        let mut ch = handler();
+        ch.closing = Some(ClosingReason::Command);
+        ch.enter_close_send(Instant::now());
+        assert_eq!(ch.state.name_short(), "Done1");
+    }
+
+    #[test]
+    fn healthy_close_sends_exactly_one_close_command() {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap();
+        let _g = rt.enter();
+        let mut ch = handler();
+        ch.sid = Some(Sid::new(7));
+        ch.closing = Some(ClosingReason::Command);
+        ch.enter_close_send(Instant::now());
+        assert_eq!(ch.state.name_short(), "CloseSend");
+
+        let w = noop_waker();
+        let mut cx = Context::from_waker(&w);
+        let mut close_cnt = 0;
+        for _ in 0..8 {
+            if let Poll::Ready(Some(Ok(item))) = Pin::new(&mut ch).poll_next(&mut cx) {
+                if let ItemInner::ProtoOut(msg) = &item.inner {
+                    if let CaMsgTy::ChannelClose(x) = &msg.ty {
+                        close_cnt += 1;
+                        assert_eq!(x.sid, 7);
+                    }
+                }
+            }
+        }
+        assert_eq!(close_cnt, 1, "ChannelClose must be emitted exactly once");
+        assert_eq!(ch.state.name_short(), "CloseWait");
+
+        ch.proto_inp_buf.push_back(rx_item(close_res()));
+        let _ = Pin::new(&mut ch).poll_next(&mut cx);
+        assert!(ch.chan_close_ack);
+        assert!(
+            matches!(ch.state.name_short(), "Done1" | "Done"),
+            "the ack must end the wait, state is {}",
+            ch.state.name_short()
+        );
+    }
+
+    #[test]
+    fn input_gone_while_closing_does_not_panic() {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap();
+        let _g = rt.enter();
+        let mut ch = handler();
+        ch.sid = Some(Sid::new(7));
+        ch.closing = Some(ClosingReason::Command);
+        ch.enter_close_send(Instant::now());
+        let w = noop_waker();
+        let mut cx = Context::from_waker(&w);
+        let _ = Pin::new(&mut ch).poll_next(&mut cx);
+        assert_eq!(ch.state.name_short(), "CloseWait");
+        ch.inp_done();
+        assert_eq!(ch.state.name_short(), "Done1");
     }
 }
 

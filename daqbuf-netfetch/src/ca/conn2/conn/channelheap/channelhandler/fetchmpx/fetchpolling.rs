@@ -269,8 +269,9 @@ impl FetchPolling {
         }
     }
 
-    fn transition_to_closing(&mut self) {
+    fn transition_to_closing(&mut self, reason: &conn2::conn::channelheap::channelhandler::ClosingReason) {
         let selfname = "transition_to_closing";
+        let _ = reason;
         match &mut self.state {
             State::DoNothing => {
                 self.llog.push(format!("{selfname}  State::DoNothing  goto Closing1"));
@@ -300,7 +301,7 @@ impl FetchPolling {
     pub fn trigger_closing(&mut self, reason: conn2::conn::channelheap::channelhandler::ClosingReason) {
         let selfname = "trigger_closing";
         todo_shutdown!("{selfname}  {}  {:?}", self.sid, reason);
-        self.transition_to_closing();
+        self.transition_to_closing(&reason);
     }
 
     pub fn inp_push_try(&mut self, item: ProtoRxItem) -> Option<ProtoRxItem> {
