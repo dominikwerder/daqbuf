@@ -47,8 +47,10 @@ macro_rules! trace4 { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; 
 macro_rules! trace_pending { ($($arg:tt)*) => { if false { trace!("{}  Pending", format_args!($($arg)*)); } }; }
 
 macro_rules! trace_transition_state { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
-macro_rules! debug_shutdown { ($($arg:tt)*) => { if true { log::debug!($($arg)*); } }; }
 macro_rules! todo_shutdown { ($($arg:tt)*) => { if true { log::debug!($($arg)*); } }; }
+macro_rules! debug_shutdown { ($($arg:tt)*) => { if true { log::debug!($($arg)*); } }; }
+macro_rules! trace_shutdown { ($($arg:tt)*) => { if true { log::debug!($($arg)*); } }; }
+macro_rules! trace2_shutdown { ($($arg:tt)*) => { if false { log::debug!($($arg)*); } }; }
 
 autoerr::create_error_v1!(
     name(Error, "FetchMonitoring"),
@@ -277,7 +279,7 @@ impl FetchMonitoring {
 
     fn transition_to_closing(&mut self, reason: &conn2::conn::channelheap::channelhandler::ClosingReason) -> () {
         let selfname = "transition_to_closing";
-        debug_shutdown!("{selfname}  {reason:?}");
+        trace2_shutdown!("{selfname}  {reason:?}");
         self.llog.push(format!("{selfname}  {}", self.state));
         if reason.no_more_protocol() {
             self.llog
@@ -330,13 +332,19 @@ impl FetchMonitoring {
 
     pub fn inp_done(&mut self) {
         let selfname = "inp_done";
-        debug_shutdown!("{selfname}");
+        trace2_shutdown!("{selfname}");
+        self.inp_done = true;
+    }
+
+    fn inp_done_internal(&mut self) {
+        let selfname = "inp_done_internal";
+        trace2_shutdown!("{selfname}");
         self.inp_done = true;
     }
 
     pub fn trigger_closing(&mut self, reason: conn2::conn::channelheap::channelhandler::ClosingReason) {
         let selfname = "trigger_closing";
-        todo_shutdown!("{selfname}  {}  {:?}", self.sid, reason);
+        trace2_shutdown!("{selfname}  {}  {:?}", self.sid, reason);
         self.transition_to_closing(&reason);
     }
 
@@ -417,7 +425,7 @@ impl FetchMonitoring {
                     ret
                 }
                 State::RemoveMonitorRecv(_, stdir) => {
-                    debug_shutdown!("{selfname}  State::RemoveMonitorRecv  {}", item.msg.ty.cmd_title());
+                    trace2_shutdown!("{selfname}  State::RemoveMonitorRecv  {}", item.msg.ty.cmd_title());
                     match item.msg.ty {
                         CaMsgTy::EventAddResEmpty(..) | CaMsgTy::EventCancelRes(..) => {
                             let stdir = stdir.clone();
@@ -426,7 +434,7 @@ impl FetchMonitoring {
                         }
                         CaMsgTy::EventAddRes(..) => {}
                         _ => {
-                            info!("{selfname}  item while in RemoveMonitorRecv  {item:?}");
+                            debug_shutdown!("{selfname}  item while in RemoveMonitorRecv  {item:?}");
                         }
                     }
                     Ready(Some(None))
@@ -534,7 +542,7 @@ impl FetchMonitoring {
                         hpp.mark_progress();
                         let stdir = stdir.clone();
                         let stn = State::RemoveMonitorSend(stdir);
-                        debug_shutdown!("State::Monitoring  go to {stn:?}");
+                        trace2_shutdown!("State::Monitoring  go to {stn:?}");
                         transition_state(&mut self2.state, stn, &mut self2.state_dt, &mut self2.llog);
                     }
                     StateDirection::Enable => match to.poll_unpin(cx) {
@@ -603,25 +611,27 @@ impl FetchMonitoring {
                 }
                 State::RemoveSubidSend(stdir) => {
                     hpp.mark_progress();
+                    let selfname2 = "State::RemoveSubidSend";
                     match stdir {
                         StateDirection::None => {
                             // TODO RemoveMonitorRecv should actually not accommodate StateDirection::None
-                            debug_shutdown!("{selfname}  State::RemoveMonitorRecv  dir None");
+                            debug_shutdown!("{selfname}  {selfname2}  dir None");
                             let stn = State::DoNothing();
                             transition_state(&mut self2.state, stn, &mut self2.state_dt, &mut self2.llog);
                         }
                         StateDirection::Disable => {
-                            debug_shutdown!("{selfname}  State::RemoveMonitorRecv  dir Disable");
+                            debug_shutdown!("{selfname}  {selfname2}  dir Disable");
                             let stn = State::DoNothing();
                             transition_state(&mut self2.state, stn, &mut self2.state_dt, &mut self2.llog);
                         }
                         StateDirection::Enable => {
-                            debug_shutdown!("{selfname}  State::RemoveMonitorRecv  dir Enable");
+                            debug_shutdown!("{selfname}  {selfname2}  dir Enable");
                             let stdir = stdir.clone();
                             let stn = State::CreateMonitorSend(stdir);
                             transition_state(&mut self2.state, stn, &mut self2.state_dt, &mut self2.llog);
                         }
                         StateDirection::Closing => {
+                            trace2_shutdown!("{selfname}  {selfname2}  dir Closing");
                             let stn = State::Closing1;
                             transition_state(&mut self2.state, stn, &mut self2.state_dt, &mut self2.llog);
                         }
@@ -630,9 +640,8 @@ impl FetchMonitoring {
                     break Ready(Some(Ok(ret)));
                 }
                 State::Closing1 => {
-                    todo_shutdown!("TODO  emit all writes for shutdown");
                     hpp.mark_progress();
-                    self.inp_done();
+                    self.inp_done_internal();
                     transition_state(&mut self.state, State::Done, &mut self.state_dt, &mut self.llog);
                 }
                 State::Done => {}
@@ -644,7 +653,7 @@ impl FetchMonitoring {
                 trace_pending!("{selfname}  HPP");
                 Pending
             } else {
-                trace!("{selfname}  HPP:Done  {}", self.dbg_chn);
+                trace2_shutdown!("{selfname}  HPP:Done  {}", self.dbg_chn);
                 Ready(None)
             };
         }

@@ -560,7 +560,8 @@ impl ChannelHandler {
     }
 
     fn handle_cmd_remove(&mut self, done_tx: asynchan::Sender<u32>) {
-        debug!("handle_cmd_remove  {}", self.conf.name());
+        let selfname = "handle_cmd_remove";
+        debug!("{selfname}  {}", self.conf.name());
         self.removing = Some(done_tx);
         self.initiate_close(ClosingReason::Command);
     }
@@ -570,7 +571,7 @@ impl ChannelHandler {
         match cmd {
             Cmd::Remove(done_tx) => {
                 if self.removing.is_some() {
-                    warn!("already removing")
+                    warn!("{selfname}  already removing")
                 } else {
                     self.handle_cmd_remove(done_tx);
                 }
@@ -1135,7 +1136,8 @@ impl Stream for ChannelHandler {
                     }
                 }
                 State::Done1 { .. } => {
-                    trace!("ChannelHandler:Done1");
+                    let name = self.conf.name();
+                    trace!("{selfname}  Done1  {name}");
                     if let Some(tx) = self.removing.as_mut() {
                         let _ = tx.try_send(0);
                     }

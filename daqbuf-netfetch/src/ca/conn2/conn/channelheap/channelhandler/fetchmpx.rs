@@ -252,12 +252,10 @@ impl Fetchmpx {
 
     pub fn trigger_closing(&mut self, reason: channelhandler::ClosingReason) {
         let selfname = "trigger_closing";
-        todo_shutdown!("{selfname}  {}  reason {:?}", self.sid, reason);
+        let name = self.chconf.name();
+        todo_shutdown!("{selfname}  {}  {name}  reason {:?}", self.sid, reason);
         match &mut self.state {
             State::Normal => {
-                todo_shutdown!(
-                    "{selfname}  TODO  collect all information that we want to store or log and move into future"
-                );
                 self.monitoring.trigger_closing(reason.clone());
                 self.polling.trigger_closing(reason);
                 self.transition_state(State::Closing1);

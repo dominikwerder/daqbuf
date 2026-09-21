@@ -53,6 +53,7 @@ macro_rules! trace_pending { ($($arg:tt)*) => { if false { trace!("{}  Pending",
 
 macro_rules! todo_shutdown { ($($arg:tt)*) => { if true { log::debug!($($arg)*); } }; }
 macro_rules! debug_shutdown { ($($arg:tt)*) => { if true { log::debug!($($arg)*); } }; }
+macro_rules! trace_shutdown { ($($arg:tt)*) => { if true { log::trace!($($arg)*); } }; }
 
 fn _keep() {
     info!("");
@@ -151,6 +152,8 @@ pub struct Running {
     #[to_serde(skip)]
     crst: consume_event_data::ChannelConsumeState,
     use_ioc_time: bool,
+    #[to_serde(skip)]
+    chname: String,
 }
 
 impl Running {
@@ -169,6 +172,7 @@ impl Running {
         chi: ChannelInfoResult,
         chconf: ChannelConfig,
     ) -> Result<Self, Error> {
+        let chname = chconf.name().into();
         let series = chi.series.to_series();
         let use_ioc_time = chconf.use_ioc_time();
         let min_quiets = chconf.min_quiets();
@@ -218,6 +222,7 @@ impl Running {
             binwriter: Some(binwriter),
             crst: consume_event_data::ChannelConsumeState::new(),
             use_ioc_time,
+            chname,
         })
     }
 
@@ -435,7 +440,7 @@ impl Stream for Running {
                     },
                     Ready(None) => {
                         hpp.mark_progress();
-                        debug_shutdown!("Done");
+                        trace_shutdown!("Done  {}", self.chname);
                         self.transition_state(State::Done);
                     }
                     Pending => {

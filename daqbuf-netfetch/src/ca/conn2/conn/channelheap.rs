@@ -753,7 +753,8 @@ impl ChannelHeap {
                                 channelhandler::ItemInner::TestValue(x) => PollHandlerItem::TestValue(x),
                                 channelhandler::ItemInner::LocalLog(x) => PollHandlerItem::LocalLog(x),
                                 channelhandler::ItemInner::ChannelStatus(x) => {
-                                    warn!("{selfname}  TODO  do something with received {x:?}");
+                                    let name = handler.channel_config().name();
+                                    warn!("{selfname}  TODO  do something with received {x:?}  {name}");
                                     PollHandlerItem::None
                                 }
                                 channelhandler::ItemInner::ChannelEventValue(x) => {
@@ -1206,7 +1207,6 @@ impl ChannelHeap {
                     }
                     let donecb = |cheap: &mut ChannelHeap| {
                         let selfname = "ChannelHeap  handle_command  RemoveChannel  fut  donecb";
-                        todo_shutdown!("{selfname}  TODO impl donecb");
                         for cid in cids {
                             cheap.remove_cid(cid);
                         }

@@ -40,6 +40,7 @@ macro_rules! trace_pending { ($($arg:tt)*) => { if false { trace!("{}  Pending",
 
 macro_rules! debug_transition_state { ($($arg:tt)*) => { if false { log::debug!($($arg)*); } }; }
 macro_rules! todo_shutdown { ($($arg:tt)*) => { if true { log::debug!($($arg)*); } }; }
+macro_rules! trace2_shutdown { ($($arg:tt)*) => { if false { log::trace!($($arg)*); } }; }
 
 autoerr::create_error_v1!(
     name(Error, "FetchPolling"),
@@ -300,12 +301,13 @@ impl FetchPolling {
 
     pub fn trigger_closing(&mut self, reason: conn2::conn::channelheap::channelhandler::ClosingReason) {
         let selfname = "trigger_closing";
-        todo_shutdown!("{selfname}  {}  {:?}", self.sid, reason);
+        trace2_shutdown!("{selfname}  {}  {:?}", self.sid, reason);
         self.transition_to_closing(&reason);
     }
 
     pub fn inp_push_try(&mut self, item: ProtoRxItem) -> Option<ProtoRxItem> {
-        trace3!("FetchPolling  inp_push_try");
+        let selfname = "inp_push_try";
+        trace3!("{selfname}");
         let v = &mut self.inp_buf;
         if v.len() < v.capacity() {
             v.push_back(item);
@@ -316,7 +318,8 @@ impl FetchPolling {
     }
 
     pub fn inp_done(&mut self) {
-        trace3!("FetchPolling  inp_done");
+        let selfname = "inp_done";
+        trace3!("{selfname}");
         self.inp_done = true;
     }
 
@@ -490,7 +493,6 @@ impl FetchPolling {
             },
             State::Closing1 => {
                 hpp.mark_progress();
-                todo_shutdown!("TODO  State::Closing1  emit all writes");
                 self2.inp_done();
                 transition_state(&mut self2.state, State::Done, &mut self2.state_dt, &mut self2.llog);
             }
