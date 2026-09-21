@@ -26,6 +26,29 @@ macro_rules! poll_a {
 
 pub(crate) use poll_a;
 
+macro_rules! poll_b {
+    ($poll:expr, $hpp:expr) => {{
+        use Poll::*;
+        match $poll {
+            Ready(Some(x)) => {
+                $hpp.mark_progress();
+                match x {
+                    Ok(()) => {}
+                    Err(e) => {
+                        break Ready(Some(Err(e)));
+                    }
+                }
+            }
+            Ready(None) => {}
+            Pending => {
+                $hpp.mark_pending();
+            }
+        }
+    }};
+}
+
+pub(crate) use poll_b;
+
 macro_rules! poll_break {
     ($poll:expr, $hpp:expr) => {{
         use Poll::*;

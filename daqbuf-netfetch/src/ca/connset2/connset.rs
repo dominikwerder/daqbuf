@@ -20,6 +20,7 @@ use crate::conf::ChannelConfig;
 use crate::futwrap::FutDbg;
 use crate::futwrap::FutDbgBox;
 use crate::futwrap::poll_a;
+use crate::futwrap::poll_b;
 use crate::futwrap::poll_opt_fut_map;
 use crate::futwrap::poll_stream_map_ok;
 use crate::misc::todoval;
@@ -165,14 +166,6 @@ enum ConnSetCmdKind {
 #[derive(Debug)]
 pub struct ConnSetCmd {
     kind: ConnSetCmdKind,
-}
-
-impl ConnSetCmd {
-    fn shutdown() -> Self {
-        Self {
-            kind: ConnSetCmdKind::Shutdown,
-        }
-    }
 }
 
 #[derive(Debug)]
@@ -337,17 +330,20 @@ impl ConnSet {
 
     fn poll_channels(
         self: Pin<&mut Self>,
+        futs_max: usize,
         cx: &mut Context,
-    ) -> Poll<Result<Option<(FutDbg<Result<(), Error>>,)>, Error>> {
+    ) -> Poll<Option<Result<VecDeque<FutDbg<Result<(), Error>>>, Error>>> {
         use Poll::*;
         let selfname = "poll_channels";
         // TODO caller wants to handle only one potential future at a time.
         let mut hpp = HaveProgressPending::new();
         let self2 = self.get_mut();
         let mut remove_names = Vec::new();
-        let mut it1 = self2.channels.iter_mut();
-        let item = loop {
-            if let Some((name, ch)) = it1.next() {
+        let mut ret = VecDeque::new();
+        for (name, ch) in &mut self2.channels {
+            if ret.len() >= futs_max {
+                break;
+            } else {
                 let mut ress = PollRess::new(&self2.ch_info_tx, &self2.finder_handle);
                 match ch.channel.poll_unpin(&mut ress, cx) {
                     Ready(Some(x)) => {
@@ -357,10 +353,12 @@ impl ConnSet {
                                 use channels::channel::ChannelActionItem;
                                 match x {
                                     ChannelActionItem::AddToCaConn(conf, addr) => {
-                                        trace!("poll_channels  ChannelActionItem::AddToCaConn  {addr}  {conf:?}");
+                                        trace!("{selfname}  ChannelActionItem::AddToCaConn  {addr}  {conf:?}");
                                         if let Some(conn_reg) = self2.ca_conns.get_mut(&addr) {
                                             if conn_reg.shutting_down {
-                                                error!("TODO backoff channel, existing CaConn shutting down");
+                                                error!(
+                                                    "{selfname}  TODO backoff channel, existing CaConn shutting down"
+                                                );
                                                 // TODO
                                                 todo!();
                                             } else {
@@ -369,7 +367,7 @@ impl ConnSet {
                                                     comm.channel_add(conf).await?;
                                                     Ok(())
                                                 };
-                                                break Ready(Ok(Some((fut.box2(),))));
+                                                ret.push_back(fut.box2());
                                             }
                                         } else {
                                             self2.mett.ca_conn_create().inc();
@@ -394,11 +392,10 @@ impl ConnSet {
                                                 comm.channel_add(conf).await?;
                                                 Ok(())
                                             };
-                                            break Ready(Ok(Some((fut.box2(),))));
+                                            ret.push_back(fut.box2());
                                         }
                                     }
                                     ChannelActionItem::RemoveFromCaConn(conf, reminfo, mut done_tx) => {
-                                        // TODO send a command to the CaConn to remove the channel, wait for confirmation.
                                         if let Some(addr) = reminfo.addr() {
                                             if let Some(conn_reg) = self2.ca_conns.get_mut(&addr) {
                                                 let mut comm = conn_reg.comm.clone();
@@ -407,7 +404,7 @@ impl ConnSet {
                                                     let _ = done_tx.send(0).await;
                                                     Ok(())
                                                 };
-                                                break Ready(Ok(Some((fut.box2(),))));
+                                                ret.push_back(fut.box2());
                                             } else {
                                             }
                                         } else {
@@ -422,37 +419,29 @@ impl ConnSet {
                             }
                             Err(e) => {
                                 error!("{selfname}  recv error {e}");
-                                break Ready(Err(e));
+                                return Ready(Some(Err(e.into())));
                             }
                         }
                     }
                     Ready(None) => {
-                        todo_shutdown!("channel is done  TODO status event");
+                        todo_shutdown!("{selfname}  channel is done  TODO status event");
                         remove_names.push(name.clone());
                     }
                     Pending => {
                         hpp.mark_pending();
                     }
                 }
-            } else {
-                break Ready(Ok(None));
             }
-        };
+        }
         for x in remove_names {
             self2.channels.remove(&x);
         }
-        if let Ready(Ok(Some(x))) = item {
-            Ready(Ok(Some(x)))
+        if hpp.have_progress() {
+            Ready(Some(Ok(ret)))
+        } else if hpp.have_pending() {
+            Pending
         } else {
-            if hpp.have_progress() {
-                // TODO return type does not allow yet to indicate progress without future to execute.
-                let fut = async move { Ok(()) };
-                Ready(Ok(Some((fut.box2(),))))
-            } else if hpp.have_pending() {
-                Pending
-            } else {
-                Ready(Ok(None))
-            }
+            Ready(None)
         }
     }
 
@@ -1305,20 +1294,21 @@ impl ConnSet {
         loop {
             let mut hpp2 = HaveProgressPending::new();
             let fa = &mut self.cmd_futs_channel;
-            if fa.len() < fa.capacity() {
-                match self.as_mut().poll_channels(cx) {
-                    Ready(x) => match x {
-                        Ok(Some((fut,))) => {
-                            hpp2.mark_progress();
-                            let fa = &mut self.cmd_futs_channel;
-                            fa.push_back(Some(fut));
+            let futs_max = fa.capacity() - fa.len();
+            if futs_max > 0 {
+                match self.as_mut().poll_channels(futs_max, cx) {
+                    Ready(Some(x)) => {
+                        hpp2.mark_progress();
+                        match x {
+                            Ok(futs) => {
+                                self.cmd_futs_channel.extend(futs.into_iter().map(Some));
+                            }
+                            Err(e) => {
+                                return Ready(Some(Err(e)));
+                            }
                         }
-                        Ok(None) => {}
-                        Err(e) => {
-                            hpp2.mark_progress();
-                            return Ready(Some(Err(e)));
-                        }
-                    },
+                    }
+                    Ready(None) => {}
                     Pending => {
                         hpp2.mark_pending();
                     }
@@ -1577,9 +1567,32 @@ impl Stream for ConnSet {
                     );
                 }
                 State::Shutdown2 => {
+                    todo_shutdown!("in State::Shutdown2");
                     poll_a!(self.as_mut().poll_common(cx), hpp);
-                    if !hpp.have_progress() && !hpp.have_pending() {
-                        trace2!("Shutdown2 --> Done");
+                    poll_b!(self.as_mut().poll_shutdown_futs(cx), hpp);
+                    for (k, v) in self.ca_conns.iter_mut() {
+                        if v.shutting_down {
+                        } else {
+                            todo_shutdown!("in State::Shutdown2  ERROR not shutting down {k}");
+                        }
+                    }
+                    if self.shutdown_futs.len() < self.shutdown_futs.capacity() {
+                        if let Some((k, v)) = self.ca_conns.pop_last() {
+                            let fut = async move {
+                                if let Err(e) = v.jh.await {
+                                    error!("fail to join {k}  {e}");
+                                }
+                                info!("CaConn joined {k}");
+                                Ok(())
+                            };
+                            self.shutdown_futs.push_back(Some(fut.box2()));
+                            hpp.mark_progress();
+                        }
+                    }
+                    if hpp.have_progress() {
+                    } else if hpp.have_pending() {
+                    } else {
+                        todo_shutdown!("Shutdown2 --> Done");
                         hpp.mark_progress();
                         self.state = State::Done;
                     }
