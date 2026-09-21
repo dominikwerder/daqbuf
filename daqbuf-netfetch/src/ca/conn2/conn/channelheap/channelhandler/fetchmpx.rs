@@ -211,6 +211,7 @@ impl Fetchmpx {
             scalar_type.clone(),
             shape.clone(),
             ca_dbr_ty.clone(),
+            chconf.name().into(),
         );
         if chconf.is_polled() {
             polling.transition_to_enable();

@@ -307,6 +307,19 @@ impl ConnSet {
     fn trigger_shutdown(mut self: Pin<&mut Self>) {
         match self.state {
             State::Running => {
+                self.ca_conns.iter_mut().for_each(|(_, v)| {
+                    v.shutting_down = true;
+                });
+                let comms: Vec<_> = self.ca_conns.iter().map(|(_, v)| v.comm.clone()).collect();
+                let futs = async move {
+                    for mut comm in comms {
+                        if comm.trigger_disconnect_on_idle().await.is_err() {
+                            // TODO metrics
+                        }
+                    }
+                    Ok(())
+                };
+                self.shutdown_futs.push_back(Some(futs.box2()));
                 self.state = State::Shutdown(Shutdown {
                     timeout: tokio::time::sleep(Duration::from_millis(10000)).box2(),
                 });

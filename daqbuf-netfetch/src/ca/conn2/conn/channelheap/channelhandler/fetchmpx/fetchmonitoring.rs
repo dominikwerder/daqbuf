@@ -165,6 +165,8 @@ pub struct FetchMonitoring {
     llog: locallog::LocalLog,
     #[to_serde(skip)]
     pending_write: VecDeque<super::RawEventForWrite>,
+    #[to_serde(skip)]
+    dbg_chn: String,
 }
 
 impl FetchMonitoring {
@@ -175,6 +177,7 @@ impl FetchMonitoring {
         scalar_type: ScalarType,
         shape: Shape,
         ca_dbr_ty: CaDbrTy,
+        dbg_chn: String,
     ) -> Self {
         Self {
             state: State::DoNothing(),
@@ -191,6 +194,7 @@ impl FetchMonitoring {
             rng: stats::xoshiro_from_os_rng(),
             llog: locallog::LocalLog::new(),
             pending_write: VecDeque::new(),
+            dbg_chn,
         }
     }
 
@@ -640,7 +644,7 @@ impl FetchMonitoring {
                 trace_pending!("{selfname}  HPP");
                 Pending
             } else {
-                trace3!("{selfname}  HPP:Done");
+                trace!("{selfname}  HPP:Done  {}", self.dbg_chn);
                 Ready(None)
             };
         }

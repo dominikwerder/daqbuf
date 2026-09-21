@@ -75,13 +75,13 @@ impl<'a> fmt::Display for EventPrepareWriteFmtOnline<'a> {
         let cnt_max = map.values().map(|x| x.cnt).max().unwrap_or(0);
         let cnt_maxdiff = cnt_max - cnt_min;
         let cnt_sum: u64 = map.values().map(|x| x.cnt).sum();
-        let cnt_avg = cnt_sum as f32 / map.len() as f32;
-        let cnt_var: f32 = map.values().map(|x| (x.cnt as f32 - cnt_avg).powi(2)).sum();
-        let cnt_dev = cnt_var.powf(0.5);
+        // let cnt_avg = cnt_sum as f32 / map.len() as f32;
+        // let cnt_var: f32 = map.values().map(|x| (x.cnt as f32 - cnt_avg).powi(2)).sum();
+        // let cnt_dev = cnt_var.powf(0.5);
         let cnt_delta = self.cnt_delta;
         write!(
             fmt,
-            "\n  mlen {mlen}  cnt_sum {cnt_sum:14}  cnt_delta {cnt_delta:6}  cnt_maxdiff {cnt_maxdiff:14}  cnt_avg {cnt_avg:18.2}  cnt_dev {cnt_dev:14.2}"
+            "\n  mlen {mlen}  cnt_sum {cnt_sum:14}  cnt_delta {cnt_delta:6}  cnt_maxdiff {cnt_maxdiff:14}"
         )
     }
 }
