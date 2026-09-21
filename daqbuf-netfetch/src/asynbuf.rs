@@ -121,18 +121,23 @@ impl<T> PushRes<T> {
 
 #[derive(Debug)]
 pub struct AsynBuf<T> {
+    cap: usize,
     buf: VecDeque<T>,
 }
 
 impl<T> AsynBuf<T> {
     pub fn new(cap: usize) -> Self {
         Self {
+            cap,
             buf: VecDeque::with_capacity(cap),
         }
     }
 
     pub fn from_deque(v: VecDeque<T>) -> Self {
-        Self { buf: v }
+        Self {
+            cap: v.capacity(),
+            buf: v,
+        }
     }
 
     pub fn len(&self) -> usize {
@@ -140,7 +145,7 @@ impl<T> AsynBuf<T> {
     }
 
     pub fn cap(&self) -> usize {
-        self.buf.capacity()
+        self.cap
     }
 
     pub fn is_space(&self) -> bool {
@@ -151,7 +156,7 @@ impl<T> AsynBuf<T> {
         if self.buf.len() == 0 {
             self.buf.push_back(x);
             PushRes::First
-        } else if self.buf.len() < self.buf.capacity() {
+        } else if self.buf.len() < self.cap {
             self.buf.push_back(x);
             PushRes::Done
         } else {
@@ -172,8 +177,7 @@ impl<T> AsynBuf<T> {
     }
 
     pub fn take(&mut self) -> Self {
-        let n = self.buf.capacity();
-        let v = std::mem::replace(&mut self.buf, VecDeque::with_capacity(n));
+        let v = std::mem::replace(&mut self.buf, VecDeque::with_capacity(self.cap));
         Self::from_deque(v)
     }
 }

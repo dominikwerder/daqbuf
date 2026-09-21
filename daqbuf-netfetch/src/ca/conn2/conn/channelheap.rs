@@ -1,5 +1,4 @@
 const INP_BUF_CAP: usize = 128;
-const OUT_BUF_MAX_LEN: usize = 128;
 
 //
 
@@ -932,7 +931,7 @@ impl ChannelHeap {
         let loopres: Poll<Option<Result<PollHandlerItemB, Error>>> = loop {
             // TODO monitor the capacity of the wakeup lists
             trace4!("{selfname}  loop");
-            if self2.out_buf.len() > OUT_BUF_MAX_LEN {
+            if !self2.out_buf.is_space() {
                 break Ready(Some(Ok(PollHandlerItemB::None)));
             }
             if let Some(cid) = self2.wakeup_cids_tmp.pop() {

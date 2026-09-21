@@ -517,7 +517,7 @@ impl CaConn {
             }
         }
         self.as_mut().metrics_emit();
-        if self.out_buf.len() < OUT_BUF_CAP {
+        if self.out_buf.is_space() {
             trace!("TODO  poll_own_ticker  emit status info");
             let v = self.as_mut().status_info();
             let item = CaConnItem::StatusInfo(v);
@@ -718,7 +718,7 @@ impl CaConn {
 
     fn try_flush_write_batch(&mut self) {
         if !self.write_batch.is_empty() {
-            if self.out_buf.len() < OUT_BUF_CAP {
+            if self.out_buf.is_space() {
                 let batch = std::mem::take(&mut self.write_batch);
                 self.mett.write_batch_flush().inc();
                 self.mett.write_batch_flush_len().push_val(batch.len() as u32);
@@ -1008,7 +1008,7 @@ impl Stream for CaConn {
                             );
                         };
                     }
-                    if self2.out_buf.len() < OUT_BUF_CAP {
+                    if self2.out_buf.is_space() {
                         // Precondition: must only call this if self.out_buf not too full.
                         match st1.poll_next_unpin(cx) {
                             Ready(Some(x)) => {
