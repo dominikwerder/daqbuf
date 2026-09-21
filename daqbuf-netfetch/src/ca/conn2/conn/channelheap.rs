@@ -1075,84 +1075,97 @@ impl ChannelHeap {
         }
     }
 
-    fn poll_all_handler(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-    ) -> Poll<Option<Result<PollHandlerItem, Error>>> {
+    fn poll_all_handler(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Result<(), Error>>> {
         use Poll::*;
         let selfname = "poll_all_handler";
         trace4!("{selfname}");
         let mut hpp2 = HaveProgressPending::new();
+        let tsnow = Instant::now();
         loop {
             trace4!("{selfname}  loop");
-            if self.out_buf.len() >= OUT_BUF_MAX_LEN {
-                break Ready(Some(Ok(PollHandlerItem::None)));
-            }
             let mut hpp = HaveProgressPending::new();
-            if let Some(mut fut) = self.poll_handler_fut.as_mut().map(Pin::new) {
-                match fut.poll_unpin(cx) {
-                    Ready(x) => {
-                        trace4!("poll_handler_fut  Ready");
-                        self.poll_handler_fut = None;
-                        hpp.mark_progress();
-                        match x {
-                            Ok(()) => {}
-                            Err(e) => {
-                                break Ready(Some(Err(e)));
+            if self.out_buf.len() < OUT_BUF_MAX_LEN {
+                if let Some(fut) = self.poll_handler_fut.as_mut() {
+                    match fut.poll_unpin(cx) {
+                        Ready(x) => {
+                            trace4!("poll_handler_fut  Ready");
+                            self.poll_handler_fut = None;
+                            hpp.mark_progress();
+                            match x {
+                                Ok(()) => {}
+                                Err(e) => {
+                                    break Ready(Some(Err(e)));
+                                }
                             }
                         }
-                    }
-                    Pending => {
-                        hpp.mark_pending();
-                    }
-                }
-            } else {
-                match self.as_mut().poll_all_handler_sub(cx) {
-                    Ready(Some(x)) => {
-                        hpp.mark_progress();
-                        hpp2.mark_progress();
-                        match x {
-                            Ok(x) => match x {
-                                PollHandlerItemB::None => {
-                                    trace4!("poll_all_handler_sub  None");
-                                }
-                                PollHandlerItemB::Fut(fut) => {
-                                    trace4!("poll_all_handler_sub  Fut");
-                                    self.poll_handler_fut = Some(fut);
-                                }
-                                PollHandlerItemB::ProtoOut(x) => {
-                                    trace4!("poll_all_handler_sub  ProtoOut");
-                                    break Ready(Some(Ok(PollHandlerItem::ProtoOut(x))));
-                                }
-                                PollHandlerItemB::ChannelInfoQuery(x) => {
-                                    break Ready(Some(Ok(PollHandlerItem::ChannelInfoQuery(x))));
-                                }
-                                PollHandlerItemB::TestValue(x) => {
-                                    break Ready(Some(Ok(PollHandlerItem::TestValue(x))));
-                                }
-                                PollHandlerItemB::LocalLog(x) => {
-                                    break Ready(Some(Ok(PollHandlerItem::LocalLog(x))));
-                                }
-                                PollHandlerItemB::ChannelEventValue(x) => {
-                                    break Ready(Some(Ok(PollHandlerItem::ChannelEventValue(x))));
-                                }
-                            },
-                            Err(e) => {
-                                error!("{selfname}  {e}");
-                                break Ready(Some(Err(e)));
-                            }
+                        Pending => {
+                            hpp.mark_pending();
                         }
                     }
-                    Ready(None) => {}
-                    Pending => {
-                        hpp.mark_pending();
+                } else {
+                    match self.as_mut().poll_all_handler_sub(cx) {
+                        Ready(Some(x)) => {
+                            hpp.mark_progress();
+                            hpp2.mark_progress();
+                            match x {
+                                Ok(x) => match x {
+                                    PollHandlerItemB::None => {
+                                        trace4!("poll_all_handler_sub  None");
+                                    }
+                                    PollHandlerItemB::Fut(fut) => {
+                                        trace4!("poll_all_handler_sub  Fut");
+                                        self.poll_handler_fut = Some(fut);
+                                    }
+                                    PollHandlerItemB::ProtoOut(x) => {
+                                        trace4!("poll_all_handler_sub  ProtoOut");
+                                        // self.out_buf.push_back(PollHandlerItem::ProtoOut(x));
+                                        let _ = self.out_buf.push_back(ChannelHeapItem {
+                                            ts_create: tsnow,
+                                            inner: ItemInner::ProtoOut(x),
+                                        });
+                                    }
+                                    PollHandlerItemB::ChannelInfoQuery(x) => {
+                                        let _ = self.out_buf.push_back(ChannelHeapItem {
+                                            ts_create: tsnow,
+                                            inner: ItemInner::ChannelInfoQuery(x),
+                                        });
+                                    }
+                                    PollHandlerItemB::TestValue(x) => {
+                                        let _ = self.out_buf.push_back(ChannelHeapItem {
+                                            ts_create: tsnow,
+                                            inner: ItemInner::TestValue(x),
+                                        });
+                                    }
+                                    PollHandlerItemB::LocalLog(x) => {
+                                        let _ = self.out_buf.push_back(ChannelHeapItem {
+                                            ts_create: tsnow,
+                                            inner: ItemInner::LocalLog(x),
+                                        });
+                                    }
+                                    PollHandlerItemB::ChannelEventValue(x) => {
+                                        let _ = self.out_buf.push_back(ChannelHeapItem {
+                                            ts_create: tsnow,
+                                            inner: ItemInner::ChannelEventValue(x),
+                                        });
+                                    }
+                                },
+                                Err(e) => {
+                                    error!("{selfname}  {e}");
+                                    break Ready(Some(Err(e)));
+                                }
+                            }
+                        }
+                        Ready(None) => {}
+                        Pending => {
+                            hpp.mark_pending();
+                        }
                     }
                 }
             }
             break if hpp.have_progress() {
                 continue;
             } else if hpp2.have_progress() {
-                Ready(Some(Ok(PollHandlerItem::None)))
+                Ready(Some(Ok(())))
             } else if hpp.have_pending() {
                 Pending
             } else {
@@ -1293,7 +1306,7 @@ impl ChannelHeap {
         let mut i1 = 0;
         loop {
             i1 += 1;
-            if i1 > 8000 {
+            if i1 > 16000 {
                 panic!("i1 max");
             }
             let tsloop = Instant::now();
@@ -1346,69 +1359,7 @@ impl ChannelHeap {
                             hpp.mark_progress();
                             trace2!("after ChannelHeap::poll_all_handler");
                             match x {
-                                Ok(x) => match x {
-                                    PollHandlerItem::None => {}
-                                    PollHandlerItem::ChannelHeapItem(item) => {
-                                        error!("{selfname}  TODO handle ChannelHeapItem  {item:?}");
-                                    }
-                                    PollHandlerItem::ChHandlerMod => {}
-                                    PollHandlerItem::ProtoOut(x) => {
-                                        let inner = ItemInner::ProtoOut(x);
-                                        let item = ChannelHeapItem {
-                                            ts_create: tsloop,
-                                            inner,
-                                        };
-                                        self.out_buf.push_back_force(item);
-                                    }
-                                    PollHandlerItem::ChannelInfoQuery(x) => {
-                                        let inner = ItemInner::ChannelInfoQuery(x);
-                                        let item = ChannelHeapItem {
-                                            ts_create: tsloop,
-                                            inner,
-                                        };
-                                        self.out_buf.push_back_force(item);
-                                    }
-                                    PollHandlerItem::TestValue(x) => {
-                                        let inner = ItemInner::TestValue(x);
-                                        let item = ChannelHeapItem {
-                                            ts_create: tsloop,
-                                            inner,
-                                        };
-                                        self.out_buf.push_back_force(item);
-                                    }
-                                    PollHandlerItem::LocalLog(x) => {
-                                        let inner = ItemInner::LocalLog(x);
-                                        let item = ChannelHeapItem {
-                                            ts_create: tsloop,
-                                            inner,
-                                        };
-                                        self.out_buf.push_back_force(item);
-                                    }
-                                    PollHandlerItem::ChannelEventValue(x) => {
-                                        let inner = ItemInner::ChannelEventValue(x);
-                                        let item = ChannelHeapItem {
-                                            ts_create: tsloop,
-                                            inner,
-                                        };
-                                        self.out_buf.push_back_force(item);
-                                    }
-                                    PollHandlerItem::ChannelWriteItems(x) => {
-                                        let inner = ItemInner::ChannelWriteItems(x);
-                                        let item = ChannelHeapItem {
-                                            ts_create: tsloop,
-                                            inner,
-                                        };
-                                        self.out_buf.push_back_force(item);
-                                    }
-                                    PollHandlerItem::ChannelTrace(x) => {
-                                        let inner = ItemInner::ChannelTrace(x);
-                                        let item = ChannelHeapItem {
-                                            ts_create: tsloop,
-                                            inner,
-                                        };
-                                        self.out_buf.push_back_force(item);
-                                    }
-                                },
+                                Ok(()) => {}
                                 Err(e) => {
                                     self.state = State::Done;
                                     break Ready(Some(Err(e)));
