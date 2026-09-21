@@ -1084,7 +1084,7 @@ impl ChannelHeap {
         loop {
             trace4!("{selfname}  loop");
             let mut hpp = HaveProgressPending::new();
-            if self.out_buf.len() < OUT_BUF_MAX_LEN {
+            if self.out_buf.len() < self.out_buf.cap() {
                 if let Some(fut) = self.poll_handler_fut.as_mut() {
                     match fut.poll_unpin(cx) {
                         Ready(x) => {
@@ -1118,32 +1118,31 @@ impl ChannelHeap {
                                     }
                                     PollHandlerItemB::ProtoOut(x) => {
                                         trace4!("poll_all_handler_sub  ProtoOut");
-                                        // self.out_buf.push_back(PollHandlerItem::ProtoOut(x));
-                                        let _ = self.out_buf.push_back(ChannelHeapItem {
+                                        self.out_buf.push_back_force(ChannelHeapItem {
                                             ts_create: tsnow,
                                             inner: ItemInner::ProtoOut(x),
                                         });
                                     }
                                     PollHandlerItemB::ChannelInfoQuery(x) => {
-                                        let _ = self.out_buf.push_back(ChannelHeapItem {
+                                        self.out_buf.push_back_force(ChannelHeapItem {
                                             ts_create: tsnow,
                                             inner: ItemInner::ChannelInfoQuery(x),
                                         });
                                     }
                                     PollHandlerItemB::TestValue(x) => {
-                                        let _ = self.out_buf.push_back(ChannelHeapItem {
+                                        self.out_buf.push_back_force(ChannelHeapItem {
                                             ts_create: tsnow,
                                             inner: ItemInner::TestValue(x),
                                         });
                                     }
                                     PollHandlerItemB::LocalLog(x) => {
-                                        let _ = self.out_buf.push_back(ChannelHeapItem {
+                                        self.out_buf.push_back_force(ChannelHeapItem {
                                             ts_create: tsnow,
                                             inner: ItemInner::LocalLog(x),
                                         });
                                     }
                                     PollHandlerItemB::ChannelEventValue(x) => {
-                                        let _ = self.out_buf.push_back(ChannelHeapItem {
+                                        self.out_buf.push_back_force(ChannelHeapItem {
                                             ts_create: tsnow,
                                             inner: ItemInner::ChannelEventValue(x),
                                         });
