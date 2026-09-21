@@ -172,7 +172,8 @@ impl<T> AsynBuf<T> {
     }
 
     pub fn take(&mut self) -> Self {
-        let v = std::mem::replace(&mut self.buf, VecDeque::new());
+        let n = self.buf.capacity();
+        let v = std::mem::replace(&mut self.buf, VecDeque::with_capacity(n));
         Self::from_deque(v)
     }
 }

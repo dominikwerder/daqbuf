@@ -1084,7 +1084,7 @@ impl ChannelHeap {
         loop {
             trace4!("{selfname}  loop");
             let mut hpp = HaveProgressPending::new();
-            if self.out_buf.len() < self.out_buf.cap() {
+            if self.out_buf.is_space() {
                 if let Some(fut) = self.poll_handler_fut.as_mut() {
                     match fut.poll_unpin(cx) {
                         Ready(x) => {
