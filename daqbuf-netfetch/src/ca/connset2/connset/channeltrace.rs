@@ -1,4 +1,5 @@
 use hashbrown::HashMap;
+use serde::Serialize;
 use std::collections::VecDeque;
 use std::net::SocketAddrV4;
 use std::time::Instant;
@@ -8,7 +9,25 @@ pub struct ChannelTraceError {
     err: Box<dyn std::error::Error + Send>,
 }
 
-#[derive(Debug)]
+impl Serialize for ChannelTraceError {
+    fn serialize<S>(&self, ser: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        ser.serialize_str(&self.err.to_string())
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub enum CaProto {
+    Created,
+    Ping,
+    Pong,
+    ReadNotify,
+    ReadNotifyRes,
+}
+
+#[derive(Debug, Serialize)]
 pub enum ChannelTraceItemInner {
     Error(ChannelTraceError),
     Created,
@@ -26,8 +45,9 @@ enum ChannelTraceCat {
     Ping,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct ChannelTraceItem {
+    #[serde(with = "serde_helper::serde_instant::serde_Instant_elapsed_ms")]
     ts: Instant,
     inner: ChannelTraceItemInner,
 }
@@ -41,8 +61,9 @@ impl ChannelTraceItem {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct ChannelTraceL1Item {
+    #[serde(with = "serde_helper::serde_instant::serde_Instant_elapsed_ms")]
     ts: Instant,
     chname: String,
     inner: ChannelTraceItem,
@@ -50,6 +71,7 @@ pub struct ChannelTraceL1Item {
 
 impl ChannelTraceL1Item {
     pub fn new(chname: String, inner: ChannelTraceItem) -> Self {
+        // serde_helper::serde_instant::serde_Instant_elapsed_ms
         Self {
             ts: Instant::now(),
             chname,
@@ -58,8 +80,9 @@ impl ChannelTraceL1Item {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct ChannelTraceL2Item {
+    #[serde(with = "serde_helper::serde_instant::serde_Instant_elapsed_ms")]
     ts: Instant,
     conn: SocketAddrV4,
     inner: ChannelTraceL1Item,
@@ -81,9 +104,20 @@ struct ChannelTraceStashChname {
 }
 
 impl ChannelTraceStashChname {
+    const fn cap() -> usize {
+        100
+    }
+
     fn new() -> Self {
         Self {
-            qu_channel: VecDeque::with_capacity(100),
+            qu_channel: VecDeque::with_capacity(Self::cap() + 20),
+        }
+    }
+
+    fn push(&mut self, item: ChannelTraceL2Item) {
+        self.qu_channel.push_back(item);
+        if self.qu_channel.len() > Self::cap() {
+            self.qu_channel = self.qu_channel.split_off(Self::cap() * 2 / 3);
         }
     }
 }
@@ -102,8 +136,12 @@ impl ChannelTraceStash {
 
     pub(super) fn push(&mut self, item: ChannelTraceL2Item) {
         if let Some(e) = self.by_chname.get_mut(&item.inner.chname) {
+            e.push(item);
         } else {
-            self.by_chname.insert(item.inner.chname, ChannelTraceStashChname::new());
+            let k = item.inner.chname.clone();
+            let mut st = ChannelTraceStashChname::new();
+            st.push(item);
+            self.by_chname.insert(k, st);
         }
     }
 
