@@ -25,10 +25,22 @@ pub struct Created {
     latency: Duration,
 }
 
+impl Created {
+    pub fn new(latency: Duration) -> Self {
+        Self { latency }
+    }
+}
+
 #[derive(Debug, Serialize)]
 pub struct ReadNotifyRes {
     #[serde(with = "serde_helper::serde_duration::serde_Duration_human")]
     latency: Duration,
+}
+
+impl ReadNotifyRes {
+    pub fn new(latency: Duration) -> Self {
+        Self { latency }
+    }
 }
 
 #[derive(Debug, Serialize)]

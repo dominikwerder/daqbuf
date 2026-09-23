@@ -18,7 +18,9 @@ use crate::ca::conn2::conn::channelheap::ProtoRxItem;
 use crate::ca::conn2::conn::channelheap::channelhandler::ClosingReason;
 use crate::ca::conn2::conn::channelheap::channelhandler::fetchmpx;
 use crate::ca::conn2::locallog;
+use crate::ca::connset2::connset::channeltrace::CaProto;
 use crate::ca::connset2::connset::channeltrace::ChannelTraceItemInner;
+use crate::ca::connset2::connset::channeltrace::ReadNotifyRes;
 use crate::ca::progpend::HaveProgressPending;
 use crate::conf::ChannelConfig;
 use crate::futwrap::FutDbg;
@@ -148,9 +150,10 @@ struct Normal {
     #[to_serde(len)]
     futs: VecDeque<Option<(Ioid, FutDbg<()>)>>,
     /// Completed together with the matching `futs` slot (see `Running::poll_futs`),
-    /// so a timed-out command can't leak a stale entry here.
+    /// so a timed-out command can't leak a stale entry here. The `Instant` is when the
+    /// `ReadNotify` request was sent, kept to measure round-trip latency for the trace.
     #[to_serde(skip)]
-    read_notify_pending: HashMap<Ioid, oneshot::Sender<proto::ReadNotifyRes>>,
+    read_notify_pending: HashMap<Ioid, (Instant, oneshot::Sender<proto::ReadNotifyRes>)>,
 }
 
 #[derive(Debug, ToSerde)]
@@ -329,7 +332,7 @@ impl Running {
                     tsnow,
                 );
                 let (oneshot_tx, oneshot_rx) = oneshot::channel();
-                normal.read_notify_pending.insert(ioid, oneshot_tx);
+                normal.read_notify_pending.insert(ioid, (tsnow, oneshot_tx));
                 let fut = async move {
                     let res = match tokio::time::timeout(Duration::from_millis(READ_NOTIFY_CMD_TIMEOUT_MS), oneshot_rx)
                         .await
@@ -347,7 +350,8 @@ impl Running {
                 };
                 normal.futs.push_back(Some((ioid, fut.box2())));
                 self.outbuf.push_back(msg);
-                self.trace_outbuf.push_back(ChannelTraceItemInner::ReadNotify);
+                self.trace_outbuf
+                    .push_back(ChannelTraceItemInner::CaProto(CaProto::ReadNotify));
                 json!({"queued": true})
             }
             State::Done => json!({
@@ -405,9 +409,14 @@ impl Running {
                         };
                         let read_notify_waiter =
                             read_notify_ioid.and_then(|ioid| st2.read_notify_pending.remove(&ioid));
-                        if let Some(tx) = read_notify_waiter {
+                        if let Some((ts_sent, tx)) = read_notify_waiter {
                             hpp.mark_progress();
-                            self2.trace_outbuf.push_back(ChannelTraceItemInner::ReadNotifyRes);
+                            let latency = ts_sent.elapsed();
+                            self2
+                                .trace_outbuf
+                                .push_back(ChannelTraceItemInner::CaProto(CaProto::ReadNotifyRes(
+                                    ReadNotifyRes::new(latency),
+                                )));
                             match item.msg.ty {
                                 proto::CaMsgTy::ReadNotifyRes(v) => {
                                     let _ = tx.send(v);

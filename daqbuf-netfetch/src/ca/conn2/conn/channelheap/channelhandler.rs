@@ -22,9 +22,11 @@ use crate::ca::conn2::conn::channelheap::channelhandler::running::Running;
 use crate::ca::conn2::conn::channelheap::channelhandler::running::RunningStateSerde;
 use crate::ca::conn2::locallog;
 use crate::ca::conn2::timeoutable;
+use crate::ca::connset2::connset::channeltrace::CaProto;
 use crate::ca::connset2::connset::channeltrace::ChannelTraceItem;
 use crate::ca::connset2::connset::channeltrace::ChannelTraceItemInner;
 use crate::ca::connset2::connset::channeltrace::ChannelTraceL1Item;
+use crate::ca::connset2::connset::channeltrace::Created;
 use crate::ca::progpend::HaveProgressPending;
 use crate::conf::ChannelConfig;
 use crate::futwrap::FutDbg;
@@ -745,7 +747,10 @@ impl Stream for ChannelHandler {
                     };
                     hpp.mark_progress();
                 }
-                State::Creating { state: st1, .. } => {
+                State::Creating {
+                    ts: ts_creating,
+                    state: st1,
+                } => {
                     match Self::poll_proto_rx_creating(
                         Pin::new(st1),
                         &mut self2.proto_inp_buf,
@@ -806,7 +811,9 @@ impl Stream for ChannelHandler {
                                         self2.outbuf.push_back(ChannelHandlerItem {
                                             ts_create: Instant::now(),
                                             inner: ItemInner::ChannelTrace(ChannelTraceItem::new(
-                                                ChannelTraceItemInner::Created,
+                                                ChannelTraceItemInner::CaProto(CaProto::Created(Created::new(
+                                                    ts_creating.elapsed(),
+                                                ))),
                                             )),
                                         });
                                         if let netpod::ScalarType::Enum = scalar_type {
