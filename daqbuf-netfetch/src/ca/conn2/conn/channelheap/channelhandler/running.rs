@@ -18,6 +18,7 @@ use crate::ca::conn2::conn::channelheap::ProtoRxItem;
 use crate::ca::conn2::conn::channelheap::channelhandler::ClosingReason;
 use crate::ca::conn2::conn::channelheap::channelhandler::fetchmpx;
 use crate::ca::conn2::locallog;
+use crate::ca::connset2::connset::channeltrace::ChannelTraceItemInner;
 use crate::ca::progpend::HaveProgressPending;
 use crate::conf::ChannelConfig;
 use crate::futwrap::FutDbg;
@@ -113,6 +114,7 @@ pub enum RunningItem {
     ChannelEventValue(ChannelEventValue),
     ChannelWriteItems(Vec<QueryItem>),
     RequestClose(ClosingReason),
+    ChannelTrace(ChannelTraceItemInner),
 }
 
 #[derive(Debug, ToSerde)]
@@ -166,6 +168,8 @@ pub struct Running {
     removing: bool,
     #[to_serde(len)]
     outbuf: VecDeque<CaMsg>,
+    #[to_serde(len)]
+    trace_outbuf: VecDeque<ChannelTraceItemInner>,
     #[to_serde(len)]
     inp_buf: VecDeque<ProtoRxItem>,
     inp_done: bool,
@@ -240,6 +244,7 @@ impl Running {
             chi,
             removing: false,
             outbuf: VecDeque::new(),
+            trace_outbuf: VecDeque::new(),
             inp_buf: VecDeque::with_capacity(INP_BUF_CAP),
             inp_done: false,
             mett: ChannelHandlerMetrics::new(),
@@ -342,6 +347,7 @@ impl Running {
                 };
                 normal.futs.push_back(Some((ioid, fut.box2())));
                 self.outbuf.push_back(msg);
+                self.trace_outbuf.push_back(ChannelTraceItemInner::ReadNotify);
                 json!({"queued": true})
             }
             State::Done => json!({
@@ -401,6 +407,7 @@ impl Running {
                             read_notify_ioid.and_then(|ioid| st2.read_notify_pending.remove(&ioid));
                         if let Some(tx) = read_notify_waiter {
                             hpp.mark_progress();
+                            self2.trace_outbuf.push_back(ChannelTraceItemInner::ReadNotifyRes);
                             match item.msg.ty {
                                 proto::CaMsgTy::ReadNotifyRes(v) => {
                                     let _ = tx.send(v);
@@ -486,6 +493,9 @@ impl Stream for Running {
             self.poll_futs(cx);
             if let Some(msg) = self.outbuf.pop_front() {
                 break Ready(Some(Ok(RunningItem::CaMsgOut(msg))));
+            }
+            if let Some(x) = self.trace_outbuf.pop_front() {
+                break Ready(Some(Ok(RunningItem::ChannelTrace(x))));
             }
             match &mut self.state {
                 State::Normal(normal) => match normal.fetchmpx.poll_next_unpin(cx) {

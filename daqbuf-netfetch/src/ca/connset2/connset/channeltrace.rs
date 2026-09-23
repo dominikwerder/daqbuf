@@ -2,6 +2,7 @@ use hashbrown::HashMap;
 use serde::Serialize;
 use std::collections::VecDeque;
 use std::net::SocketAddrV4;
+use std::time::Duration;
 use std::time::Instant;
 
 #[derive(Debug)]
@@ -19,35 +20,35 @@ impl Serialize for ChannelTraceError {
 }
 
 #[derive(Debug, Serialize)]
+pub struct Created {
+    #[serde(with = "serde_helper::serde_duration::serde_Duration_human")]
+    latency: Duration,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ReadNotifyRes {
+    #[serde(with = "serde_helper::serde_duration::serde_Duration_human")]
+    latency: Duration,
+}
+
+#[derive(Debug, Serialize)]
 pub enum CaProto {
-    Created,
+    Created(Created),
     Ping,
     Pong,
     ReadNotify,
-    ReadNotifyRes,
+    ReadNotifyRes(ReadNotifyRes),
 }
 
 #[derive(Debug, Serialize)]
 pub enum ChannelTraceItemInner {
     Error(ChannelTraceError),
-    Created,
-    Ping,
-    Pong,
-}
-
-#[derive(Debug)]
-enum ChannelTraceCat {
-    Error,
-    Channel,
-    ReadNotify,
-    Monitor,
-    MonitorUpdate,
-    Ping,
+    CaProto(CaProto),
 }
 
 #[derive(Debug, Serialize)]
 pub struct ChannelTraceItem {
-    #[serde(with = "serde_helper::serde_instant::serde_Instant_elapsed_ms")]
+    #[serde(with = "serde_helper::serde_instant::serde_Instant_as_system_time")]
     ts: Instant,
     inner: ChannelTraceItemInner,
 }
@@ -63,7 +64,7 @@ impl ChannelTraceItem {
 
 #[derive(Debug, Serialize)]
 pub struct ChannelTraceL1Item {
-    #[serde(with = "serde_helper::serde_instant::serde_Instant_elapsed_ms")]
+    #[serde(with = "serde_helper::serde_instant::serde_Instant_as_system_time")]
     ts: Instant,
     chname: String,
     inner: ChannelTraceItem,
@@ -82,7 +83,7 @@ impl ChannelTraceL1Item {
 
 #[derive(Debug, Serialize)]
 pub struct ChannelTraceL2Item {
-    #[serde(with = "serde_helper::serde_instant::serde_Instant_elapsed_ms")]
+    #[serde(with = "serde_helper::serde_instant::serde_Instant_as_system_time")]
     ts: Instant,
     conn: SocketAddrV4,
     inner: ChannelTraceL1Item,
@@ -98,7 +99,7 @@ impl ChannelTraceL2Item {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 struct ChannelTraceStashChname {
     qu_channel: VecDeque<ChannelTraceL2Item>,
 }
@@ -147,5 +148,13 @@ impl ChannelTraceStash {
 
     pub(super) fn dump(&self) -> String {
         format!("{:?}", self)
+    }
+
+    pub(super) fn get_json_value_for_channel(&self, chn: &str) -> serde_json::Value {
+        if let Some(e) = self.by_chname.get(chn) {
+            serde_json::to_value(&e).unwrap()
+        } else {
+            serde_json::Value::Null
+        }
     }
 }

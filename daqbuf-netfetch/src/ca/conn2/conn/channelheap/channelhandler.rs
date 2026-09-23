@@ -1068,6 +1068,12 @@ impl Stream for ChannelHandler {
                                     running::RunningItem::RequestClose(reason) => {
                                         close_request = Some(reason);
                                     }
+                                    running::RunningItem::ChannelTrace(x) => {
+                                        break Ready(Some(Ok(ChannelHandlerItem {
+                                            ts_create: tsloop,
+                                            inner: ItemInner::ChannelTrace(ChannelTraceItem::new(x)),
+                                        })));
+                                    }
                                 },
                                 Err(e) => {
                                     info!("ChannelHandler:Running:Ready:Err {e}");

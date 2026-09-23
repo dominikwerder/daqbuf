@@ -278,6 +278,31 @@ fn channel_details_v00(
     }
 }
 
+fn channel_trace_v01(
+    self1: Pin<&mut ConnSet>,
+    cmd: String,
+    mut tx: asynchan::Sender<serde_json::Value>,
+    _cx: &mut Context,
+) -> Option<FutDbg<Result<(), Error>>> {
+    #[derive(Debug, Deserialize)]
+    struct Cmd {
+        chname: String,
+    }
+    if let Ok(cmd2) = serde_json::from_str::<Cmd>(&cmd) {
+        info!("{cmd2:?}");
+        let v = self1.chtrace.get_json_value_for_channel(&cmd2.chname);
+        let _ = tx.try_send(v);
+        None
+    } else {
+        let val = serde_json::json!({
+            "type": "error",
+            "msg": format!("command bad"),
+        });
+        let _ = tx.try_send(val);
+        None
+    }
+}
+
 fn channel_read_notify_v01(
     self1: Pin<&mut ConnSet>,
     cmd: String,
@@ -348,6 +373,8 @@ impl ConnSet {
                 channel_details_v00(self, cmd, tx, cx)
             } else if cmd2.connset_cmd == "channel_read_notify_v01" {
                 channel_read_notify_v01(self, cmd, tx, cx)
+            } else if cmd2.connset_cmd == "channel_trace_v01" {
+                channel_trace_v01(self, cmd, tx, cx)
             } else {
                 let val = serde_json::json!({
                     "type": "error",

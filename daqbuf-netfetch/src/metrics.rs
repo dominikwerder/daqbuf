@@ -841,7 +841,8 @@ fn make_routes(ca_ingest_ctrls: Arc<dyn CaIngestCtrls>, post_ingest_ctrls: Arc<d
     let rt_channel = OpenApiRouter::new()
         .routes(routes!(channel_v1::channel_add))
         .routes(routes!(channel_v1::channel_remove))
-        .routes(routes!(channel_v1::channel_read_notify));
+        .routes(routes!(channel_v1::channel_read_notify))
+        .routes(routes!(channel_v1::channel_trace));
     let (documented_router, api) = OpenApiRouter::new()
         .nest("/daqingest/admin", rt_admin)
         .nest("/daqingest/channel", rt_channel)
