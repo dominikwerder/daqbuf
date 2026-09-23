@@ -111,8 +111,8 @@ pub enum RunningItem {
     derive(utoipa::ToSchema)
 )]
 enum State {
-    #[to_serde(schema(value_type = fetchmpx::FetchmpxSerde))]
-    Normal(#[to_serde(nest)] Fetchmpx),
+    #[to_serde(schema(value_type = NormalSerde))]
+    Normal(#[to_serde(nest)] Normal),
     Done,
 }
 
@@ -123,6 +123,13 @@ impl State {
             State::Done => "Done",
         }
     }
+}
+
+#[derive(Debug, ToSerde)]
+#[to_serde(vis = "pub", derive(utoipa::ToSchema))]
+struct Normal {
+    #[to_serde(nest, schema(value_type = fetchmpx::FetchmpxSerde))]
+    fetchmpx: Fetchmpx,
 }
 
 #[derive(Debug, ToSerde)]
@@ -200,15 +207,9 @@ impl Running {
             chconf.name().into(),
         )?;
         Ok(Self {
-            state: State::Normal(Fetchmpx::new(
-                series,
-                cid.clone(),
-                sid.clone(),
-                scalar_type,
-                shape,
-                ca_dbr_ty,
-                chconf,
-            )),
+            state: State::Normal(Normal {
+                fetchmpx: Fetchmpx::new(series, cid.clone(), sid.clone(), scalar_type, shape, ca_dbr_ty, chconf),
+            }),
             state_dt: Instant::now(),
             cid,
             sid,
@@ -231,7 +232,7 @@ impl Running {
         let mut ret = std::mem::replace(&mut self.mett, ChannelHandlerMetrics::new());
         match &mut self.state {
             State::Normal(st) => {
-                ret.ingest(st.mett_take());
+                ret.ingest(st.fetchmpx.mett_take());
             }
             State::Done => {}
         }
@@ -246,7 +247,7 @@ impl Running {
         self.removing = true;
         match &mut self.state {
             State::Normal(x) => {
-                x.trigger_closing(reason);
+                x.fetchmpx.trigger_closing(reason);
             }
             State::Done => {}
         }
@@ -257,7 +258,7 @@ impl Running {
         self.inp_done = true;
         match &mut self.state {
             State::Normal(x) => {
-                x.notify_peer_closed();
+                x.fetchmpx.notify_peer_closed();
             }
             State::Done => {}
         }
@@ -266,7 +267,7 @@ impl Running {
     pub fn handle_channel_handler_cmd(&mut self, cmd: serde_json::Value) -> serde_json::Value {
         use serde_json::json;
         match &mut self.state {
-            State::Normal(st) => st.handle_channel_handler_cmd(cmd),
+            State::Normal(st) => st.fetchmpx.handle_channel_handler_cmd(cmd),
             State::Done => json!({
                 "error": format!("Running  {}", self.state.str()),
             }),
@@ -286,7 +287,7 @@ impl Running {
     pub fn inp_done(&mut self) {
         self.inp_done = true;
         match &mut self.state {
-            State::Normal(st) => st.inp_done(),
+            State::Normal(st) => st.fetchmpx.inp_done(),
             State::Done => {}
         }
     }
@@ -308,7 +309,7 @@ impl Running {
                             _ => false,
                         };
                         if to_mpx {
-                            match st2.inp_push_try(item) {
+                            match st2.fetchmpx.inp_push_try(item) {
                                 Some(item) => {
                                     hpp.mark_pending();
                                     self2.inp_buf.push_front(item);
@@ -376,7 +377,7 @@ impl Stream for Running {
                 },
             }
             match &mut self.state {
-                State::Normal(fetchmpx) => match fetchmpx.poll_next_unpin(cx) {
+                State::Normal(normal) => match normal.fetchmpx.poll_next_unpin(cx) {
                     Ready(Some(x)) => match x {
                         Ok(x) => {
                             hpp.mark_progress();
