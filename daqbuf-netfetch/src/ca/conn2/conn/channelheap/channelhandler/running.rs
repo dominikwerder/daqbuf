@@ -10,6 +10,7 @@ use crate::ca::conn2::caids::CaDbrTy;
 use crate::ca::conn2::caids::Cid;
 use crate::ca::conn2::caids::Sid;
 use crate::ca::conn2::channel_event_value::ChannelEventValue;
+use crate::ca::conn2::conn::channelheap::IoidRegistry;
 use crate::ca::conn2::conn::channelheap::ProtoRxItem;
 use crate::ca::conn2::conn::channelheap::channelhandler::ClosingReason;
 use crate::ca::conn2::conn::channelheap::channelhandler::fetchmpx;
@@ -36,6 +37,7 @@ use serieswriter::binwriter::WriteCntZero;
 use stats::mett::ChannelHandlerMetrics;
 use std::collections::VecDeque;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::task::Context;
 use std::task::Poll;
 use std::time::Instant;
@@ -161,6 +163,8 @@ pub struct Running {
     use_ioc_time: bool,
     #[to_serde(skip)]
     chname: String,
+    #[to_serde(skip)]
+    ioid_reg: Arc<IoidRegistry>,
 }
 
 impl Running {
@@ -178,6 +182,7 @@ impl Running {
         ca_dbr_ty: CaDbrTy,
         chi: ChannelInfoResult,
         chconf: ChannelConfig,
+        ioid_reg: Arc<IoidRegistry>,
     ) -> Result<Self, Error> {
         let chname = chconf.name().into();
         let series = chi.series.to_series();
@@ -224,6 +229,7 @@ impl Running {
             crst: consume_event_data::ChannelConsumeState::new(),
             use_ioc_time,
             chname,
+            ioid_reg,
         })
     }
 

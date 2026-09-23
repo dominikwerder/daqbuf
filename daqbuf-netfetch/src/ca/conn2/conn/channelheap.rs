@@ -33,9 +33,11 @@ use hashbrown::HashMap;
 use scywr::iteminsertqueue::QueryItem;
 use serde::Serialize;
 use stats::mett::CaConnConnectedMetrics;
+use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::RwLock;
 use std::task;
 use std::task::Context;
 use std::task::Poll;
@@ -255,22 +257,36 @@ type StreamItem = Result<AsynBuf<ChannelHeapItem>, Error>;
 type Cb1Box = Box<dyn FnOnce(&mut ChannelHeap) -> () + Send>;
 
 #[derive(Debug)]
-struct IoidRegistry {
+struct IoidRegistryInner {
     ioids: HashMap<Ioid, (Cid, Sid, Instant, Instant)>,
     current: Ioid,
+}
+
+#[derive(Debug)]
+struct IoidRegistry {
+    inner: RwLock<IoidRegistryInner>,
 }
 
 impl IoidRegistry {
     fn new() -> Self {
         Self {
-            ioids: HashMap::new(),
-            current: Ioid::new(0),
+            inner: RwLock::new(IoidRegistryInner {
+                ioids: HashMap::new(),
+                current: Ioid::new(0),
+            }),
         }
     }
 
-    fn register(&mut self, sid: Sid, ioid: Ioid, cid: Cid, tscmd: Instant, tsreg: Instant) {
+    fn testing() -> Arc<Self> {
+        Arc::new(Self::new())
+    }
+
+    fn _register_old(&self, sid: Sid, ioid: Ioid, cid: Cid, tscmd: Instant, tsreg: Instant) {
         // TODO count errors for metrics
-        self.ioids
+        self.inner
+            .write()
+            .unwrap()
+            .ioids
             .entry(ioid.clone())
             .and_modify(|e| {
                 // mett.ioid_read_error_exists().inc();
@@ -285,16 +301,34 @@ impl IoidRegistry {
             });
     }
 
-    fn take(&mut self, ioid: Ioid) -> Option<(Cid, Sid, Instant, Instant)> {
-        if let Some(x) = self.ioids.remove(&ioid) {
+    fn register_new(&self, sid: Sid, cid: Cid, tscmd: Instant, tsreg: Instant) -> Ioid {
+        // TODO count errors for metrics
+        let mut inner = self.inner.write().unwrap();
+        let ioid = inner.current.inc();
+        inner
+            .ioids
+            .entry(ioid.clone())
+            .and_modify(|e| {
+                // mett.ioid_read_error_exists().inc();
+                trace2!("IoidRegistry  register  update  {}  {}  {}", sid, ioid, cid);
+                e.2 = tscmd;
+                e.3 = tsreg;
+            })
+            .or_insert_with(|| {
+                // mett.ioid_read_begin().inc();
+                trace2!("IoidRegistry  register  fresh  {}  {}  {}", sid, ioid, cid);
+                (cid, sid, tscmd, tsreg)
+            });
+        ioid
+    }
+
+    fn take(&self, ioid: Ioid) -> Option<(Cid, Sid, Instant, Instant)> {
+        let mut inner = self.inner.write().unwrap();
+        if let Some(x) = inner.ioids.remove(&ioid) {
             Some(x)
         } else {
             None
         }
-    }
-
-    fn current(&mut self) -> &mut Ioid {
-        &mut self.current
     }
 }
 
@@ -383,7 +417,7 @@ pub struct ChannelHeap {
     wakeup_cids_tmp: Vec<Cid>,
     cmd_exec_futs: VecDeque<Option<FutDbg<Result<(Cb1Box,), Error>>>>,
     disconnect_on_idle: bool,
-    ioid_reg: IoidRegistry,
+    ioid_reg: Arc<IoidRegistry>,
     subid_reg: SubidRegistry,
     poll_handler_fut: Option<FutDbg<Result<(), Error>>>,
     mett: CaConnConnectedMetrics,
@@ -405,7 +439,7 @@ impl ChannelHeap {
             wakeup_cids_tmp: Vec::new(),
             cmd_exec_futs: VecDeque::new(),
             disconnect_on_idle: false,
-            ioid_reg: IoidRegistry::new(),
+            ioid_reg: Arc::new(IoidRegistry::new()),
             subid_reg: SubidRegistry::new(),
             poll_handler_fut: None,
             mett: CaConnConnectedMetrics::new(),
@@ -645,7 +679,7 @@ impl ChannelHeap {
             warn!("TODO channel already present, return error");
         } else {
             self.mett.channel_handler_new().inc();
-            let handler = ChannelHandler::new(self.backend.clone(), conf);
+            let handler = ChannelHandler::new(self.backend.clone(), conf, self.ioid_reg.clone());
             let cid = handler.cid();
             if self.by_cid.contains_key(&cid) {
                 error!("ChannelHeap::channel_add: channel with cid {cid:?} already in map");
@@ -686,7 +720,7 @@ impl ChannelHeap {
         mut handler: Pin<&mut ChannelHandler>,
         cx: &mut Context,
         cid: Cid,
-        ioid_reg: &mut IoidRegistry,
+        ioid_reg: &mut Arc<IoidRegistry>,
         subid_reg: &mut SubidRegistry,
         tsnow: Instant,
     ) -> Poll<Option<Result<PollHandlerItem, Error>>> {
@@ -719,10 +753,11 @@ impl ChannelHeap {
                                         if sid2 != sid {
                                             warn!("{selfname}  ProtoOutIoid but handler sid differs");
                                             PollHandlerItem::None
-                                        } else {
-                                            let ioid = ioid_reg.current().inc();
-                                            ioid_reg.register(sid, ioid.clone(), cid, tscmd, tsnow);
+                                        } else if msg.ioid().map_or(true, |x| x == 0) {
+                                            let ioid = ioid_reg.register_new(sid, cid, tscmd, tsnow);
                                             msg.overwrite_ioid(ioid.to_u32());
+                                            PollHandlerItem::ProtoOut(msg)
+                                        } else {
                                             PollHandlerItem::ProtoOut(msg)
                                         }
                                     } else {

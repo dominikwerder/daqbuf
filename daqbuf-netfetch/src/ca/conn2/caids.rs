@@ -134,6 +134,9 @@ impl Ioid {
 
     pub fn inc(&mut self) -> Self {
         self.0 = self.0.wrapping_add(1);
+        if self.0 == 0 {
+            self.0 = 1;
+        }
         self.clone()
     }
 }

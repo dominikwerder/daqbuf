@@ -14,6 +14,7 @@ use crate::ca::conn2::caids::Subid;
 use crate::ca::conn2::channel_event_value::ChannelEventValue;
 use crate::ca::conn2::conn::StatusDetail;
 use crate::ca::conn2::conn::StatusSel;
+use crate::ca::conn2::conn::channelheap::IoidRegistry;
 use crate::ca::conn2::conn::channelheap::ProtoRxItem;
 use crate::ca::conn2::conn::channelheap::channelhandler::create::Creating;
 use crate::ca::conn2::conn::channelheap::channelhandler::create::CreatingSerde;
@@ -47,6 +48,7 @@ use stats::mett::ChannelHandlerMetrics;
 use std::collections::VecDeque;
 use std::fmt;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::sync::atomic;
 use std::task::Context;
 use std::task::Poll;
@@ -328,10 +330,12 @@ pub struct ChannelHandler {
     waker_1: Option<Waker>,
     #[to_serde(skip)]
     waker_2: Option<Waker>,
+    #[to_serde(skip)]
+    ioid_reg: Arc<IoidRegistry>,
 }
 
 impl ChannelHandler {
-    pub fn new(backend: String, conf: ChannelConfig) -> Self {
+    pub(super) fn new(backend: String, conf: ChannelConfig, ioid_reg: Arc<IoidRegistry>) -> Self {
         let cid = CidOwned::new();
         trace!("ChannelHandler::new  {}", conf.name());
         trace2!("ChannelHandler::new  {cid:?}  {conf:?}");
@@ -359,6 +363,7 @@ impl ChannelHandler {
             mett: ChannelHandlerMetrics::new(),
             waker_1: None,
             waker_2: None,
+            ioid_reg,
         }
     }
 
@@ -814,6 +819,7 @@ impl Stream for ChannelHandler {
                                                 ca_dbr_ty,
                                                 chi,
                                                 self2.conf.clone(),
+                                                self2.ioid_reg.clone(),
                                             ) {
                                                 Ok(running) => {
                                                     self2.state = State::Running {
@@ -921,6 +927,7 @@ impl Stream for ChannelHandler {
                                             ca_dbr_ty,
                                             chi,
                                             self2.conf.clone(),
+                                            self2.ioid_reg.clone(),
                                         ) {
                                             Ok(running) => {
                                                 self2.state = State::Running {
@@ -1194,7 +1201,8 @@ mod test_close_sequence {
 
     fn handler() -> ChannelHandler {
         let conf = ChannelConfig::st_monitor("SOME:CHANNEL", "test.hcl");
-        ChannelHandler::new("testbackend".into(), conf)
+        let ioid_reg = IoidRegistry::testing();
+        ChannelHandler::new("testbackend".into(), conf, ioid_reg)
     }
 
     #[test]
@@ -1327,7 +1335,8 @@ mod test_state_serde {
     #[test]
     fn channel_handler_snapshot_shape() {
         let conf = ChannelConfig::st_monitor("SOME:CHANNEL", "test.hcl");
-        let mut ch = ChannelHandler::new("testbackend".into(), conf);
+        let ioid_reg = IoidRegistry::testing();
+        let mut ch = ChannelHandler::new("testbackend".into(), conf, ioid_reg);
         let v = serde_json::to_value(ch.to_serde()).unwrap();
         assert_eq!(v["state"]["ty"], "Init");
         assert_eq!(v["backend"], "testbackend");
