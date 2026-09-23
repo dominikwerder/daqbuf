@@ -1,4 +1,5 @@
 const INP_BUF_CAP: usize = 128;
+const CMD_EXEC_FUTS_CAP: usize = 16;
 
 //
 
@@ -32,6 +33,7 @@ use hashbrown::HashMap;
 use scywr::iteminsertqueue::QueryItem;
 use serde::Serialize;
 use stats::mett::CaConnConnectedMetrics;
+use std::collections::VecDeque;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task;
@@ -379,7 +381,7 @@ pub struct ChannelHeap {
     inp_done: bool,
     wakeup_cids: Arc<dashmap::DashMap<Cid, ()>>,
     wakeup_cids_tmp: Vec<Cid>,
-    cmd_exec_fut: Option<FutDbg<Result<(Cb1Box,), Error>>>,
+    cmd_exec_futs: VecDeque<Option<FutDbg<Result<(Cb1Box,), Error>>>>,
     disconnect_on_idle: bool,
     ioid_reg: IoidRegistry,
     subid_reg: SubidRegistry,
@@ -401,7 +403,7 @@ impl ChannelHeap {
             inp_done: false,
             wakeup_cids: Arc::new(dashmap::DashMap::new()),
             wakeup_cids_tmp: Vec::new(),
-            cmd_exec_fut: None,
+            cmd_exec_futs: VecDeque::new(),
             disconnect_on_idle: false,
             ioid_reg: IoidRegistry::new(),
             subid_reg: SubidRegistry::new(),
@@ -1224,11 +1226,12 @@ impl ChannelHeap {
                     };
                     Ok((Box::new(donecb) as Cb1Box,))
                 };
-                let fut = fut.timeout(Duration::from_millis(2000)).then(|x| match x {
+                // TODO timeout was just for test
+                let fut = fut.timeout(Duration::from_millis(99999000)).then(|x| match x {
                     Ok(x) => ready(x),
                     Err(e) => ready(Err(e.into())),
                 });
-                self.cmd_exec_fut = Some(fut.box2());
+                self.cmd_exec_futs.push_back(Some(fut.box2()));
             }
         }
     }
@@ -1237,27 +1240,56 @@ impl ChannelHeap {
     fn poll_outer_cmd(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<()>> {
         let selfname = "poll_outer_cmd";
         use Poll::*;
-        if let Some(fut) = &mut self.cmd_exec_fut {
-            match fut.poll_unpin(cx) {
-                Ready(x) => {
-                    self.cmd_exec_fut = None;
-                    match x {
-                        Ok((donecb,)) => {
-                            donecb(&mut self);
-                            Ready(Some(()))
+        let mut hpp = HaveProgressPending::new();
+        while self.cmd_exec_futs.len() < CMD_EXEC_FUTS_CAP {
+            if let Some(x) = self.inp_cmd_buf.pop_front() {
+                hpp.have_progress();
+                self.handle_command(x);
+            } else {
+                break;
+            }
+        }
+        let mut donecbs = Vec::new();
+        loop {
+            let mut hpp2 = HaveProgressPending::new();
+            for futopt in &mut self.cmd_exec_futs {
+                if let Some(fut) = futopt {
+                    match fut.poll_unpin(cx) {
+                        Ready(x) => {
+                            hpp2.have_progress();
+                            *futopt = None;
+                            match x {
+                                Ok((donecb,)) => {
+                                    donecbs.push(donecb);
+                                }
+                                Err(e) => {
+                                    // TODO could be a remote timeout!
+                                    error!("{selfname}  {e}");
+                                }
+                            }
                         }
-                        Err(e) => {
-                            // TODO could be a remote timeout!
-                            error!("{selfname}  {e}");
-                            Ready(Some(()))
+                        Pending => {
+                            hpp2.have_pending();
                         }
                     }
                 }
-                Pending => Pending,
             }
-        } else if let Some(x) = self.inp_cmd_buf.pop_front() {
-            self.handle_command(x);
+            break if hpp2.have_progress() {
+                hpp.mark_progress();
+                continue;
+            } else if hpp2.have_pending() {
+                hpp.mark_pending();
+            } else {
+            };
+        }
+        self.cmd_exec_futs.retain(Option::is_some);
+        for donecb in donecbs {
+            donecb(&mut self);
+        }
+        if hpp.have_progress() {
             Ready(Some(()))
+        } else if hpp.have_pending() {
+            Pending
         } else {
             Ready(None)
         }
