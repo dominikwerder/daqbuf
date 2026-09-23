@@ -23,6 +23,7 @@ mod Metrics {
     type StructName = CaConnConnectedMetrics;
     enum counters {
         channel_handler_new,
+        protowrap_space_full,
     }
     mod Compose {
         type Input = ChannelHandlerMetrics;

@@ -365,6 +365,7 @@ impl Stream for Connected {
                                             trace2!("{selfname}  PROTOWRAP  Empty");
                                         }
                                     }
+                                    continue;
                                 }
                                 Ready(Some(Err(e))) => {
                                     hpp.mark_progress();
@@ -380,8 +381,6 @@ impl Stream for Connected {
                                     hpp.mark_pending();
                                 }
                             }
-                        } else {
-                            trace_blocked!("{selfname}  SKIP  protowrap.poll_next_unpin  BLOCKED BY inp_buf");
                         };
                     }
                 }
@@ -459,12 +458,9 @@ impl Stream for Connected {
                                         break 'outer Ready(Some(Err(Error::Logic)));
                                     } else {
                                         hpp.mark_progress();
+                                        continue;
                                     }
-                                } else {
-                                    break;
                                 }
-                            } else {
-                                trace_blocked!("{selfname}  SKIP ActiveCa cmd push  BLOCKED BY inp full");
                             }
                         };
                     }
@@ -476,9 +472,11 @@ impl Stream for Connected {
                             match st1.inp_push_try(activeca::InpItem::CaMsg(x), cx) {
                                 asynbuf::PushRes::First => {
                                     hpp.mark_progress();
+                                    continue;
                                 }
                                 asynbuf::PushRes::Done => {
                                     hpp.mark_progress();
+                                    continue;
                                 }
                                 asynbuf::PushRes::Full(x) => {
                                     if let activeca::InpItem::CaMsg(x) = x {
@@ -488,8 +486,6 @@ impl Stream for Connected {
                                     }
                                 }
                             }
-                        } else {
-                            break;
                         };
                     }
                     if self2.protowrap.is_space() {
@@ -569,7 +565,7 @@ impl Stream for Connected {
                             }
                         }
                     } else {
-                        warn!("{selfname}  SKIP ActiveCa::poll_next_unpin  BLOCKED BY proto out no space");
+                        self.mett.protowrap_space_full().inc();
                     }
                 }
                 State::Done => {
