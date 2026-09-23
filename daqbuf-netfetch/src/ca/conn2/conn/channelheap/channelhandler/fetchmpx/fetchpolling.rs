@@ -208,6 +208,14 @@ impl FetchPolling {
         std::mem::replace(&mut self.mett, ChannelHandlerMetrics::new())
     }
 
+    pub(super) fn ca_dbr_ty(&self) -> CaDbrTy {
+        self.ca_dbr_ty.clone()
+    }
+
+    pub(super) fn shape(&self) -> Shape {
+        self.shape.clone()
+    }
+
     pub fn transition_to_enable(&mut self) {
         let selfname = "transition_to_enable";
         match &mut self.state {

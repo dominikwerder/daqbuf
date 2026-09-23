@@ -416,6 +416,18 @@ impl ChannelHandler {
         ready(v)
     }
 
+    pub fn cmd_read_notify(&mut self, mut resp_tx: asynchan::Sender<serde_json::Value>) -> serde_json::Value {
+        use serde_json::json;
+        match &mut self.state {
+            State::Running { state, .. } => state.cmd_read_notify(resp_tx),
+            _ => {
+                let v = json!({"error": format!("ChannelHandler  {}", self.state.str())});
+                let _ = resp_tx.try_send(v.clone());
+                v
+            }
+        }
+    }
+
     pub fn channel_info_v1(&mut self) -> crate::metrics::ChannelInfoV1 {
         let name = self.conf.name().into();
         crate::metrics::ChannelInfoV1 {

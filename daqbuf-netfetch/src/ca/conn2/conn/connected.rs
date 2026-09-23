@@ -264,6 +264,22 @@ impl Connected {
         }
     }
 
+    pub fn handle_read_notify_cmd(&mut self, cmd: serde_json::Value, mut tx: asynchan::Sender<serde_json::Value>) {
+        use serde_json::json;
+        match &mut self.state {
+            State::Init(..) => {
+                let _ = tx.try_send(json!({"error": "CaConn  Connected  State::Init"}));
+            }
+            State::Handshake(..) => {
+                let _ = tx.try_send(json!({"error": "CaConn  Connected  State::Handshake"}));
+            }
+            State::ActiveCa(st, ..) => st.handle_read_notify_cmd(cmd, tx),
+            State::Done => {
+                let _ = tx.try_send(json!({"error": "CaConn  Connected  State::Done"}));
+            }
+        }
+    }
+
     pub(super) fn check_flow_state(&self) {
         match &self.state {
             State::Init(..) => {}

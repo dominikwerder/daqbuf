@@ -804,6 +804,19 @@ impl CaConn {
                     Ok(())
                 }
                 .box2()
+            } else if cmd2.caconn_cmd == "channel_read_notify_v01" {
+                match &mut self.state {
+                    State::Connecting(_) => {
+                        let _ = tx.try_send(json!({"error": "CaConn  State::Connecting"}));
+                    }
+                    State::Connected(st1) => {
+                        st1.handle_read_notify_cmd(cmd, tx);
+                    }
+                    State::Done => {
+                        let _ = tx.try_send(json!({"error": "CaConn  State::Done"}));
+                    }
+                }
+                ready(Ok(())).box2()
             } else {
                 let x = match &mut self.state {
                     State::Connecting(st1) => ready(json!({

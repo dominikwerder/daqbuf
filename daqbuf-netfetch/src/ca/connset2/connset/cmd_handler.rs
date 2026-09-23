@@ -278,6 +278,51 @@ fn channel_details_v00(
     }
 }
 
+fn channel_read_notify_v01(
+    self1: Pin<&mut ConnSet>,
+    cmd: String,
+    mut tx: asynchan::Sender<serde_json::Value>,
+    _cx: &mut Context,
+) -> Option<FutDbg<Result<(), Error>>> {
+    use serde_json::json;
+    #[derive(Debug, Deserialize)]
+    struct Cmd {
+        chname: String,
+    }
+    if let Ok(cmd2) = serde_json::from_str::<Cmd>(&cmd) {
+        info!("{cmd2:?}");
+        let comms = self1
+            .ca_conns
+            .iter()
+            .map(|(addr, reg)| (*addr, reg.comm.clone()))
+            .collect::<Vec<_>>();
+        let fut = async move {
+            let sss = futures::stream::iter(comms)
+                .map(|(addr, mut comm)| {
+                    let cmd4: serde_json::Value = serde_json::from_str(&cmd).unwrap();
+                    async move { comm.dyn_cmd_v03(cmd4).map(|x| (addr, x)).await }
+                })
+                .buffer_unordered(16)
+                .collect::<Vec<_>>()
+                .await;
+            let is_not_found =
+                |v: &serde_json::Value| v.get("error").and_then(|e| e.as_str()) == Some("chname not found");
+            let found = sss.into_iter().map(|(_, v)| v).find(|v| !is_not_found(v));
+            let x = found.unwrap_or_else(|| json!({"error": "chname not found"}));
+            let _ = tx.try_send(x);
+            Ok(())
+        };
+        Some(fut.box2())
+    } else {
+        let val = serde_json::json!({
+            "type": "error",
+            "msg": format!("command bad"),
+        });
+        let _ = tx.try_send(val);
+        None
+    }
+}
+
 impl ConnSet {
     pub(super) fn handle_dyn_cmd_v03(
         self: Pin<&mut Self>,
@@ -301,6 +346,8 @@ impl ConnSet {
                 ca_conn_state_proto(self, cmd, tx, cx)
             } else if cmd2.connset_cmd == "channel_details_v00" {
                 channel_details_v00(self, cmd, tx, cx)
+            } else if cmd2.connset_cmd == "channel_read_notify_v01" {
+                channel_read_notify_v01(self, cmd, tx, cx)
             } else {
                 let val = serde_json::json!({
                     "type": "error",

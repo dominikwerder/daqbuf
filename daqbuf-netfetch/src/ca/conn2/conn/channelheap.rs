@@ -584,6 +584,43 @@ impl ChannelHeap {
         }
     }
 
+    pub fn handle_read_notify_cmd(&mut self, cmd: serde_json::Value, mut tx: asynchan::Sender<serde_json::Value>) {
+        use serde::Deserialize;
+        use serde_json::json;
+        #[derive(Debug, Deserialize)]
+        struct CmdTmpNamed {
+            chname: String,
+        }
+        let cmd3 = match serde_json::from_value::<CmdTmpNamed>(cmd) {
+            Ok(x) => x,
+            Err(e) => {
+                let _ = tx.try_send(json!({"error": format!("ChannelHeap  bad command  {e:?}")}));
+                return;
+            }
+        };
+        match &mut self.state {
+            State::Running => {
+                let ch = self.by_name.get(&cmd3.chname).and_then(|cid| self.by_cid.get_mut(cid));
+                match ch {
+                    Some(ch) => match &mut ch.ch_handler {
+                        ChHandler::ChHandlerActive(st2) => {
+                            st2.handler.cmd_read_notify(tx);
+                        }
+                        ChHandler::Done => {
+                            let _ = tx.try_send(json!({"error": "ChannelHeap  ChHandler::Done"}));
+                        }
+                    },
+                    None => {
+                        let _ = tx.try_send(json!({"error": "chname not found"}));
+                    }
+                }
+            }
+            State::Done => {
+                let _ = tx.try_send(json!({"error": "ChannelHeap  State::Done"}));
+            }
+        }
+    }
+
     pub fn channel_info_v1(&mut self) -> crate::metrics::ChannelsForAddrInfoV1 {
         let mut ret = crate::metrics::ChannelsForAddrInfoV1::new();
         match &mut self.state {

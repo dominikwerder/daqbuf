@@ -245,6 +245,14 @@ impl Fetchmpx {
         ret
     }
 
+    pub(super) fn ca_dbr_ty(&self) -> CaDbrTy {
+        self.polling.ca_dbr_ty()
+    }
+
+    pub(super) fn shape(&self) -> Shape {
+        self.polling.shape()
+    }
+
     fn transition_state(&mut self, new: State) {
         self.state = new;
         self.state_dt = Instant::now();

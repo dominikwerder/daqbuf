@@ -373,6 +373,16 @@ impl ActiveCa {
         }
     }
 
+    pub fn handle_read_notify_cmd(&mut self, cmd: serde_json::Value, mut tx: asynchan::Sender<serde_json::Value>) {
+        use serde_json::json;
+        match &mut self.state {
+            State::Running(_) => self.chanheap.handle_read_notify_cmd(cmd, tx),
+            State::Done => {
+                let _ = tx.try_send(json!({"error": "ActiveCa  State::Done"}));
+            }
+        }
+    }
+
     fn handle_command(&mut self, cmd: CaCommand, cx: &mut Context) -> CommandFut {
         let selfname = "handle_command";
         let self2 = self;

@@ -1,4 +1,6 @@
 pub(super) const INP_BUF_CAP: usize = 64;
+const READ_NOTIFY_FUTS_CAP: usize = 16;
+const READ_NOTIFY_CMD_TIMEOUT_MS: u64 = 3000;
 
 mod consume_event_data;
 
@@ -8,6 +10,7 @@ use crate::ca::conn2::ca_writer_value::CaRtWriter;
 use crate::ca::conn2::ca_writer_value::CaWriterValueState;
 use crate::ca::conn2::caids::CaDbrTy;
 use crate::ca::conn2::caids::Cid;
+use crate::ca::conn2::caids::Ioid;
 use crate::ca::conn2::caids::Sid;
 use crate::ca::conn2::channel_event_value::ChannelEventValue;
 use crate::ca::conn2::conn::channelheap::IoidRegistry;
@@ -17,11 +20,15 @@ use crate::ca::conn2::conn::channelheap::channelhandler::fetchmpx;
 use crate::ca::conn2::locallog;
 use crate::ca::progpend::HaveProgressPending;
 use crate::conf::ChannelConfig;
+use crate::futwrap::FutDbg;
+use crate::futwrap::FutDbgBox;
 use ca_proto::ca::proto;
 use ca_proto::ca::proto::CaMsg;
 use dbpg::seriesbychannel::ChannelInfoResult;
+use futures::FutureExt;
 use futures::Stream;
 use futures::StreamExt;
+use futures::channel::oneshot;
 use netpod::ScalarType;
 use netpod::Shape;
 use netpod::TsNano;
@@ -35,13 +42,16 @@ use serieswriter::binwriter::BinWriter;
 use serieswriter::binwriter::DiscardFirstOutput;
 use serieswriter::binwriter::WriteCntZero;
 use stats::mett::ChannelHandlerMetrics;
+use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::Context;
 use std::task::Poll;
+use std::time::Duration;
 use std::time::Instant;
 use std::time::SystemTime;
+use taskrun::tokio;
 
 macro_rules! error { ($($arg:tt)*) => { if true { log::error!($($arg)*); } }; }
 macro_rules! warn { ($($arg:tt)*) => { if true { log::warn!($($arg)*); } }; }
@@ -132,6 +142,13 @@ impl State {
 struct Normal {
     #[to_serde(nest, schema(value_type = fetchmpx::FetchmpxSerde))]
     fetchmpx: Fetchmpx,
+    /// In-flight `cmd_read_notify` command futures, capped at `READ_NOTIFY_FUTS_CAP`.
+    #[to_serde(len)]
+    futs: VecDeque<Option<(Ioid, FutDbg<()>)>>,
+    /// Completed together with the matching `futs` slot (see `Running::poll_futs`),
+    /// so a timed-out command can't leak a stale entry here.
+    #[to_serde(skip)]
+    read_notify_pending: HashMap<Ioid, oneshot::Sender<proto::ReadNotifyRes>>,
 }
 
 #[derive(Debug, ToSerde)]
@@ -214,6 +231,8 @@ impl Running {
         Ok(Self {
             state: State::Normal(Normal {
                 fetchmpx: Fetchmpx::new(series, cid.clone(), sid.clone(), scalar_type, shape, ca_dbr_ty, chconf),
+                futs: VecDeque::new(),
+                read_notify_pending: HashMap::new(),
             }),
             state_dt: Instant::now(),
             cid,
@@ -280,6 +299,72 @@ impl Running {
         }
     }
 
+    /// Issue an on-demand `ReadNotify` for this channel. The immediate return value is
+    /// only a synchronous ack/error; the actual result is delivered later through `resp_tx`,
+    /// from the future queued onto `Normal.futs` and driven by `poll_futs`.
+    pub fn cmd_read_notify(&mut self, mut resp_tx: asynchan::Sender<serde_json::Value>) -> serde_json::Value {
+        use serde_json::json;
+        let selfname = "cmd_read_notify";
+        match &mut self.state {
+            State::Normal(normal) => {
+                if normal.futs.len() >= READ_NOTIFY_FUTS_CAP {
+                    return json!({"error": format!("{selfname}  too many in-flight read-notify commands")});
+                }
+                let tsnow = Instant::now();
+                let ioid = self
+                    .ioid_reg
+                    .register_new(self.sid.clone(), self.cid.clone(), tsnow, tsnow);
+                let msg = proto::CaMsg::from_ty_ts(
+                    proto::CaMsgTy::ReadNotify(proto::ReadNotify {
+                        data_type: normal.fetchmpx.ca_dbr_ty().to_u16(),
+                        data_count: normal.fetchmpx.shape().to_ca_count().unwrap(),
+                        sid: self.sid.to_u32(),
+                        ioid: ioid.to_u32(),
+                    }),
+                    tsnow,
+                );
+                let (oneshot_tx, oneshot_rx) = oneshot::channel();
+                normal.read_notify_pending.insert(ioid, oneshot_tx);
+                let fut = async move {
+                    let res = match tokio::time::timeout(Duration::from_millis(READ_NOTIFY_CMD_TIMEOUT_MS), oneshot_rx)
+                        .await
+                    {
+                        Ok(Ok(v)) => json!({
+                            "ok": true,
+                            "value": serde_json::to_value(&v.value).unwrap_or_else(|e| json!({"error": e.to_string()})),
+                            "data_type": v.data_type,
+                            "data_count": v.data_count,
+                        }),
+                        Ok(Err(_canceled)) => json!({"error": "canceled"}),
+                        Err(_timeout) => json!({"error": "timeout"}),
+                    };
+                    let _ = resp_tx.try_send(res);
+                };
+                normal.futs.push_back(Some((ioid, fut.box2())));
+                self.outbuf.push_back(msg);
+                json!({"queued": true})
+            }
+            State::Done => json!({
+                "error": format!("{selfname}  Running  {}", self.state.str()),
+            }),
+        }
+    }
+
+    fn poll_futs(&mut self, cx: &mut Context<'_>) {
+        use Poll::*;
+        if let State::Normal(normal) = &mut self.state {
+            for slot in normal.futs.iter_mut() {
+                if let Some((ioid, fut)) = slot {
+                    if let Ready(()) = fut.poll_unpin(cx) {
+                        normal.read_notify_pending.remove(ioid);
+                        *slot = None;
+                    }
+                }
+            }
+            normal.futs.retain(Option::is_some);
+        }
+    }
+
     pub fn inp_push_try(&mut self, item: ProtoRxItem) -> Option<ProtoRxItem> {
         let v = &mut self.inp_buf;
         if v.len() < v.capacity() {
@@ -308,27 +393,43 @@ impl Running {
                 State::Normal(st2) => {
                     if let Some(item) = self2.inp_buf.pop_front() {
                         trace3!("{selfname}  have item  {item:?}");
-                        let to_mpx = match &item.msg.ty {
-                            proto::CaMsgTy::EventAddRes(_) => true,
-                            proto::CaMsgTy::EventAddResEmpty(_) => true,
-                            proto::CaMsgTy::ReadNotifyRes(_) => true,
-                            _ => false,
+                        let read_notify_ioid = match &item.msg.ty {
+                            proto::CaMsgTy::ReadNotifyRes(v) => Some(Ioid::new(v.ioid)),
+                            _ => None,
                         };
-                        if to_mpx {
-                            match st2.fetchmpx.inp_push_try(item) {
-                                Some(item) => {
-                                    hpp.mark_pending();
-                                    self2.inp_buf.push_front(item);
+                        let read_notify_waiter =
+                            read_notify_ioid.and_then(|ioid| st2.read_notify_pending.remove(&ioid));
+                        if let Some(tx) = read_notify_waiter {
+                            hpp.mark_progress();
+                            match item.msg.ty {
+                                proto::CaMsgTy::ReadNotifyRes(v) => {
+                                    let _ = tx.send(v);
                                 }
-                                None => {
-                                    hpp.mark_progress();
-                                }
+                                _ => unreachable!(),
                             }
                         } else {
-                            hpp.mark_progress();
-                            error!("{selfname}  unexpected message {item:?}");
-                            let e = Error::CreateMonitorUnexpectedMessage;
-                            break Ready(Some(Err(e)));
+                            let to_mpx = match &item.msg.ty {
+                                proto::CaMsgTy::EventAddRes(_) => true,
+                                proto::CaMsgTy::EventAddResEmpty(_) => true,
+                                proto::CaMsgTy::ReadNotifyRes(_) => true,
+                                _ => false,
+                            };
+                            if to_mpx {
+                                match st2.fetchmpx.inp_push_try(item) {
+                                    Some(item) => {
+                                        hpp.mark_pending();
+                                        self2.inp_buf.push_front(item);
+                                    }
+                                    None => {
+                                        hpp.mark_progress();
+                                    }
+                                }
+                            } else {
+                                hpp.mark_progress();
+                                error!("{selfname}  unexpected message {item:?}");
+                                let e = Error::CreateMonitorUnexpectedMessage;
+                                break Ready(Some(Err(e)));
+                            }
                         }
                     } else if self.inp_done {
                     } else {
@@ -381,6 +482,10 @@ impl Stream for Running {
                         hpp.mark_pending();
                     }
                 },
+            }
+            self.poll_futs(cx);
+            if let Some(msg) = self.outbuf.pop_front() {
+                break Ready(Some(Ok(RunningItem::CaMsgOut(msg))));
             }
             match &mut self.state {
                 State::Normal(normal) => match normal.fetchmpx.poll_next_unpin(cx) {
