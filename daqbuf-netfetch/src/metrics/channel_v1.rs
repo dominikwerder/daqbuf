@@ -216,7 +216,7 @@ pub struct ChannelTraceResult {
 
 #[derive(Debug, Serialize, ToSchema)]
 pub struct ChannelTraceErrorBody {
-    /// Stable machine-readable discriminator: `conn2-not-active`, `backend-error`.
+    /// Stable machine-readable discriminator: `conn2-not-active`, `backend-error`, `bad-addr`.
     pub kind: String,
     pub error: String,
 }
@@ -226,6 +226,7 @@ autoerr::create_error_v1!(
     enum variants {
         Conn2NotActive,
         Backend(String),
+        BadAddr(String),
     },
 );
 
@@ -234,6 +235,7 @@ impl ChannelTraceApiError {
         match self {
             ChannelTraceApiError::Conn2NotActive => "conn2-not-active",
             ChannelTraceApiError::Backend(..) => "backend-error",
+            ChannelTraceApiError::BadAddr(..) => "bad-addr",
             _ => "error",
         }
     }
@@ -241,6 +243,7 @@ impl ChannelTraceApiError {
     pub fn status_code(&self) -> axum::http::StatusCode {
         match self {
             ChannelTraceApiError::Conn2NotActive => axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            ChannelTraceApiError::BadAddr(..) => axum::http::StatusCode::BAD_REQUEST,
             _ => axum::http::StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -284,4 +287,49 @@ pub async fn channel_trace(
         .await
         .map_err(|e| ChannelTraceApiError::Backend(e.to_string()))?;
     Ok(axum::Json(ChannelTraceResult { trace: v }))
+}
+
+#[derive(Debug, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct ConnectionTraceQuery {
+    pub addr: String,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ConnectionTraceResult {
+    #[schema(value_type = Object)]
+    pub trace: serde_json::Value,
+}
+
+#[utoipa::path(
+    get,
+    path = "/connection-trace",
+    params(ConnectionTraceQuery),
+    responses(
+        (status = 200, description = "Traced events for the connection", body = ConnectionTraceResult),
+        (status = 400, description = "The address could not be parsed", body = ChannelTraceErrorBody),
+        (status = 500, description = "The command could not be executed", body = ChannelTraceErrorBody),
+        (status = 503, description = "This daemon does not run the v2 ingest path", body = ChannelTraceErrorBody),
+    ),
+    tag = "daqingest-channel",
+)]
+pub async fn connection_trace(
+    axum::extract::State(ctrls): axum::extract::State<Arc<dyn CaIngestCtrls>>,
+    axum::extract::Query(q): axum::extract::Query<ConnectionTraceQuery>,
+) -> Result<axum::Json<ConnectionTraceResult>, ChannelTraceApiError> {
+    let addr: std::net::SocketAddrV4 = q
+        .addr
+        .parse()
+        .map_err(|e| ChannelTraceApiError::BadAddr(format!("{e}")))?;
+    let c2 = ctrls.conn2_ctrls().await.ok_or(ChannelTraceApiError::Conn2NotActive)?;
+    let cmd = serde_json::json!({
+        "type": "dyn_cmd_v03",
+        "connset_cmd": "connection_trace_v01",
+        "addr": addr,
+    });
+    let v = c2
+        .cmd_dyn_v1(cmd.to_string())
+        .await
+        .map_err(|e| ChannelTraceApiError::Backend(e.to_string()))?;
+    Ok(axum::Json(ConnectionTraceResult { trace: v }))
 }

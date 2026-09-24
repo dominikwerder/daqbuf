@@ -303,6 +303,31 @@ fn channel_trace_v01(
     }
 }
 
+fn connection_trace_v01(
+    self1: Pin<&mut ConnSet>,
+    cmd: String,
+    mut tx: asynchan::Sender<serde_json::Value>,
+    _cx: &mut Context,
+) -> Option<FutDbg<Result<(), Error>>> {
+    #[derive(Debug, Deserialize)]
+    struct Cmd {
+        addr: std::net::SocketAddrV4,
+    }
+    if let Ok(cmd2) = serde_json::from_str::<Cmd>(&cmd) {
+        info!("{cmd2:?}");
+        let v = self1.chtrace.get_json_value_for_connection(cmd2.addr);
+        let _ = tx.try_send(v);
+        None
+    } else {
+        let val = serde_json::json!({
+            "type": "error",
+            "msg": format!("command bad"),
+        });
+        let _ = tx.try_send(val);
+        None
+    }
+}
+
 fn channel_read_notify_v01(
     self1: Pin<&mut ConnSet>,
     cmd: String,
@@ -375,6 +400,8 @@ impl ConnSet {
                 channel_read_notify_v01(self, cmd, tx, cx)
             } else if cmd2.connset_cmd == "channel_trace_v01" {
                 channel_trace_v01(self, cmd, tx, cx)
+            } else if cmd2.connset_cmd == "connection_trace_v01" {
+                connection_trace_v01(self, cmd, tx, cx)
             } else {
                 let val = serde_json::json!({
                     "type": "error",
