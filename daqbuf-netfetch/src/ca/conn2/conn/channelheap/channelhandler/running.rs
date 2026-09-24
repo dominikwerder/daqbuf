@@ -1,6 +1,5 @@
 pub(super) const INP_BUF_CAP: usize = 64;
 const READ_NOTIFY_FUTS_CAP: usize = 16;
-const READ_NOTIFY_CMD_TIMEOUT_MS: u64 = 3000;
 
 mod consume_event_data;
 mod subfut;

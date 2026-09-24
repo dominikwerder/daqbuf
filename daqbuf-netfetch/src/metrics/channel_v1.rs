@@ -107,8 +107,6 @@ pub struct ChannelReadNotifyResult {
     /// The read value. Free-form since its shape depends on the channel's native DBR type.
     #[schema(value_type = Object)]
     pub value: Option<serde_json::Value>,
-    pub data_type: Option<u16>,
-    pub data_count: Option<u16>,
     /// Set when `ok` is false, e.g. `chname not found`, `timeout`, or a state mismatch.
     pub error: Option<String>,
 }
@@ -192,8 +190,6 @@ pub async fn channel_read_notify(
         serde_json::from_value::<ChannelReadNotifyResult>(v.clone()).unwrap_or_else(|_| ChannelReadNotifyResult {
             ok: false,
             value: None,
-            data_type: None,
-            data_count: None,
             error: Some(
                 v.get("error")
                     .and_then(|e| e.as_str())

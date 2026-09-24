@@ -85,11 +85,11 @@ pub enum CaProto {
 impl CaProto {
     fn oneline(&self) -> String {
         match self {
-            CaProto::Created(x) => format!("created {:?}", x.latency),
+            CaProto::Created(x) => format!("created {:.0} ms", 1e3 * x.latency.as_secs_f32()),
             CaProto::Ping => "ping".into(),
             CaProto::Pong => "pong".into(),
             CaProto::ReadNotify => "read-notify".into(),
-            CaProto::ReadNotifyRes(x) => format!("read-notify-res {:?}", x.latency),
+            CaProto::ReadNotifyRes(x) => format!("read-notify-res {:.0} ms", 1e3 * x.latency.as_secs_f32()),
             CaProto::ReadNotifyTimeout => "read-notify-timeout".into(),
         }
     }
