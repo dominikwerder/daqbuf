@@ -149,7 +149,7 @@ impl fmt::Debug for Sleep2 {
 enum PingPong {
     Idle(Sleep2),
     Send(Option<CaMsg>, Sleep2),
-    Wait(Sleep2),
+    Wait(Instant, Sleep2),
 }
 
 impl PingPong {
@@ -165,14 +165,14 @@ impl PingPong {
 
     fn new_wait() -> Self {
         let dur = Duration::from_millis(10000);
-        Self::Wait(Sleep2::new_dur(dur))
+        Self::Wait(Instant::now(), Sleep2::new_dur(dur))
     }
 
     fn status_info(&self) -> PingPongInfo {
         match self {
             PingPong::Idle(x) => PingPongInfo::Idle(x.until()),
             PingPong::Send(_, x) => PingPongInfo::Send(x.until()),
-            PingPong::Wait(x) => PingPongInfo::Wait(x.until()),
+            PingPong::Wait(ts1, x) => PingPongInfo::Wait(ts1.clone(), x.until()),
         }
     }
 }
@@ -180,7 +180,6 @@ impl PingPong {
 use crate::asynbuf;
 use crate::asynbuf::AsynBuf;
 use crate::asynbuf::TsMark;
-use crate::ca::connset2::connset::channeltrace::ChannelTraceItem;
 use crate::ca::connset2::connset::channeltrace::ChannelTraceL1Item;
 use crate::ca::connset2::connset::channeltrace::ConnectionTraceL1Item;
 use crate::ca::connset2::connset::channeltrace::ConnectionTraceL1ItemInner;
@@ -191,7 +190,10 @@ use serde_helper::serde_instant::serde_Instant_elapsed_ms::serialize as inser3;
 enum PingPongInfo {
     Idle(#[serde(serialize_with = "inser3")] Instant),
     Send(#[serde(serialize_with = "inser3")] Instant),
-    Wait(#[serde(serialize_with = "inser3")] Instant),
+    Wait(
+        #[serde(serialize_with = "inser3")] Instant,
+        #[serde(serialize_with = "inser3")] Instant,
+    ),
 }
 
 #[derive(Debug)]
@@ -515,7 +517,8 @@ impl ActiveCa {
                                     match &mut st1.pingpong {
                                         PingPong::Idle(..) => {}
                                         PingPong::Send(..) => {}
-                                        PingPong::Wait(..) => {
+                                        PingPong::Wait(ts1, ..) => {
+                                            let lat = ts1.elapsed();
                                             st1.pingpong = PingPong::new_idle();
                                             let tsnow = Instant::now();
                                             let t3 = ActiveCaItem {
@@ -523,7 +526,7 @@ impl ActiveCa {
                                                 inner: ItemInner::ConnectionTrace(ConnectionTraceL1Item {
                                                     ts: tsnow,
                                                     addr: self.addr,
-                                                    inner: ConnectionTraceL1ItemInner::Ping,
+                                                    inner: ConnectionTraceL1ItemInner::Pong(lat),
                                                 }),
                                             };
                                             // TODO could remove outbuf if I can return item from here
@@ -842,7 +845,7 @@ impl ActiveCa {
                                     }
                                 }
                             },
-                            PingPong::Wait(to) => match to.poll_unpin(cx) {
+                            PingPong::Wait(_, to) => match to.poll_unpin(cx) {
                                 Ready(()) => {
                                     hpp.mark_progress();
                                     self2.state = State::Done;
