@@ -19,6 +19,7 @@ use crate::ca::conn2::locallog;
 use crate::ca::conn2::protowrap;
 use crate::ca::connset2::connset::channeltrace::ChannelTraceItem;
 use crate::ca::connset2::connset::channeltrace::ChannelTraceL1Item;
+use crate::ca::connset2::connset::channeltrace::ConnectionTraceL1Item;
 use crate::ca::progpend::HaveProgressPending;
 use ca_proto::ca::proto::CaItem;
 use ca_proto::ca::proto::CaMsg;
@@ -85,6 +86,7 @@ pub enum ItemInner {
     ChannelEventValue(ChannelEventValue),
     ChannelWriteItems(Vec<QueryItem>),
     ChannelTrace(ChannelTraceL1Item),
+    ConnectionTrace(ConnectionTraceL1Item),
 }
 
 #[derive(Debug)]
@@ -556,6 +558,13 @@ impl Stream for Connected {
                                                     let item = ConnectedItem {
                                                         ts_create: item.ts_create,
                                                         inner: ItemInner::ChannelTrace(x),
+                                                    };
+                                                    Some(item)
+                                                }
+                                                activeca::ItemInner::ConnectionTrace(x) => {
+                                                    let item = ConnectedItem {
+                                                        ts_create: item.ts_create,
+                                                        inner: ItemInner::ConnectionTrace(x),
                                                     };
                                                     Some(item)
                                                 }

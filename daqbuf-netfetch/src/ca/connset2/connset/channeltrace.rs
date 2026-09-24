@@ -6,6 +6,49 @@ use std::net::SocketAddrV4;
 use std::time::Duration;
 use std::time::Instant;
 
+#[derive(Debug, Clone, Serialize)]
+pub enum ConnectionTraceL1ItemInner {
+    Ping,
+    Pong(Duration),
+}
+
+impl ConnectionTraceL1ItemInner {
+    fn oneline(&self) -> String {
+        use ConnectionTraceL1ItemInner::*;
+        match self {
+            Ping => "ping".into(),
+            Pong(lat) => format!("pong {:.0} ms", 1e3 * lat.as_secs_f32()),
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct ConnectionTraceL1Item {
+    #[serde(with = "serde_helper::serde_instant::serde_Instant_as_system_time")]
+    pub ts: Instant,
+    pub addr: SocketAddrV4,
+    pub inner: ConnectionTraceL1ItemInner,
+}
+
+impl ConnectionTraceL1Item {
+    pub fn oneline(&self) -> String {
+        let s = self.inner.oneline();
+        if s.chars().count() > 50 {
+            s.chars().take(49).chain(['…']).collect()
+        } else {
+            s
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct ConnectionTraceExportItem {
+    #[serde(with = "serde_helper::serde_instant::serde_Instant_as_system_time")]
+    ts1: Instant,
+    oneline: String,
+    inner: ConnectionTraceL1ItemInner,
+}
+
 #[derive(Debug)]
 pub enum ChannelTraceErrorInner {
     Boxed(Box<dyn std::error::Error + Send>),
@@ -75,8 +118,6 @@ impl ReadNotifyRes {
 #[derive(Debug, Clone, Serialize)]
 pub enum CaProto {
     Created(Created),
-    Ping,
-    Pong,
     ReadNotify,
     ReadNotifyRes(ReadNotifyRes),
     ReadNotifyTimeout,
@@ -86,8 +127,6 @@ impl CaProto {
     fn oneline(&self) -> String {
         match self {
             CaProto::Created(x) => format!("created {:.0} ms", 1e3 * x.latency.as_secs_f32()),
-            CaProto::Ping => "ping".into(),
-            CaProto::Pong => "pong".into(),
             CaProto::ReadNotify => "read-notify".into(),
             CaProto::ReadNotifyRes(x) => format!("read-notify-res {:.0} ms", 1e3 * x.latency.as_secs_f32()),
             CaProto::ReadNotifyTimeout => "read-notify-timeout".into(),
@@ -210,15 +249,41 @@ impl ChannelTraceStashChname {
     }
 }
 
+#[derive(Debug, Serialize)]
+struct ConnectionTraceStash {
+    items: VecDeque<ConnectionTraceL1Item>,
+}
+
+impl ConnectionTraceStash {
+    const fn cap() -> usize {
+        100
+    }
+
+    fn new() -> Self {
+        Self {
+            items: VecDeque::with_capacity(Self::cap() + 20),
+        }
+    }
+
+    fn push(&mut self, item: ConnectionTraceL1Item) {
+        self.items.push_back(item);
+        if self.items.len() > Self::cap() {
+            self.items = self.items.split_off(Self::cap() * 2 / 3);
+        }
+    }
+}
+
 #[derive(Debug)]
 pub(super) struct ChannelTraceStash {
     by_chname: HashMap<String, ChannelTraceStashChname>,
+    by_connaddr: HashMap<SocketAddrV4, ConnectionTraceStash>,
 }
 
 impl ChannelTraceStash {
     pub(super) fn new() -> Self {
         Self {
             by_chname: HashMap::new(),
+            by_connaddr: HashMap::new(),
         }
     }
 
@@ -232,9 +297,39 @@ impl ChannelTraceStash {
             self.by_chname.insert(k, st);
         }
     }
+    pub(super) fn push_connection_trace(&mut self, item: ConnectionTraceL1Item) {
+        if let Some(e) = self.by_connaddr.get_mut(&item.addr) {
+            e.push(item);
+        } else {
+            let k = item.addr.clone();
+            let mut st = ConnectionTraceStash::new();
+            st.push(item);
+            self.by_connaddr.insert(k, st);
+        }
+    }
 
     pub(super) fn dump(&self) -> String {
         format!("{:?}", self)
+    }
+
+    pub(super) fn get_json_value_for_connection(&self, addr: SocketAddrV4) -> serde_json::Value {
+        if let Some(e) = self.by_connaddr.get(&addr) {
+            let aa: Vec<_> = e
+                .items
+                .iter()
+                .map(|x| ConnectionTraceExportItem {
+                    ts1: x.ts,
+                    oneline: x.inner.oneline(),
+                    inner: x.inner.clone(),
+                })
+                .collect();
+            serde_json::to_value(serde_json::json!({
+                "trace": aa,
+            }))
+            .unwrap()
+        } else {
+            serde_json::Value::Null
+        }
     }
 
     pub(super) fn get_json_value_for_channel(&self, chn: &str) -> serde_json::Value {

@@ -21,6 +21,7 @@ use crate::ca::conn2::locallog;
 use crate::ca::connset2::connset::TestValue;
 use crate::ca::connset2::connset::channeltrace::ChannelTraceItem;
 use crate::ca::connset2::connset::channeltrace::ChannelTraceL2Item;
+use crate::ca::connset2::connset::channeltrace::ConnectionTraceL1Item;
 use crate::ca::progpend::HaveProgressPending;
 use crate::conf::ChannelConfig;
 use crate::futwrap::FutDbg;
@@ -409,6 +410,7 @@ pub enum CaConnItem {
     ChannelEventValue(ChannelEventValue),
     ChannelWriteItems(VecDeque<QueryItem>),
     ChannelTrace(ChannelTraceL2Item),
+    ConnectionTrace(ConnectionTraceL1Item),
     Metrics(stats::mett::CaConn2Metrics),
 }
 
@@ -894,29 +896,6 @@ impl CaConn {
     }
 }
 
-macro_rules! handle_poll_res {
-    ($res:expr, $hpp:expr) => {
-        match $res {
-            Ready(x) => match x {
-                Ok(x) => match x {
-                    Some(x) => {
-                        $hpp.have_progress();
-                    }
-                    None => {}
-                },
-                Err(e) => {
-                    // TODO how to handle error:
-                    // Transition state, emit item.
-                    error!("{}", e);
-                }
-            },
-            Pending => {
-                $hpp.have_pending();
-            }
-        }
-    };
-}
-
 impl Stream for CaConn {
     type Item = Result<AsynBuf<CaConnItem>, Error>;
 
@@ -1059,6 +1038,11 @@ impl Stream for CaConn {
                                                     self2.mett.item_channel_trace().inc();
                                                     let item = ChannelTraceL2Item::new(st1.addr(), x);
                                                     let item = CaConnItem::ChannelTrace(item);
+                                                    self2.out_buf.push_back_force(item);
+                                                }
+                                                connected::ItemInner::ConnectionTrace(x) => {
+                                                    self2.mett.item_connection_trace().inc();
+                                                    let item = CaConnItem::ConnectionTrace(x);
                                                     self2.out_buf.push_back_force(item);
                                                 }
                                             }

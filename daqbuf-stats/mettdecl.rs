@@ -343,6 +343,7 @@ mod Metrics {
         item_channel_event_value,
         item_channel_write_items,
         item_channel_trace,
+        item_connection_trace,
         write_batch_flush,
         write_batch_flush_blocked,
     }
@@ -373,6 +374,7 @@ mod Metrics {
         conn_channel_event_value,
         conn_channel_write_items,
         conn_channel_trace,
+        conn_connection_trace,
         write_sender_batch_send,
         write_sender_closed,
         conn_recv_error,

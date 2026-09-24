@@ -626,6 +626,10 @@ impl ConnSet {
                                                 self2.mett.conn_channel_trace().inc();
                                                 self2.chtrace.push(x);
                                             }
+                                            conn2::conn::CaConnItem::ConnectionTrace(x) => {
+                                                self2.mett.conn_channel_trace().inc();
+                                                self2.chtrace.push_connection_trace(x);
+                                            }
                                         }
                                     }
                                 }

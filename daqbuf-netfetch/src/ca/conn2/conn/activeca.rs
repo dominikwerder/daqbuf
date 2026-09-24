@@ -182,6 +182,8 @@ use crate::asynbuf::AsynBuf;
 use crate::asynbuf::TsMark;
 use crate::ca::connset2::connset::channeltrace::ChannelTraceItem;
 use crate::ca::connset2::connset::channeltrace::ChannelTraceL1Item;
+use crate::ca::connset2::connset::channeltrace::ConnectionTraceL1Item;
+use crate::ca::connset2::connset::channeltrace::ConnectionTraceL1ItemInner;
 use ca_proto::ca::proto::CaMsgTy;
 use serde_helper::serde_instant::serde_Instant_elapsed_ms::serialize as inser3;
 
@@ -248,6 +250,7 @@ pub enum ItemInner {
     ChannelWriteItems(Vec<QueryItem>),
     ProtoOut(CaMsg),
     ChannelTrace(ChannelTraceL1Item),
+    ConnectionTrace(ConnectionTraceL1Item),
 }
 
 #[derive(Debug)]
@@ -291,6 +294,7 @@ pub struct ActiveCa {
     ts_mark_proto_rx: TsMark,
     cmd_futs: VecDeque<Option<CommandFut>>,
     mett: CaConnConnectedMetrics,
+    outbuf: AsynBuf<ActiveCaItem>,
 }
 
 impl ActiveCa {
@@ -309,6 +313,7 @@ impl ActiveCa {
             ts_mark_proto_rx: TsMark::new("proto_rx".into()),
             cmd_futs: VecDeque::new(),
             mett: CaConnConnectedMetrics::new(),
+            outbuf: AsynBuf::new(16),
         }
     }
 
@@ -512,6 +517,17 @@ impl ActiveCa {
                                         PingPong::Send(..) => {}
                                         PingPong::Wait(..) => {
                                             st1.pingpong = PingPong::new_idle();
+                                            let tsnow = Instant::now();
+                                            let t3 = ActiveCaItem {
+                                                ts_create: tsnow,
+                                                inner: ItemInner::ConnectionTrace(ConnectionTraceL1Item {
+                                                    ts: tsnow,
+                                                    addr: self.addr,
+                                                    inner: ConnectionTraceL1ItemInner::Ping,
+                                                }),
+                                            };
+                                            // TODO could remove outbuf if I can return item from here
+                                            self.outbuf.push_back_force(t3);
                                         }
                                     }
                                 } else {
@@ -613,6 +629,9 @@ impl ActiveCa {
         loop {
             let tsnow = Instant::now();
             let mut hpp = HaveProgressPending::new();
+            if self.outbuf.len() != 0 {
+                break Ready(Some(Ok(self.outbuf.take())));
+            }
             match &mut self.state {
                 State::Running(st1) => {
                     let self2 = self.as_mut().get_mut();
@@ -801,13 +820,21 @@ impl ActiveCa {
                                 Pending => {
                                     hpp.mark_pending();
                                     if let Some(item2) = item.take() {
+                                        hpp.mark_progress();
+                                        st1.pingpong = PingPong::new_wait();
                                         let t2 = ActiveCaItem {
                                             ts_create: tsnow,
                                             inner: ItemInner::ProtoOut(item2),
                                         };
-                                        hpp.mark_progress();
-                                        st1.pingpong = PingPong::new_wait();
-                                        let x = AsynBuf::from_deque([t2].into());
+                                        let t3 = ActiveCaItem {
+                                            ts_create: tsnow,
+                                            inner: ItemInner::ConnectionTrace(ConnectionTraceL1Item {
+                                                ts: tsnow,
+                                                addr: self.addr,
+                                                inner: ConnectionTraceL1ItemInner::Ping,
+                                            }),
+                                        };
+                                        let x = AsynBuf::from_deque([t2, t3].into());
                                         break Ready(Some(Ok(x)));
                                     } else {
                                         self2.state = State::Done;
@@ -819,6 +846,7 @@ impl ActiveCa {
                                 Ready(()) => {
                                     hpp.mark_progress();
                                     self2.state = State::Done;
+                                    // status item emitted by outer layer?
                                     break Ready(Some(Err(Error::IocEchoTimeout)));
                                 }
                                 Pending => {
