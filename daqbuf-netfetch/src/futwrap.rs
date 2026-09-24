@@ -10,8 +10,7 @@ macro_rules! poll_a {
                 match x {
                     Some(Ok(())) => {}
                     Some(Err(e)) => {
-                        //
-                        break Ready(Some(Err(e)));
+                        break Ready(Some(Err(e.into())));
                     }
                     None => {}
                 }
@@ -35,7 +34,7 @@ macro_rules! poll_b {
                 match x {
                     Ok(()) => {}
                     Err(e) => {
-                        break Ready(Some(Err(e)));
+                        break Ready(Some(Err(e.into())));
                     }
                 }
             }
@@ -137,3 +136,17 @@ macro_rules! poll_opt_fut_map {
 }
 
 pub(crate) use poll_opt_fut_map;
+
+macro_rules! break_hpp_a {
+    ($hpp:expr) => {{
+        break if $hpp.have_progress() {
+            continue;
+        } else if $hpp.have_pending() {
+            Pending
+        } else {
+            Ready(None)
+        };
+    }};
+}
+
+pub(crate) use break_hpp_a;

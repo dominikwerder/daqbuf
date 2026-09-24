@@ -1,9 +1,11 @@
 use crate::asynchan;
+use crate::ca::conn2::caids::CaDbrTy;
 use crate::ca::conn2::caids::Ioid;
 use crate::ca::conn2::caids::Sid;
 use crate::ca::conn2::conn::channelheap::ProtoRxItem;
 use crate::ca::connset2::connset::channeltrace;
 use ca_proto::ca::proto;
+use netpod::Shape;
 use serde_helper::ToSerde;
 use serde_json::json;
 use std::collections::VecDeque;
@@ -13,6 +15,8 @@ use std::task::Context;
 use std::task::Poll;
 use std::time::Duration;
 use std::time::Instant;
+
+macro_rules! debug { ($($arg:tt)*) => { if true { log::debug!($($arg)*); } }; }
 
 pub enum CaSubFutItem {
     Error,
@@ -32,12 +36,15 @@ pub trait CaSubFut: fmt::Debug + Send {
 #[derive(Debug, ToSerde)]
 pub(super) struct ReadNotifyAdhoc {
     sid: Sid,
+    dbrty: CaDbrTy,
+    shape: Shape,
     ioid: Ioid,
     #[to_serde(skip)]
     sent: Option<Instant>,
     #[to_serde(len)]
     inp_buf: VecDeque<ProtoRxItem>,
     inp_done: bool,
+    done: bool,
     #[to_serde(skip)]
     tx: asynchan::Sender<serde_json::Value>,
 }
@@ -45,14 +52,18 @@ pub(super) struct ReadNotifyAdhoc {
 // RunningItem::CaMsgOut
 
 impl ReadNotifyAdhoc {
-    pub fn new(sid: Sid, ioid: Ioid, tx: asynchan::Sender<serde_json::Value>) -> Self {
-        taskrun::tokio::time::sleep(Duration::from_millis(4000));
+    pub fn new(sid: Sid, dbrty: CaDbrTy, shape: Shape, ioid: Ioid, tx: asynchan::Sender<serde_json::Value>) -> Self {
+        debug!("new");
+        // taskrun::tokio::time::sleep(Duration::from_millis(4000));
         Self {
             sid,
+            dbrty,
+            shape,
             ioid,
             sent: None,
-            inp_buf: VecDeque::new(),
+            inp_buf: VecDeque::with_capacity(8),
             inp_done: false,
+            done: false,
             tx,
         }
     }
@@ -81,7 +92,9 @@ impl CaSubFut for ReadNotifyAdhoc {
         use Poll::*;
         let tsnow = Instant::now();
         loop {
-            break if let Some(sent) = self.sent {
+            break if self.done {
+                Ready(None)
+            } else if let Some(sent) = self.sent {
                 if let Some(msg) = self.inp_buf.pop_front() {
                     let (m1, m2) = msg.msg.into_parts();
                     match m2 {
@@ -99,12 +112,19 @@ impl CaSubFut for ReadNotifyAdhoc {
                                     channeltrace::ReadNotifyRes::new(sent.elapsed()),
                                 )),
                             );
+                            self.done = true;
                             Ready(Some(CaSubFutItem::ChannelTrace(item)))
                         }
                         _ => continue,
                     }
                 } else if self.inp_done {
                     Ready(None)
+                } else if sent + Duration::from_millis(4000) < tsnow {
+                    self.done = true;
+                    let item = channeltrace::ChannelTraceItem::new(channeltrace::ChannelTraceItemInner::CaProto(
+                        channeltrace::CaProto::ReadNotifyTimeout,
+                    ));
+                    Ready(Some(CaSubFutItem::ChannelTrace(item)))
                 } else {
                     Pending
                 }
@@ -112,8 +132,8 @@ impl CaSubFut for ReadNotifyAdhoc {
                 self.sent = Some(tsnow);
                 let msg = proto::CaMsg::from_ty_ts(
                     proto::CaMsgTy::ReadNotify(proto::ReadNotify {
-                        data_type: 0,
-                        data_count: 0,
+                        data_type: self.dbrty.to_u16(),
+                        data_count: self.shape.to_ca_count().unwrap_or(0),
                         sid: self.sid.to_u32(),
                         ioid: self.ioid.to_u32(),
                     }),

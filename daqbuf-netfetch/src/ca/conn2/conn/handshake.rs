@@ -1,6 +1,7 @@
 use crate::asynbuf;
 use crate::asynchan;
 use crate::ca::conn2::conn::activeca::CaCommand;
+use crate::futwrap::break_hpp_a;
 use ca_proto::ca::proto::CaMsg;
 use ca_proto::ca::proto::CaMsgTy;
 use futures::Stream;
@@ -109,7 +110,6 @@ impl Stream for Handshake {
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         use Poll::*;
-        trace!("poll_next");
         loop {
             let mut hpp = HaveProgressPending::new();
             let self2 = self.as_mut().get_mut();
@@ -118,7 +118,6 @@ impl Stream for Handshake {
                     if let Some(msg) = st1.msgs.pop_front() {
                         break Ready(Some(Ok(Item::CaMsg(msg))));
                     } else {
-                        trace!("Tx:AllSent");
                         hpp.mark_progress();
                         self.state = State::HelloRecv;
                     }
@@ -161,13 +160,7 @@ impl Stream for Handshake {
                 }
                 State::Done => {}
             };
-            break if hpp.have_progress() {
-                continue;
-            } else if hpp.have_pending() {
-                Pending
-            } else {
-                Ready(None)
-            };
+            break_hpp_a!(hpp);
         }
     }
 }

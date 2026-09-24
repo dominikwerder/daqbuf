@@ -28,6 +28,8 @@ use crate::ca::progpend::HaveProgressPending;
 use crate::conf::ChannelConfig;
 use crate::futwrap::FutDbg;
 use crate::futwrap::FutDbgBox;
+use crate::futwrap::break_hpp_a;
+use crate::futwrap::poll_b;
 use ca_proto::ca::proto;
 use ca_proto::ca::proto::CaMsg;
 use dbpg::seriesbychannel::ChannelInfoResult;
@@ -307,8 +309,10 @@ impl Running {
     pub fn cmd_read_notify(&mut self, tx: asynchan::Sender<serde_json::Value>) -> serde_json::Value {
         use serde_json::json;
         let selfname = "cmd_read_notify";
+        debug!("{selfname}");
         match &mut self.state {
             State::Normal(st) => {
+                debug!("{selfname}  Normal");
                 if st.subfuts.len() >= READ_NOTIFY_FUTS_CAP {
                     json!({"error": format!("{selfname}  too many in-flight read-notify commands")})
                 } else {
@@ -316,7 +320,13 @@ impl Running {
                     let ioid = self
                         .ioid_reg
                         .register_new(self.sid.clone(), self.cid.clone(), tsnow, tsnow);
-                    let fut = subfut::ReadNotifyAdhoc::new(self.sid.clone(), ioid, tx);
+                    let fut = subfut::ReadNotifyAdhoc::new(
+                        self.sid.clone(),
+                        st.fetchmpx.ca_dbr_ty(),
+                        st.fetchmpx.shape(),
+                        ioid,
+                        tx,
+                    );
                     st.subfuts.push_back(Some(Box::new(fut)));
                     self.trace_outbuf
                         .push_back(ChannelTraceItem::new(ChannelTraceItemInner::CaProto(
@@ -341,7 +351,6 @@ impl Running {
                         match fut.poll_next_unpin(cx) {
                             Ready(Some(item)) => {
                                 hpp.mark_progress();
-                                *slot = None;
                                 use subfut::CaSubFutItem;
                                 match item {
                                     CaSubFutItem::Error => return Ready(Some(Err(Error::SubFut))),
@@ -353,7 +362,10 @@ impl Running {
                                     }
                                 }
                             }
-                            Ready(None) => {}
+                            Ready(None) => {
+                                hpp.mark_progress();
+                                *slot = None;
+                            }
                             Pending => {
                                 hpp.mark_pending();
                             }
@@ -398,24 +410,38 @@ impl Running {
                     if let Some(item) = self2.inp_buf.pop_front() {
                         trace3!("{selfname}  have item  {item:?}");
                         let ioid = match &item.msg.ty {
-                            proto::CaMsgTy::ReadNotifyRes(v) => Some(Ioid::new(v.ioid)),
+                            proto::CaMsgTy::ReadNotifyRes(v) => {
+                                debug!("have ReadNotifyRes {v:?}");
+                                Some(Ioid::new(v.ioid))
+                            }
                             _ => None,
                         };
-                        let subfut = ioid
+                        if false {
+                            let aa: Vec<_> = st2
+                                .subfuts
+                                .iter()
+                                .map(|x| x.as_ref().map(|x| x.awaits_ioid()))
+                                .collect();
+                            debug!("checking with subfuts: {aa:?}");
+                        }
+                        if let Some(fut) = ioid
                             .map(|ioid| {
                                 st2.subfuts
                                     .iter_mut()
                                     .filter_map(|x| x.as_mut())
                                     .filter(|x| x.awaits_ioid() == Some(ioid))
+                                    .inspect(|_| debug!("match for ioid {ioid}"))
                                     .next()
                             })
-                            .flatten();
-                        if let Some(fut) = subfut {
+                            .flatten()
+                        {
                             match fut.inp_push_try(item) {
                                 Some(item) => {
+                                    debug!("-- FULL");
                                     self2.inp_buf.push_front(item);
                                 }
                                 None => {
+                                    debug!("-- PUSHED");
                                     hpp.mark_progress();
                                 }
                             }
@@ -460,16 +486,7 @@ impl Running {
                 }
                 State::Done => {}
             }
-            break if hpp.have_progress() {
-                trace4!("HPP:Progress");
-                continue;
-            } else if hpp.have_pending() {
-                trace_pending!("HPP");
-                Pending
-            } else {
-                trace!("HPP:Done");
-                Ready(None)
-            };
+            break_hpp_a!(hpp);
         }
     }
 }
@@ -505,12 +522,7 @@ impl Stream for Running {
                     }
                 },
             }
-            match self.poll_subfuts(cx) {
-                Ready(_) => todo!(),
-                Pending => {
-                    hpp.mark_pending();
-                }
-            }
+            poll_b!(self.poll_subfuts(cx), hpp);
             if let Some(x) = self.trace_outbuf.pop_front() {
                 break Ready(Some(Ok(RunningItem::ChannelTrace(x))));
             }
@@ -591,16 +603,7 @@ impl Stream for Running {
                 },
                 State::Done => {}
             }
-            break if hpp.have_progress() {
-                trace4!("HPP:Progress");
-                continue;
-            } else if hpp.have_pending() {
-                trace_pending!("HPP");
-                Pending
-            } else {
-                trace!("HPP:Done");
-                Ready(None)
-            };
+            break_hpp_a!(hpp);
         }
     }
 }
