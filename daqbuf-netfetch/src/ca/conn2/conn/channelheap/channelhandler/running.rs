@@ -3,6 +3,7 @@ const READ_NOTIFY_FUTS_CAP: usize = 16;
 const READ_NOTIFY_CMD_TIMEOUT_MS: u64 = 3000;
 
 mod consume_event_data;
+mod subfut;
 
 use super::fetchmpx::Fetchmpx;
 use crate::asynchan;
@@ -17,8 +18,10 @@ use crate::ca::conn2::conn::channelheap::IoidRegistry;
 use crate::ca::conn2::conn::channelheap::ProtoRxItem;
 use crate::ca::conn2::conn::channelheap::channelhandler::ClosingReason;
 use crate::ca::conn2::conn::channelheap::channelhandler::fetchmpx;
+use crate::ca::conn2::conn::channelheap::channelhandler::running::subfut::CaSubFut;
 use crate::ca::conn2::locallog;
 use crate::ca::connset2::connset::channeltrace::CaProto;
+use crate::ca::connset2::connset::channeltrace::ChannelTraceItem;
 use crate::ca::connset2::connset::channeltrace::ChannelTraceItemInner;
 use crate::ca::connset2::connset::channeltrace::ReadNotifyRes;
 use crate::ca::progpend::HaveProgressPending;
@@ -89,6 +92,7 @@ autoerr::create_error_v1!(
         Register(#[from] dbpg::seriesbychannel::Error),
         RtWriter(#[from] serieswriter::rtwriter::Error),
         BinWriter(#[from] serieswriter::binwriter::Error),
+        SubFut,
     },
 );
 
@@ -116,7 +120,19 @@ pub enum RunningItem {
     ChannelEventValue(ChannelEventValue),
     ChannelWriteItems(Vec<QueryItem>),
     RequestClose(ClosingReason),
-    ChannelTrace(ChannelTraceItemInner),
+    ChannelTrace(ChannelTraceItem),
+}
+
+#[derive(Debug, ToSerde)]
+#[to_serde(vis = "pub", derive(utoipa::ToSchema))]
+struct Normal {
+    #[to_serde(nest, schema(value_type = fetchmpx::FetchmpxSerde))]
+    fetchmpx: Fetchmpx,
+    #[to_serde(len)]
+    subfuts: VecDeque<Option<Box<dyn CaSubFut>>>,
+    // #[to_serde(skip)]
+    // #[to_serde(len)]
+    // read_notify_pending: HashMap<Ioid, (Instant, oneshot::Sender<proto::ReadNotifyRes>)>,
 }
 
 #[derive(Debug, ToSerde)]
@@ -143,21 +159,6 @@ impl State {
 
 #[derive(Debug, ToSerde)]
 #[to_serde(vis = "pub", derive(utoipa::ToSchema))]
-struct Normal {
-    #[to_serde(nest, schema(value_type = fetchmpx::FetchmpxSerde))]
-    fetchmpx: Fetchmpx,
-    /// In-flight `cmd_read_notify` command futures, capped at `READ_NOTIFY_FUTS_CAP`.
-    #[to_serde(len)]
-    futs: VecDeque<Option<(Ioid, FutDbg<()>)>>,
-    /// Completed together with the matching `futs` slot (see `Running::poll_futs`),
-    /// so a timed-out command can't leak a stale entry here. The `Instant` is when the
-    /// `ReadNotify` request was sent, kept to measure round-trip latency for the trace.
-    #[to_serde(skip)]
-    read_notify_pending: HashMap<Ioid, (Instant, oneshot::Sender<proto::ReadNotifyRes>)>,
-}
-
-#[derive(Debug, ToSerde)]
-#[to_serde(vis = "pub", derive(utoipa::ToSchema))]
 pub(super) struct Running {
     #[to_serde(nest, schema(value_type = RunningStateSerde))]
     state: State,
@@ -170,12 +171,13 @@ pub(super) struct Running {
     chi: ChannelInfoResult,
     removing: bool,
     #[to_serde(len)]
-    outbuf: VecDeque<CaMsg>,
+    outbuf: VecDeque<RunningItem>,
     #[to_serde(len)]
-    trace_outbuf: VecDeque<ChannelTraceItemInner>,
+    trace_outbuf: VecDeque<ChannelTraceItem>,
     #[to_serde(len)]
     inp_buf: VecDeque<ProtoRxItem>,
     inp_done: bool,
+    inp_done_fwd: bool,
     #[to_serde(skip)]
     mett: ChannelHandlerMetrics,
     #[to_serde(skip)]
@@ -238,8 +240,7 @@ impl Running {
         Ok(Self {
             state: State::Normal(Normal {
                 fetchmpx: Fetchmpx::new(series, cid.clone(), sid.clone(), scalar_type, shape, ca_dbr_ty, chconf),
-                futs: VecDeque::new(),
-                read_notify_pending: HashMap::new(),
+                subfuts: VecDeque::new(),
             }),
             state_dt: Instant::now(),
             cid,
@@ -250,6 +251,7 @@ impl Running {
             trace_outbuf: VecDeque::new(),
             inp_buf: VecDeque::with_capacity(INP_BUF_CAP),
             inp_done: false,
+            inp_done_fwd: false,
             mett: ChannelHandlerMetrics::new(),
             rtwriter,
             binwriter: Some(binwriter),
@@ -302,49 +304,26 @@ impl Running {
         }
     }
 
-    pub fn cmd_read_notify(&mut self, mut resp_tx: asynchan::Sender<serde_json::Value>) -> serde_json::Value {
+    pub fn cmd_read_notify(&mut self, tx: asynchan::Sender<serde_json::Value>) -> serde_json::Value {
         use serde_json::json;
         let selfname = "cmd_read_notify";
         match &mut self.state {
-            State::Normal(normal) => {
-                if normal.futs.len() >= READ_NOTIFY_FUTS_CAP {
-                    return json!({"error": format!("{selfname}  too many in-flight read-notify commands")});
+            State::Normal(st) => {
+                if st.subfuts.len() >= READ_NOTIFY_FUTS_CAP {
+                    json!({"error": format!("{selfname}  too many in-flight read-notify commands")})
+                } else {
+                    let tsnow = Instant::now();
+                    let ioid = self
+                        .ioid_reg
+                        .register_new(self.sid.clone(), self.cid.clone(), tsnow, tsnow);
+                    let fut = subfut::ReadNotifyAdhoc::new(self.sid.clone(), ioid, tx);
+                    st.subfuts.push_back(Some(Box::new(fut)));
+                    self.trace_outbuf
+                        .push_back(ChannelTraceItem::new(ChannelTraceItemInner::CaProto(
+                            CaProto::ReadNotify,
+                        )));
+                    json!({"status": "pending"})
                 }
-                let tsnow = Instant::now();
-                let ioid = self
-                    .ioid_reg
-                    .register_new(self.sid.clone(), self.cid.clone(), tsnow, tsnow);
-                let msg = proto::CaMsg::from_ty_ts(
-                    proto::CaMsgTy::ReadNotify(proto::ReadNotify {
-                        data_type: normal.fetchmpx.ca_dbr_ty().to_u16(),
-                        data_count: normal.fetchmpx.shape().to_ca_count().unwrap(),
-                        sid: self.sid.to_u32(),
-                        ioid: ioid.to_u32(),
-                    }),
-                    tsnow,
-                );
-                let (oneshot_tx, oneshot_rx) = oneshot::channel();
-                normal.read_notify_pending.insert(ioid, (tsnow, oneshot_tx));
-                let fut = async move {
-                    let res = match tokio::time::timeout(Duration::from_millis(READ_NOTIFY_CMD_TIMEOUT_MS), oneshot_rx)
-                        .await
-                    {
-                        Ok(Ok(v)) => json!({
-                            "ok": true,
-                            "value": serde_json::to_value(&v.value).unwrap_or_else(|e| json!({"error": e.to_string()})),
-                            "data_type": v.data_type,
-                            "data_count": v.data_count,
-                        }),
-                        Ok(Err(_canceled)) => json!({"error": "canceled"}),
-                        Err(_timeout) => json!({"error": "timeout"}),
-                    };
-                    let _ = resp_tx.try_send(res);
-                };
-                normal.futs.push_back(Some((ioid, fut.box2())));
-                self.outbuf.push_back(msg);
-                self.trace_outbuf
-                    .push_back(ChannelTraceItemInner::CaProto(CaProto::ReadNotify));
-                json!({"queued": true})
             }
             State::Done => json!({
                 "error": format!("{selfname}  Running  {}", self.state.str()),
@@ -352,18 +331,45 @@ impl Running {
         }
     }
 
-    fn poll_futs(&mut self, cx: &mut Context<'_>) {
+    fn poll_subfuts(&mut self, cx: &mut Context<'_>) -> Poll<Option<Result<(), Error>>> {
         use Poll::*;
-        if let State::Normal(normal) = &mut self.state {
-            for slot in normal.futs.iter_mut() {
-                if let Some((ioid, fut)) = slot {
-                    if let Ready(()) = fut.poll_unpin(cx) {
-                        normal.read_notify_pending.remove(ioid);
-                        *slot = None;
+        let mut hpp = HaveProgressPending::new();
+        match &mut self.state {
+            State::Normal(normal) => {
+                for slot in normal.subfuts.iter_mut() {
+                    if let Some(fut) = slot {
+                        match fut.poll_next_unpin(cx) {
+                            Ready(Some(item)) => {
+                                hpp.mark_progress();
+                                *slot = None;
+                                use subfut::CaSubFutItem;
+                                match item {
+                                    CaSubFutItem::Error => return Ready(Some(Err(Error::SubFut))),
+                                    CaSubFutItem::ChannelTrace(x) => {
+                                        self.trace_outbuf.push_back(x);
+                                    }
+                                    CaSubFutItem::CaMsgOut(x) => {
+                                        self.outbuf.push_back(RunningItem::CaMsgOut(x));
+                                    }
+                                }
+                            }
+                            Ready(None) => {}
+                            Pending => {
+                                hpp.mark_pending();
+                            }
+                        }
                     }
                 }
+                normal.subfuts.retain(Option::is_some);
             }
-            normal.futs.retain(Option::is_some);
+            State::Done => {}
+        }
+        if hpp.have_progress() {
+            Ready(Some(Ok(())))
+        } else if hpp.have_pending() {
+            Pending
+        } else {
+            Ready(None)
         }
     }
 
@@ -379,10 +385,6 @@ impl Running {
 
     pub fn inp_done(&mut self) {
         self.inp_done = true;
-        match &mut self.state {
-            State::Normal(st) => st.fetchmpx.inp_done(),
-            State::Done => {}
-        }
     }
 
     fn poll_inp_dispatch(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Result<(), Error>>> {
@@ -395,25 +397,27 @@ impl Running {
                 State::Normal(st2) => {
                     if let Some(item) = self2.inp_buf.pop_front() {
                         trace3!("{selfname}  have item  {item:?}");
-                        let read_notify_ioid = match &item.msg.ty {
+                        let ioid = match &item.msg.ty {
                             proto::CaMsgTy::ReadNotifyRes(v) => Some(Ioid::new(v.ioid)),
                             _ => None,
                         };
-                        let read_notify_waiter =
-                            read_notify_ioid.and_then(|ioid| st2.read_notify_pending.remove(&ioid));
-                        if let Some((ts_sent, tx)) = read_notify_waiter {
-                            hpp.mark_progress();
-                            let latency = ts_sent.elapsed();
-                            self2
-                                .trace_outbuf
-                                .push_back(ChannelTraceItemInner::CaProto(CaProto::ReadNotifyRes(
-                                    ReadNotifyRes::new(latency),
-                                )));
-                            match item.msg.ty {
-                                proto::CaMsgTy::ReadNotifyRes(v) => {
-                                    let _ = tx.send(v);
+                        let subfut = ioid
+                            .map(|ioid| {
+                                st2.subfuts
+                                    .iter_mut()
+                                    .filter_map(|x| x.as_mut())
+                                    .filter(|x| x.awaits_ioid() == Some(ioid))
+                                    .next()
+                            })
+                            .flatten();
+                        if let Some(fut) = subfut {
+                            match fut.inp_push_try(item) {
+                                Some(item) => {
+                                    self2.inp_buf.push_front(item);
                                 }
-                                _ => unreachable!(),
+                                None => {
+                                    hpp.mark_progress();
+                                }
                             }
                         } else {
                             let to_mpx = match &item.msg.ty {
@@ -425,7 +429,6 @@ impl Running {
                             if to_mpx {
                                 match st2.fetchmpx.inp_push_try(item) {
                                     Some(item) => {
-                                        hpp.mark_pending();
                                         self2.inp_buf.push_front(item);
                                     }
                                     None => {
@@ -439,7 +442,18 @@ impl Running {
                                 break Ready(Some(Err(e)));
                             }
                         }
-                    } else if self.inp_done {
+                    } else if self2.inp_done {
+                        if self2.inp_done_fwd {
+                        } else {
+                            self2.inp_done_fwd = true;
+                            hpp.mark_progress();
+                            st2.fetchmpx.inp_done();
+                            for e in &mut st2.subfuts {
+                                if let Some(fut) = e {
+                                    fut.inp_done();
+                                }
+                            }
+                        }
                     } else {
                         hpp.mark_pending();
                     }
@@ -491,12 +505,17 @@ impl Stream for Running {
                     }
                 },
             }
-            self.poll_futs(cx);
-            if let Some(msg) = self.outbuf.pop_front() {
-                break Ready(Some(Ok(RunningItem::CaMsgOut(msg))));
+            match self.poll_subfuts(cx) {
+                Ready(_) => todo!(),
+                Pending => {
+                    hpp.mark_pending();
+                }
             }
             if let Some(x) = self.trace_outbuf.pop_front() {
                 break Ready(Some(Ok(RunningItem::ChannelTrace(x))));
+            }
+            if let Some(x) = self.outbuf.pop_front() {
+                break Ready(Some(Ok(x)));
             }
             match &mut self.state {
                 State::Normal(normal) => match normal.fetchmpx.poll_next_unpin(cx) {

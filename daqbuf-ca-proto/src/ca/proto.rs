@@ -185,7 +185,7 @@ pub struct ReadNotify {
     pub ioid: u32,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct ReadNotifyRes {
     pub data_type: u16,
     pub data_count: u32,

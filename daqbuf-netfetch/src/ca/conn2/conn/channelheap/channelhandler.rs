@@ -1078,7 +1078,7 @@ impl Stream for ChannelHandler {
                                     running::RunningItem::ChannelTrace(x) => {
                                         break Ready(Some(Ok(ChannelHandlerItem {
                                             ts_create: tsloop,
-                                            inner: ItemInner::ChannelTrace(ChannelTraceItem::new(x)),
+                                            inner: ItemInner::ChannelTrace(x),
                                         })));
                                     }
                                 },
