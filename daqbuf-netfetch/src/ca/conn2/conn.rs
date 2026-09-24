@@ -958,15 +958,15 @@ impl Stream for CaConn {
                 }
                 while self.ca_cmd_tx_futs.len() < CMD_TX_FUTS_CAP {
                     match self.as_mut().poll_cmd_rx(cx) {
-                        Ready(Some(x)) => match x {
-                            Ok(()) => {
-                                hpp.mark_progress();
+                        Ready(Some(x)) => {
+                            hpp.mark_progress();
+                            match x {
+                                Ok(()) => {}
+                                Err(e) => {
+                                    break 'outer Ready(Some(Err(e)));
+                                }
                             }
-                            Err(e) => {
-                                hpp.mark_progress();
-                                break 'outer Ready(Some(Err(e)));
-                            }
-                        },
+                        }
                         Ready(None) => break,
                         Pending => {
                             hpp.mark_pending();

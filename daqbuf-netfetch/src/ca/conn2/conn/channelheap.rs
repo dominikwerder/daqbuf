@@ -600,19 +600,22 @@ impl ChannelHeap {
         };
         match &mut self.state {
             State::Running => {
-                let ch = self.by_name.get(&cmd3.chname).and_then(|cid| self.by_cid.get_mut(cid));
-                match ch {
-                    Some(ch) => match &mut ch.ch_handler {
-                        ChHandler::ChHandlerActive(st2) => {
-                            st2.handler.cmd_read_notify(tx);
+                if let Some(cid) = self.by_name.get(&cmd3.chname).map(Clone::clone) {
+                    if let Some(ce) = self.by_cid.get_mut(&cid) {
+                        match &mut ce.ch_handler {
+                            ChHandler::ChHandlerActive(st2) => {
+                                self.wakeup_cids.insert(cid, ());
+                                st2.handler.cmd_read_notify(tx);
+                            }
+                            ChHandler::Done => {
+                                let _ = tx.try_send(json!({"error": "ChannelHeap  ChHandler::Done"}));
+                            }
                         }
-                        ChHandler::Done => {
-                            let _ = tx.try_send(json!({"error": "ChannelHeap  ChHandler::Done"}));
-                        }
-                    },
-                    None => {
-                        let _ = tx.try_send(json!({"error": "chname not found"}));
+                    } else {
+                        let _ = tx.try_send(json!({"error": "channel entry not found"}));
                     }
+                } else {
+                    let _ = tx.try_send(json!({"error": "chname not found"}));
                 }
             }
             State::Done => {

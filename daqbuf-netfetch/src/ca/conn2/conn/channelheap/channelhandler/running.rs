@@ -158,7 +158,7 @@ struct Normal {
 
 #[derive(Debug, ToSerde)]
 #[to_serde(vis = "pub", derive(utoipa::ToSchema))]
-pub struct Running {
+pub(super) struct Running {
     #[to_serde(nest, schema(value_type = RunningStateSerde))]
     state: State,
     /// Set by `transition_state`, reported as time-in-state.
@@ -260,7 +260,6 @@ impl Running {
         })
     }
 
-    /// Harvest the metrics of this state and of the contained Fetchmpx.
     pub fn mett_take(&mut self) -> ChannelHandlerMetrics {
         let mut ret = std::mem::replace(&mut self.mett, ChannelHandlerMetrics::new());
         match &mut self.state {
@@ -270,10 +269,6 @@ impl Running {
             State::Done => {}
         }
         ret
-    }
-
-    pub fn sid(&self) -> Sid {
-        self.sid.clone()
     }
 
     pub fn trigger_close(&mut self, reason: ClosingReason) {
@@ -307,9 +302,6 @@ impl Running {
         }
     }
 
-    /// Issue an on-demand `ReadNotify` for this channel. The immediate return value is
-    /// only a synchronous ack/error; the actual result is delivered later through `resp_tx`,
-    /// from the future queued onto `Normal.futs` and driven by `poll_futs`.
     pub fn cmd_read_notify(&mut self, mut resp_tx: asynchan::Sender<serde_json::Value>) -> serde_json::Value {
         use serde_json::json;
         let selfname = "cmd_read_notify";
