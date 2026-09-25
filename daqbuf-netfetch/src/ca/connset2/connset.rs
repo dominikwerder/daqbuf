@@ -720,10 +720,23 @@ impl ConnSet {
                         Ok(cmd) => match regex::Regex::new(&cmd.regex) {
                             Ok(re1) => {
                                 if cmd.src == "CaConn" {
+                                    let addr_re = match cmd.addr_regex.as_deref().map(regex::Regex::new).transpose() {
+                                        Ok(x) => x,
+                                        Err(e) => {
+                                            let val = serde_json::json!({
+                                                "type": "error",
+                                                "msg": format!("{e}"),
+                                            });
+                                            let _ = tx.try_send(val);
+                                            return None;
+                                        }
+                                    };
                                     let cmdtxs: Vec<_> = self
                                         .ca_conns
                                         .iter()
-                                        .filter(|(addr, _)| true || addr.port() == 123)
+                                        .filter(|(addr, _)| {
+                                            addr_re.as_ref().map_or(true, |re| re.is_match(&addr.to_string()))
+                                        })
                                         .map(|(addr, reg)| (addr.clone(), reg.comm.clone()))
                                         .collect();
                                     let fut = async move {

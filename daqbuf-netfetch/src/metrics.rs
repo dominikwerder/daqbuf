@@ -151,6 +151,8 @@ pub struct CmdChannelsByRegex {
     pub regex: String,
     pub src: String,
     pub kind: String,
+    #[serde(default)]
+    pub addr_regex: Option<String>,
 }
 
 pub trait Conn2Ctrls: Send + Sync {
@@ -842,6 +844,7 @@ fn make_routes(ca_ingest_ctrls: Arc<dyn CaIngestCtrls>, post_ingest_ctrls: Arc<d
         .routes(routes!(channel_v1::channel_add))
         .routes(routes!(channel_v1::channel_remove))
         .routes(routes!(channel_v1::channel_read_notify))
+        .routes(routes!(channel_v1::channel_names))
         .routes(routes!(channel_v1::channel_trace))
         .routes(routes!(channel_v1::connection_trace));
     let (documented_router, api) = OpenApiRouter::new()

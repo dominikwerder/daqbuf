@@ -333,3 +333,116 @@ pub async fn connection_trace(
         .map_err(|e| ChannelTraceApiError::Backend(e.to_string()))?;
     Ok(axum::Json(ConnectionTraceResult { trace: v }))
 }
+
+#[derive(Debug, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct ChannelNamesQuery {
+    /// Regex matched against the `ip:port` of each CaConn. Matches all if absent.
+    pub addr: Option<String>,
+    /// Regex matched against the channel name. Matches all if absent.
+    pub name: Option<String>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ChannelNamesItem {
+    pub name: String,
+    /// `ip:port` of the connection that holds the channel.
+    pub addr: Option<String>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ChannelNamesResult {
+    pub channels: Vec<ChannelNamesItem>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ChannelNamesErrorBody {
+    /// Stable machine-readable discriminator: `bad-regex`, `conn2-not-active`, `backend-error`.
+    pub kind: String,
+    pub error: String,
+}
+
+autoerr::create_error_v1!(
+    name(ChannelNamesApiError, "ChannelNamesApi"),
+    enum variants {
+        Conn2NotActive,
+        Backend(String),
+        BadRegex(String),
+    },
+);
+
+impl ChannelNamesApiError {
+    pub fn kind(&self) -> &'static str {
+        match self {
+            ChannelNamesApiError::Conn2NotActive => "conn2-not-active",
+            ChannelNamesApiError::Backend(..) => "backend-error",
+            ChannelNamesApiError::BadRegex(..) => "bad-regex",
+            _ => "error",
+        }
+    }
+
+    pub fn status_code(&self) -> axum::http::StatusCode {
+        match self {
+            ChannelNamesApiError::Conn2NotActive => axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            ChannelNamesApiError::BadRegex(..) => axum::http::StatusCode::BAD_REQUEST,
+            _ => axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+        }
+    }
+}
+
+impl axum::response::IntoResponse for ChannelNamesApiError {
+    fn into_response(self) -> axum::response::Response {
+        let body = ChannelNamesErrorBody {
+            kind: self.kind().into(),
+            error: self.to_string(),
+        };
+        (self.status_code(), axum::Json(body)).into_response()
+    }
+}
+
+/// Channel names held by the CaConns whose `ip:port` matches the `addr` regex, filtered by the `name` regex.
+#[utoipa::path(
+    get,
+    path = "/names",
+    params(ChannelNamesQuery),
+    responses(
+        (status = 200, description = "Matching channel names", body = ChannelNamesResult),
+        (status = 400, description = "A regex could not be compiled", body = ChannelNamesErrorBody),
+        (status = 500, description = "The command could not be executed", body = ChannelNamesErrorBody),
+        (status = 503, description = "This daemon does not run the v2 ingest path", body = ChannelNamesErrorBody),
+    ),
+    tag = "daqingest-channel",
+)]
+pub async fn channel_names(
+    axum::extract::State(ctrls): axum::extract::State<Arc<dyn CaIngestCtrls>>,
+    axum::extract::Query(q): axum::extract::Query<ChannelNamesQuery>,
+) -> Result<axum::Json<ChannelNamesResult>, ChannelNamesApiError> {
+    let c2 = ctrls.conn2_ctrls().await.ok_or(ChannelNamesApiError::Conn2NotActive)?;
+    let cmd = serde_json::json!({
+        "type": "ChannelsByRegexV1",
+        "regex": q.name.unwrap_or_else(|| ".*".into()),
+        "addr_regex": q.addr,
+        "src": "CaConn",
+        "kind": "",
+    });
+    let v = c2
+        .cmd_dyn_v1(cmd.to_string())
+        .await
+        .map_err(|e| ChannelNamesApiError::Backend(e.to_string()))?;
+    if v.get("type").and_then(|x| x.as_str()) == Some("error") {
+        let msg = v.get("msg").and_then(|x| x.as_str()).unwrap_or("unknown").to_string();
+        return Err(ChannelNamesApiError::BadRegex(msg));
+    }
+    let channels = v
+        .get("channels")
+        .and_then(|x| x.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|x| {
+            let name = x.get("name")?.as_str()?.to_string();
+            let addr = x.get("addr").and_then(|x| x.as_str()).map(String::from);
+            Some(ChannelNamesItem { name, addr })
+        })
+        .collect();
+    Ok(axum::Json(ChannelNamesResult { channels }))
+}
