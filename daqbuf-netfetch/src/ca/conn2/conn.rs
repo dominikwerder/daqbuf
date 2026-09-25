@@ -22,6 +22,7 @@ use crate::ca::connset2::connset::TestValue;
 use crate::ca::connset2::connset::channeltrace::ChannelTraceItem;
 use crate::ca::connset2::connset::channeltrace::ChannelTraceL2Item;
 use crate::ca::connset2::connset::channeltrace::ConnectionTraceL1Item;
+use crate::ca::connset2::connset::channeltrace::ConnectionTraceL1ItemInner;
 use crate::ca::progpend::HaveProgressPending;
 use crate::conf::ChannelConfig;
 use crate::futwrap::FutDbg;
@@ -178,7 +179,7 @@ impl State {
         let fut = ConnectFut(fut);
         Self::Connecting(Connecting {
             remote_addr,
-            // ress_a,
+            ts_begin: Instant::now(),
             fut,
         })
     }
@@ -213,6 +214,7 @@ impl fmt::Debug for ConnectFut {
 #[derive(Debug)]
 struct Connecting {
     remote_addr: SocketAddrV4,
+    ts_begin: Instant,
     fut: ConnectFut,
 }
 
@@ -459,7 +461,18 @@ impl CaConn {
             ca_cmd_rx,
             out_buf: AsynBuf::new(OUT_BUF_CAP),
         };
+        let mut ret = ret;
+        ret.push_connection_trace(ConnectionTraceL1ItemInner::TcpConnectAttempt);
         ret
+    }
+
+    fn push_connection_trace(&mut self, inner: ConnectionTraceL1ItemInner) {
+        let item = ConnectionTraceL1Item {
+            ts: Instant::now(),
+            addr: self.remote_addr,
+            inner,
+        };
+        self.out_buf.push_back_force(CaConnItem::ConnectionTrace(item));
     }
 
     pub fn comm(&self) -> CaConnComm {
@@ -961,16 +974,18 @@ impl Stream for CaConn {
                         trace!("{selfname}:Connecting:Ready");
                         self2.mett.tcp_connected().inc();
                         // ok, we replace the full state
-                        let stn = Connected::new(self2.backend.clone(), x, self.remote_addr, tsloop);
-                        self.state = State::Connected(stn);
+                        let dt = st1.ts_begin.elapsed();
+                        let stn = Connected::new(self2.backend.clone(), x, self2.remote_addr, tsloop);
+                        self2.state = State::Connected(stn);
+                        self2.push_connection_trace(ConnectionTraceL1ItemInner::TcpConnected(dt));
                         hpp.mark_progress();
                     }
                     Ready(Err(e)) => {
                         trace!("{selfname}:Connecting:Err:{e}");
-                        self.mett.connect_error().inc();
-                        self.state = State::Done;
+                        self2.mett.connect_error().inc();
+                        self2.push_connection_trace(ConnectionTraceL1ItemInner::TcpConnectError(e.to_string()));
+                        self2.state = State::Done;
                         hpp.mark_progress();
-                        break Ready(Some(Err(e)));
                     }
                     Pending => {
                         hpp.mark_pending();
@@ -1050,16 +1065,19 @@ impl Stream for CaConn {
                                     }
                                     Err(e) => {
                                         error!("{selfname}:Connected:Err  TODO handle error more elegant?  {e}");
-                                        self.mett.connected_error().inc();
-                                        self.dump_state_poll();
-                                        self.state = State::Done;
-                                        break Ready(Some(Err(e.into())));
+                                        self2.mett.connected_error().inc();
+                                        self2.push_connection_trace(ConnectionTraceL1ItemInner::ConnectionError(
+                                            e.to_string(),
+                                        ));
+                                        self2.state = State::Done;
+                                        hpp.mark_progress();
                                     }
                                 }
                             }
                             Ready(None) => {
                                 error!("{selfname}:Connected:Done  TODO handle shutdown");
                                 self2.mett.connected_end_of_stream().inc();
+                                self2.push_connection_trace(ConnectionTraceL1ItemInner::EndOfStream);
                                 self2.state = State::Done;
                                 hpp.mark_progress();
                             }

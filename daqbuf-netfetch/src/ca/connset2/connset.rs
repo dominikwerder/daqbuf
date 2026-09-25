@@ -628,6 +628,19 @@ impl ConnSet {
                                             }
                                             conn2::conn::CaConnItem::ConnectionTrace(x) => {
                                                 self2.mett.conn_channel_trace().inc();
+                                                if let Some(inner) = x.inner.to_channel_trace_inner() {
+                                                    for (chn, cc) in self2.channels.iter() {
+                                                        if cc.channel.addr() == Some(*addr) {
+                                                            let item = channeltrace::ChannelTraceL1Item::new(
+                                                                chn.to_string(),
+                                                                channeltrace::ChannelTraceItem::new(inner.clone()),
+                                                            );
+                                                            let item =
+                                                                channeltrace::ChannelTraceL2Item::new(*addr, item);
+                                                            self2.chtrace.push(item);
+                                                        }
+                                                    }
+                                                }
                                                 self2.chtrace.push_connection_trace(x);
                                             }
                                         }

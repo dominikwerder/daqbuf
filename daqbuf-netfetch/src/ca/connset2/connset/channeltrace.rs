@@ -10,6 +10,11 @@ use std::time::Instant;
 pub enum ConnectionTraceL1ItemInner {
     Ping,
     Pong(Duration),
+    TcpConnectAttempt,
+    TcpConnected(Duration),
+    TcpConnectError(String),
+    ConnectionError(String),
+    EndOfStream,
 }
 
 impl ConnectionTraceL1ItemInner {
@@ -18,6 +23,25 @@ impl ConnectionTraceL1ItemInner {
         match self {
             Ping => "ping".into(),
             Pong(lat) => format!("pong {:.0} ms", 1e3 * lat.as_secs_f32()),
+            TcpConnectAttempt => "tcp connect".into(),
+            TcpConnected(dt) => format!("tcp connected {:.0} ms", 1e3 * dt.as_secs_f32()),
+            TcpConnectError(e) => format!("tcp connect error {e}"),
+            ConnectionError(e) => format!("connection error {e}"),
+            EndOfStream => "end of stream".into(),
+        }
+    }
+}
+
+impl ConnectionTraceL1ItemInner {
+    pub fn to_channel_trace_inner(&self) -> Option<ChannelTraceItemInner> {
+        use ConnectionTraceL1ItemInner::*;
+        match self {
+            Ping | Pong(_) => None,
+            TcpConnectAttempt => Some(ChannelTraceItemInner::TcpConnectAttempt),
+            TcpConnected(dt) => Some(ChannelTraceItemInner::TcpConnected(*dt)),
+            TcpConnectError(e) => Some(ChannelTraceItemInner::TcpConnectError(e.clone())),
+            ConnectionError(e) => Some(ChannelTraceItemInner::ConnectionError(e.clone())),
+            EndOfStream => Some(ChannelTraceItemInner::EndOfStream),
         }
     }
 }
@@ -138,6 +162,11 @@ impl CaProto {
 pub enum ChannelTraceItemInner {
     Error(ChannelTraceError),
     CaProto(CaProto),
+    TcpConnectAttempt,
+    TcpConnected(Duration),
+    TcpConnectError(String),
+    ConnectionError(String),
+    EndOfStream,
 }
 
 impl ChannelTraceItemInner {
@@ -145,6 +174,11 @@ impl ChannelTraceItemInner {
         match self {
             ChannelTraceItemInner::Error(e) => format!("error: {e}"),
             ChannelTraceItemInner::CaProto(x) => x.oneline(),
+            ChannelTraceItemInner::TcpConnectAttempt => "tcp connect".into(),
+            ChannelTraceItemInner::TcpConnected(dt) => format!("tcp connected {:.0} ms", 1e3 * dt.as_secs_f32()),
+            ChannelTraceItemInner::TcpConnectError(e) => format!("tcp connect error {e}"),
+            ChannelTraceItemInner::ConnectionError(e) => format!("connection error {e}"),
+            ChannelTraceItemInner::EndOfStream => "end of stream".into(),
         }
     }
 }
