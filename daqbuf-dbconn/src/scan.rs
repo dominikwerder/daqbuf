@@ -243,6 +243,7 @@ async fn update_db_with_channel_names_inner(
         .ok_or_else(|| Error::with_msg(format!("missing sf databuffer config in node")))?
         .data_base_path;
     debug!("base_path {:?}", base_path);
+    let mut msgs: Vec<String> = Vec::new();
     let channel_names = find_channel_names_from_config(base_path).await?;
     for ch in channel_names {
         if ch.contains("BEAT") || ch.contains("BEAM") {
@@ -251,6 +252,9 @@ async fn update_db_with_channel_names_inner(
         debug!("ch {:?}", ch);
         let fac = node_disk_ident.facility;
         crate::delay_io_short().await;
+        if ch.contains("SINEG01-RKLY-DCP10:FOR-AMPLT-AVG") {
+            msgs.push(format!("Found {ch}"));
+        }
         let ret = dbc
             .query(insert_sql, &[&fac, &ch])
             .await
@@ -283,7 +287,10 @@ async fn update_db_with_channel_names_inner(
     }
     dbc.query("commit", &[]).await.err_conv()?;
     let ret = UpdatedDbWithChannelNames {
-        msg: format!("all done"),
+        msg: format!(
+            "all done. facility {fac}.  msgs {msgs:?}",
+            fac = node_disk_ident.facility
+        ),
         count: c1,
     };
     tx.send(Ok(ret)).await.err_conv()?;

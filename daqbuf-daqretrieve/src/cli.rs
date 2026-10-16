@@ -25,12 +25,16 @@ pub enum SubCmd {
 pub struct Retrieval {
     #[arg(long)]
     pub config: String,
+    #[arg(long)]
+    pub test_config: bool,
 }
 
 #[derive(Debug, Parser)]
 pub struct Proxy {
     #[arg(long)]
     pub config: String,
+    #[arg(long)]
+    pub test_config: bool,
 }
 
 #[derive(Debug, Parser)]
