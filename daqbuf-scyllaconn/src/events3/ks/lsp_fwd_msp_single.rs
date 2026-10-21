@@ -63,7 +63,7 @@ impl LspFwdMspSingleStream {
         scyopts: ScyllaOptsSubmit,
         scyqu: ScyllaQueueCluster,
     ) -> Self {
-        let limit = limit.max(1).min(70312);
+        let limit = limit.max(1).min(0x0fffffff);
         Self {
             ks,
             series_info,

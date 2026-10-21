@@ -31,11 +31,11 @@ autoerr::create_error_v1!(
     },
 );
 
-const MSP_LIMIT_DEF: u32 = 10;
-const LSP_LIMIT_DEF: u32 = 800;
-const MSP_RESERVE_MIN: usize = 20;
-const MSP_PREOPEN_MIN: usize = 6;
-const LSP_SINGLE_BUF_MAX: usize = 5;
+const MSP_LIMIT_DEF: u32 = 0x100;
+const LSP_LIMIT_DEF: u32 = 0x10000000;
+const MSP_RESERVE_MIN: usize = 32;
+const MSP_PREOPEN_MIN: usize = 64;
+const LSP_SINGLE_BUF_MAX: usize = 16;
 
 pub async fn cl_ks_merged(
     series_info: SeriesInfo,

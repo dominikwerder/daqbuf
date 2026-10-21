@@ -290,7 +290,7 @@ impl Merging {
         let mut il1 = 0u32;
         loop {
             il1 += 1;
-            if il1 > 200 {
+            if il1 > 600 {
                 error!("check_inputs  loop iteration too many");
                 break Ready(Some(Err(Error::LoopTooMany)));
             }
@@ -407,7 +407,7 @@ impl Merging {
         let mut il1 = 0u32;
         loop {
             il1 += 1;
-            if il1 > 200 {
+            if il1 > 1000 {
                 error!("{selfname}  loop iteration too many");
                 break Ready(Some(Err(Error::LoopTooMany)));
             }
