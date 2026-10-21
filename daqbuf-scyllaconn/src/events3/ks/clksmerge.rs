@@ -32,7 +32,8 @@ autoerr::create_error_v1!(
 );
 
 const MSP_LIMIT_DEF: u32 = 0x100;
-const LSP_LIMIT_DEF: u32 = 0x10000000;
+const LSP_SCYLLA_LIMIT_DEF: u32 = 0x1000000;
+const LSP_MERGED_EMIT_LIMIT_DEF: u32 = 0x1000;
 const MSP_RESERVE_MIN: usize = 32;
 const MSP_PREOPEN_MIN: usize = 64;
 const LSP_SINGLE_BUF_MAX: usize = 16;
@@ -53,7 +54,7 @@ pub async fn cl_ks_merged(
             if filter_rts.as_ref().map_or(true, |fs| fs.contains(&ks.rt())) {
                 let opts = crate::events3::ks::lsp_fwd_msp_multi::Opts::new(
                     MSP_LIMIT_DEF,
-                    LSP_LIMIT_DEF,
+                    LSP_SCYLLA_LIMIT_DEF,
                     MSP_RESERVE_MIN,
                     MSP_PREOPEN_MIN,
                     LSP_SINGLE_BUF_MAX,
@@ -120,7 +121,7 @@ pub async fn cl_ks_merged(
             }
         }
     }
-    let stream = crate::events3::ks::lspmerge::LspMerge::new(inps, LSP_LIMIT_DEF);
+    let stream = crate::events3::ks::lspmerge::LspMerge::new(inps, LSP_MERGED_EMIT_LIMIT_DEF);
     let stream = streams::dedup::Dedup::new(stream).map(|x| x);
     let stream = stream.map(|x| match x {
         Ok(x) => match x {

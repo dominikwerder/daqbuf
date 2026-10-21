@@ -139,12 +139,13 @@ where
 
     fn poll_all_inp(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Sitemty2<(), Error>>> {
         use Poll::*;
+        let selfname = "poll_all_inp";
         // TODO when does this loop actually terminate?
         let mut il1 = 0u32;
         'outer: loop {
             il1 += 1;
-            if il1 > 200 {
-                error!("poll_all_inp  loop iteration too many");
+            if il1 > 1000 {
+                error!("{selfname}  loop iteration too many {il1}");
                 break Ready(Some(Err(Error::LoopTooMany)));
             }
             let mut hpp = HaveProgressPending::new();
@@ -226,10 +227,10 @@ where
         use Poll::*;
         let selfname = "check_inputs";
         let mut il1 = 0u32;
-        loop {
+        let ret = loop {
             il1 += 1;
-            if il1 > 140000 {
-                error!("{selfname}  loop iteration too many");
+            if il1 > 1000000 {
+                error!("{selfname}  loop iteration too many {il1}");
                 break Ready(Some(Err(Error::LoopTooMany)));
             }
             let mut hpp = HaveProgressPending::new();
@@ -276,6 +277,7 @@ where
                                                 Some((ix1, i3))
                                             }
                                         };
+                                        trace!("{selfname}  draininfo {draininfo:?}");
                                         if false && let Some((ix1, i3)) = draininfo {
                                             // Basic merge
                                             let b1 = &mut self2.inps.get_mut(ix1.0).unwrap().buf;
@@ -458,7 +460,9 @@ where
             } else {
                 Ready(None)
             };
-        }
+        };
+        info!("{selfname} done il1 {il1}");
+        ret
     }
 }
 
@@ -524,8 +528,8 @@ where
         let mut il1 = 0u32;
         loop {
             il1 += 1;
-            if il1 > 200 {
-                error!("{selfname}  loop iteration too many");
+            if il1 > 2000 {
+                error!("{selfname}  loop iteration too many {il1}");
                 self.state = State::Done;
                 break Ready(Some(Err(Error::LoopTooMany)));
             }

@@ -44,7 +44,7 @@ pub struct LspFwdMspSingleStream {
     range: ScyllaSeriesRange,
     done: bool,
     begexcl: RangeExcl,
-    limit: u32,
+    lsp_scylla_limit: u32,
     buf_max: usize,
     fut: FutSt,
     scyopts: ScyllaOptsSubmit,
@@ -58,12 +58,12 @@ impl LspFwdMspSingleStream {
         series_info: SeriesInfo,
         msp: MspEv,
         range: ScyllaSeriesRange,
-        limit: u32,
+        lsp_scylla_limit: u32,
         buf_max: usize,
         scyopts: ScyllaOptsSubmit,
         scyqu: ScyllaQueueCluster,
     ) -> Self {
-        let limit = limit.max(1).min(0x0fffffff);
+        let lsp_scylla_limit = lsp_scylla_limit.max(1).min(0x01ffffff);
         Self {
             ks,
             series_info,
@@ -72,7 +72,7 @@ impl LspFwdMspSingleStream {
             done: false,
             // TODO maybe take already as option?
             begexcl: RangeExcl::None,
-            limit,
+            lsp_scylla_limit,
             buf_max,
             fut: FutSt::None,
             scyopts,
@@ -132,7 +132,7 @@ impl LspFwdMspSingleStream {
                             let msp = self.msp;
                             let range = self.range.clone();
                             let begexcl = self.begexcl.clone();
-                            let limit = self.limit;
+                            let limit = self.lsp_scylla_limit;
                             let scyopts = self.scyopts.clone();
                             let fut = async move {
                                 scyqu

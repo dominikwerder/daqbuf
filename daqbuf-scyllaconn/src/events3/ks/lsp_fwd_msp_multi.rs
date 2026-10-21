@@ -64,7 +64,7 @@ const DO_CHECK_CONSISTENT: bool = false;
 #[derive(Debug, Clone)]
 pub struct Opts {
     msp_limit: u32,
-    lsp_limit: u32,
+    lsp_scylla_limit: u32,
     msp_reserve_min: usize,
     msp_preopen_min: usize,
     lsp_single_buf_max: usize,
@@ -73,14 +73,14 @@ pub struct Opts {
 impl Opts {
     pub fn new(
         msp_limit: u32,
-        lsp_limit: u32,
+        lsp_scylla_limit: u32,
         msp_reserve_min: usize,
         msp_preopen_min: usize,
         lsp_single_buf_max: usize,
     ) -> Self {
         Self {
             msp_limit,
-            lsp_limit,
+            lsp_scylla_limit,
             msp_reserve_min,
             msp_preopen_min,
             lsp_single_buf_max,
@@ -139,7 +139,7 @@ struct Merging {
     mspbuf_re: VecDeque<TsMs>,
     mspbuf_po: VecDeque<(TsMs, LspFwdMspSingleStream)>,
     inps: VecDeque<Inp>,
-    lsp_limit: u32,
+    lsp_scylla_limit: u32,
     msp_reserve_min: usize,
     msp_preopen_min: usize,
     lsp_single_buf_max: usize,
@@ -393,8 +393,8 @@ impl Merging {
         }
     }
 
-    fn lsp_limit(&mut self) -> u32 {
-        self.lsp_limit
+    fn lsp_scylla_limit(&mut self) -> u32 {
+        self.lsp_scylla_limit
     }
 
     fn poll_state_2(
@@ -538,7 +538,7 @@ impl Merging {
                     brefs.series_info.clone(),
                     msp,
                     brefs.range.clone(),
-                    self2.lsp_limit(),
+                    self2.lsp_scylla_limit(),
                     self2.lsp_single_buf_max,
                     self2.scyopts.clone(),
                     brefs.scyqu.clone(),
@@ -672,7 +672,7 @@ impl LspFwdMspMulti {
             mspbuf_re: mspbuf,
             mspbuf_po: VecDeque::new(),
             inps: VecDeque::new(),
-            lsp_limit: opts.lsp_limit,
+            lsp_scylla_limit: opts.lsp_scylla_limit,
             msp_reserve_min: opts.msp_reserve_min,
             msp_preopen_min: opts.msp_preopen_min,
             lsp_single_buf_max: opts.lsp_single_buf_max,
