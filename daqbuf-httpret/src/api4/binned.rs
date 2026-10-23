@@ -219,7 +219,7 @@ pub fn make_read_provider(
     let events_read_provider = if chname.starts_with("unittest") {
         let x = streams::teststream::UnitTestStream::new();
         Arc::new(x)
-    } else if ncc.node_config.cluster.scylla_lt().is_some() {
+    } else if ncc.node_config.is_backend_scylla() {
         scyqueue
             .clone()
             .map(|qu| ScyllaEventReadProvider::new(qu, ScyllaOptsSubmit::no_choice()))
@@ -232,7 +232,7 @@ pub fn make_read_provider(
     } else {
         panic!("unexpected backend")
     };
-    let cache_read_provider = if ncc.node_config.cluster.scylla_lt().is_some() {
+    let cache_read_provider = if ncc.node_config.is_backend_scylla() {
         scyqueue
             .clone()
             .map(|qu| scyllaconn::bincache::ScyllaPrebinnedReadProvider::new(qu, ScyllaOptsSubmit::no_choice()))

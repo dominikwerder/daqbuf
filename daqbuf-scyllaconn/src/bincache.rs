@@ -1,4 +1,4 @@
-use crate::events2::prepare::StmtsEvents;
+use crate::events2::prepare::StmtsEventsClusterKeyspace;
 use crate::worker::ScyllaOptsJob;
 use crate::worker::ScyllaOptsSubmit;
 use crate::worker::ScyllaQueue;
@@ -12,6 +12,8 @@ use netpod::ttl::RetentionTime;
 use std::ops::Range;
 use streams::timebin::cached::reader::BinsReadRes;
 
+macro_rules! info { ($($arg:tt)*) => ( if true { log::info!($($arg)*); } ); }
+
 type ScySession = scylla::client::session::Session;
 
 async fn scylla_read_prebinned_f32(
@@ -22,13 +24,16 @@ async fn scylla_read_prebinned_f32(
     scyopts: ScyllaOptsSubmit,
     scyqu: ScyllaQueue,
 ) -> BinsReadRes {
-    let rts = [RetentionTime::Short, RetentionTime::Medium, RetentionTime::Long];
+    info!("TODO merge over clusters properly");
+    // Also before, this was just reading all rt in one mixed slurp.
     let mut res = Vec::new();
-    for rt in rts {
-        let x = scyqu
-            .read_prebinned_f32(rt, series, bin_len, msp, offs.clone(), scyopts.clone())
-            .await?;
-        res.push(x);
+    for cl in scyqu.clusters() {
+        for ks in cl.keyspaces() {
+            let x = cl
+                .read_prebinned_f32(ks.clone(), series, bin_len, msp, offs.clone(), scyopts.clone())
+                .await?;
+            res.push(x);
+        }
     }
     let mut out = ContainerBins::new();
     let mut dmp = ContainerBins::new();
@@ -100,13 +105,13 @@ impl streams::timebin::CacheReadProvider for ScyllaPrebinnedReadProvider {
 
 // TODO remove?
 pub async fn worker_read(
-    rt: RetentionTime,
+    _rt: RetentionTime,
     series: u64,
     bin_len: DtMs,
     msp: u64,
     offs: core::ops::Range<u32>,
     scyopts: ScyllaOptsJob,
-    stmts: &StmtsEvents,
+    stmts: &StmtsEventsClusterKeyspace,
     scy: &ScySession,
 ) -> Result<ContainerBins<f32, f32>, streams::timebin::cached::reader::Error> {
     let partt = PrebinnedPartitioning::try_from(bin_len)?;
@@ -122,7 +127,6 @@ pub async fn worker_read(
         .execute_iter(
             stmts
                 .cache_bypass(scyopts.bins_fwd_cache_bypass.clone().into())
-                .rt(&rt)
                 .prebinned_f32()
                 .clone(),
             params,

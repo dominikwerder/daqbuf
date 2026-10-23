@@ -26,6 +26,8 @@ autoerr::create_error_v1!(
         ChannelRecv,
         Scylla(String),
         PrebinnedPartitioningInvalid(#[from] series::msp::Error),
+        NoKeyspaceMatch,
+        NoCluster,
     },
 );
 

@@ -940,8 +940,8 @@ impl MapPulseScyllaHandler {
         let url = req_uri_to_url(req.uri())?;
         let query = MapPulseQuery::from_url(&url)?;
         let pulse = query.pulse;
-        let scyconf = if let Some(x) = node_config.node_config.cluster.scylla_st() {
-            x
+        let scyconf = if node_config.node_config.is_backend_scylla() {
+            todo!("adapt to cluster-aware scylla");
         } else {
             return Err(Error::with_public_msg_no_trace("no scylla configured"));
         };

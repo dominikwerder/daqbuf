@@ -1039,9 +1039,6 @@ pub struct Cluster {
     pub is_central_storage: bool,
     #[serde(rename = "fileIoBufferSize", default)]
     pub file_io_buffer_size: FileIoBufferSize,
-    scylla_st: Option<ScyllaConfig>,
-    scylla_mt: Option<ScyllaConfig>,
-    scylla_lt: Option<ScyllaConfig>,
     #[serde(default)]
     scylla_clusters: Vec<ScyllaConfigMultiKeyspace>,
     cache_scylla: Option<ScyllaConfig>,
@@ -1053,20 +1050,12 @@ impl Cluster {
         if self.is_central_storage { false } else { true }
     }
 
-    pub fn scylla_st(&self) -> Option<&ScyllaConfig> {
-        self.scylla_st.as_ref()
-    }
-
-    pub fn scylla_mt(&self) -> Option<&ScyllaConfig> {
-        self.scylla_mt.as_ref()
-    }
-
-    pub fn scylla_lt(&self) -> Option<&ScyllaConfig> {
-        self.scylla_lt.as_ref()
-    }
-
     pub fn scylla_clusters(&self) -> &[ScyllaConfigMultiKeyspace] {
         &self.scylla_clusters
+    }
+
+    pub fn has_scylla(&self) -> bool {
+        self.scylla_clusters.len() != 0
     }
 
     pub fn test_00() -> Self {
@@ -1083,9 +1072,6 @@ impl Cluster {
             run_map_pulse_task: false,
             is_central_storage: false,
             file_io_buffer_size: FileIoBufferSize(1024 * 8),
-            scylla_st: None,
-            scylla_mt: None,
-            scylla_lt: None,
             scylla_clusters: Vec::new(),
             cache_scylla: None,
             announce_backends: None,
@@ -1139,10 +1125,7 @@ impl NodeConfig {
     }
 
     pub fn is_backend_scylla(&self) -> bool {
-        self.cluster.scylla_st.is_some()
-            || self.cluster.scylla_mt.is_some()
-            || self.cluster.scylla_lt.is_some()
-            || self.cluster.scylla_clusters.len() != 0
+        self.cluster.has_scylla()
     }
 }
 
@@ -4103,9 +4086,6 @@ pub fn test_cluster() -> Cluster {
             user: "testingdaq".into(),
             pass: "testingdaq".into(),
         },
-        scylla_st: None,
-        scylla_mt: None,
-        scylla_lt: None,
         scylla_clusters: Vec::new(),
         cache_scylla: None,
         run_map_pulse_task: false,
@@ -4141,9 +4121,6 @@ pub fn sls_test_cluster() -> Cluster {
             user: "testingdaq".into(),
             pass: "testingdaq".into(),
         },
-        scylla_st: None,
-        scylla_mt: None,
-        scylla_lt: None,
         scylla_clusters: Vec::new(),
         cache_scylla: None,
         run_map_pulse_task: false,
@@ -4179,9 +4156,6 @@ pub fn archapp_test_cluster() -> Cluster {
             user: "testingdaq".into(),
             pass: "testingdaq".into(),
         },
-        scylla_st: None,
-        scylla_mt: None,
-        scylla_lt: None,
         scylla_clusters: Vec::new(),
         cache_scylla: None,
         run_map_pulse_task: false,

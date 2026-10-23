@@ -19,11 +19,15 @@ use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
 
+macro_rules! info { ($($arg:tt)*) => ( if true { log::info!($($arg)*); } ); }
+
 autoerr::create_error_v1!(
     name(Error, "BinReadLayeredTop"),
     enum variants {
         StateModFn,
         Worker(#[from] crate::worker::Error),
+        NoCluster,
+        NoKeyspaceMatch,
     },
 );
 
@@ -43,9 +47,17 @@ async fn fetch_index_entries(
 ) -> FetchingIndexFutRes {
     let rt = RetentionTime::Long;
     let pbp = PrebinnedPartitioning::Day1;
-    match scyqueue
+    info!("TODO merge over clusters");
+    let cl = scyqueue.clusters().get(0).ok_or(Error::NoCluster)?;
+    let ks = cl
+        .keyspaces()
+        .iter()
+        .filter(|x| x.rt() == rt)
+        .next()
+        .ok_or(Error::NoKeyspaceMatch)?;
+    match cl
         .bin_write_index_read(
-            rt,
+            ks.clone(),
             series,
             pbp.clone(),
             msp,

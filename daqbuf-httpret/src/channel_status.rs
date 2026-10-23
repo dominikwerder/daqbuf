@@ -156,12 +156,6 @@ impl ChannelStatusEventsHandler {
         shared_res: &ServiceSharedResources,
         ncc: &NodeConfigCached,
     ) -> Result<ChannelStatusEvents, Error> {
-        let scyco = ncc
-            .node_config
-            .cluster
-            .scylla_st()
-            .ok_or_else(|| Error::with_public_msg_no_trace(format!("no scylla configured")))?;
-        let scy = scyllaconn::conn::create_scy_session(scyco).await?;
         let do_one_before_range = true;
         if false {
             let chconf = nodenet::channelconfig::channel_config(
@@ -182,7 +176,7 @@ impl ChannelStatusEventsHandler {
             q.channel().series().unwrap(),
             q.range().clone(),
             do_one_before_range,
-            scy,
+            todo!("adapt to cluster-aware"),
         );
         let mut ret = ChannelStatusEvents::empty();
         while let Some(item) = stream.next().await {

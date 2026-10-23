@@ -117,16 +117,32 @@ impl DataSearch {
         let url = req_uri_to_url(req.uri())?;
         let _params: BTreeMap<_, _> = url.query_pairs().collect();
         if let Some(scyqu) = &shared_res.scyqueue {
-            let cql = "select ts_msp from sls_st.st_ts_msp where series = 6293882751490541488";
-            let st = scyqu.prepare(cql.into()).await?;
-            let qp = scyqu.execute(st).await?;
-            let mut it = qp.rows_stream::<(i64,)>()?;
-            let mut msps_in_table = Vec::new();
-            while let Some(row) = it.try_next().await? {
-                msps_in_table.push(row.0);
+            let mut res = BTreeMap::new();
+            for cl in scyqu.clusters() {
+                let mut res_cl = BTreeMap::new();
+                for ks in cl.keyspaces() {
+                    let cql = format!(
+                        "select ts_msp from {ks}.st_ts_msp where series = 6293882751490541488",
+                        ks = ks.name()
+                    );
+                    let st = cl.prepare(ks.clone(), cql.into()).await?;
+                    let qp = cl.execute(ks.clone(), st, Box::new(())).await?;
+                    let mut it = qp.rows_stream::<(i64,)>()?;
+                    let mut msps_in_table = Vec::new();
+                    while let Some(row) = it.try_next().await? {
+                        msps_in_table.push(row.0);
+                    }
+                    res_cl.insert(
+                        ks.name().to_string(),
+                        serde_json::json!({
+                            "msps_in_table": msps_in_table,
+                        }),
+                    );
+                }
+                res.insert(cl.tag().to_string(), res_cl);
             }
             let body = serde_json::json!({
-                "msps_in_table": msps_in_table,
+                "result": res,
             });
             let body = ToJsonBody::from(&body).into_body();
             Ok(response(StatusCode::OK).body(body)?)

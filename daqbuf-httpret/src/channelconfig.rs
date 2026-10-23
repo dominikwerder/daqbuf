@@ -1,9 +1,7 @@
-use crate::ServiceSharedResources;
 use crate::requests::accepts_json_or_all;
 use crate::response;
 use dbconn::create_connection;
 use dbconn::worker::PgQueue;
-use futures_util::StreamExt;
 use futures_util::TryStreamExt;
 use http::Method;
 use http::StatusCode;
@@ -480,12 +478,18 @@ impl ScyllaChannelsActive {
         q: &ScyllaChannelsActiveQuery,
         node_config: &NodeConfigCached,
     ) -> Result<Vec<u64>, Error> {
-        let scyco = node_config
-            .node_config
-            .cluster
-            .scylla_st()
-            .ok_or_else(|| Error::ExpectScyllaBackend)?;
-        let scy = scyllaconn::conn::create_scy_session(scyco).await?;
+        warn!("TODO  get_channels  adapt to cluster-aware");
+        let mut scyco = None;
+        'outer: for cl in node_config.node_config.cluster.scylla_clusters() {
+            for (ks, rt) in &cl.keyspaces {
+                if *rt == RetentionTime::Short {
+                    scyco = Some((cl, ks, rt));
+                    break 'outer;
+                }
+            }
+        }
+        let scyco = scyco.ok_or(Error::ExpectScyllaBackend)?;
+        let scy = scyllaconn::conn::create_scy_session(todo!("adapt to cluster-aware")).await?;
         // Database stores tsedge/ts_msp in units of (10 sec), and we additionally map to the grid.
         let tsedge = q.tsedge / 10 / (6 * 2) * (6 * 2);
         info!(
@@ -772,7 +776,8 @@ impl GenerateScyllaTestData {
     }
 
     async fn process(&self, node_config: &NodeConfigCached) -> Result<(), Error> {
-        let scyconf = node_config.node_config.cluster.scylla_st().unwrap();
+        let scyconf = todo!("adapt to cluster-aware");
+        // let scyconf = node_config.node_config.cluster.scylla_st().unwrap();
         let scy = scyllaconn::conn::create_scy_session(scyconf).await?;
         let series: u64 = 42001;
         // TODO query `ts_msp` for all MSP values und use that to delete from event table first.

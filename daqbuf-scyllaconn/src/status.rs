@@ -1,4 +1,5 @@
 use crate::errconv::ErrConv;
+use crate::worker::ScyllaQueue;
 use daqbuf_err as err;
 use err::Error;
 use futures_util::Future;
@@ -15,10 +16,8 @@ use netpod::CONNECTION_STATUS_DIV;
 use netpod::log::*;
 use netpod::range::evrange::NanoRange;
 use netpod::timeunits::MS;
-use scylla::client::session::Session as ScySession;
 use std::collections::VecDeque;
 use std::pin::Pin;
-use std::sync::Arc;
 use std::task::Context;
 use std::task::Poll;
 
@@ -28,7 +27,7 @@ async fn read_next_status_events(
     range: NanoRange,
     fwd: bool,
     do_one_before: bool,
-    scy: Arc<ScySession>,
+    scy: ScyllaQueue,
 ) -> Result<ChannelStatusEvents, Error> {
     if ts_msp >= range.end {
         warn!(
@@ -50,12 +49,17 @@ async fn read_next_status_events(
         let cql = concat!(
             "select ts_lsp, kind from channel_status where series = ? and ts_msp = ? and ts_lsp >= ? and ts_lsp < ?"
         );
-        scy.query_iter(
-            cql,
-            (series as i64, ts_msp as i64, ts_lsp_min as i64, ts_lsp_max as i64),
-        )
-        .await
-        .err_conv()?
+        if let Some(cl) = scy.clusters().first() {
+            // TODO choose keyspace
+            // scy.query_iter(
+            //     cql,
+            //     (series as i64, ts_msp as i64, ts_lsp_min as i64, ts_lsp_max as i64),
+            // )
+            // .await
+            // .err_conv()?
+        } else {
+        }
+        todo!("read_next_status_events")
     } else {
         let ts_lsp_max = if ts_msp < range.beg { range.beg - ts_msp } else { 0 };
         debug!(
@@ -67,13 +71,15 @@ async fn read_next_status_events(
             stringify!($fname)
         );
         // TODO use prepared!
-        let cql = concat!(
-            "select ts_lsp, kind from channel_status where series = ? and ts_msp = ? and ts_lsp < ? order by ts_lsp desc limit 1"
-        );
-        scy.query_iter(cql, (series as i64, ts_msp as i64, ts_lsp_max as i64))
-            .await
-            .err_conv()?
+        // let cql = concat!(
+        //     "select ts_lsp, kind from channel_status where series = ? and ts_msp = ? and ts_lsp < ? order by ts_lsp desc limit 1"
+        // );
+        // scy.query_iter(cql, (series as i64, ts_msp as i64, ts_lsp_max as i64))
+        //     .await
+        //     .err_conv()?
+        todo!("read_next_status_events")
     };
+    /*
     let mut last_before = None;
     let mut ret = ChannelStatusEvents::empty();
     let mut it = res.rows_stream::<(i64, i32)>().err_conv()?;
@@ -100,6 +106,7 @@ async fn read_next_status_events(
     }
     trace!("found in total {} events  ts_msp {}", ret.len(), ts_msp);
     Ok(ret)
+    */
 }
 
 struct ReadValues {
@@ -109,7 +116,7 @@ struct ReadValues {
     fwd: bool,
     do_one_before_range: bool,
     fut: Pin<Box<dyn Future<Output = Result<ChannelStatusEvents, Error>> + Send>>,
-    scy: Arc<ScySession>,
+    scy: ScyllaQueue,
 }
 
 impl ReadValues {
@@ -119,7 +126,7 @@ impl ReadValues {
         ts_msps: VecDeque<u64>,
         fwd: bool,
         do_one_before_range: bool,
-        scy: Arc<ScySession>,
+        scy: ScyllaQueue,
     ) -> Self {
         let mut ret = Self {
             series,
@@ -171,12 +178,12 @@ pub struct StatusStreamScylla {
     series: u64,
     range: NanoRange,
     do_one_before_range: bool,
-    scy: Arc<ScySession>,
+    scy: ScyllaQueue,
     outbuf: ChannelStatusEvents,
 }
 
 impl StatusStreamScylla {
-    pub fn new(series: u64, range: NanoRange, do_one_before_range: bool, scy: Arc<ScySession>) -> Self {
+    pub fn new(series: u64, range: NanoRange, do_one_before_range: bool, scy: ScyllaQueue) -> Self {
         Self {
             state: FrState::New,
             series,

@@ -54,9 +54,7 @@ use netpod::status_board_init;
 use panic::AssertUnwindSafe;
 use panic::UnwindSafe;
 use pin::Pin;
-use scyllaconn::worker::ScyllaOptsDefault;
 use scyllaconn::worker::ScyllaQueue;
-use scyllaconn::worker::ScyllaWorker;
 use std::net;
 use std::panic;
 use std::pin;
@@ -128,28 +126,14 @@ pub async fn host(ncc: NodeConfigCached, service_version: ServiceVersion) -> Res
     }
     // let rawjh = taskrun::spawn(nodenet::conn::events_service(node_config.clone()));
     let (pgqueue,) = PgWorker::new(&ncc.node_config.cluster.database).await?;
-    let scyqueue = if let (Some(st), Some(mt), Some(lt)) = (
-        ncc.node_config.cluster.scylla_st(),
-        ncc.node_config.cluster.scylla_mt(),
-        ncc.node_config.cluster.scylla_lt(),
-    ) {
-        // TODO use
-        let (scyqueue, scylla_worker_jh) = ScyllaWorker::new(
-            st.clone(),
-            mt.clone(),
-            lt.clone(),
-            ncc.node_config.cluster.scylla_clusters(),
-        )
-        .await
-        .map_err(|e| {
+    let scm = ncc.node_config.cluster.scylla_clusters();
+    let scyqueue = if scm.len() == 0 {
+        None
+    } else {
+        Some(ScyllaQueue::new(scm).await.map_err(|e| {
             error!("{e}");
             RetrievalError::TextError(e.to_string())
-        })?;
-        // TODO await the task
-        let _ = scylla_worker_jh;
-        Some(scyqueue)
-    } else {
-        None
+        })?)
     };
     let shared_res = ServiceSharedResources::new(pgqueue, scyqueue);
     let shared_res = Arc::new(shared_res);

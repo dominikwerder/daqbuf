@@ -36,6 +36,8 @@ autoerr::create_error_v1!(
     name(Error, "BinWriteIndexRtStream"),
     enum variants {
         Worker(#[from] crate::worker::Error),
+        NoKeyspaceMatch,
+        NoCluster,
     },
 );
 
@@ -132,8 +134,18 @@ impl BinWriteIndexRtStream {
         scyopts: ScyllaOptsSubmit,
     ) -> Result<(MspU32, LspU32, LspU32, VecDeque<BinWriteIndexEntry>), crate::worker::Error> {
         trace_item!("make_next_query_fut  {:?}  min {:?}  max {:?}", msp, lsp_min, lsp_max);
-        let res = scyqueue
-            .bin_write_index_read(rt1, series, pbp, msp, lsp_min, lsp_max, scyopts)
+        let cl = scyqueue
+            .clusters()
+            .get(0)
+            .ok_or(crate::worker::Error::ClusterKeyspaceNoMatch)?;
+        let ks = cl
+            .keyspaces()
+            .iter()
+            .filter(|x| x.rt() == rt1)
+            .next()
+            .ok_or(crate::worker::Error::ClusterKeyspaceNoMatch)?;
+        let res = cl
+            .bin_write_index_read(ks.clone(), series, pbp, msp, lsp_min, lsp_max, scyopts)
             .await?;
         Ok((msp, lsp_min, lsp_max, res))
     }

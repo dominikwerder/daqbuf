@@ -14,6 +14,8 @@ use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
 
+macro_rules! info { ($($arg:tt)*) => ( if true { log::info!($($arg)*); } ); }
+
 autoerr::create_error_v1!(
     name(Error, "BinnedRtMspLsps"),
     enum variants {
@@ -77,8 +79,18 @@ impl BinnedRtMspLsps {
         let scyqueue = self.scyqueue.clone();
         let scylla_opts = self.scylla_opts.clone();
         let fut = async move {
-            scyqueue
-                .read_prebinned_f32(rt, series, binlen, msp, offs, ScyllaOptsSubmit::no_choice())
+            info!("TODO merge over clusters");
+            let cl = scyqueue
+                .clusters()
+                .get(0)
+                .ok_or(streams::timebin::cached::reader::Error::NoCluster)?;
+            let ks = cl
+                .keyspaces()
+                .iter()
+                .filter(|x| x.rt() == rt)
+                .next()
+                .ok_or(streams::timebin::cached::reader::Error::NoKeyspaceMatch)?;
+            cl.read_prebinned_f32(ks.clone(), series, binlen, msp, offs, ScyllaOptsSubmit::no_choice())
                 .await
         };
         let fut = Box::pin(fut);
