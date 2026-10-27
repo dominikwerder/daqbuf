@@ -6,6 +6,8 @@ use crate::ca::conn2::locallog::LocalLog;
 use crate::ca::connset2::connset::channels;
 use crate::ca::connset2::connset::channels::channel::locallog::llog;
 use crate::ca::connset2::connset::channels::pollcstm;
+use crate::ca::connset2::connset::channeltrace;
+use crate::ca::connset2::connset::channeltrace::ChannelTraceL1Item;
 use crate::ca::finder::FinderHandleV02;
 use crate::ca::progpend::HaveProgressPending;
 use crate::conf::ChannelConfig;
@@ -24,6 +26,7 @@ use netpod::SeriesKind;
 use netpod::Shape;
 use serde::Serialize;
 use series::ChannelStatusSeriesId;
+use std::collections::VecDeque;
 use std::fmt;
 use std::net::SocketAddrV4;
 use std::pin::Pin;
@@ -229,6 +232,7 @@ pub enum ChannelActionItem {
     AddToCaConn(ChannelConfig, SocketAddrV4),
     RemoveFromCaConn(ChannelConfig, RemovingCommon, asynchan::Sender<u32>),
     LocalLog(locallog::Entry),
+    ChannelTrace(channeltrace::ChannelTraceL1Item),
 }
 
 #[derive(Debug)]
@@ -242,6 +246,7 @@ pub struct Channel {
     addr_cache_skip: bool,
     backoff_i: u32,
     llog: LocalLog,
+    outbuf: VecDeque<ChannelActionItem>,
     waker: Option<Waker>,
 }
 
@@ -258,6 +263,7 @@ impl Channel {
             addr_cache_skip: false,
             backoff_i: 0,
             llog: LocalLog::new(),
+            outbuf: VecDeque::new(),
             waker: None,
         }
     }
@@ -460,6 +466,9 @@ impl PollCstm for Channel {
             if let Some(x) = self.llog.pop() {
                 break Ready(Some(Ok(ChannelActionItem::LocalLog(x))));
             }
+            if let Some(x) = self.outbuf.pop_front() {
+                break Ready(Some(Ok(x)));
+            }
             match self.as_mut().poll_cmd(cx) {
                 Ready(Some(x)) => {
                     hpp.mark_progress();
@@ -502,10 +511,21 @@ impl PollCstm for Channel {
                             hpp.mark_progress();
                             match x {
                                 Ok(chi) => {
+                                    let cssid = ChannelStatusSeriesId::new(chi.series.to_series().id());
                                     self2.backoff_i = 0;
                                     let stn = self2.produce_addr_search_state(chi, ress.finder_handle.clone());
                                     llog!(self2, "transition {} -> {}", self2.state, stn);
                                     self2.state = stn;
+                                    {
+                                        let item = channeltrace::ChannelTraceItem::new(
+                                            channeltrace::ChannelTraceItemInner::ConnSetCssidOk(cssid),
+                                        );
+                                        let item = ChannelActionItem::ChannelTrace(ChannelTraceL1Item::new(
+                                            self2.conf.name().into(),
+                                            item,
+                                        ));
+                                        self2.outbuf.push_back(item);
+                                    }
                                     continue;
                                 }
                                 Err(e) => {
@@ -514,6 +534,16 @@ impl PollCstm for Channel {
                                     let stn = State::Removed;
                                     llog!(self2, "transition {} -> {}", self2.state, stn);
                                     self2.state = stn;
+                                    {
+                                        let item = channeltrace::ChannelTraceItem::new(
+                                            channeltrace::ChannelTraceItemInner::ConnSetCssidErr,
+                                        );
+                                        let item = ChannelActionItem::ChannelTrace(ChannelTraceL1Item::new(
+                                            self2.conf.name().into(),
+                                            item,
+                                        ));
+                                        self2.outbuf.push_back(item);
+                                    }
                                     continue;
                                 }
                             }
@@ -536,6 +566,16 @@ impl PollCstm for Channel {
                             });
                             llog!(self2, "transition {} -> {}", self2.state, stn);
                             self2.state = stn;
+                            {
+                                let item = channeltrace::ChannelTraceItem::new(
+                                    channeltrace::ChannelTraceItemInner::ConnSetCssidTimeout,
+                                );
+                                let item = ChannelActionItem::ChannelTrace(ChannelTraceL1Item::new(
+                                    self2.conf.name().into(),
+                                    item,
+                                ));
+                                self2.outbuf.push_back(item);
+                            }
                         }
                         Pending => {
                             hpp.mark_pending();
@@ -557,10 +597,32 @@ impl PollCstm for Channel {
                                     llog!(self2, "transition {} -> {}", self2.state, stn);
                                     self2.state = stn;
                                     self2.addr = Some(x);
+                                    {
+                                        let item = channeltrace::ChannelTraceItem::new(
+                                            channeltrace::ChannelTraceItemInner::ConnSetAddrOk(
+                                                std::net::SocketAddr::V4(x),
+                                            ),
+                                        );
+                                        let item = ChannelActionItem::ChannelTrace(ChannelTraceL1Item::new(
+                                            self2.conf.name().into(),
+                                            item,
+                                        ));
+                                        self2.outbuf.push_back(item);
+                                    }
                                     let item = ChannelActionItem::AddToCaConn(self2.conf.clone(), x);
                                     break Ready(Some(Ok(item)));
                                 }
                                 Err(e) => {
+                                    {
+                                        let item = channeltrace::ChannelTraceItem::new(
+                                            channeltrace::ChannelTraceItemInner::ConnSetAddrErr,
+                                        );
+                                        let item = ChannelActionItem::ChannelTrace(ChannelTraceL1Item::new(
+                                            self2.conf.name().into(),
+                                            item,
+                                        ));
+                                        self2.outbuf.push_back(item);
+                                    }
                                     match e {
                                         Error::AddrNotFound(_) => {
                                             self2.addr_cache_skip = true;
@@ -618,6 +680,16 @@ impl PollCstm for Channel {
                                 });
                                 llog!(self2, "transition {} -> {}", self2.state, stn);
                                 self2.state = stn;
+                                {
+                                    let item = channeltrace::ChannelTraceItem::new(
+                                        channeltrace::ChannelTraceItemInner::ConnSetAddrTimeout,
+                                    );
+                                    let item = ChannelActionItem::ChannelTrace(ChannelTraceL1Item::new(
+                                        self2.conf.name().into(),
+                                        item,
+                                    ));
+                                    self2.outbuf.push_back(item);
+                                }
                             } else {
                                 self2.state = State::Done;
                                 break Ready(Some(Err(Error::Logic)));

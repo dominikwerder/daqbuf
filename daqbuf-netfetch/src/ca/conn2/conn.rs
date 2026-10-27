@@ -1051,7 +1051,9 @@ impl Stream for CaConn {
                                                 }
                                                 connected::ItemInner::ChannelTrace(x) => {
                                                     self2.mett.item_channel_trace().inc();
-                                                    let item = ChannelTraceL2Item::new(st1.addr(), x);
+                                                    // TODO pass address for channels that have one
+                                                    let _addr = st1.addr();
+                                                    let item = ChannelTraceL2Item::new(x);
                                                     let item = CaConnItem::ChannelTrace(item);
                                                     self2.out_buf.push_back_force(item);
                                                 }

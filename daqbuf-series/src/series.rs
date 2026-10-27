@@ -37,7 +37,7 @@ impl SeriesId {
 
 impl fmt::Display for SeriesId {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        write!(fmt, "SeriesId {{ {:20} }}", self.0)
+        fmt::Debug::fmt(self, fmt)
     }
 }
 
@@ -93,5 +93,11 @@ impl ChannelStatusSeriesId {
 
     pub fn to_i64(&self) -> i64 {
         self.0 as i64
+    }
+}
+
+impl fmt::Display for ChannelStatusSeriesId {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        fmt::Debug::fmt(self, fmt)
     }
 }

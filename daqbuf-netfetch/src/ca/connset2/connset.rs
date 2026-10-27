@@ -248,7 +248,7 @@ pub struct ConnSet {
     ca_conns: BTreeMap<SocketAddrV4, CaConnReg>,
     shutdown_futs: VecDeque<Option<FutDbg<Result<(), Error>>>>,
     conn_idle_disconnect_futs: VecDeque<FutDbg<Result<(), Error>>>,
-    out_buf: AsynBuf<ConnSetItem>,
+    outbuf: AsynBuf<ConnSetItem>,
     llog: LocalLog,
     chtrace: channeltrace::ChannelTraceStash,
     write_staging: VecDeque<QueryItem>,
@@ -281,7 +281,7 @@ impl ConnSet {
             ca_conns: BTreeMap::new(),
             shutdown_futs: VecDeque::with_capacity(32),
             conn_idle_disconnect_futs: VecDeque::new(),
-            out_buf: AsynBuf::new(INP_BUF_CAP),
+            outbuf: AsynBuf::new(INP_BUF_CAP),
             llog: LocalLog::new(),
             chtrace: channeltrace::ChannelTraceStash::new(),
             write_staging: VecDeque::new(),
@@ -427,6 +427,11 @@ impl ConnSet {
                                     ChannelActionItem::LocalLog(llog) => {
                                         hpp.mark_progress();
                                         self2.llog.push_entry(llog);
+                                    }
+                                    ChannelActionItem::ChannelTrace(item) => {
+                                        hpp.mark_progress();
+                                        let item = channeltrace::ChannelTraceL2Item::new(item);
+                                        self2.chtrace.push(item);
                                     }
                                 }
                             }
@@ -608,7 +613,7 @@ impl ConnSet {
                                             }
                                             conn2::conn::CaConnItem::TestValue(x) => {
                                                 self2.mett.conn_test_value().inc();
-                                                self2.out_buf.push_back_force(ConnSetItem::TestValue(x));
+                                                self2.outbuf.push_back_force(ConnSetItem::TestValue(x));
                                             }
                                             conn2::conn::CaConnItem::LocalLog(x) => {
                                                 self2.mett.conn_local_log().inc();
@@ -616,7 +621,7 @@ impl ConnSet {
                                             }
                                             conn2::conn::CaConnItem::ChannelEventValue(x) => {
                                                 self2.mett.conn_channel_event_value().inc();
-                                                self2.out_buf.push_back_force(ConnSetItem::ChannelEventValue(x));
+                                                self2.outbuf.push_back_force(ConnSetItem::ChannelEventValue(x));
                                             }
                                             conn2::conn::CaConnItem::ChannelWriteItems(x) => {
                                                 self2.mett.conn_channel_write_items().add(x.len() as u32);
@@ -635,8 +640,9 @@ impl ConnSet {
                                                                 chn.to_string(),
                                                                 channeltrace::ChannelTraceItem::new(inner.clone()),
                                                             );
-                                                            let item =
-                                                                channeltrace::ChannelTraceL2Item::new(*addr, item);
+                                                            // TODO pass address for those channels that have it
+                                                            let _addr = *addr;
+                                                            let item = channeltrace::ChannelTraceL2Item::new(item);
                                                             self2.chtrace.push(item);
                                                         }
                                                     }
@@ -1575,8 +1581,8 @@ impl Stream for ConnSet {
         loop {
             trace4!("ConnSet  poll_next  loop begin  {}", self.state.name());
             let mut hpp = HaveProgressPending::new();
-            if self.out_buf.len() != 0 {
-                break Ready(Some(Ok(self.out_buf.take())));
+            if self.outbuf.len() != 0 {
+                break Ready(Some(Ok(self.outbuf.take())));
             }
             match &mut self.state {
                 State::Running => {

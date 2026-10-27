@@ -1,7 +1,9 @@
 use hashbrown::HashMap;
 use serde::Serialize;
+use series::ChannelStatusSeriesId;
 use std::collections::VecDeque;
 use std::fmt;
+use std::net::SocketAddr;
 use std::net::SocketAddrV4;
 use std::time::Duration;
 use std::time::Instant;
@@ -161,6 +163,12 @@ impl CaProto {
 #[derive(Debug, Clone, Serialize)]
 pub enum ChannelTraceItemInner {
     Error(ChannelTraceError),
+    ConnSetCssidOk(ChannelStatusSeriesId),
+    ConnSetCssidErr,
+    ConnSetCssidTimeout,
+    ConnSetAddrOk(SocketAddr),
+    ConnSetAddrErr,
+    ConnSetAddrTimeout,
     CaProto(CaProto),
     TcpConnectAttempt,
     TcpConnected(Duration),
@@ -173,6 +181,12 @@ impl ChannelTraceItemInner {
     fn oneline(&self) -> String {
         match self {
             ChannelTraceItemInner::Error(e) => format!("error: {e}"),
+            ChannelTraceItemInner::ConnSetCssidOk(cssid) => format!("cssid ok {cssid}"),
+            ChannelTraceItemInner::ConnSetCssidErr => format!("cssid err"),
+            ChannelTraceItemInner::ConnSetCssidTimeout => format!("cssid timeout"),
+            ChannelTraceItemInner::ConnSetAddrOk(addr) => format!("addr ok {addr}"),
+            ChannelTraceItemInner::ConnSetAddrErr => format!("addr err"),
+            ChannelTraceItemInner::ConnSetAddrTimeout => format!("addr timeout"),
             ChannelTraceItemInner::CaProto(x) => x.oneline(),
             ChannelTraceItemInner::TcpConnectAttempt => "tcp connect".into(),
             ChannelTraceItemInner::TcpConnected(dt) => format!("tcp connected {:.0} ms", 1e3 * dt.as_secs_f32()),
@@ -231,15 +245,13 @@ impl ChannelTraceL1Item {
 pub struct ChannelTraceL2Item {
     #[serde(with = "serde_helper::serde_instant::serde_Instant_as_system_time")]
     ts: Instant,
-    conn: SocketAddrV4,
     inner: ChannelTraceL1Item,
 }
 
 impl ChannelTraceL2Item {
-    pub fn new(conn: SocketAddrV4, inner: ChannelTraceL1Item) -> Self {
+    pub fn new(inner: ChannelTraceL1Item) -> Self {
         Self {
             ts: Instant::now(),
-            conn,
             inner,
         }
     }
@@ -255,7 +267,7 @@ pub struct ChannelTraceExportItem {
     ts3: Instant,
     oneline: String,
     chname: String,
-    conn: SocketAddrV4,
+    // conn: SocketAddrV4,
     inner: ChannelTraceItemInner,
 }
 
@@ -377,7 +389,7 @@ impl ChannelTraceStash {
                     ts3: x.ts,
                     oneline: x.inner.inner.oneline(),
                     chname: x.inner.chname.clone(),
-                    conn: x.conn,
+                    // conn: x.conn,
                     inner: x.inner.inner.inner.clone(),
                 })
                 .collect();
