@@ -14,6 +14,7 @@ use crate::ca::conn2;
 use crate::ca::connset2::connset::channels::pollcstm;
 use crate::ca::connset2::connset::channels::pollcstm::PollCstm;
 use crate::ca::connset2::connset::channels::pollcstm::PollRess;
+use crate::ca::connset2::connset::channeltrace::ChannelTraceL2Item;
 use crate::ca::finder::FinderHandleV02;
 use crate::ca::progpend::HaveProgressPending;
 use crate::conf::ChannelConfig;
@@ -372,18 +373,25 @@ impl ConnSet {
                                                 error!(
                                                     "{selfname}  TODO backoff channel, existing CaConn shutting down"
                                                 );
-                                                // TODO
-                                                todo!();
                                             } else {
+                                                let chn = conf.name().into();
                                                 let mut comm = conn_reg.comm.clone();
                                                 let fut = async move {
                                                     comm.channel_add(conf).await?;
                                                     Ok(())
                                                 };
                                                 ret.push_back(fut.box2());
+                                                {
+                                                    let item = channeltrace::ChannelTraceItem::new(
+                                                        channeltrace::ChannelTraceItemInner::ConnSetChannelConnAddExisting,
+                                                    );
+                                                    let item = channeltrace::ChannelTraceL1Item::new(chn, item);
+                                                    self2.chtrace.push(ChannelTraceL2Item::new(item));
+                                                }
                                             }
                                         } else {
                                             self2.mett.ca_conn_create().inc();
+                                            let chn = conf.name().into();
                                             let conn = CaConn::new(
                                                 self2.backend.clone(),
                                                 addr,
@@ -406,6 +414,13 @@ impl ConnSet {
                                                 Ok(())
                                             };
                                             ret.push_back(fut.box2());
+                                            {
+                                                let item = channeltrace::ChannelTraceItem::new(
+                                                    channeltrace::ChannelTraceItemInner::ConnSetChannelConnAddNew,
+                                                );
+                                                let item = channeltrace::ChannelTraceL1Item::new(chn, item);
+                                                self2.chtrace.push(ChannelTraceL2Item::new(item));
+                                            }
                                         }
                                     }
                                     ChannelActionItem::RemoveFromCaConn(conf, reminfo, mut done_tx) => {

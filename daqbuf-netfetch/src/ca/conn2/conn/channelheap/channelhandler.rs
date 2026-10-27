@@ -746,6 +746,12 @@ impl Stream for ChannelHandler {
                         state: Creating::new(self2.cid.to_cid(), self2.conf.name().into(), self2.backend.clone()),
                     };
                     hpp.mark_progress();
+                    self2.outbuf.push_back(ChannelHandlerItem {
+                        ts_create: Instant::now(),
+                        inner: ItemInner::ChannelTrace(ChannelTraceItem::new(ChannelTraceItemInner::CaProto(
+                            CaProto::Creating,
+                        ))),
+                    });
                 }
                 State::Creating {
                     ts: ts_creating,
@@ -865,6 +871,12 @@ impl Stream for ChannelHandler {
                                         std::process::exit(88);
                                     }
                                     self2.state = State::Done1 { ts: Instant::now() };
+                                    self2.outbuf.push_back(ChannelHandlerItem {
+                                        ts_create: Instant::now(),
+                                        inner: ItemInner::ChannelTrace(ChannelTraceItem::new(
+                                            ChannelTraceItemInner::CaProto(CaProto::CreateErr(format!("{e}"))),
+                                        )),
+                                    });
                                     break Ready(Some(Err(e.into())));
                                 }
                             }

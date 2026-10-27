@@ -143,6 +143,8 @@ impl ReadNotifyRes {
 
 #[derive(Debug, Clone, Serialize)]
 pub enum CaProto {
+    Creating,
+    CreateErr(String),
     Created(Created),
     ReadNotify,
     ReadNotifyRes(ReadNotifyRes),
@@ -152,6 +154,8 @@ pub enum CaProto {
 impl CaProto {
     fn oneline(&self) -> String {
         match self {
+            CaProto::Creating => format!("creating"),
+            CaProto::CreateErr(x) => format!("create err {x}"),
             CaProto::Created(x) => format!("created {:.0} ms", 1e3 * x.latency.as_secs_f32()),
             CaProto::ReadNotify => "read-notify".into(),
             CaProto::ReadNotifyRes(x) => format!("read-notify-res {:.0} ms", 1e3 * x.latency.as_secs_f32()),
@@ -169,6 +173,8 @@ pub enum ChannelTraceItemInner {
     ConnSetAddrOk(SocketAddr),
     ConnSetAddrErr,
     ConnSetAddrTimeout,
+    ConnSetChannelConnAddNew,
+    ConnSetChannelConnAddExisting,
     CaProto(CaProto),
     TcpConnectAttempt,
     TcpConnected(Duration),
@@ -187,6 +193,8 @@ impl ChannelTraceItemInner {
             ChannelTraceItemInner::ConnSetAddrOk(addr) => format!("addr ok {addr}"),
             ChannelTraceItemInner::ConnSetAddrErr => format!("addr err"),
             ChannelTraceItemInner::ConnSetAddrTimeout => format!("addr timeout"),
+            ChannelTraceItemInner::ConnSetChannelConnAddNew => format!("conn add new"),
+            ChannelTraceItemInner::ConnSetChannelConnAddExisting => format!("conn add existing"),
             ChannelTraceItemInner::CaProto(x) => x.oneline(),
             ChannelTraceItemInner::TcpConnectAttempt => "tcp connect".into(),
             ChannelTraceItemInner::TcpConnected(dt) => format!("tcp connected {:.0} ms", 1e3 * dt.as_secs_f32()),

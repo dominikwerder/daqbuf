@@ -1,5 +1,4 @@
 use super::Error;
-use super::Running;
 use crate::ca::conn2::ca_writer_value::CaWriterValue;
 use ca_proto::ca::proto::CaDataScalarValue;
 use ca_proto::ca::proto::CaDataValue;
@@ -86,7 +85,7 @@ fn check_ev_value_data(data: &CaDataValue, scalar_type: &ScalarType) -> Result<(
     Ok(())
 }
 
-impl Running {
+impl super::Running {
     /// Applies one decoded Channel Access value to this channel's real-time writer and bin
     /// writer, and returns whatever scylla write items that produced. Shared by both the
     /// monitoring and the polling read path, since both feed the same series.
