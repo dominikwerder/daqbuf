@@ -30,7 +30,7 @@ hex = "0.4.3"
 regex = "1.11.2"
 axum = "0.8.4"
 http-body = "1"
-tower-http = { version = "0.6.8", features = ["compression-gzip", "cors"] }
+tower-http = { version = "0.7.1", features = ["compression-gzip", "cors"] }
 utoipa = { version = "6", features = ["axum_extras"] }
 utoipa-axum = "0.3"
 utoipa-swagger-ui = { version = "10", features = ["axum"] }
