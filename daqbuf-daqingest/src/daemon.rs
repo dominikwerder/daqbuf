@@ -1068,7 +1068,7 @@ pub async fn run(opts: CaIngestOpts, channels_config: Option<ChannelsConfig>) ->
                 &opts.scylla_config_lt(),
                 &opts.scylla_config_st_rf1(),
             ],
-            false,
+            scywr::schema::ChangeMode::CheckOnly,
         )
         .await
         .map_err(Error::from_string)?;

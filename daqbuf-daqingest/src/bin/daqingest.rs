@@ -9,6 +9,7 @@ use netfetch::conf::parse_config_v2;
 use netpod::Database;
 use netpod::ttl::RetentionTime;
 use scywr::config::ScyllaIngestConfig;
+use scywr::schema::ChangeMode;
 use taskrun::TracingMode;
 
 pub fn main() -> Result<(), Error> {
@@ -103,12 +104,12 @@ async fn main_run_inner(opts: DaqIngestOpts) -> Result<(), Error> {
                 daqingest::opts::ScyllaSchemaSubcmd::Check(h) => {
                     info!("daqingest version {} {}", clap::crate_version!(), buildmark);
                     let (opts, _) = parse_config(h.config).await.map_err(Error::from_string)?;
-                    scylla_schema_check(opts, false).await?;
+                    scylla_schema_check(opts, ChangeMode::CheckOnly).await?;
                 }
                 daqingest::opts::ScyllaSchemaSubcmd::Change(h) => {
                     info!("daqingest version {} {}", clap::crate_version!(), buildmark);
                     let (opts, _) = parse_config(h.config).await.map_err(Error::from_string)?;
-                    scylla_schema_check(opts, true).await?;
+                    scylla_schema_check(opts, ChangeMode::DoChange).await?;
                 }
             },
         },
@@ -188,13 +189,16 @@ async fn main_run_inner(opts: DaqIngestOpts) -> Result<(), Error> {
     Ok(())
 }
 
-async fn scylla_schema_check(opts: CaIngestOpts, do_change: bool) -> Result<(), Error> {
+async fn scylla_schema_check(opts: CaIngestOpts, do_change: ChangeMode) -> Result<(), Error> {
     let mut confs = Vec::new();
     confs.push(opts.scylla_insert_set_conf_main());
     if let Some(x) = opts.scylla_insert_set_conf_2nd() {
         confs.push(x);
     }
-    let opstr = if do_change { "change" } else { "check" };
+    let opstr = match do_change {
+        ChangeMode::DoChange => "change",
+        ChangeMode::CheckOnly => "check",
+    };
     info!("start scylla schema {}", opstr);
     for conf in confs {
         info!("{:?}", conf.st_rf3());

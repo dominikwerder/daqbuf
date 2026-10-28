@@ -771,13 +771,29 @@ async fn migrate_scylla_data_schema(
             chs.add_todo(format!("drop table {}.{}", ks, tn));
         }
     }
+    if let RetentionTime::Long = rett {
+        let tn = format!("{}{}", rett.table_prefix(), "channel_writer_state_v00");
+        if has_table(&ks, &tn, scy).await? {
+        } else {
+            chs.add_todo(format!(
+                "create table {}.{} (series bigint, tsc bigint, state_00 blob, primary key (series, tsc)) with clustering order by (tsc desc)",
+                ks, tn
+            ));
+        }
+    }
     Ok(())
+}
+
+#[derive(Clone, Copy)]
+pub enum ChangeMode {
+    CheckOnly,
+    DoChange,
 }
 
 pub async fn migrate_scylla_data_schema_all_rt(
     rts: [RetentionTime; 4],
     scyconfs: [&ScyllaIngestConfig; 4],
-    do_change: bool,
+    do_change: ChangeMode,
 ) -> Result<(), Error> {
     let mut chsa = [Changeset::new(), Changeset::new(), Changeset::new(), Changeset::new()];
     let rfs = [3, 3, 3, 1];
@@ -793,7 +809,7 @@ pub async fn migrate_scylla_data_schema_all_rt(
         migrate_scylla_data_schema(scyconf, rt, rf, chs).await?;
     }
     let todo = chsa.iter().any(|x| x.has_to_do());
-    if do_change {
+    if let ChangeMode::DoChange = do_change {
         if todo {
             for ((_rt, scyconf), chs) in rts.clone().into_iter().zip(scyconfs.iter()).zip(chsa.iter_mut()) {
                 if chs.has_to_do() {
@@ -810,7 +826,7 @@ pub async fn migrate_scylla_data_schema_all_rt(
                     }
                 }
             }
-            let fut = migrate_scylla_data_schema_all_rt(rts, scyconfs, false);
+            let fut = migrate_scylla_data_schema_all_rt(rts, scyconfs, ChangeMode::CheckOnly);
             Box::pin(fut).await?;
             Ok(())
         } else {
