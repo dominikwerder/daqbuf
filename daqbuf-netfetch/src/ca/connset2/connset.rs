@@ -664,6 +664,11 @@ impl ConnSet {
                                                 }
                                                 self2.chtrace.push_connection_trace(x);
                                             }
+                                            conn2::conn::CaConnItem::WriterStateQuery(x) => {
+                                                self2.mett.item_writer_state_query().inc();
+                                                let item = QueryItem::WriterStateQuery(x);
+                                                self2.write_staging.push_back(item);
+                                            }
                                         }
                                     }
                                 }

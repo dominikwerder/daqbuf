@@ -87,6 +87,7 @@ pub enum ItemInner {
     ChannelWriteItems(Vec<QueryItem>),
     ChannelTrace(ChannelTraceL1Item),
     ConnectionTrace(ConnectionTraceL1Item),
+    WriterStateQuery(scywr::channelwriterstate::WriterStateQuery),
 }
 
 #[derive(Debug)]
@@ -565,6 +566,13 @@ impl Stream for Connected {
                                                     let item = ConnectedItem {
                                                         ts_create: item.ts_create,
                                                         inner: ItemInner::ConnectionTrace(x),
+                                                    };
+                                                    Some(item)
+                                                }
+                                                activeca::ItemInner::WriterStateQuery(x) => {
+                                                    let item = ConnectedItem {
+                                                        ts_create: item.ts_create,
+                                                        inner: ItemInner::WriterStateQuery(x),
                                                     };
                                                     Some(item)
                                                 }

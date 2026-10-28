@@ -7,7 +7,6 @@ use std::fmt;
 use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
-use taskrun::tokio;
 use tokio::sync::mpsc;
 
 fn _abc() {

@@ -14,13 +14,12 @@ serde_json = "1.0"
 serde_cbor = "0.11"
 serde_yaml = "0.9.16"
 ciborium = "0.2.2"
+cbor2 = "1.1.6"
 hcl-rs = "0.19.2"
 tokio-stream = { version = "0.1", features = ["fs"] }
 tokio-util = "0.7.18"
 tracing = "0.1.37"
 async-channel = "2.5.0"
-crossfire = { version = "2.1.10", features = [] }
-# crossfire = { version = "3.1.7", features = ["compat"] }
 bytes = "1.10"
 arrayref = "0.3"
 byteorder = "1.5"
@@ -59,6 +58,7 @@ netpod = { path = "../daqbuf-netpod", package = "daqbuf-netpod" }
 items_0 = { path = "../daqbuf-items-0", package = "daqbuf-items-0" }
 items_2 = { path = "../daqbuf-items-2", package = "daqbuf-items-2" }
 streams = { path = "../daqbuf-streams", package = "daqbuf-streams" }
+channeltools = { path = "../daqbuf-channeltools", package = "daqbuf-channeltools" }
 ca_proto = { path = "../daqbuf-ca-proto", package = "daqbuf-ca-proto" }
 ca-proto-tokio = { path = "../daqbuf-ca-proto-tokio", package = "daqbuf-ca-proto-tokio" }
 serde-helper = { path = "../daqbuf-serde-helper", package = "daqbuf-serde-helper", features = ["schema"] }

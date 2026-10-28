@@ -414,6 +414,7 @@ pub enum CaConnItem {
     ChannelTrace(ChannelTraceL2Item),
     ConnectionTrace(ConnectionTraceL1Item),
     Metrics(stats::mett::CaConn2Metrics),
+    WriterStateQuery(scywr::channelwriterstate::WriterStateQuery),
 }
 
 #[derive(Debug)]
@@ -1060,6 +1061,10 @@ impl Stream for CaConn {
                                                 connected::ItemInner::ConnectionTrace(x) => {
                                                     self2.mett.item_connection_trace().inc();
                                                     let item = CaConnItem::ConnectionTrace(x);
+                                                    self2.out_buf.push_back_force(item);
+                                                }
+                                                connected::ItemInner::WriterStateQuery(x) => {
+                                                    let item = CaConnItem::WriterStateQuery(x);
                                                     self2.out_buf.push_back_force(item);
                                                 }
                                             }

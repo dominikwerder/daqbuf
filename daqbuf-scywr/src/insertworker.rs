@@ -337,6 +337,9 @@ async fn worker_streamed(
                 FutJobKind::AccountingRecv => {
                     mett.jobtrans().AccountingRecv().inc();
                 }
+                FutJobKind::WriterStateQuery => {
+                    mett.jobtrans().WriterStateQuery().inc();
+                }
             }
             match item {
                 Ok(_) => {
@@ -404,6 +407,7 @@ enum FutJobKind {
     BinWriteIndexV04,
     Accounting,
     AccountingRecv,
+    WriterStateQuery,
 }
 
 struct FutJob {
@@ -488,6 +492,10 @@ where
                         prepare_accounting_recv_insert_futs(item, &data_store, tsnow, wid)
                     }
                 }
+                QueryItem::WriterStateQuery(item) => {
+                    //
+                    prepare_writer_state_query_futs(item, &data_store, tsnow, wid)
+                }
             };
             trace_transform!("{selfname}  prepared futs  len {}", futs.len());
             mett.fut_prepared().add(futs.len() as u32);
@@ -526,6 +534,9 @@ fn inspect_items(
                 }
                 QueryItem::AccountingRecv(_) => {
                     trace_item_execute!("execute  {}  Accounting  {:?}", worker_name, item);
+                }
+                QueryItem::WriterStateQuery(..) => {
+                    trace_item_execute!("execute  {}  WriterStateQuery  {:?}", worker_name, item);
                 }
             }
         }
@@ -705,6 +716,35 @@ fn prepare_accounting_recv_insert_futs(
         fut,
         ts_net: tsnow,
         jobkind: FutJobKind::AccountingRecv,
+    };
+    let futs = smallvec![fut];
+    futs
+}
+
+fn prepare_writer_state_query_futs(
+    item: crate::channelwriterstate::WriterStateQuery,
+    data_store: &Arc<DataStore>,
+    tsnow: Instant,
+    wid: Arc<InsertWorkerId>,
+) -> SmallVec<[FutJob; 4]> {
+    let data_store = data_store.clone();
+    let fut = async move {
+        let rt = data_store.rett.clone();
+        let series = item.series().to_i64();
+        let res = data_store
+            .scy
+            .query_unpaged(
+                "select state_00 from sls_lt.lt_channel_writer_state_v00 where series = ? limit 8",
+                (series,),
+            )
+            .await?;
+        Ok(res)
+    };
+    let fut = InsertFut::from_fut(Box::pin(fut));
+    let fut = FutJob {
+        fut,
+        ts_net: tsnow,
+        jobkind: FutJobKind::WriterStateQuery,
     };
     let futs = smallvec![fut];
     futs

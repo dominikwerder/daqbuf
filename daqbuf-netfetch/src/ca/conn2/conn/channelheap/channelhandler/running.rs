@@ -122,6 +122,14 @@ pub enum RunningItem {
     ChannelWriteItems(Vec<QueryItem>),
     RequestClose(ClosingReason),
     ChannelTrace(ChannelTraceItem),
+    WriterStateQuery(scywr::channelwriterstate::WriterStateQuery),
+}
+
+#[derive(Debug, ToSerde)]
+#[to_serde(vis = "pub", derive(utoipa::ToSchema))]
+struct WriterStateQuery {
+    #[to_serde(skip)]
+    rx: asynchan::Receiver<Result<Vec<u8>, scywr::channelwriterstate::Error>>,
 }
 
 #[derive(Debug, ToSerde)]
@@ -144,6 +152,8 @@ struct Normal {
     derive(utoipa::ToSchema)
 )]
 enum State {
+    #[to_serde(schema(value_type = WriterStateQuerySerde))]
+    WriterStateQuery(#[to_serde(nest)] WriterStateQuery),
     #[to_serde(schema(value_type = NormalSerde))]
     Normal(#[to_serde(nest)] Normal),
     Done,
@@ -152,6 +162,7 @@ enum State {
 impl State {
     fn str(&self) -> &str {
         match self {
+            State::WriterStateQuery(..) => "WriterStateQuery",
             State::Normal(..) => "Normal",
             State::Done => "Done",
         }
@@ -170,6 +181,14 @@ pub(super) struct Running {
     sid: Sid,
     #[to_serde(schema(value_type = Object))]
     chi: ChannelInfoResult,
+    #[to_serde(skip)]
+    chconf: ChannelConfig,
+    #[to_serde(skip)]
+    scalar_type: ScalarType,
+    #[to_serde(skip)]
+    shape: Shape,
+    #[to_serde(skip)]
+    ca_dbr_ty: CaDbrTy,
     removing: bool,
     #[to_serde(len)]
     outbuf: VecDeque<RunningItem>,
@@ -238,17 +257,21 @@ impl Running {
             shape.clone(),
             chconf.name().into(),
         )?;
+        let (item, rx) = scywr::channelwriterstate::WriterStateQuery::new(series);
+        let outbuf = VecDeque::from([RunningItem::WriterStateQuery(item)]);
+        let state = State::WriterStateQuery(WriterStateQuery { rx });
         Ok(Self {
-            state: State::Normal(Normal {
-                fetchmpx: Fetchmpx::new(series, cid.clone(), sid.clone(), scalar_type, shape, ca_dbr_ty, chconf),
-                subfuts: VecDeque::new(),
-            }),
+            state,
             state_dt: Instant::now(),
             cid,
             sid,
             chi,
+            chconf,
+            scalar_type,
+            shape,
+            ca_dbr_ty,
             removing: false,
-            outbuf: VecDeque::new(),
+            outbuf,
             trace_outbuf: VecDeque::new(),
             inp_buf: VecDeque::with_capacity(INP_BUF_CAP),
             inp_done: false,
@@ -266,6 +289,7 @@ impl Running {
     pub fn mett_take(&mut self) -> ChannelHandlerMetrics {
         let mut ret = std::mem::replace(&mut self.mett, ChannelHandlerMetrics::new());
         match &mut self.state {
+            State::WriterStateQuery(..) => {}
             State::Normal(st) => {
                 ret.ingest(st.fetchmpx.mett_take());
             }
@@ -277,6 +301,10 @@ impl Running {
     pub fn trigger_close(&mut self, reason: ClosingReason) {
         self.removing = true;
         match &mut self.state {
+            State::WriterStateQuery(..) => {
+                // TODO
+                error!("TODO trigger_close WriterStateQuery");
+            }
             State::Normal(x) => {
                 x.fetchmpx.trigger_closing(reason);
             }
@@ -288,6 +316,10 @@ impl Running {
         self.removing = true;
         self.inp_done = true;
         match &mut self.state {
+            State::WriterStateQuery(..) => {
+                // TODO
+                error!("TODO notify_peer_closed WriterStateQuery");
+            }
             State::Normal(x) => {
                 x.fetchmpx.notify_peer_closed();
             }
@@ -298,6 +330,13 @@ impl Running {
     pub fn handle_channel_handler_cmd(&mut self, cmd: serde_json::Value) -> serde_json::Value {
         use serde_json::json;
         match &mut self.state {
+            State::WriterStateQuery(..) => {
+                // TODO
+                error!("TODO handle_channel_handler_cmd WriterStateQuery");
+                json!({
+                    "error": format!("TODO handle_channel_handler_cmd WriterStateQuery"),
+                })
+            }
             State::Normal(st) => st.fetchmpx.handle_channel_handler_cmd(cmd),
             State::Done => json!({
                 "error": format!("Running  {}", self.state.str()),
@@ -310,6 +349,11 @@ impl Running {
         let selfname = "cmd_read_notify";
         debug!("{selfname}");
         match &mut self.state {
+            State::WriterStateQuery(..) => {
+                // TODO
+                error!("TODO handle_channel_handler_cmd WriterStateQuery");
+                json!({"status": "TODO handle_channel_handler_cmd WriterStateQuery"})
+            }
             State::Normal(st) => {
                 debug!("{selfname}  Normal");
                 if st.subfuts.len() >= READ_NOTIFY_FUTS_CAP {
@@ -344,6 +388,7 @@ impl Running {
         use Poll::*;
         let mut hpp = HaveProgressPending::new();
         match &mut self.state {
+            State::WriterStateQuery(st) => {}
             State::Normal(normal) => {
                 for slot in normal.subfuts.iter_mut() {
                     if let Some(fut) = slot {
@@ -405,6 +450,7 @@ impl Running {
             let mut hpp = HaveProgressPending::new();
             let self2 = self.as_mut().get_mut();
             match &mut self2.state {
+                State::WriterStateQuery(..) => {}
                 State::Normal(st2) => {
                     if let Some(item) = self2.inp_buf.pop_front() {
                         trace3!("{selfname}  have item  {item:?}");
@@ -529,6 +575,39 @@ impl Stream for Running {
                 break Ready(Some(Ok(x)));
             }
             match &mut self.state {
+                State::WriterStateQuery(st) => match st.rx.poll_next_unpin(cx) {
+                    Ready(x) => match x {
+                        Some(Ok(x)) => {
+                            hpp.mark_progress();
+                            let a = cbor2::from_slice::<cbor2::Value>(&x);
+                            info!("write state query returned: {a:?}");
+                            let state = State::Normal(Normal {
+                                fetchmpx: Fetchmpx::new(
+                                    self.chi.series.to_series(),
+                                    self.cid.clone(),
+                                    self.sid.clone(),
+                                    self.scalar_type.clone(),
+                                    self.shape.clone(),
+                                    self.ca_dbr_ty.clone(),
+                                    self.chconf.clone(),
+                                ),
+                                subfuts: VecDeque::new(),
+                            });
+                            self.state = state;
+                        }
+                        Some(Err(e)) => {
+                            hpp.mark_progress();
+                            self.trigger_close(ClosingReason::ErrorMsg(format!("{e}")));
+                        }
+                        None => {
+                            hpp.mark_progress();
+                            self.trigger_close(ClosingReason::ErrorMsg(format!("can not write state query")));
+                        }
+                    },
+                    Pending => {
+                        hpp.mark_pending();
+                    }
+                },
                 State::Normal(normal) => match normal.fetchmpx.poll_next_unpin(cx) {
                     Ready(Some(x)) => match x {
                         Ok(x) => {

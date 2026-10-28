@@ -651,6 +651,7 @@ pub enum QueryItem {
     BinWriteIndexV04(BinWriteIndexV04),
     Accounting(Accounting),
     AccountingRecv(AccountingRecv),
+    WriterStateQuery(crate::channelwriterstate::WriterStateQuery),
 }
 
 impl QueryItem {
@@ -663,6 +664,7 @@ impl QueryItem {
             BinWriteIndexV04(x) => x.target,
             Accounting(x) => x.target,
             AccountingRecv(x) => x.target,
+            WriterStateQuery(..) => InsertTarget::LtRf3,
         }
     }
 }
@@ -759,6 +761,10 @@ impl InsertFut {
             Ok::<_, InsertFutError>(res)
         };
         let fut = Box::pin(fut);
+        Self { fut }
+    }
+
+    pub fn from_fut(fut: Pin<Box<dyn Future<Output = Result<QueryResult, InsertFutError>> + Send>>) -> Self {
         Self { fut }
     }
 

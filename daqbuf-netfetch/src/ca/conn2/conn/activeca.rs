@@ -253,6 +253,7 @@ pub enum ItemInner {
     ProtoOut(CaMsg),
     ChannelTrace(ChannelTraceL1Item),
     ConnectionTrace(ConnectionTraceL1Item),
+    WriterStateQuery(scywr::channelwriterstate::WriterStateQuery),
 }
 
 #[derive(Debug)]
@@ -775,6 +776,13 @@ impl ActiveCa {
                                                 let item = ActiveCaItem {
                                                     ts_create: item.ts_create,
                                                     inner: ItemInner::ChannelTrace(x),
+                                                };
+                                                item
+                                            }
+                                            channelheap::ItemInner::WriterStateQuery(x) => {
+                                                let item = ActiveCaItem {
+                                                    ts_create: item.ts_create,
+                                                    inner: ItemInner::WriterStateQuery(x),
                                                 };
                                                 item
                                             }

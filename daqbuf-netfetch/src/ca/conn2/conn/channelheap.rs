@@ -206,6 +206,7 @@ pub enum ItemInner {
     ChannelWriteItems(Vec<QueryItem>),
     ProtoOut(CaMsg),
     ChannelTrace(ChannelTraceL1Item),
+    WriterStateQuery(scywr::channelwriterstate::WriterStateQuery),
 }
 
 #[derive(Debug)]
@@ -226,6 +227,7 @@ enum PollHandlerItem {
     ChannelEventValue(ChannelEventValue),
     ChannelWriteItems(Vec<QueryItem>),
     ChannelTrace(ChannelTraceL1Item),
+    WriterStateQuery(scywr::channelwriterstate::WriterStateQuery),
 }
 
 #[derive(Debug, Serialize)]
@@ -842,6 +844,7 @@ impl ChannelHeap {
                                 channelhandler::ItemInner::ChannelTrace(x) => PollHandlerItem::ChannelTrace(
                                     ChannelTraceL1Item::new(handler.channel_config().name().into(), x),
                                 ),
+                                channelhandler::ItemInner::WriterStateQuery(x) => PollHandlerItem::WriterStateQuery(x),
                             };
                             break Ready(Some(Ok(item)));
                         }
@@ -1096,6 +1099,13 @@ impl ChannelHeap {
                                                 let x = ChannelHeapItem {
                                                     ts_create: tsnow,
                                                     inner: ItemInner::ChannelTrace(x),
+                                                };
+                                                self2.out_buf.push_back_force(x);
+                                            }
+                                            PollHandlerItem::WriterStateQuery(x) => {
+                                                let x = ChannelHeapItem {
+                                                    ts_create: tsnow,
+                                                    inner: ItemInner::WriterStateQuery(x),
                                                 };
                                                 self2.out_buf.push_back_force(x);
                                             }

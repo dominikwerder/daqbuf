@@ -44,6 +44,7 @@ mod Metrics {
         BinWriteIndexV04,
         Accounting,
         AccountingRecv,
+        WriterStateQuery,
     }
 }
 
@@ -393,6 +394,7 @@ mod Metrics {
         cmd_status_v1,
         channel_idle_disconnect_trigger,
         channel_idle_disconnect_err,
+        item_writer_state_query,
     }
     enum values {
         ca_conn_count,

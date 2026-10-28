@@ -1,4 +1,5 @@
 pub mod access;
+pub mod channelwriterstate;
 pub mod config;
 pub mod futbatch;
 pub mod futbatchgen;
@@ -14,4 +15,5 @@ pub mod session;
 pub mod store;
 pub mod tools;
 
+pub use channeltools::asynchan2 as asynchan;
 pub use scylla;

@@ -6,7 +6,6 @@ use std::fmt;
 use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
-use taskrun::tokio;
 use tokio::sync::mpsc;
 
 pub struct Sender<T>(mpsc::Sender<T>, &'static str);

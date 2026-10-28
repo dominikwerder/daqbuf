@@ -229,6 +229,7 @@ pub enum ItemInner {
     ChannelEventValue(ChannelEventValue),
     ChannelWriteItems(Vec<QueryItem>),
     ChannelTrace(ChannelTraceItem),
+    WriterStateQuery(scywr::channelwriterstate::WriterStateQuery),
 }
 
 #[derive(Debug)]
@@ -1091,6 +1092,12 @@ impl Stream for ChannelHandler {
                                         break Ready(Some(Ok(ChannelHandlerItem {
                                             ts_create: tsloop,
                                             inner: ItemInner::ChannelTrace(x),
+                                        })));
+                                    }
+                                    running::RunningItem::WriterStateQuery(x) => {
+                                        break Ready(Some(Ok(ChannelHandlerItem {
+                                            ts_create: tsloop,
+                                            inner: ItemInner::WriterStateQuery(x),
                                         })));
                                     }
                                 },
