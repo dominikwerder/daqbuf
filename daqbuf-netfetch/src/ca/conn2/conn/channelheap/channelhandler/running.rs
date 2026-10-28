@@ -5,6 +5,7 @@ mod consume_event_data;
 mod subfut;
 
 use super::fetchmpx::Fetchmpx;
+use crate::WriterStateQuery;
 use crate::asynchan;
 use crate::ca::conn2::ca_writer_value::CaRtWriter;
 use crate::ca::conn2::ca_writer_value::CaWriterValueState;
@@ -122,14 +123,21 @@ pub enum RunningItem {
     ChannelWriteItems(Vec<QueryItem>),
     RequestClose(ClosingReason),
     ChannelTrace(ChannelTraceItem),
-    WriterStateQuery(scywr::channelwriterstate::WriterStateQuery),
+    WriterStateQuery(WriterStateQuery),
 }
 
 #[derive(Debug, ToSerde)]
 #[to_serde(vis = "pub", derive(utoipa::ToSchema))]
-struct WriterStateQuery {
+struct WriterStateSelectState {
     #[to_serde(skip)]
     rx: asynchan::Receiver<Result<Vec<u8>, scywr::channelwriterstate::Error>>,
+}
+
+#[derive(Debug, ToSerde)]
+#[to_serde(vis = "pub", derive(utoipa::ToSchema))]
+struct WriterStateInsertState {
+    #[to_serde(skip)]
+    rx: asynchan::Receiver<Result<(), scywr::channelwriterstate::Error>>,
 }
 
 #[derive(Debug, ToSerde)]
@@ -152,17 +160,20 @@ struct Normal {
     derive(utoipa::ToSchema)
 )]
 enum State {
-    #[to_serde(schema(value_type = WriterStateQuerySerde))]
-    WriterStateQuery(#[to_serde(nest)] WriterStateQuery),
+    #[to_serde(schema(value_type = WriterStateSelectStateSerde))]
+    WriterStateSelect(#[to_serde(nest)] WriterStateSelectState),
     #[to_serde(schema(value_type = NormalSerde))]
     Normal(#[to_serde(nest)] Normal),
+    #[to_serde(schema(value_type = WriterStateInsertStateSerde))]
+    WriterStateInsert(#[to_serde(nest)] WriterStateInsertState),
     Done,
 }
 
 impl State {
     fn str(&self) -> &str {
         match self {
-            State::WriterStateQuery(..) => "WriterStateQuery",
+            State::WriterStateSelect(..) => "WriterStateQuery",
+            State::WriterStateInsert(..) => "WriterStateInsert",
             State::Normal(..) => "Normal",
             State::Done => "Done",
         }
@@ -230,6 +241,7 @@ impl Running {
         chconf: ChannelConfig,
         ioid_reg: Arc<IoidRegistry>,
     ) -> Result<Self, Error> {
+        info!("\n\n\n Running::new \n\n\n");
         let chname = chconf.name().into();
         let series = chi.series.to_series();
         let use_ioc_time = chconf.use_ioc_time();
@@ -257,9 +269,9 @@ impl Running {
             shape.clone(),
             chconf.name().into(),
         )?;
-        let (item, rx) = scywr::channelwriterstate::WriterStateQuery::new(series);
-        let outbuf = VecDeque::from([RunningItem::WriterStateQuery(item)]);
-        let state = State::WriterStateQuery(WriterStateQuery { rx });
+        let (item, rx) = scywr::channelwriterstate::WriterStateSelect::new(series);
+        let outbuf = VecDeque::from([RunningItem::WriterStateQuery(WriterStateQuery::Select(item))]);
+        let state = State::WriterStateSelect(WriterStateSelectState { rx });
         Ok(Self {
             state,
             state_dt: Instant::now(),
@@ -289,7 +301,8 @@ impl Running {
     pub fn mett_take(&mut self) -> ChannelHandlerMetrics {
         let mut ret = std::mem::replace(&mut self.mett, ChannelHandlerMetrics::new());
         match &mut self.state {
-            State::WriterStateQuery(..) => {}
+            State::WriterStateSelect(..) => {}
+            State::WriterStateInsert(..) => {}
             State::Normal(st) => {
                 ret.ingest(st.fetchmpx.mett_take());
             }
@@ -301,10 +314,8 @@ impl Running {
     pub fn trigger_close(&mut self, reason: ClosingReason) {
         self.removing = true;
         match &mut self.state {
-            State::WriterStateQuery(..) => {
-                // TODO
-                error!("TODO trigger_close WriterStateQuery");
-            }
+            State::WriterStateSelect(..) => {}
+            State::WriterStateInsert(..) => {}
             State::Normal(x) => {
                 x.fetchmpx.trigger_closing(reason);
             }
@@ -316,10 +327,8 @@ impl Running {
         self.removing = true;
         self.inp_done = true;
         match &mut self.state {
-            State::WriterStateQuery(..) => {
-                // TODO
-                error!("TODO notify_peer_closed WriterStateQuery");
-            }
+            State::WriterStateSelect(..) => {}
+            State::WriterStateInsert(..) => {}
             State::Normal(x) => {
                 x.fetchmpx.notify_peer_closed();
             }
@@ -330,11 +339,18 @@ impl Running {
     pub fn handle_channel_handler_cmd(&mut self, cmd: serde_json::Value) -> serde_json::Value {
         use serde_json::json;
         match &mut self.state {
-            State::WriterStateQuery(..) => {
+            State::WriterStateSelect(..) => {
                 // TODO
-                error!("TODO handle_channel_handler_cmd WriterStateQuery");
+                error!("TODO handle_channel_handler_cmd WriterStateSelect");
                 json!({
-                    "error": format!("TODO handle_channel_handler_cmd WriterStateQuery"),
+                    "error": format!("TODO handle_channel_handler_cmd WriterStateSelect"),
+                })
+            }
+            State::WriterStateInsert(..) => {
+                // TODO
+                error!("TODO handle_channel_handler_cmd WriterStateInsert");
+                json!({
+                    "error": format!("TODO handle_channel_handler_cmd WriterStateInsert"),
                 })
             }
             State::Normal(st) => st.fetchmpx.handle_channel_handler_cmd(cmd),
@@ -349,10 +365,15 @@ impl Running {
         let selfname = "cmd_read_notify";
         debug!("{selfname}");
         match &mut self.state {
-            State::WriterStateQuery(..) => {
+            State::WriterStateSelect(..) => {
                 // TODO
                 error!("TODO handle_channel_handler_cmd WriterStateQuery");
                 json!({"status": "TODO handle_channel_handler_cmd WriterStateQuery"})
+            }
+            State::WriterStateInsert(..) => {
+                // TODO
+                error!("TODO handle_channel_handler_cmd WriterStateInsert");
+                json!({"status": "TODO handle_channel_handler_cmd WriterStateInsert"})
             }
             State::Normal(st) => {
                 debug!("{selfname}  Normal");
@@ -388,7 +409,8 @@ impl Running {
         use Poll::*;
         let mut hpp = HaveProgressPending::new();
         match &mut self.state {
-            State::WriterStateQuery(st) => {}
+            State::WriterStateSelect(st) => {}
+            State::WriterStateInsert(st) => {}
             State::Normal(normal) => {
                 for slot in normal.subfuts.iter_mut() {
                     if let Some(fut) = slot {
@@ -450,7 +472,8 @@ impl Running {
             let mut hpp = HaveProgressPending::new();
             let self2 = self.as_mut().get_mut();
             match &mut self2.state {
-                State::WriterStateQuery(..) => {}
+                State::WriterStateSelect(..) => {}
+                State::WriterStateInsert(..) => {}
                 State::Normal(st2) => {
                     if let Some(item) = self2.inp_buf.pop_front() {
                         trace3!("{selfname}  have item  {item:?}");
@@ -575,7 +598,7 @@ impl Stream for Running {
                 break Ready(Some(Ok(x)));
             }
             match &mut self.state {
-                State::WriterStateQuery(st) => match st.rx.poll_next_unpin(cx) {
+                State::WriterStateSelect(st) => match st.rx.poll_next_unpin(cx) {
                     Ready(x) => match x {
                         Some(Ok(x)) => {
                             hpp.mark_progress();
@@ -593,7 +616,7 @@ impl Stream for Running {
                                 ),
                                 subfuts: VecDeque::new(),
                             });
-                            self.state = state;
+                            self.transition_state(state);
                         }
                         Some(Err(e)) => {
                             hpp.mark_progress();
@@ -601,7 +624,27 @@ impl Stream for Running {
                         }
                         None => {
                             hpp.mark_progress();
-                            self.trigger_close(ClosingReason::ErrorMsg(format!("can not write state query")));
+                            self.trigger_close(ClosingReason::ErrorMsg(format!("can not WriterStateSelect")));
+                        }
+                    },
+                    Pending => {
+                        hpp.mark_pending();
+                    }
+                },
+                State::WriterStateInsert(st) => match st.rx.poll_next_unpin(cx) {
+                    Ready(x) => match x {
+                        Some(Ok(x)) => {
+                            hpp.mark_progress();
+                            info!("write state insert returned");
+                            self.transition_state(State::Done);
+                        }
+                        Some(Err(e)) => {
+                            hpp.mark_progress();
+                            self.trigger_close(ClosingReason::ErrorMsg(format!("{e}")));
+                        }
+                        None => {
+                            hpp.mark_progress();
+                            self.trigger_close(ClosingReason::ErrorMsg(format!("can not WriterStateInsert")));
                         }
                     },
                     Pending => {
@@ -673,7 +716,15 @@ impl Stream for Running {
                     Ready(None) => {
                         hpp.mark_progress();
                         trace_shutdown!("Done  {}", self.chname);
-                        self.transition_state(State::Done);
+                        info!("got to writer state INSERT");
+                        let (item, rx) = scywr::channelwriterstate::WriterStateInsert::new(
+                            self.chi.series.to_series(),
+                            vec![1, 2, 3],
+                        );
+                        self.outbuf
+                            .push_back(RunningItem::WriterStateQuery(WriterStateQuery::Insert(item)));
+                        let state = State::WriterStateInsert(WriterStateInsertState { rx });
+                        self.transition_state(state);
                     }
                     Pending => {
                         hpp.mark_pending();

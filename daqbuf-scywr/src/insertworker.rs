@@ -35,6 +35,7 @@ use tokio::task::JoinHandle;
 
 macro_rules! error { ($($arg:tt)*) => ( if true { log::error!($($arg)*); } ); }
 macro_rules! warn { ($($arg:tt)*) => ( if true { log::warn!($($arg)*); } ); }
+macro_rules! info { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
 macro_rules! debug { ($($arg:tt)*) => ( if true { log::debug!($($arg)*); } ); }
 macro_rules! debug_setup { ($($arg:tt)*) => ( if false { log::debug!($($arg)*); } ); }
 macro_rules! trace2 { ($($arg:tt)*) => ( if false { log::trace!($($arg)*); } ); }
@@ -67,6 +68,9 @@ fn stats_inc_for_err(err: &crate::iteminsertqueue::InsertFutError, mett: &mut st
         },
         InsertFutError::NoFuture => {
             mett.db_no_future().inc();
+        }
+        InsertFutError::Scylla => {
+            // TODO
         }
     }
 }
@@ -492,9 +496,13 @@ where
                         prepare_accounting_recv_insert_futs(item, &data_store, tsnow, wid)
                     }
                 }
-                QueryItem::WriterStateQuery(item) => {
+                QueryItem::WriterStateSelect(item) => {
                     //
-                    prepare_writer_state_query_futs(item, &data_store, tsnow, wid)
+                    prepare_writer_state_select_futs(item, &data_store, tsnow, wid)
+                }
+                QueryItem::WriterStateInsert(item) => {
+                    //
+                    prepare_writer_state_insert_futs(item, &data_store, tsnow, wid)
                 }
             };
             trace_transform!("{selfname}  prepared futs  len {}", futs.len());
@@ -533,10 +541,13 @@ fn inspect_items(
                     trace_item_execute!("execute  {}  Accounting  {:?}", worker_name, item);
                 }
                 QueryItem::AccountingRecv(_) => {
-                    trace_item_execute!("execute  {}  Accounting  {:?}", worker_name, item);
+                    trace_item_execute!("execute  {}  AccountingRecv  {:?}", worker_name, item);
                 }
-                QueryItem::WriterStateQuery(..) => {
-                    trace_item_execute!("execute  {}  WriterStateQuery  {:?}", worker_name, item);
+                QueryItem::WriterStateSelect(..) => {
+                    trace_item_execute!("execute  {}  WriterStateSelect  {:?}", worker_name, item);
+                }
+                QueryItem::WriterStateInsert(..) => {
+                    trace_item_execute!("execute  {}  WriterStateInsert  {:?}", worker_name, item);
                 }
             }
         }
@@ -721,23 +732,70 @@ fn prepare_accounting_recv_insert_futs(
     futs
 }
 
-fn prepare_writer_state_query_futs(
-    item: crate::channelwriterstate::WriterStateQuery,
+fn prepare_writer_state_select_futs(
+    item: crate::channelwriterstate::WriterStateSelect,
     data_store: &Arc<DataStore>,
     tsnow: Instant,
     wid: Arc<InsertWorkerId>,
 ) -> SmallVec<[FutJob; 4]> {
     let data_store = data_store.clone();
     let fut = async move {
+        let mut item = item;
         let rt = data_store.rett.clone();
         let series = item.series().to_i64();
+        info!("\n\n\n  prepare_writer_state_select_futs \n\n\n");
         let res = data_store
             .scy
             .query_unpaged(
-                "select state_00 from sls_lt.lt_channel_writer_state_v00 where series = ? limit 8",
+                "select tsc, writetime(state_00), state_00 from sls_lt.lt_channel_writer_state_v00 where series = ? limit 8",
                 (series,),
             )
             .await?;
+        for row in res
+            .clone()
+            .into_rows_result()
+            .map_err(|e| crate::iteminsertqueue::InsertFutError::Scylla)?
+            .rows::<(i64, i64, Vec<u8>)>()
+            .map_err(|e| crate::iteminsertqueue::InsertFutError::Scylla)?
+        {
+            info!("\n\n\n  from scylla query: {row:?}");
+            let row = row.map_err(|e| crate::iteminsertqueue::InsertFutError::Scylla)?;
+            let x = item.tx().try_send(Ok(row.2));
+        }
+        Ok(res)
+    };
+    let fut = InsertFut::from_fut(Box::pin(fut));
+    let fut = FutJob {
+        fut,
+        ts_net: tsnow,
+        jobkind: FutJobKind::WriterStateQuery,
+    };
+    let futs = smallvec![fut];
+    futs
+}
+
+fn prepare_writer_state_insert_futs(
+    item: crate::channelwriterstate::WriterStateInsert,
+    data_store: &Arc<DataStore>,
+    tsnow: Instant,
+    wid: Arc<InsertWorkerId>,
+) -> SmallVec<[FutJob; 4]> {
+    let data_store = data_store.clone();
+    let fut = async move {
+        let mut item = item;
+        let rt = data_store.rett.clone();
+        let series = item.series().to_i64();
+        let tsc = 123i64;
+        let state_00 = item.state_00();
+        info!("\n\n\n  prepare_writer_state_insert_futs \n\n\n");
+        let res = data_store
+            .scy
+            .query_unpaged(
+                "insert into sls_lt.lt_channel_writer_state_v00 (series, tsc, state_00) values (?, ?, ?)",
+                (series, tsc, state_00),
+            )
+            .await?;
+        let x = item.tx().try_send(Ok(()));
         Ok(res)
     };
     let fut = InsertFut::from_fut(Box::pin(fut));

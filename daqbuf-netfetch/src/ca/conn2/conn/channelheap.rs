@@ -206,7 +206,7 @@ pub enum ItemInner {
     ChannelWriteItems(Vec<QueryItem>),
     ProtoOut(CaMsg),
     ChannelTrace(ChannelTraceL1Item),
-    WriterStateQuery(scywr::channelwriterstate::WriterStateQuery),
+    WriterStateQuery(crate::WriterStateQuery),
 }
 
 #[derive(Debug)]
@@ -227,7 +227,7 @@ enum PollHandlerItem {
     ChannelEventValue(ChannelEventValue),
     ChannelWriteItems(Vec<QueryItem>),
     ChannelTrace(ChannelTraceL1Item),
-    WriterStateQuery(scywr::channelwriterstate::WriterStateQuery),
+    WriterStateQuery(crate::WriterStateQuery),
 }
 
 #[derive(Debug, Serialize)]

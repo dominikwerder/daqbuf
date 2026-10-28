@@ -253,7 +253,7 @@ pub enum ItemInner {
     ProtoOut(CaMsg),
     ChannelTrace(ChannelTraceL1Item),
     ConnectionTrace(ConnectionTraceL1Item),
-    WriterStateQuery(scywr::channelwriterstate::WriterStateQuery),
+    WriterStateQuery(crate::WriterStateQuery),
 }
 
 #[derive(Debug)]

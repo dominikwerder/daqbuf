@@ -63,6 +63,7 @@ autoerr::create_error_v1!(
     enum variants {
         NoFuture,
         Execution(#[from] scylla::errors::ExecutionError),
+        Scylla,
     },
 );
 
@@ -651,7 +652,8 @@ pub enum QueryItem {
     BinWriteIndexV04(BinWriteIndexV04),
     Accounting(Accounting),
     AccountingRecv(AccountingRecv),
-    WriterStateQuery(crate::channelwriterstate::WriterStateQuery),
+    WriterStateSelect(crate::channelwriterstate::WriterStateSelect),
+    WriterStateInsert(crate::channelwriterstate::WriterStateInsert),
 }
 
 impl QueryItem {
@@ -664,7 +666,8 @@ impl QueryItem {
             BinWriteIndexV04(x) => x.target,
             Accounting(x) => x.target,
             AccountingRecv(x) => x.target,
-            WriterStateQuery(..) => InsertTarget::LtRf3,
+            WriterStateSelect(..) => InsertTarget::LtRf3,
+            WriterStateInsert(..) => InsertTarget::LtRf3,
         }
     }
 }

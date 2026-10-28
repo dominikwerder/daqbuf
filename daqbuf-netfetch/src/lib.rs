@@ -27,3 +27,9 @@ pub fn log_test() {
     debug!("log-test");
     trace!("log-test");
 }
+
+#[derive(Debug)]
+pub enum WriterStateQuery {
+    Select(scywr::channelwriterstate::WriterStateSelect),
+    Insert(scywr::channelwriterstate::WriterStateInsert),
+}

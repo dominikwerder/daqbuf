@@ -414,7 +414,7 @@ pub enum CaConnItem {
     ChannelTrace(ChannelTraceL2Item),
     ConnectionTrace(ConnectionTraceL1Item),
     Metrics(stats::mett::CaConn2Metrics),
-    WriterStateQuery(scywr::channelwriterstate::WriterStateQuery),
+    WriterStateQuery(crate::WriterStateQuery),
 }
 
 #[derive(Debug)]

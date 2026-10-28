@@ -666,8 +666,18 @@ impl ConnSet {
                                             }
                                             conn2::conn::CaConnItem::WriterStateQuery(x) => {
                                                 self2.mett.item_writer_state_query().inc();
-                                                let item = QueryItem::WriterStateQuery(x);
-                                                self2.write_staging.push_back(item);
+                                                match x {
+                                                    crate::WriterStateQuery::Select(x) => {
+                                                        info!("\n\n  WriterStateQuery::Select  {x:?}");
+                                                        let item = QueryItem::WriterStateSelect(x);
+                                                        self2.write_staging.push_back(item);
+                                                    }
+                                                    crate::WriterStateQuery::Insert(x) => {
+                                                        info!("\n\n  WriterStateQuery::Insert  {x:?}");
+                                                        let item = QueryItem::WriterStateInsert(x);
+                                                        self2.write_staging.push_back(item);
+                                                    }
+                                                }
                                             }
                                         }
                                     }
