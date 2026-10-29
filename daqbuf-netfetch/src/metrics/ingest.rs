@@ -36,7 +36,6 @@ use serieswriter::writer::EmittableType;
 use serieswriter::writer::SeriesWriter;
 use std::collections::HashMap;
 use std::collections::VecDeque;
-use std::io::Cursor;
 use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
@@ -319,7 +318,7 @@ where
     T: EventValueType,
     F1: Fn(<T as EventValueType>::IterTy1<'_>) -> DataValue,
 {
-    let evs: ContainerEvents<T> = ciborium::de::from_reader(Cursor::new(frame))
+    let evs: ContainerEvents<T> = cbor2::from_slice(&frame[..])
         .map_err(|e| {
             log::error!("cbor decode error {e}");
         })
@@ -344,7 +343,7 @@ fn evpush_dim0_enum(
     deque: &mut VecDeque<QueryItem>,
     writer: &mut ValueSeriesWriter,
 ) -> Result<(), Error> {
-    let evs: ContainerEvents<EnumVariant> = ciborium::de::from_reader(Cursor::new(frame))
+    let evs: ContainerEvents<EnumVariant> = cbor2::from_slice(&frame[..])
         .map_err(|e| {
             log::error!("cbor decode error {e}");
         })
@@ -373,7 +372,7 @@ where
     Vec<T>: EventValueType,
     F1: Fn(<Vec<T> as EventValueType>::IterTy1<'_>) -> DataValue,
 {
-    let evs: ContainerEvents<Vec<T>> = ciborium::de::from_reader(Cursor::new(frame))
+    let evs: ContainerEvents<Vec<T>> = cbor2::from_slice(&frame[..])
         .map_err(|e| {
             log::error!("cbor decode error {e}");
         })

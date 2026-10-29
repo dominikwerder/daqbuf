@@ -12,7 +12,6 @@ use serde::Deserialize;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::collections::VecDeque;
-use std::io::Cursor;
 use std::io::Write;
 use std::sync::OnceLock;
 use std::time::Instant;
@@ -58,7 +57,7 @@ fn extract_all_files() -> Contents {
     //         return Contents::new();
     //     }
     // };
-    match ciborium::from_reader::<Contents, _>(Cursor::new(buf1)) {
+    match cbor2::from_slice::<Contents>(&buf1[..]) {
         Ok(x) => {
             let ts2 = Instant::now();
             let dt = ts2.saturating_duration_since(ts1);

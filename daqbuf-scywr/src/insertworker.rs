@@ -294,7 +294,8 @@ async fn worker_streamed(
     tx: Sender<InsertWorkerOutputItem>,
     wid: InsertWorkerId,
 ) -> Result<(), Error> {
-    debug_setup!("worker_streamed  begin");
+    let selfname = "worker_streamed";
+    debug_setup!("{selfname}  begin");
     let tsnow = Instant::now();
     let mut mett = stats::mett::ScyllaInsertWorker::new();
     let mett_input = InputMett::new();
@@ -318,6 +319,11 @@ async fn worker_streamed(
             .flatten_unordered(Some(1))
             .map(|x| FutTrackDt::from_fut_job(x))
             .buffer_unordered(concurrency);
+        let stream = stream.inspect(|x| {
+            trace_item_execute_2!(
+                "\n\n---------------------------------------------------------------------\n{selfname}  job done\n\n"
+            );
+        });
         let mut stream = Box::pin(stream);
         debug_setup!("waiting for item");
         while let Some((ts_net, ts1, ts2, item, jobkind, npoll)) = stream.next().await {
@@ -521,35 +527,36 @@ fn inspect_items(
     item_inp: Receiver<VecDeque<QueryItem>>,
     worker_name: String,
 ) -> impl Stream<Item = VecDeque<QueryItem>> {
-    trace_inspect!("transform_to_db_futures  begin");
+    let selfname = "inspect_items";
+    trace_inspect!("{selfname}  transform_to_db_futures  begin");
     // TODO possible without box?
     // let item_inp = Box::pin(item_inp);
     item_inp.inspect(move |batch| {
         for item in batch {
             match &item {
                 QueryItem::Insert(item) => {
-                    trace_item_execute!("execute  {}  Insert  {}", worker_name, item.string_short());
+                    trace_item_execute!("{selfname}  execute  {}  Insert  {}", worker_name, item.string_short());
                 }
                 QueryItem::Msp(item) => {
-                    trace_item_execute!("execute  {}  Msp  {}", worker_name, item.string_short());
+                    trace_item_execute!("{selfname}  execute  {}  Msp  {}", worker_name, item.string_short());
                 }
                 QueryItem::TimeBinSimpleF32V02(_) => {
-                    trace_item_execute!("execute  {}  TimeBinSimpleF32V02", worker_name);
+                    trace_item_execute!("{selfname}  execute  {}  TimeBinSimpleF32V02", worker_name);
                 }
                 QueryItem::BinWriteIndexV04(_) => {
-                    trace_item_execute!("execute  {}  BinWriteIndexV04", worker_name);
+                    trace_item_execute!("{selfname}  execute  {}  BinWriteIndexV04", worker_name);
                 }
                 QueryItem::Accounting(_) => {
-                    trace_item_execute!("execute  {}  Accounting  {:?}", worker_name, item);
+                    trace_item_execute!("{selfname}  execute  {}  Accounting  {:?}", worker_name, item);
                 }
                 QueryItem::AccountingRecv(_) => {
-                    trace_item_execute!("execute  {}  AccountingRecv  {:?}", worker_name, item);
+                    trace_item_execute!("{selfname}  execute  {}  AccountingRecv  {:?}", worker_name, item);
                 }
                 QueryItem::WriterStateSelect(..) => {
-                    trace_item_execute!("execute  {}  WriterStateSelect  {:?}", worker_name, item);
+                    trace_item_execute!("{selfname}  execute  {}  WriterStateSelect  {:?}", worker_name, item);
                 }
                 QueryItem::WriterStateInsert(..) => {
-                    trace_item_execute!("execute  {}  WriterStateInsert  {:?}", worker_name, item);
+                    trace_item_execute!("{selfname}  execute  {}  WriterStateInsert  {:?}", worker_name, item);
                 }
             }
         }

@@ -339,20 +339,20 @@ fn take_collector_result_cbor(coll: &mut Box<dyn items_0::collect_s::CollectorDy
             let x = collres.into_user_facing_api_type_box();
             let val = x.into_serializable_normal();
             let mut buf = Vec::with_capacity(1024);
-            ciborium::into_writer(&val, &mut buf).expect("cbor serialize");
+            cbor2::to_writer(&val, &mut buf).expect("cbor serialize");
             let bytes = Bytes::from(buf);
             let item = CborBytes::new(bytes);
             Some(item)
         }
         Err(e) => {
             error!("{}", e);
-            use ciborium::cbor;
+            use cbor2::cbor;
             let val = cbor!({
                 "ERROR" => true,
             })
             .unwrap();
             let mut buf = Vec::with_capacity(1024);
-            ciborium::into_writer(&val, &mut buf).expect("cbor serialize");
+            cbor2::to_writer(&val, &mut buf).expect("cbor serialize");
             let bytes = Bytes::from(buf);
             let item = CborBytes::new(bytes);
             Some(item)
@@ -557,7 +557,7 @@ pub async fn timebinned_cbor_framed(
                         StreamItem::Log(x) => {
                             if x.level() <= log_items_level {
                                 let mut buf = Vec::with_capacity(1024);
-                                ciborium::into_writer(&x, &mut buf).expect("cbor serialize");
+                                cbor2::to_writer(&x, &mut buf).expect("cbor serialize");
                                 let bytes = Bytes::from(buf);
                                 let item = CborBytes::new(bytes);
                                 Some(Ok(item))
@@ -568,7 +568,7 @@ pub async fn timebinned_cbor_framed(
                         StreamItem::Stats(x) => {
                             if stats_items {
                                 let mut buf = Vec::with_capacity(1024);
-                                ciborium::into_writer(&x, &mut buf).expect("cbor serialize");
+                                cbor2::to_writer(&x, &mut buf).expect("cbor serialize");
                                 let bytes = Bytes::from(buf);
                                 let item = CborBytes::new(bytes);
                                 Some(Ok(item))

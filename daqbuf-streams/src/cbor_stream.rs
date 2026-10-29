@@ -33,8 +33,8 @@ autoerr::create_error_v1!(
     enum variants {
         FromSlice(#[from] std::array::TryFromSliceError),
         Msg(String),
-        Ciborium(#[from] ciborium::de::Error<std::io::Error>),
-        CiboriumValue(#[from] ciborium::value::Error),
+        Cbor2De(#[from] cbor2::de::Error),
+        Cbor2Value(#[from] cbor2::value::Error),
     },
 );
 
@@ -81,19 +81,19 @@ where
                     let val = evs.into_user_facing_api_type();
                     let val = val.into_serializable_normal();
                     let mut buf = Vec::with_capacity(1024);
-                    ciborium::into_writer(&val, &mut buf).map_err(|e| Error::Msg(e.to_string()))?;
+                    cbor2::to_writer(&val, &mut buf).map_err(|e| Error::Msg(e.to_string()))?;
                     let bytes = Bytes::from(buf);
                     let item = CborBytes::new(bytes);
                     Ok(item)
                 }
                 RangeCompletableItem::RangeComplete => {
-                    use ciborium::cbor;
+                    use cbor2::cbor;
                     let val = cbor!({
                         "rangeFinal" => true,
                     })
                     .map_err(|e| Error::Msg(e.to_string()))?;
                     let mut buf = Vec::with_capacity(1024);
-                    ciborium::into_writer(&val, &mut buf).map_err(|e| Error::Msg(e.to_string()))?;
+                    cbor2::to_writer(&val, &mut buf).map_err(|e| Error::Msg(e.to_string()))?;
                     let bytes = Bytes::from(buf);
                     let item = CborBytes::new(bytes);
                     Ok(item)
@@ -127,13 +127,13 @@ where
             }
         },
         Err(e) => {
-            use ciborium::cbor;
+            use cbor2::cbor;
             let item = cbor!({
                 "error" => e.to_string(),
             })
             .map_err(|e| Error::Msg(e.to_string()))?;
             let mut buf = Vec::with_capacity(1024);
-            ciborium::into_writer(&item, &mut buf).map_err(|e| Error::Msg(e.to_string()))?;
+            cbor2::to_writer(&item, &mut buf).map_err(|e| Error::Msg(e.to_string()))?;
             let bytes = Bytes::from(buf);
             let item = CborBytes::new(bytes);
             Ok(item)
@@ -142,13 +142,13 @@ where
 }
 
 fn make_keepalive() -> Result<CborBytes, Error> {
-    use ciborium::cbor;
+    use cbor2::cbor;
     let item = cbor!({
         "type" => "keepalive",
     })
     .map_err(ErrMsg)?;
     let mut buf = Vec::with_capacity(128);
-    ciborium::into_writer(&item, &mut buf).map_err(ErrMsg)?;
+    cbor2::to_writer(&item, &mut buf).map_err(ErrMsg)?;
     let bytes = Bytes::from(buf);
     let item = Ok(CborBytes::new(bytes));
     item
@@ -194,8 +194,8 @@ impl<S> FramedBytesToChannelEventsStream<S> {
             return Ok(None);
         }
         let buf = &self.buf[FRAME_HEAD_LEN..frame_len];
-        let val: ciborium::Value = ciborium::from_reader(std::io::Cursor::new(buf)).map_err(ErrMsg)?;
-        debug!("decoded ciborium value {val:?}");
+        let val: cbor2::Value = cbor2::from_slice(buf).map_err(ErrMsg)?;
+        debug!("decoded cbor2 value {val:?}");
         let item = if let Some(map) = val.as_map() {
             let keys: Vec<&str> = map.iter().map(|k| k.0.as_text().unwrap_or("(none)")).collect();
             debug!("keys {keys:?}");
@@ -240,7 +240,7 @@ impl<S> FramedBytesToChannelEventsStream<S> {
         if let Some(x) = item {
             Ok(Some(Ok(x)))
         } else {
-            let item = LogItem::from_node(Level::DEBUG, format!("decoded ciborium Value"));
+            let item = LogItem::from_node(Level::DEBUG, format!("decoded cbor2 Value"));
             Ok(Some(Ok(StreamItem::Log(item))))
         }
     }
