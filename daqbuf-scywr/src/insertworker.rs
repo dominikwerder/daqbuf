@@ -824,7 +824,7 @@ fn prepare_writer_state_insert_futs(
         let mut tx = item.tx().clone();
         let state_00 = item.state_00();
         info!(
-            "prepare_writer_state_insert_futs  {wid}  series {series}  tsc {tsc}  bytes {}",
+            "\n\n  +++++++++++++++++++++++++++++\n  prepare_writer_state_insert_futs  {wid}  series {series}  tsc {tsc}  bytes {}",
             state_00.len()
         );
         let res = data_store
@@ -836,6 +836,9 @@ fn prepare_writer_state_insert_futs(
             .inspect_err(|e| {
                 error!("prepare_writer_state_insert_futs  {wid}  series {series}  {e}");
                 let _ = tx.clone().try_send(Err(crate::channelwriterstate::Error::Logic));
+            })
+            .inspect_ok(|x| {
+                info!("\n\n  INSERT OK  {:?}  \n\n", (series, tsc, state_00));
             })
             .await?;
         info!("prepare_writer_state_insert_futs  {wid}  series {series}  stored");

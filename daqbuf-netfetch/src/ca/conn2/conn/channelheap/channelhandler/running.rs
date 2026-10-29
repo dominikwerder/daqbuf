@@ -632,8 +632,8 @@ impl Stream for Running {
             }
             match &mut self.state {
                 State::WriterStateSelect(st) => match st.rx.poll_next_unpin(cx) {
-                    Ready(x) => match x {
-                        Some(Ok(x)) => {
+                    Ready(Some(x)) => match x {
+                        Ok(x) => {
                             hpp.mark_progress();
                             if x.is_empty() {
                                 info!("wsq  {}  no stored writer state", self.chname);
@@ -655,41 +655,41 @@ impl Stream for Running {
                             });
                             self.transition_state(state);
                         }
-                        Some(Err(e)) => {
+                        Err(e) => {
                             hpp.mark_progress();
                             warn!("wsq  {}  write state select error  {e}", self.chname);
                             // self.trigger_close(ClosingReason::ErrorMsg(format!("{e}")));
                             self.trigger_done_error_now();
                         }
-                        None => {
-                            hpp.mark_progress();
-                            warn!("wsq  {}  write state select  channel closed", self.chname);
-                            // self.trigger_close(ClosingReason::ErrorMsg(format!("can not WriterStateSelect")));
-                            self.trigger_done_error_now();
-                        }
                     },
+                    Ready(None) => {
+                        hpp.mark_progress();
+                        warn!("wsq  {}  write state select  channel closed", self.chname);
+                        // self.trigger_close(ClosingReason::ErrorMsg(format!("can not WriterStateSelect")));
+                        self.trigger_done_error_now();
+                    }
                     Pending => {
                         hpp.mark_pending();
                     }
                 },
                 State::WriterStateInsert(st) => match st.rx.poll_next_unpin(cx) {
-                    Ready(x) => match x {
-                        Some(Ok(x)) => {
+                    Ready(Some(x)) => match x {
+                        Ok(x) => {
                             hpp.mark_progress();
                             info!("wsq  {}  write state insert returned", self.chname);
                             self.transition_state(State::Done);
                         }
-                        Some(Err(e)) => {
+                        Err(e) => {
                             hpp.mark_progress();
                             warn!("wsq  {}  write state insert error  {e}", self.chname);
                             self.transition_state(State::Done);
                         }
-                        None => {
-                            hpp.mark_progress();
-                            warn!("wsq  {}  write state insert  channel closed", self.chname);
-                            self.transition_state(State::Done);
-                        }
                     },
+                    Ready(None) => {
+                        hpp.mark_progress();
+                        warn!("wsq  {}  write state insert  channel closed", self.chname);
+                        self.transition_state(State::Done);
+                    }
                     Pending => {
                         hpp.mark_pending();
                     }
