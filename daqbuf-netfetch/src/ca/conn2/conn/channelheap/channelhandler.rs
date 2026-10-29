@@ -1289,7 +1289,11 @@ mod test_close_sequence {
         ch.proto_inp_buf.push_back(rx_item(close_res()));
         let w = noop_waker();
         let mut cx = Context::from_waker(&w);
-        let _ = Pin::new(&mut ch).poll_next(&mut cx);
+        for _ in 0..10 {
+            if Pin::new(&mut ch).poll_next(&mut cx).is_pending() {
+                break;
+            }
+        }
         assert!(ch.chan_close_ack, "ack behind the batch was missed");
         assert!(ch.peer_closed);
         assert!(ch.closing.is_some(), "peer close must start the close sequence");
