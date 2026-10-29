@@ -233,6 +233,15 @@ impl Running {
             (State::Normal(..), State::Done) => self.writer_state_insert_state(),
             (_, new) => new,
         };
+        if matches!(new, State::Done | State::WriterStateInsert(..)) {
+            info!(
+                "wsq  {}  series {}  {} -> {}",
+                self.chname,
+                self.chi.series.to_series().id(),
+                self.state.str(),
+                new.str()
+            );
+        }
         self.state = new;
         self.state_dt = Instant::now();
     }
@@ -621,14 +630,17 @@ impl Stream for Running {
             if let Some(x) = self.outbuf.pop_front() {
                 break Ready(Some(Ok(x)));
             }
-            let mk = "\n\n- - - - - - - - - - - - - - - - - - - - - - - - - - \n";
             match &mut self.state {
                 State::WriterStateSelect(st) => match st.rx.poll_next_unpin(cx) {
                     Ready(x) => match x {
                         Some(Ok(x)) => {
                             hpp.mark_progress();
-                            let a = cbor2::from_slice::<cbor2::Value>(&x);
-                            info!("{mk}write state select returned  {a:?}");
+                            if x.is_empty() {
+                                info!("wsq  {}  no stored writer state", self.chname);
+                            } else {
+                                let a = cbor2::from_slice::<cbor2::Value>(&x);
+                                info!("wsq  {}  stored writer state  bytes {}  {a:?}", self.chname, x.len());
+                            }
                             let state = State::Normal(Normal {
                                 fetchmpx: Fetchmpx::new(
                                     self.chi.series.to_series(),
@@ -645,19 +657,18 @@ impl Stream for Running {
                         }
                         Some(Err(e)) => {
                             hpp.mark_progress();
-                            warn!("{mk}write state select error  {e}");
+                            warn!("wsq  {}  write state select error  {e}", self.chname);
                             // self.trigger_close(ClosingReason::ErrorMsg(format!("{e}")));
                             self.trigger_done_error_now();
                         }
                         None => {
                             hpp.mark_progress();
-                            info!("{mk}write state select  None");
+                            warn!("wsq  {}  write state select  channel closed", self.chname);
                             // self.trigger_close(ClosingReason::ErrorMsg(format!("can not WriterStateSelect")));
                             self.trigger_done_error_now();
                         }
                     },
                     Pending => {
-                        info!("{mk}write state select  Pending");
                         hpp.mark_pending();
                     }
                 },
@@ -665,17 +676,17 @@ impl Stream for Running {
                     Ready(x) => match x {
                         Some(Ok(x)) => {
                             hpp.mark_progress();
-                            info!("write state insert returned");
+                            info!("wsq  {}  write state insert returned", self.chname);
                             self.transition_state(State::Done);
                         }
                         Some(Err(e)) => {
                             hpp.mark_progress();
-                            warn!("write state insert error  {e}");
+                            warn!("wsq  {}  write state insert error  {e}", self.chname);
                             self.transition_state(State::Done);
                         }
                         None => {
                             hpp.mark_progress();
-                            warn!("write state insert  None");
+                            warn!("wsq  {}  write state insert  channel closed", self.chname);
                             self.transition_state(State::Done);
                         }
                     },

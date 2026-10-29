@@ -1064,6 +1064,7 @@ impl Stream for CaConn {
                                                     self2.out_buf.push_back_force(item);
                                                 }
                                                 connected::ItemInner::WriterStateQuery(x) => {
+                                                    info!("wsq  conn out_buf  {}", x.describe());
                                                     let item = CaConnItem::WriterStateQuery(x);
                                                     self2.out_buf.push_back_force(item);
                                                 }

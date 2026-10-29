@@ -33,3 +33,12 @@ pub enum WriterStateQuery {
     Select(scywr::channelwriterstate::WriterStateSelect),
     Insert(scywr::channelwriterstate::WriterStateInsert),
 }
+
+impl WriterStateQuery {
+    pub fn describe(&self) -> String {
+        match self {
+            WriterStateQuery::Select(x) => format!("Select  series {}", x.series().id()),
+            WriterStateQuery::Insert(x) => format!("Insert  series {}  bytes {}", x.series().id(), x.state_00().len()),
+        }
+    }
+}

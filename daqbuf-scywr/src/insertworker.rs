@@ -790,7 +790,10 @@ fn prepare_writer_state_select_futs(
             data = row.2;
             break;
         }
-        let _ = item.tx().try_send(Ok(data));
+        info!("{selfname}  {wid}  series {series}  state bytes {}", data.len());
+        if item.tx().try_send(Ok(data)).is_err() {
+            warn!("{selfname}  {wid}  series {series}  can not deliver result");
+        }
         Ok(())
     };
     let fut = InsertFut::from_fut(Box::pin(fut));
@@ -818,8 +821,12 @@ fn prepare_writer_state_insert_futs(
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap()
             .as_millis() as i64;
+        let mut tx = item.tx().clone();
         let state_00 = item.state_00();
-        info!("\n\n\n  prepare_writer_state_insert_futs \n\n\n");
+        info!(
+            "prepare_writer_state_insert_futs  {wid}  series {series}  tsc {tsc}  bytes {}",
+            state_00.len()
+        );
         let res = data_store
             .scy
             .query_unpaged(
@@ -827,10 +834,14 @@ fn prepare_writer_state_insert_futs(
                 (series, tsc, state_00),
             )
             .inspect_err(|e| {
-                error!("{e}");
+                error!("prepare_writer_state_insert_futs  {wid}  series {series}  {e}");
+                let _ = tx.clone().try_send(Err(crate::channelwriterstate::Error::Logic));
             })
             .await?;
-        let x = item.tx().try_send(Ok(()));
+        info!("prepare_writer_state_insert_futs  {wid}  series {series}  stored");
+        if tx.try_send(Ok(())).is_err() {
+            warn!("prepare_writer_state_insert_futs  {wid}  series {series}  can not deliver result");
+        }
         Ok(())
     };
     let fut = InsertFut::from_fut(Box::pin(fut));

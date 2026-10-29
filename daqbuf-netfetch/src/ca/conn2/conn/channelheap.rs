@@ -1103,6 +1103,7 @@ impl ChannelHeap {
                                                 self2.out_buf.push_back_force(x);
                                             }
                                             PollHandlerItem::WriterStateQuery(x) => {
+                                                info!("wsq  channelheap out_buf  {}", x.describe());
                                                 let x = ChannelHeapItem {
                                                     ts_create: tsnow,
                                                     inner: ItemInner::WriterStateQuery(x),

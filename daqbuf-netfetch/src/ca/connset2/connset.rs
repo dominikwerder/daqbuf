@@ -542,6 +542,17 @@ impl ConnSet {
         }
         if self2.write_sender.is_idle() && !self2.write_staging.is_empty() {
             let batch = std::mem::take(&mut self2.write_staging);
+            let wsq_n = batch
+                .iter()
+                .filter(|x| matches!(x, QueryItem::WriterStateSelect(..) | QueryItem::WriterStateInsert(..)))
+                .count();
+            if wsq_n != 0 {
+                info!(
+                    "wsq  connset sending batch  len {}  writer state items {}",
+                    batch.len(),
+                    wsq_n
+                );
+            }
             self2.mett.write_sender_batch_send().inc();
             self2.mett.write_sender_batch_len().push_val(batch.len() as u32);
             self2.write_sender.as_mut().send_pin(batch);
@@ -668,12 +679,19 @@ impl ConnSet {
                                                 self2.mett.item_writer_state_query().inc();
                                                 match x {
                                                     crate::WriterStateQuery::Select(x) => {
-                                                        info!("\n\n  WriterStateQuery::Select  {x:?}");
+                                                        info!(
+                                                            "wsq  connset staging  Select  series {}",
+                                                            x.series().id()
+                                                        );
                                                         let item = QueryItem::WriterStateSelect(x);
                                                         self2.write_staging.push_back(item);
                                                     }
                                                     crate::WriterStateQuery::Insert(x) => {
-                                                        info!("\n\n  WriterStateQuery::Insert  {x:?}");
+                                                        info!(
+                                                            "wsq  connset staging  Insert  series {}  bytes {}",
+                                                            x.series().id(),
+                                                            x.state_00().len()
+                                                        );
                                                         let item = QueryItem::WriterStateInsert(x);
                                                         self2.write_staging.push_back(item);
                                                     }
@@ -1655,23 +1673,11 @@ impl Stream for ConnSet {
                             todo_shutdown!("in State::Shutdown2  ERROR not shutting down {k}");
                         }
                     }
-                    if self.shutdown_futs.len() < self.shutdown_futs.capacity() {
-                        if let Some((k, v)) = self.ca_conns.pop_last() {
-                            let fut = async move {
-                                if let Err(e) = v.jh.await {
-                                    error!("fail to join {k}  {e}");
-                                }
-                                info!("CaConn joined {k}");
-                                Ok(())
-                            };
-                            self.shutdown_futs.push_back(Some(fut.box2()));
-                            hpp.mark_progress();
-                        }
-                    }
                     if hpp.have_progress() {
                     } else if hpp.have_pending() {
                     } else {
                         todo_shutdown!("Shutdown2 --> Done");
+                        info!("Shutdown2 --> Done  ca_conns left {}", self.ca_conns.len());
                         hpp.mark_progress();
                         self.state = State::Done;
                     }
