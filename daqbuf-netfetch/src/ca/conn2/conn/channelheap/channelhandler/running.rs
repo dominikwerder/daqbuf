@@ -570,7 +570,9 @@ impl Stream for Running {
             let mut hpp = HaveProgressPending::new();
             match &self.state {
                 State::Done => {}
-                _ => match self.as_mut().poll_inp_dispatch(cx) {
+                State::WriterStateSelect(..) => {}
+                State::WriterStateInsert(..) => {}
+                State::Normal(..) => match self.as_mut().poll_inp_dispatch(cx) {
                     Ready(Some(x)) => {
                         hpp.mark_progress();
                         match x {
