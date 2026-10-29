@@ -126,11 +126,25 @@ impl ScyllaInsertSet {
             return Ok(ret);
         }
         let mut sinks = Vec::new();
-        for conf in &confs {
+        for (cluster_ix, conf) in confs.iter().enumerate() {
             let (iqtx, iqrx) = make_pair_cap(opts.insert_item_queue_cap);
             for target in TARGETS {
                 let scyconf = conf.for_target(target).clone();
-                info!("spawn insert workers  {}  {}", target, scyconf.short_name());
+                info!(
+                    "\n\n  ##############################  CLUSTER {}  spawn insert workers  {}  {}  hosts {:?}  keyspace {:?}\n\n",
+                    cluster_ix + 1,
+                    target,
+                    scyconf.short_name(),
+                    scyconf.hosts(),
+                    scyconf.keyspace()
+                );
+                if scyconf.keyspace() == "none" {
+                    warn!(
+                        "\n\n  ##############################  CLUSTER {}  {}  keyspace is none, items will be DISCARDED\n\n",
+                        cluster_ix + 1,
+                        target
+                    );
+                }
                 let jhs = insertworker::spawn_scylla_insert_workers(
                     target.retention_time(),
                     scyconf,
@@ -201,7 +215,12 @@ impl ScyllaInsertSet {
                 error!("shutdown  sorter join error {e}");
             }
         }
+        for sink in &self.sinks {
+            sink.close_all();
+        }
         drop(self.sinks);
+        let n_workers = self.worker_jhs.len();
+        info!("shutdown  queues closed, joining {n_workers} insert workers");
         for jh in self.worker_jhs {
             match jh.await {
                 Ok(Ok(())) => {}
@@ -296,8 +315,21 @@ async fn flush(acc: &mut InsertDeques, sinks: &[InsertQueuesTx]) -> Result<(), E
         }
         per_sink[n - 1].push((target, batch));
     }
-    let futs = sinks.iter().zip(per_sink).map(|(sink, items)| async move {
+    let futs = sinks.iter().enumerate().zip(per_sink).map(|((sink_ix, sink), items)| async move {
         for (target, batch) in items {
+            let wsq_n = batch
+                .iter()
+                .filter(|x| matches!(x, QueryItem::WriterStateSelect(..) | QueryItem::WriterStateInsert(..)))
+                .count();
+            if wsq_n != 0 {
+                info!(
+                    "\n\n  ##############################  SORTER to CLUSTER {}  {}  batch len {}  writer state items {}\n\n",
+                    sink_ix + 1,
+                    target,
+                    batch.len(),
+                    wsq_n
+                );
+            }
             match sink.sender_for_target(target).send(batch).await {
                 Ok(()) => {}
                 Err(_) => {

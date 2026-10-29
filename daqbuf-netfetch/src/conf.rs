@@ -221,6 +221,7 @@ impl CaIngestOpts {
 }
 
 #[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ScyllaConfigBlockV2 {
     scylla: ScyllaConfigBlockV2MainHosts,
     scylla_st: ScyllaRtConf,
@@ -262,11 +263,13 @@ impl ScyllaConfigBlockV2 {
 }
 
 #[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ScyllaConfigBlockV2MainHosts {
     hosts: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CaIngestOptsV2 {
     backend: String,
     channels: Option<PathBuf>,
@@ -731,6 +734,7 @@ struct ScyllaDefaultHosts {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ScyllaRtConf {
     keyspace: String,
     hosts: Option<Vec<String>>,
@@ -1245,5 +1249,78 @@ impl ScyllaInsertsetConf {
             self.mt_rf3.clone(),
             self.lt_rf3.clone(),
         )
+    }
+}
+
+#[cfg(test)]
+mod test_ingest_opts_v2 {
+    use super::*;
+
+    const HEAD: &str = r###"
+backend: test_backend
+api_bind: "0.0.0.0:3011"
+channels: /some/path
+search:
+- 172.26.0.255
+postgresql:
+  host: host.example.com
+  port: 5432
+  user: USER
+  pass: PASS
+  name: NAME
+"###;
+
+    const BLOCK_1ST: &str = r###"
+scylla_1st:
+  scylla:
+    hosts:
+    - node1:19042
+  scylla_st:
+    keyspace: ks_st
+  scylla_mt:
+    keyspace: ks_mt
+  scylla_lt:
+    keyspace: ks_lt
+  scylla_st_rf1:
+    keyspace: ks_st_rf1
+"###;
+
+    const OLD_LAYOUT: &str = r###"
+scylla:
+  hosts:
+  - node1:19042
+scylla_st:
+  keyspace: ks_st
+"###;
+
+    fn parse(tail: &str) -> Result<CaIngestOptsV2, serde_saphyr::Error> {
+        let conf = format!("{HEAD}{tail}");
+        serde_saphyr::from_slice(conf.as_bytes())
+    }
+
+    #[test]
+    fn accepts_valid_config() {
+        let conf = parse(BLOCK_1ST).unwrap();
+        assert!(conf.scylla_insert_set_conf_1st().is_some());
+        assert!(conf.scylla_insert_set_conf_2nd().is_none());
+    }
+
+    #[test]
+    fn rejects_old_layout_at_top_level() {
+        assert!(parse(OLD_LAYOUT).is_err());
+    }
+
+    #[test]
+    fn rejects_unknown_top_level_key() {
+        assert!(parse(&format!("{BLOCK_1ST}\nscylla_3rd: {{}}\n")).is_err());
+    }
+
+    #[test]
+    fn rejects_unknown_key_inside_block() {
+        let tail = BLOCK_1ST.replace(
+            "scylla_lt:\n    keyspace: ks_lt",
+            "scylla_lt:\n    keyspace: ks_lt\n    keyspce: x",
+        );
+        assert!(parse(&tail).is_err());
     }
 }

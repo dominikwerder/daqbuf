@@ -24,6 +24,8 @@ use smallvec::SmallVec;
 use smallvec::smallvec;
 use std::collections::VecDeque;
 use std::fmt;
+use std::net::IpAddr;
+use std::net::Ipv4Addr;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -169,6 +171,20 @@ pub async fn spawn_scylla_insert_workers(
         let mut data_stores = Vec::new();
         for _ in 0..insert_scylla_sessions {
             let data_store = Arc::new(DataStore::new(&scyconf, rett.clone()).await?);
+            let nodes: Vec<_> = data_store
+                .scy
+                .get_cluster_state()
+                .get_nodes_info()
+                .iter()
+                .map(|x| x.address.ip())
+                .collect();
+            info!(
+                "\n\n  ##############################  CONNECTED  {}  hosts {:?}  keyspace {:?}  nodes {:?}\n\n",
+                rett.debug_tag(),
+                scyconf.hosts(),
+                scyconf.keyspace(),
+                nodes
+            );
             data_stores.push(data_store);
         }
         for worker_ix in 0..insert_worker_count {
@@ -757,6 +773,14 @@ fn prepare_writer_state_select_futs(
     let selfname = "prepare_writer_state_select_futs";
     let data_store = data_store.clone();
     let fut = async move {
+        let clname = data_store
+            .scy
+            .get_cluster_state()
+            .get_nodes_info()
+            .iter()
+            .map(|x| x.address.ip())
+            .next()
+            .unwrap_or(IpAddr::V4(Ipv4Addr::UNSPECIFIED));
         let mut item = item;
         let _rt = data_store.rett.clone();
         let series = item.series().to_i64();
@@ -767,32 +791,35 @@ fn prepare_writer_state_select_futs(
                 (series,),
             )
             .inspect_err(|e|{
-                error!("{selfname}  {wid}  {e}");
+                error!("{selfname}  {clname}  {wid}  {e}");
             })
             .await?;
         let mut data = Vec::new();
         for row in res
             .into_rows_result()
             .map_err(|e| {
-                warn!("{selfname}  {wid}  {e}");
+                info!("{selfname}  {clname}  {wid}  {e}");
                 crate::iteminsertqueue::InsertFutError::Scylla
             })?
             .rows::<(i64, i64, Vec<u8>)>()
             .map_err(|e| {
-                warn!("{selfname}  {wid}  {e}");
+                info!("{selfname}  {clname}  {wid}  {e}");
                 crate::iteminsertqueue::InsertFutError::Scylla
             })?
         {
             let row = row.map_err(|e| {
-                warn!("{selfname}  {wid}  {e}");
+                info!("{selfname}  {clname}  {wid}  {e}");
                 crate::iteminsertqueue::InsertFutError::Scylla
             })?;
             data = row.2;
             break;
         }
-        info!("{selfname}  {wid}  series {series}  state bytes {}", data.len());
+        info!(
+            "{selfname}  {clname}  {wid}  series {series}  state bytes {}",
+            data.len()
+        );
         if item.tx().try_send(Ok(data)).is_err() {
-            warn!("{selfname}  {wid}  series {series}  can not deliver result");
+            warn!("{selfname}  {clname}  {wid}  series {series}  can not deliver result");
         }
         Ok(())
     };
@@ -814,6 +841,14 @@ fn prepare_writer_state_insert_futs(
 ) -> SmallVec<[FutJob; 4]> {
     let data_store = data_store.clone();
     let fut = async move {
+        let clname = data_store
+            .scy
+            .get_cluster_state()
+            .get_nodes_info()
+            .iter()
+            .map(|x| x.address.ip())
+            .next()
+            .unwrap_or(IpAddr::V4(Ipv4Addr::UNSPECIFIED));
         let mut item = item;
         let rt = data_store.rett.clone();
         let series = item.series().to_i64();
@@ -824,7 +859,7 @@ fn prepare_writer_state_insert_futs(
         let mut tx = item.tx().clone();
         let state_00 = item.state_00();
         info!(
-            "\n\n  +++++++++++++++++++++++++++++\n  prepare_writer_state_insert_futs  {wid}  series {series}  tsc {tsc}  bytes {}",
+            "prepare_writer_state_insert_futs  {wid}  series {series}  tsc {tsc}  bytes {}",
             state_00.len()
         );
         let res = data_store
@@ -838,10 +873,10 @@ fn prepare_writer_state_insert_futs(
                 let _ = tx.clone().try_send(Err(crate::channelwriterstate::Error::Logic));
             })
             .inspect_ok(|x| {
-                info!("\n\n  INSERT OK  {:?}  \n\n", (series, tsc, state_00));
+                info!("{clname}  INSERT OK  {:?}  \n\n", (series, tsc, state_00));
             })
             .await?;
-        info!("prepare_writer_state_insert_futs  {wid}  series {series}  stored");
+        info!("{clname}  prepare_writer_state_insert_futs  {wid}  series {series}  stored");
         let nodes: Vec<_> = data_store
             .scy
             .get_cluster_state()
@@ -865,10 +900,10 @@ fn prepare_writer_state_insert_futs(
                     .collect::<Result<Vec<_>, _>>()
             });
         info!(
-            "prepare_writer_state_insert_futs  {wid}  series {series}  rett {rt:?}  nodes {nodes:?}  readback {readback:?}"
+            "{clname}  prepare_writer_state_insert_futs  {wid}  series {series}  rett {rt:?}  nodes {nodes:?}  readback {readback:?}"
         );
         if tx.try_send(Ok(())).is_err() {
-            warn!("prepare_writer_state_insert_futs  {wid}  series {series}  can not deliver result");
+            warn!("{clname}  prepare_writer_state_insert_futs  {wid}  series {series}  can not deliver result");
         }
         Ok(())
     };

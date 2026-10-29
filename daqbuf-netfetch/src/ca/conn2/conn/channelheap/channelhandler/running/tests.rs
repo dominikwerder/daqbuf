@@ -159,7 +159,7 @@ fn done_from_insert_and_done_is_idempotent() {
 }
 
 #[test]
-fn insert_ok_ends_stream() {
+fn insert_ok_ends_stream_when_all_clusters_replied() {
     with_runtime(|| {
         let mut r = new_running();
         into_normal(&mut r);
@@ -168,6 +168,29 @@ fn insert_ok_ends_stream() {
         assert!(!ended);
         let mut insert = take_inserts(&mut items).pop().unwrap();
         insert.tx().try_send(Ok(())).ok().unwrap();
+        drop(insert);
+        let (_, ended) = drain(&mut r);
+        assert!(ended);
+        assert_eq!(r.state.str(), "Done");
+    });
+}
+
+#[test]
+fn insert_waits_for_second_cluster() {
+    with_runtime(|| {
+        let mut r = new_running();
+        into_normal(&mut r);
+        r.transition_state(State::Done);
+        let (mut items, _) = drain(&mut r);
+        let mut first = take_inserts(&mut items).pop().unwrap();
+        let mut second = first.clone();
+        first.tx().try_send(Ok(())).ok().unwrap();
+        drop(first);
+        let (_, ended) = drain(&mut r);
+        assert!(!ended);
+        assert_eq!(r.state.str(), "WriterStateInsert");
+        second.tx().try_send(Ok(())).ok().unwrap();
+        drop(second);
         let (_, ended) = drain(&mut r);
         assert!(ended);
         assert_eq!(r.state.str(), "Done");

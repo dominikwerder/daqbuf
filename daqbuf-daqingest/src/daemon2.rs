@@ -167,14 +167,31 @@ impl Daemon {
     }
 
     async fn make_insert_set(ingest_opts: &CaIngestOptsV2) -> Result<ScyllaInsertSet, Error> {
-        let confs: Vec<_> = [
-            ingest_opts.scylla_insert_set_conf_1st(),
-            ingest_opts.scylla_insert_set_conf_2nd(),
-        ]
-        .into_iter()
-        .flatten()
-        .map(|x| x.to_insert_set_config())
-        .collect();
+        let confs_named = [
+            ("scylla_1st", ingest_opts.scylla_insert_set_conf_1st()),
+            ("scylla_2nd", ingest_opts.scylla_insert_set_conf_2nd()),
+        ];
+        for (name, conf) in &confs_named {
+            match conf {
+                Some(conf) => info!(
+                    "\n\n  ##############################  CONFIG  {name}  PRESENT  lt hosts {:?}  lt keyspace {:?}\n\n",
+                    conf.lt_rf3().hosts(),
+                    conf.lt_rf3().keyspace()
+                ),
+                None => warn!(
+                    "\n\n  ##############################  CONFIG  {name}  NOT CONFIGURED, no inserts will go to it\n\n"
+                ),
+            }
+        }
+        let confs: Vec<_> = confs_named
+            .into_iter()
+            .filter_map(|(_, x)| x)
+            .map(|x| x.to_insert_set_config())
+            .collect();
+        info!(
+            "\n\n  ##############################  CONFIG  {} scylla cluster(s) in use\n\n",
+            confs.len()
+        );
         let opts = ScyllaInsertSetOpts::default();
         // TODO take these from config
         let insert_worker_opts = InsertWorkerOpts {
