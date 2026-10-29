@@ -842,6 +842,31 @@ fn prepare_writer_state_insert_futs(
             })
             .await?;
         info!("prepare_writer_state_insert_futs  {wid}  series {series}  stored");
+        let nodes: Vec<_> = data_store
+            .scy
+            .get_cluster_state()
+            .get_nodes_info()
+            .iter()
+            .map(|x| format!("{:?}", x.address))
+            .collect();
+        let readback = data_store
+            .scy
+            .query_unpaged(
+                "select tsc, ttl(state_00), writetime(state_00) from sls_lt.lt_channel_writer_state_v00 where series = ? limit 4",
+                (series,),
+            )
+            .await
+            .map_err(|e| format!("{e}"))
+            .and_then(|x| x.into_rows_result().map_err(|e| format!("{e}")))
+            .and_then(|x| {
+                x.rows::<(i64, Option<i32>, i64)>()
+                    .map_err(|e| format!("{e}"))?
+                    .map(|x| x.map_err(|e| format!("{e}")))
+                    .collect::<Result<Vec<_>, _>>()
+            });
+        info!(
+            "prepare_writer_state_insert_futs  {wid}  series {series}  rett {rt:?}  nodes {nodes:?}  readback {readback:?}"
+        );
         if tx.try_send(Ok(())).is_err() {
             warn!("prepare_writer_state_insert_futs  {wid}  series {series}  can not deliver result");
         }

@@ -674,10 +674,10 @@ impl Stream for Running {
                 },
                 State::WriterStateInsert(st) => match st.rx.poll_next_unpin(cx) {
                     Ready(Some(x)) => match x {
-                        Ok(x) => {
+                        Ok(()) => {
                             hpp.mark_progress();
                             info!("wsq  {}  write state insert returned", self.chname);
-                            self.transition_state(State::Done);
+                            // self.transition_state(State::Done);
                         }
                         Err(e) => {
                             hpp.mark_progress();
