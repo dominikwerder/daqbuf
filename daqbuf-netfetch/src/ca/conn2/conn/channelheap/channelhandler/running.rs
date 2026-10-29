@@ -311,6 +311,23 @@ impl Running {
         ret
     }
 
+    fn trigger_done_error_now(&mut self) {
+        self.removing = true;
+        self.inp_done = true;
+        match &mut self.state {
+            State::WriterStateSelect(..) => {
+                self.state = State::Done;
+            }
+            State::WriterStateInsert(..) => {
+                self.state = State::Done;
+            }
+            State::Normal(x) => {
+                self.state = State::Done;
+            }
+            State::Done => {}
+        }
+    }
+
     pub fn trigger_close(&mut self, reason: ClosingReason) {
         self.removing = true;
         match &mut self.state {
@@ -623,13 +640,15 @@ impl Stream for Running {
                         }
                         Some(Err(e)) => {
                             hpp.mark_progress();
-                            info!("{mk}write state select error  {e}");
-                            self.trigger_close(ClosingReason::ErrorMsg(format!("{e}")));
+                            warn!("{mk}write state select error  {e}");
+                            // self.trigger_close(ClosingReason::ErrorMsg(format!("{e}")));
+                            self.trigger_done_error_now();
                         }
                         None => {
                             hpp.mark_progress();
                             info!("{mk}write state select  None");
-                            self.trigger_close(ClosingReason::ErrorMsg(format!("can not WriterStateSelect")));
+                            // self.trigger_close(ClosingReason::ErrorMsg(format!("can not WriterStateSelect")));
+                            self.trigger_done_error_now();
                         }
                     },
                     Pending => {

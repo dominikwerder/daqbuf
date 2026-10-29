@@ -17,6 +17,7 @@ use atomic::AtomicU64;
 use futures_util::FutureExt;
 use futures_util::Stream;
 use futures_util::StreamExt;
+use futures_util::TryFutureExt;
 use log;
 use netpod::ttl::RetentionTime;
 use smallvec::SmallVec;
@@ -759,9 +760,11 @@ fn prepare_writer_state_select_futs(
                 "select tsc, writetime(state_00), state_00 from sls_lt.lt_channel_writer_state_v00 where series = ? limit 8",
                 (series,),
             )
-            .await.inspect_err(|e|{
+            .inspect_err(|e|{
                 error!("{e}");
-            })?;
+            })
+            .await?;
+        let mut data = Vec::new();
         for row in res
             .into_rows_result()
             .map_err(|e| {
@@ -779,8 +782,10 @@ fn prepare_writer_state_select_futs(
                 error!("{e}");
                 crate::iteminsertqueue::InsertFutError::Scylla
             })?;
-            let x = item.tx().try_send(Ok(row.2));
+            data = row.2;
+            break;
         }
+        let x = item.tx().try_send(Ok(data));
         Ok(())
     };
     let fut = InsertFut::from_fut(Box::pin(fut));
@@ -816,10 +821,10 @@ fn prepare_writer_state_insert_futs(
                 "insert into sls_lt.lt_channel_writer_state_v00 (series, tsc, state_00) values (?, ?, ?)",
                 (series, tsc, state_00),
             )
-            .await
             .inspect_err(|e| {
                 error!("{e}");
-            })?;
+            })
+            .await?;
         let x = item.tx().try_send(Ok(()));
         Ok(())
     };
