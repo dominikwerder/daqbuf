@@ -23,6 +23,7 @@ use netpod::ttl::RetentionTime;
 use smallvec::SmallVec;
 use smallvec::smallvec;
 use std::collections::VecDeque;
+use std::fmt;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -285,6 +286,12 @@ impl InsertWorkerId {
     }
 }
 
+impl fmt::Display for InsertWorkerId {
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(self, fmt)
+    }
+}
+
 async fn worker_streamed(
     worker_ix: usize,
     concurrency: usize,
@@ -314,17 +321,16 @@ async fn worker_streamed(
     if let Some(data_store) = data_store {
         mett.worker_start().inc();
         let stream = transform_to_db_futures(stream, data_store, ignore_writes, wid.clone(), mett_input.clone());
-        // let stream = stream.map(|_| Vec::new());
         let stream = stream
             .map(|x| futures_util::stream::iter(x))
             .flatten_unordered(Some(1))
             .map(|x| FutTrackDt::from_fut_job(x))
-            .buffer_unordered(concurrency);
-        let stream = stream.inspect(|x| {
-            trace_item_execute_2!(
-                "\n\n---------------------------------------------------------------------\n{selfname}  job done\n\n"
-            );
-        });
+            .buffer_unordered(concurrency)
+            .inspect(|x| {
+                if false {
+                    trace_item_execute_2!("{selfname}  job done  {x:?}");
+                }
+            });
         let mut stream = Box::pin(stream);
         debug_setup!("waiting for item");
         while let Some((ts_net, ts1, ts2, item, jobkind, npoll)) = stream.next().await {
@@ -748,12 +754,12 @@ fn prepare_writer_state_select_futs(
     tsnow: Instant,
     wid: Arc<InsertWorkerId>,
 ) -> SmallVec<[FutJob; 4]> {
+    let selfname = "prepare_writer_state_select_futs";
     let data_store = data_store.clone();
     let fut = async move {
         let mut item = item;
-        let rt = data_store.rett.clone();
+        let _rt = data_store.rett.clone();
         let series = item.series().to_i64();
-        info!("\n\n\n  prepare_writer_state_select_futs \n\n\n");
         let res = data_store
             .scy
             .query_unpaged(
@@ -761,31 +767,30 @@ fn prepare_writer_state_select_futs(
                 (series,),
             )
             .inspect_err(|e|{
-                error!("{e}");
+                error!("{selfname}  {wid}  {e}");
             })
             .await?;
         let mut data = Vec::new();
         for row in res
             .into_rows_result()
             .map_err(|e| {
-                error!("{e}");
+                warn!("{selfname}  {wid}  {e}");
                 crate::iteminsertqueue::InsertFutError::Scylla
             })?
             .rows::<(i64, i64, Vec<u8>)>()
             .map_err(|e| {
-                error!("{e}");
+                warn!("{selfname}  {wid}  {e}");
                 crate::iteminsertqueue::InsertFutError::Scylla
             })?
         {
-            info!("\n\n\n  from scylla query: {row:?}");
             let row = row.map_err(|e| {
-                error!("{e}");
+                warn!("{selfname}  {wid}  {e}");
                 crate::iteminsertqueue::InsertFutError::Scylla
             })?;
             data = row.2;
             break;
         }
-        let x = item.tx().try_send(Ok(data));
+        let _ = item.tx().try_send(Ok(data));
         Ok(())
     };
     let fut = InsertFut::from_fut(Box::pin(fut));

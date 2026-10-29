@@ -3,6 +3,8 @@ const READ_NOTIFY_FUTS_CAP: usize = 16;
 
 mod consume_event_data;
 mod subfut;
+#[cfg(test)]
+mod tests;
 
 use super::fetchmpx::Fetchmpx;
 use crate::WriterStateQuery;
@@ -227,8 +229,19 @@ pub(super) struct Running {
 impl Running {
     /// Single choke point for state changes so the time-in-state stamp can not drift.
     fn transition_state(&mut self, new: State) {
+        let new = match (&self.state, new) {
+            (State::Normal(..), State::Done) => self.writer_state_insert_state(),
+            (_, new) => new,
+        };
         self.state = new;
         self.state_dt = Instant::now();
+    }
+
+    fn writer_state_insert_state(&mut self) -> State {
+        let (item, rx) = scywr::channelwriterstate::WriterStateInsert::new(self.chi.series.to_series(), vec![1, 2, 3]);
+        self.outbuf
+            .push_back(RunningItem::WriterStateQuery(WriterStateQuery::Insert(item)));
+        State::WriterStateInsert(WriterStateInsertState { rx })
     }
 
     pub fn new(
@@ -314,17 +327,9 @@ impl Running {
     fn trigger_done_error_now(&mut self) {
         self.removing = true;
         self.inp_done = true;
-        match &mut self.state {
-            State::WriterStateSelect(..) => {
-                self.state = State::Done;
-            }
-            State::WriterStateInsert(..) => {
-                self.state = State::Done;
-            }
-            State::Normal(x) => {
-                self.state = State::Done;
-            }
+        match &self.state {
             State::Done => {}
+            _ => self.transition_state(State::Done),
         }
     }
 
@@ -665,11 +670,13 @@ impl Stream for Running {
                         }
                         Some(Err(e)) => {
                             hpp.mark_progress();
-                            self.trigger_close(ClosingReason::ErrorMsg(format!("{e}")));
+                            warn!("write state insert error  {e}");
+                            self.transition_state(State::Done);
                         }
                         None => {
                             hpp.mark_progress();
-                            self.trigger_close(ClosingReason::ErrorMsg(format!("can not WriterStateInsert")));
+                            warn!("write state insert  None");
+                            self.transition_state(State::Done);
                         }
                     },
                     Pending => {
@@ -721,9 +728,9 @@ impl Stream for Running {
                                             }
                                         }
                                         Err(e) => {
-                                            error!("TODO handle error {e}");
+                                            error!("ingest_event  {e}");
                                             self.transition_state(State::Done);
-                                            break Ready(Some(Err(e)));
+                                            hpp.mark_progress();
                                         }
                                     }
                                 }
@@ -741,15 +748,7 @@ impl Stream for Running {
                     Ready(None) => {
                         hpp.mark_progress();
                         trace_shutdown!("Done  {}", self.chname);
-                        info!("got to writer state INSERT");
-                        let (item, rx) = scywr::channelwriterstate::WriterStateInsert::new(
-                            self.chi.series.to_series(),
-                            vec![1, 2, 3],
-                        );
-                        self.outbuf
-                            .push_back(RunningItem::WriterStateQuery(WriterStateQuery::Insert(item)));
-                        let state = State::WriterStateInsert(WriterStateInsertState { rx });
-                        self.transition_state(state);
+                        self.transition_state(State::Done);
                     }
                     Pending => {
                         hpp.mark_pending();
