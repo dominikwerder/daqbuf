@@ -287,3 +287,44 @@ fn error_after_close_does_not_duplicate_insert() {
         assert_eq!(n, 1);
     });
 }
+
+#[test]
+fn peer_closed_emits_single_insert() {
+    with_runtime(|| {
+        let mut r = new_running();
+        into_normal(&mut r);
+        r.notify_peer_closed();
+        let (mut items, _) = drain(&mut r);
+        for _ in 0..2 {
+            let ack = proto::CaMsgTy::EventAddResEmpty(proto::EventAddResEmpty {
+                data_type: 6,
+                sid: 7,
+                subid: 1,
+            });
+            assert!(r.inp_push_try(rx_item(ack)).is_none());
+            items.extend(drain(&mut r).0);
+        }
+        let close_requests = items
+            .iter()
+            .filter(|x| matches!(x, RunningItem::RequestClose(..)))
+            .count();
+        assert_eq!(close_requests, 1);
+        assert_eq!(take_inserts(&mut items).len(), 1);
+        assert_eq!(r.state.str(), "WriterStateInsert");
+    });
+}
+
+#[test]
+fn input_done_without_close_is_requested_once() {
+    with_runtime(|| {
+        let mut r = new_running();
+        into_normal(&mut r);
+        r.inp_done();
+        let (items, _) = drain(&mut r);
+        let close_requests = items
+            .iter()
+            .filter(|x| matches!(x, RunningItem::RequestClose(..)))
+            .count();
+        assert_eq!(close_requests, 1);
+    });
+}

@@ -177,6 +177,7 @@ pub struct Fetchmpx {
     #[to_serde(len)]
     inp_buf: VecDeque<ProtoRxItem>,
     inp_done: bool,
+    inp_done_close_requested: bool,
     #[to_serde(skip)]
     mett: ChannelHandlerMetrics,
     #[to_serde(skip)]
@@ -230,6 +231,7 @@ impl Fetchmpx {
             monitoring_done: false,
             inp_buf: VecDeque::with_capacity(INP_BUF_CAP),
             inp_done: false,
+            inp_done_close_requested: false,
             mett: ChannelHandlerMetrics::new(),
             llog: locallog::LocalLog::new(),
             chconf,
@@ -388,10 +390,10 @@ impl Fetchmpx {
                                 return Ready(Some(Err(e)));
                             }
                         }
-                    } else if self2.inp_done {
+                    } else if self2.inp_done && !self2.inp_done_close_requested {
+                        self2.inp_done_close_requested = true;
                         hpp.mark_progress();
                         let reason = channelhandler::ClosingReason::InputDone;
-                        // if we are closing already, this will have no effect:
                         self2.trigger_closing(reason.clone());
                         let item = FetchmpxItem::RequestClose(reason);
                         break Ready(Some(Ok(Some(item))));
