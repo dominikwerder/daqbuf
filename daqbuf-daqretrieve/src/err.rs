@@ -13,4 +13,4 @@ impl<T, E: Convable> ErrConv<T> for Result<T, E> {
     }
 }
 
-impl Convable for serde_yaml::Error {}
+impl Convable for serde_saphyr::Error {}

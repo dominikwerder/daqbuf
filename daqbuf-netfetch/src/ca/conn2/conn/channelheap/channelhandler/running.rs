@@ -599,13 +599,14 @@ impl Stream for Running {
             if let Some(x) = self.outbuf.pop_front() {
                 break Ready(Some(Ok(x)));
             }
+            let mk = "\n\n- - - - - - - - - - - - - - - - - - - - - - - - - - \n";
             match &mut self.state {
                 State::WriterStateSelect(st) => match st.rx.poll_next_unpin(cx) {
                     Ready(x) => match x {
                         Some(Ok(x)) => {
                             hpp.mark_progress();
                             let a = cbor2::from_slice::<cbor2::Value>(&x);
-                            info!("write state query returned: {a:?}");
+                            info!("{mk}write state select returned  {a:?}");
                             let state = State::Normal(Normal {
                                 fetchmpx: Fetchmpx::new(
                                     self.chi.series.to_series(),
@@ -622,14 +623,17 @@ impl Stream for Running {
                         }
                         Some(Err(e)) => {
                             hpp.mark_progress();
+                            info!("{mk}write state select error  {e}");
                             self.trigger_close(ClosingReason::ErrorMsg(format!("{e}")));
                         }
                         None => {
                             hpp.mark_progress();
+                            info!("{mk}write state select  None");
                             self.trigger_close(ClosingReason::ErrorMsg(format!("can not WriterStateSelect")));
                         }
                     },
                     Pending => {
+                        info!("{mk}write state select  Pending");
                         hpp.mark_pending();
                     }
                 },

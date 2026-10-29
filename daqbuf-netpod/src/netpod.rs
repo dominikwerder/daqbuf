@@ -1093,7 +1093,7 @@ cluster:
     name: some
   nodes:
 "###;
-    let _cfg = serde_yaml::from_slice::<NodeConfig>(cfg.as_bytes()).unwrap();
+    let _cfg = serde_saphyr::from_slice::<NodeConfig>(cfg.as_bytes()).unwrap();
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -4664,19 +4664,19 @@ mod serde_UseScylla6Workarounds {
 conf_a:
   use_scylla6_workarounds: true
 "###;
-        let c: ConfB = serde_yaml::from_str(s).unwrap();
+        let c: ConfB = serde_saphyr::from_str(s).unwrap();
         assert_eq!(c.conf_a.use_scylla6_workarounds.unwrap().get(), true);
         let s = r###"
 conf_a:
   use_scylla6_workarounds: false
 "###;
-        let c: ConfB = serde_yaml::from_str(s).unwrap();
+        let c: ConfB = serde_saphyr::from_str(s).unwrap();
         assert_eq!(c.conf_a.use_scylla6_workarounds.unwrap().get(), false);
         let s = r###"
 conf_a:
   some_other: test
 "###;
-        let c: ConfB = serde_yaml::from_str(s).unwrap();
+        let c: ConfB = serde_saphyr::from_str(s).unwrap();
         assert_eq!(c.conf_a.use_scylla6_workarounds.is_none(), true);
     }
 }

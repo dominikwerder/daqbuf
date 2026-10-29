@@ -24,8 +24,8 @@ autoerr::create_error_v1!(
     },
 );
 
-impl From<serde_yaml::Error> for ConfError {
-    fn from(_: serde_yaml::Error) -> Self {
+impl From<serde_saphyr::Error> for ConfError {
+    fn from(_: serde_saphyr::Error) -> Self {
         ConfError::YamlBad
     }
 }
@@ -371,7 +371,7 @@ scylla_lt:
     - node-lt-1:19042
     - node-lt-2:19042
 "###;
-    let res: Result<CaIngestOpts, _> = serde_yaml::from_slice(conf.as_bytes());
+    let res: Result<CaIngestOpts, _> = serde_saphyr::from_slice(conf.as_bytes());
     let conf = res.unwrap();
     assert_eq!(conf.is_valid(), true);
     assert_eq!(conf.channels, Some(PathBuf::from("/some/path/file.txt")));
@@ -420,7 +420,7 @@ scylla_lt:
     - node3:19042
     - node4:19042
 "###;
-    let res: Result<CaIngestOpts, _> = serde_yaml::from_slice(conf.as_bytes());
+    let res: Result<CaIngestOpts, _> = serde_saphyr::from_slice(conf.as_bytes());
     let conf = res.unwrap();
     assert_eq!(conf.is_valid(), true);
     assert_eq!(conf.channels, Some(PathBuf::from("/some/path/file.txt")));
@@ -475,7 +475,7 @@ scylla_2nd:
   scylla_st_rf1:
     keyspace: ks_2nd_st_rf1
 "###;
-    let res: Result<CaIngestOpts, _> = serde_yaml::from_slice(conf.as_bytes());
+    let res: Result<CaIngestOpts, _> = serde_saphyr::from_slice(conf.as_bytes());
     let conf = res.unwrap();
     assert_eq!(conf.is_valid(), true);
     assert_eq!(conf.channels, Some(PathBuf::from("/some/path/file.txt")));
@@ -649,7 +649,7 @@ pub async fn parse_config<P: Into<PathBuf>>(config: P) -> Result<(CaIngestOpts, 
     let mut file = OpenOptions::new().read(true).open(config).await?;
     let mut buf = Vec::new();
     file.read_to_end(&mut buf).await?;
-    let conf: CaIngestOpts = serde_yaml::from_slice(&buf)?;
+    let conf: CaIngestOpts = serde_saphyr::from_slice(&buf)?;
     drop(file);
     if !conf.is_valid() {
         let e = ConfError::Invalid;
@@ -670,7 +670,7 @@ pub async fn parse_config_v2<P: Into<PathBuf>>(
         let mut file = OpenOptions::new().read(true).open(config).await?;
         file.read_to_end(&mut buf).await?;
     }
-    let conf: CaIngestOptsV2 = serde_yaml::from_slice(&buf)?;
+    let conf: CaIngestOptsV2 = serde_saphyr::from_slice(&buf)?;
     let channels = parse_channels(conf.channels.clone()).await?;
     Ok((conf, channels))
 }
@@ -690,7 +690,7 @@ async fn parse_config_dir(dir: &Path) -> Result<ChannelsConfig, ConfError> {
         if fns.ends_with(".yml") || fns.ends_with(".yaml") {
             let basename = fnp.file_stem().unwrap().to_str().unwrap();
             let buf = tokio::fs::read(e.path()).await?;
-            let conf: BTreeMap<String, ChannelConfigParse> = serde_yaml::from_slice(&buf)?;
+            let conf: BTreeMap<String, ChannelConfigParse> = serde_saphyr::from_slice(&buf)?;
             log::info!("parsed {} channels from {}", conf.len(), fns);
             ret.push_from_parsed(&conf, basename);
         } else {
@@ -1022,7 +1022,7 @@ CH-05:
     medium_term: None
     long_term: Monitor
 "###;
-    let x: BTreeMap<String, ChannelConfigParse> = serde_yaml::from_str(inp).unwrap();
+    let x: BTreeMap<String, ChannelConfigParse> = serde_saphyr::from_str(inp).unwrap();
     assert_eq!(
         x.get("CH-00").as_ref().unwrap().archiving_configuration.medium_term,
         Some(ChannelReadConfig::Poll(Duration::from_millis(1000 * 60)))

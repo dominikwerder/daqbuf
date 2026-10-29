@@ -87,7 +87,7 @@ async fn go() -> Result<(), Error> {
                 } else {
                     daqbufp2::run_node(cfg, service_version).await?;
                 }
-            } else if let Ok(cfg) = serde_yaml::from_slice::<NodeConfig>(&buf) {
+            } else if let Ok(cfg) = serde_saphyr::from_slice::<NodeConfig>(&buf) {
                 info!("Parsed yaml config from {}", subcmd.config);
                 let cfg: Result<NodeConfigCached, netpod::Error> = cfg.into();
                 let cfg = cfg.map_err(Error::from_string)?;
@@ -109,7 +109,7 @@ async fn go() -> Result<(), Error> {
             let mut buf = Vec::new();
             config_file.read_to_end(&mut buf).await?;
             let proxy_config: ProxyConfig =
-                serde_yaml::from_slice(&buf).map_err(|e| Error::with_msg_no_trace(e.to_string()))?;
+                serde_saphyr::from_slice(&buf).map_err(|e| Error::with_msg_no_trace(e.to_string()))?;
             info!("Parsed yaml config from {}", subcmd.config);
             if subcmd.test_config {
             } else {

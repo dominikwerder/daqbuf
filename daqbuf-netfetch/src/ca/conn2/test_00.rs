@@ -216,7 +216,7 @@ pub async fn test_01(cfgfn: String) {
     } else {
         if false {
             let buf = std::fs::read(&cfgfn).unwrap();
-            let ingest_opts: crate::conf::CaIngestOpts = serde_yaml::from_slice(&buf).unwrap();
+            let ingest_opts: crate::conf::CaIngestOpts = serde_saphyr::from_slice(&buf).unwrap();
         }
         let (ingest_opts, channels_config) = crate::conf::parse_config_v2(&cfgfn).await.unwrap();
         let (finder_handle, _finder_jh) = crate::ca::finder::start_finder_handle_v02(
