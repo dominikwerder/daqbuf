@@ -743,7 +743,7 @@ pub enum InsertFutKindDbgTag {
 }
 
 pub struct InsertFut {
-    fut: Pin<Box<dyn Future<Output = Result<QueryResult, InsertFutError>> + Send>>,
+    fut: Pin<Box<dyn Future<Output = Result<(), InsertFutError>> + Send>>,
 }
 
 impl InsertFut {
@@ -759,15 +759,16 @@ impl InsertFut {
                 trace!("InsertFut  {} {:?} {:?}", wid.short_name(), tag, params);
             }
             let fut = scy.execute_unpaged(&qu, params);
+            // TODO test if this still impacts performance
             let fut = taskrun::tokio::task::unconstrained(fut);
-            let res = fut.await?;
-            Ok::<_, InsertFutError>(res)
+            let _res = fut.await?;
+            Ok::<_, InsertFutError>(())
         };
         let fut = Box::pin(fut);
         Self { fut }
     }
 
-    pub fn from_fut(fut: Pin<Box<dyn Future<Output = Result<QueryResult, InsertFutError>> + Send>>) -> Self {
+    pub fn from_fut(fut: Pin<Box<dyn Future<Output = Result<(), InsertFutError>> + Send>>) -> Self {
         Self { fut }
     }
 
@@ -779,7 +780,7 @@ impl InsertFut {
 }
 
 impl Future for InsertFut {
-    type Output = Result<QueryResult, InsertFutError>;
+    type Output = Result<(), InsertFutError>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         self.fut.poll_unpin(cx)

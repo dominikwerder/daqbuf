@@ -30,6 +30,7 @@ use std::task::Context;
 use std::task::Poll;
 use std::time::Duration;
 use std::time::Instant;
+use std::time::SystemTime;
 use taskrun::tokio;
 use tokio::task::JoinHandle;
 
@@ -39,11 +40,11 @@ macro_rules! info { ($($arg:tt)*) => { if true { log::info!($($arg)*); } }; }
 macro_rules! debug { ($($arg:tt)*) => ( if true { log::debug!($($arg)*); } ); }
 macro_rules! debug_setup { ($($arg:tt)*) => ( if false { log::debug!($($arg)*); } ); }
 macro_rules! trace2 { ($($arg:tt)*) => ( if false { log::trace!($($arg)*); } ); }
-macro_rules! trace_transform { ($($arg:tt)*) => ( if false { log::trace!($($arg)*); } ); }
-macro_rules! trace_transform_2 { ($($arg:tt)*) => ( if false { log::trace!($($arg)*); } ); }
-macro_rules! trace_inspect { ($($arg:tt)*) => ( if false { log::trace!($($arg)*); } ); }
-macro_rules! trace_item_execute { ($($arg:tt)*) => ( if false { log::trace!($($arg)*); } ); }
-macro_rules! trace_item_execute_2 { ($($arg:tt)*) => ( if false { log::trace!($($arg)*); } ); }
+macro_rules! trace_transform { ($($arg:tt)*) => ( if true { log::trace!($($arg)*); } ); }
+macro_rules! trace_transform_2 { ($($arg:tt)*) => ( if true { log::trace!($($arg)*); } ); }
+macro_rules! trace_inspect { ($($arg:tt)*) => ( if true { log::trace!($($arg)*); } ); }
+macro_rules! trace_item_execute { ($($arg:tt)*) => ( if true { log::trace!($($arg)*); } ); }
+macro_rules! trace_item_execute_2 { ($($arg:tt)*) => ( if true { log::trace!($($arg)*); } ); }
 
 autoerr::create_error_v1!(
     name(Error, "ScyllaInsertWorker"),
@@ -357,6 +358,7 @@ async fn worker_streamed(
                     mett.job_npoll().push_val(npoll as u32);
                 }
                 Err(e) => {
+                    error!("TTbc8a1d74caca77c7 {e}");
                     mett.job_err().inc();
                     mett.job_npoll().push_val(npoll as u32);
                     stats_inc_for_err(&e, &mut mett);
@@ -750,19 +752,29 @@ fn prepare_writer_state_select_futs(
                 "select tsc, writetime(state_00), state_00 from sls_lt.lt_channel_writer_state_v00 where series = ? limit 8",
                 (series,),
             )
-            .await?;
+            .await.inspect_err(|e|{
+                error!("{e}");
+            })?;
         for row in res
-            .clone()
             .into_rows_result()
-            .map_err(|e| crate::iteminsertqueue::InsertFutError::Scylla)?
+            .map_err(|e| {
+                error!("{e}");
+                crate::iteminsertqueue::InsertFutError::Scylla
+            })?
             .rows::<(i64, i64, Vec<u8>)>()
-            .map_err(|e| crate::iteminsertqueue::InsertFutError::Scylla)?
+            .map_err(|e| {
+                error!("{e}");
+                crate::iteminsertqueue::InsertFutError::Scylla
+            })?
         {
             info!("\n\n\n  from scylla query: {row:?}");
-            let row = row.map_err(|e| crate::iteminsertqueue::InsertFutError::Scylla)?;
+            let row = row.map_err(|e| {
+                error!("{e}");
+                crate::iteminsertqueue::InsertFutError::Scylla
+            })?;
             let x = item.tx().try_send(Ok(row.2));
         }
-        Ok(res)
+        Ok(())
     };
     let fut = InsertFut::from_fut(Box::pin(fut));
     let fut = FutJob {
@@ -785,7 +797,10 @@ fn prepare_writer_state_insert_futs(
         let mut item = item;
         let rt = data_store.rett.clone();
         let series = item.series().to_i64();
-        let tsc = 123i64;
+        let tsc = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
         let state_00 = item.state_00();
         info!("\n\n\n  prepare_writer_state_insert_futs \n\n\n");
         let res = data_store
@@ -794,9 +809,12 @@ fn prepare_writer_state_insert_futs(
                 "insert into sls_lt.lt_channel_writer_state_v00 (series, tsc, state_00) values (?, ?, ?)",
                 (series, tsc, state_00),
             )
-            .await?;
+            .await
+            .inspect_err(|e| {
+                error!("{e}");
+            })?;
         let x = item.tx().try_send(Ok(()));
-        Ok(res)
+        Ok(())
     };
     let fut = InsertFut::from_fut(Box::pin(fut));
     let fut = FutJob {
